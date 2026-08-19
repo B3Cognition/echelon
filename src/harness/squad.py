@@ -1671,10 +1671,14 @@ class SquadController:
         if spec_dir is not None and not spec_dir.exists():
             spec_dir = None
         additional_spec_dirs: tuple[Path, ...] = ()
-        additional_owned_paths = checkpoint_additional_owned_paths(
-            self._project_root,
-            str(route.get("from_phase") or ""),
-            state,
+        additional_owned_paths = (
+            checkpoint_additional_owned_paths(
+                self._project_root,
+                str(route.get("from_phase") or ""),
+                state,
+            )
+            if route.get("checkpoint_policy_version") == 2
+            else ()
         )
         if (
             spec_dir is not None

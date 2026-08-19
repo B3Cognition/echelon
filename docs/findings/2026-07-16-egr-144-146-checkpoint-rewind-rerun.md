@@ -130,6 +130,39 @@ artifacts when a late quality issue is discovered.
 - `tests/integration/test_squad_controller.py`
 - `tests/unit/test_cli_continue.py`
 
+### Resolution (2026-08-20)
+
+Fixed. The reachable Phase A graph now declares `checkpoint: required|none`
+and `rewind: supported|none` for every node. Twenty-six executed workflow nodes
+require one completion-ID-bound ledger row and one Git commit before the next
+dispatch; skipped nodes record an explicit skipped outcome without creating a
+checkpoint. New runs use checkpoint policy version 2 and write early durable
+artifacts directly under the run-local spec directory, with narrow
+controller-owned exceptions for constitution and publication artifacts.
+
+`echelon spec checkpoint list` joins declared policy, durable completion
+outcomes, and the active run-local ledger without scanning arbitrary Git
+history. Strict mode fails only for an executed version 2 required completion
+whose matching checkpoint is absent. Every automatic or migration commit has
+the Echelon co-author trailer and machine-readable run, phase, completion, and
+source trailers. No-change nodes still receive an attributed empty commit.
+
+Rewind targets are filtered by certified ledger metadata and restore the whole
+selected commit. Legacy runs remain version 1 until an explicit, locked,
+crash-recoverable migration records their staged artifact snapshot as a
+non-rewindable migration checkpoint and promotes their state to version 2.
+Real-Git integration coverage proves early-node commits precede downstream
+dispatch, conditional skips create no commit, exact owned paths are committed,
+strict coverage is complete, and whole-commit rewind restores both artifacts
+and completion state. The focused EGR-144 matrix passed 1,255 tests without an
+LLM, Docker, or network access. The final broad suite passed 9,477 tests with 9
+skipped and 1 deselected after excluding only
+`tests/kernel/test_codegraph_integration_contract.py`; that module's missing
+`@colbymchenry/codegraph` failures were reproduced at pre-change commit
+`e688fc57` (9 failed, 16 passed), so they are unrelated environment baseline.
+The implementation range is `f6aab6d1..HEAD` on
+`codex/egr-082-spec-checkpoints`.
+
 ## EGR-145: Make `echelon spec rewind` Validate Against Actual Checkpoints
 
 **Priority:** P1

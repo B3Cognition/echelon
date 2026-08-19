@@ -40,7 +40,7 @@ from harness.human_input import (
     HumanInputResolution,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.phase_checkpoints import PhaseCheckpointError
+from harness.phase_checkpoints import PhaseCheckpointError, load_checkpoint_ledger
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
 from harness.squad import (
@@ -1814,6 +1814,216 @@ def test_versioned_completion_effect_plan_follows_phase_policy(
     assert prepared.intent.route["checkpoint_policy_version"] == 2
     assert prepared.intent.route["checkpoint_policy"] == (
         "required" if phase == "phase1-discover" else "none"
+    )
+
+
+def test_versioned_phase_a_nodes_checkpoint_before_next_dispatch_and_rewind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    from echelon.checkpoint_cli import run_checkpoint_command
+    from echelon.cli import _cmd_rewind
+
+    provider = _mock_provider()
+    default_dispatch = provider.exec_agent.side_effect
+    run_dir = tmp_path / "runs" / "spec-run-1"
+    ctrl, store = _controller(tmp_path, provider=provider, squad_dir=run_dir)
+    subprocess.run(
+        ["git", "branch", "-m", "001-demo"],
+        cwd=tmp_path,
+        check=True,
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    store.initialize(
+        "spec-run-1",
+        "greenfield",
+        "Build a simple notes application",
+        0,
+        "phase1-discover",
+        autonomy_mode="banzai",
+    )
+    state = store.load()
+    state.update(
+        {
+            "checkpoint_policy_version": 2,
+            "phase_completion_outcomes": [],
+            "spec_id": "001-demo",
+            "feature_branch": "001-demo",
+            "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+        }
+    )
+    store.save(state)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    last_executed_completion = ""
+
+    def dispatch_with_artifacts(*args, **kwargs):
+        nonlocal last_executed_completion
+        prompt = str(args[1])
+        match = re.search(r"^# Phase: ([^\n]+)$", prompt, re.MULTILINE)
+        assert match is not None
+        phase = match.group(1)
+        if last_executed_completion:
+            assert any(
+                row.completion_id == last_executed_completion
+                for row in load_checkpoint_ledger(spec_dir).checkpoints
+            )
+        if phase == "phase1-discover":
+            (spec_dir / "glossary.md").write_text("discover\n", encoding="utf-8")
+        elif phase == "phase1-synthesizer":
+            (spec_dir / "glossary.md").write_text("synthesized\n", encoding="utf-8")
+        elif phase == "phase1-tracker":
+            (spec_dir / "user-intent.md").write_text("simple notes\n", encoding="utf-8")
+        elif phase == "phase1-constitution":
+            constitution = tmp_path / ".echelon" / "constitution.md"
+            constitution.write_text("# Constitution\n", encoding="utf-8")
+        elif phase == "phase1-what":
+            (spec_dir / "spec.md").write_text("# Notes\n", encoding="utf-8")
+            (spec_dir / "requirements-overview.md").write_text(
+                "# Requirements\n",
+                encoding="utf-8",
+            )
+        result = default_dispatch(*args, **kwargs)
+        if phase == "phase1-tracker":
+            result.echelon_result["verdict"] = "ALIGNED"
+        if phase == "phase1-constitution":
+            result.echelon_result["state_updates"] = {
+                "constitution_status": "exists"
+            }
+        return result
+
+    provider.exec_agent.side_effect = dispatch_with_artifacts
+    executed = [
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-tracker",
+        "phase1-why1",
+        "phase1-constitution",
+        "phase1-what",
+    ]
+    expected_paths = {
+        "phase1-discover": {"runs/spec-run-1/specs/001-demo/glossary.md"},
+        "phase1-synthesizer": {"runs/spec-run-1/specs/001-demo/glossary.md"},
+        "phase1-tracker": {"runs/spec-run-1/specs/001-demo/user-intent.md"},
+        "phase1-why1": set(),
+        "phase1-constitution": {".echelon/constitution.md"},
+        "phase1-what": {
+            "runs/spec-run-1/specs/001-demo/spec.md",
+            "runs/spec-run-1/specs/001-demo/requirements-overview.md",
+        },
+    }
+
+    for phase in executed[:2]:
+        node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
+        parent = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        result = ctrl._executors[node.type].execute(node, store)
+        _coordinate_prepared_result(ctrl, node, result)
+        row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
+        last_executed_completion = row.completion_id
+        body = subprocess.run(
+            ["git", "show", "-s", "--format=%B", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout
+        assert "Co-authored-by: Echelon <echelon@b3cognition.dev>" in body
+        assert f"Echelon-Completion: {row.completion_id}" in body
+        assert subprocess.run(
+            ["git", "show", "-s", "--format=%P", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip() == parent
+        assert set(subprocess.run(
+            ["git", "show", "--format=", "--name-only", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout.split()) == expected_paths[phase]
+
+    modeler = ctrl._graph.get("phase1-modeler")
+    head_before_skip = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    dispatches_before_skip = provider.exec_agent.call_count
+    assert ctrl._skip_phase_if_condition_false(modeler, manual_phase_run=False)
+    skipped = store.load()["phase_completion_outcomes"][-1]
+    assert skipped["phase"] == "phase1-modeler"
+    assert skipped["outcome"] == "skipped"
+    assert provider.exec_agent.call_count == dispatches_before_skip
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip() == head_before_skip
+    assert not any(
+        row.completion_id == skipped["completion_id"]
+        for row in load_checkpoint_ledger(spec_dir).checkpoints
+    )
+
+    for phase in executed[2:]:
+        node = ctrl._materialize_controller_phase_inputs(ctrl._graph.get(phase))
+        parent = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        result = ctrl._executors[node.type].execute(node, store)
+        _coordinate_prepared_result(ctrl, node, result)
+        row = load_checkpoint_ledger(spec_dir).checkpoints[-1]
+        last_executed_completion = row.completion_id
+        body = subprocess.run(
+            ["git", "show", "-s", "--format=%B", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout
+        assert "Co-authored-by: Echelon <echelon@b3cognition.dev>" in body
+        assert f"Echelon-Completion: {row.completion_id}" in body
+        assert subprocess.run(
+            ["git", "show", "-s", "--format=%P", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout.strip() == parent
+        assert set(subprocess.run(
+            ["git", "show", "--format=", "--name-only", row.commit], cwd=tmp_path,
+            check=True, capture_output=True, text=True,
+        ).stdout.split()) == expected_paths[phase]
+
+    monkeypatch.setattr(
+        "harness.phase_graph.load_workspace_phase_graph",
+        lambda _root: (ctrl._graph, ctrl._ext_dir),
+    )
+    run_checkpoint_command(
+        ["list", "--strict", "--spec", run_dir.name],
+        project_root=tmp_path,
+    )
+    assert "missing" not in capsys.readouterr().out
+
+    constitution_row = next(
+        row
+        for row in load_checkpoint_ledger(spec_dir).checkpoints
+        if row.phase == "phase1-constitution"
+    )
+    (spec_dir / "later.md").write_text("later\n", encoding="utf-8")
+    subprocess.run(["git", "add", spec_dir / "later.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "test: later artifact"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    _cmd_rewind(
+        ["phase1-constitution", "--commit", constitution_row.commit[:12], "--confirm"],
+        project_root=tmp_path,
+    )
+
+    rewound = store.load()
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip() == constitution_row.commit
+    assert not (spec_dir / "spec.md").exists()
+    assert not (spec_dir / "later.md").exists()
+    assert rewound["phase"] == "phase1-constitution"
+    assert all(
+        row["completion_id"] != constitution_row.boundary_completion_id
+        for row in rewound["phase_completion_outcomes"]
     )
 
 

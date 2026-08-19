@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from echelon.spec_lifecycle import SpecRunExecutionLock
+from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 from harness.human_input import HumanInputPolicyRegistry
 from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
@@ -25,6 +25,34 @@ def _external_execution_owner(run_dir: Path):
                 run_dir,
                 "other-owner",
             ):
+                acquired.set()
+                assert release.wait(timeout=5)
+        except BaseException as error:
+            failures.append(error)
+            acquired.set()
+
+    owner = Thread(target=hold)
+    owner.start()
+    assert acquired.wait(timeout=5)
+    assert not failures
+    try:
+        yield
+    finally:
+        release.set()
+        owner.join(timeout=5)
+        assert not failures
+        assert not owner.is_alive()
+
+
+@contextmanager
+def _external_phase_a_owner(project_root: Path):
+    acquired = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    def hold() -> None:
+        try:
+            with PhaseAExecutionLock.acquire(project_root, "other-owner"):
                 acquired.set()
                 assert release.wait(timeout=5)
         except BaseException as error:
@@ -100,3 +128,32 @@ def test_manual_phase_refuses_a_live_execution_owner_before_state_mutation(
     assert result.run_id == store.squad_dir.name
     assert store.load() == before
     provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.unit
+def test_run_refuses_a_live_phase_a_owner_before_state_or_provider_mutation(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _controller(tmp_path)
+    before = store.load()
+
+    with PhaseAExecutionLock.acquire(tmp_path, "other-workspace-owner"):
+        result = controller.run(user_message="Build export API")
+
+    assert result.status == "busy"
+    assert result.run_id == store.squad_dir.name
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.unit
+def test_phase_a_execution_lease_is_independent_per_worktree(
+    tmp_path: Path,
+) -> None:
+    first_worktree = tmp_path / "worktree-a"
+    second_worktree = tmp_path / "worktree-b"
+
+    with _external_phase_a_owner(first_worktree):
+        with PhaseAExecutionLock.acquire(second_worktree, "owner-b") as second:
+            assert second.path.is_dir()
+            assert not second.path.is_relative_to(first_worktree)

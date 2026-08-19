@@ -3790,18 +3790,26 @@ class SquadStateStore:
                     validator="completion_binding",
                 )
             return
+        routed_keys = {
+            "kind",
+            "from_phase",
+            "to_phase",
+            "manual_phase_run",
+            "record_completion",
+        }
+        versioned_route = (
+            type(route) is dict
+            and "checkpoint_policy_version" in route
+        )
+        if versioned_route:
+            routed_keys.update({
+                "checkpoint_policy_version",
+                "checkpoint_policy",
+                "rewind_policy",
+            })
         if (
             type(route) is not dict
-            or frozenset(dict.keys(route))
-            != frozenset(
-                {
-                    "kind",
-                    "from_phase",
-                    "to_phase",
-                    "manual_phase_run",
-                    "record_completion",
-                }
-            )
+            or frozenset(dict.keys(route)) != frozenset(routed_keys)
             or route["kind"] != "routed"
             or type(route["from_phase"]) is not str
             or not route["from_phase"]
@@ -3810,6 +3818,11 @@ class SquadStateStore:
             or type(route["manual_phase_run"]) is not bool
             or type(route["record_completion"]) is not bool
             or state.get("phase") != route["to_phase"]
+            or (
+                versioned_route
+                and state.get("checkpoint_policy_version")
+                != route["checkpoint_policy_version"]
+            )
         ):
             raise StateAdvanceError(
                 "routed completion provenance changed",

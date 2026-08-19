@@ -1573,6 +1573,53 @@ class TestSquadStateStore:
             store.advance_controller_completion(one_ahead)
         assert store.load() == after
 
+    def test_versioned_controller_completion_advances_with_bound_policy(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state["checkpoint_policy_version"] = 2
+        state["phase_completion_outcomes"] = []
+        store.save(state)
+        prepared = prepare_controller_completion(
+            tmp_path,
+            store.squad_dir,
+            completion_id="c" * 32,
+            origin="routed",
+            publication={"kind": "none"},
+            route={
+                "kind": "routed",
+                "from_phase": "init",
+                "to_phase": "next",
+                "manual_phase_run": False,
+                "record_completion": True,
+                "checkpoint_policy_version": 2,
+                "checkpoint_policy": "none",
+                "rewind_policy": "none",
+            },
+            effect_plan=("journal",),
+            checkpoint_prestate={"kind": "none"},
+            context_reason="versioned state transition test",
+            mine_phase_a=False,
+            judgment_payload_sha256=(),
+            judgments=(),
+        )
+        _commit_routed_completion(store, prepared)
+        one_ahead = _rewrite_completion_receipts(
+            tmp_path,
+            store,
+            prepared,
+            {"journal": {"schema_version": 1}},
+        )
+
+        store.advance_controller_completion(one_ahead)
+
+        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
+            "complete"
+        )
+
     def test_routed_controller_completion_final_clear_is_exact(
         self,
         tmp_path,
