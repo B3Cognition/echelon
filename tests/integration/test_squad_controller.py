@@ -1773,6 +1773,100 @@ def test_inactive_checkpoint_does_not_resolve_git_prestate(
     assert prepared.intent.checkpoint_prestate == {"kind": "none"}
 
 
+@pytest.mark.parametrize(
+    ("phase", "conditional_skip", "checkpoint_expected"),
+    [
+        ("phase1-discover", False, True),
+        ("phase1-discover", True, False),
+        ("init", False, False),
+    ],
+)
+def test_versioned_completion_effect_plan_follows_phase_policy(
+    tmp_path: Path,
+    phase: str,
+    conditional_skip: bool,
+    checkpoint_expected: bool,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "message", 0, phase)
+    spec_dir = ctrl._squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = store.load()
+    state.update({
+        "checkpoint_policy_version": 2,
+        "phase_completion_outcomes": [],
+        "spec_id": "001-demo",
+        "spec_dir": str(spec_dir.relative_to(tmp_path)),
+    })
+    store.save(state)
+
+    prepared = ctrl._prepare_controller_completion(
+        from_phase=phase,
+        to_phase="phase1-discover",
+        snapshot=store.capture_routing_snapshot(expected_phase=phase),
+        manual_phase_run=False,
+        conditional_skip=conditional_skip,
+        record_completion=True,
+        publication_marker=None,
+    )
+
+    assert ("checkpoint" in prepared.intent.effect_plan) is checkpoint_expected
+    assert prepared.intent.route["checkpoint_policy_version"] == 2
+    assert prepared.intent.route["checkpoint_policy"] == (
+        "required" if phase == "phase1-discover" else "none"
+    )
+
+
+def test_versioned_required_checkpoint_rejects_missing_spec_target(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "message", 0, "phase1-discover")
+    state = store.load()
+    state.update({
+        "checkpoint_policy_version": 2,
+        "phase_completion_outcomes": [],
+    })
+    store.save(state)
+    before = store.load()
+
+    with pytest.raises(StateAdvanceError) as raised:
+        ctrl._prepare_controller_completion(
+            from_phase="phase1-discover",
+            to_phase="phase1-synthesizer",
+            snapshot=store.capture_routing_snapshot(
+                expected_phase="phase1-discover"
+            ),
+            manual_phase_run=False,
+            conditional_skip=False,
+            record_completion=True,
+            publication_marker=None,
+        )
+
+    assert raised.value.validator == "checkpoint_target"
+    assert "phase_checkpoint_target_missing: phase1-discover" in str(raised.value)
+    assert store.load() == before
+    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+
+
+def test_human_input_spec_root_fallback_is_legacy_only(tmp_path: Path) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "message", 0, "phase1-tracker")
+
+    legacy_roots = ctrl._authoritative_human_input_roots(store.load())
+    assert legacy_roots["{spec_dir}"] == store.staging_dir
+
+    state = store.load()
+    state.update({
+        "checkpoint_policy_version": 2,
+        "phase_completion_outcomes": [],
+    })
+    store.save(state)
+
+    versioned_roots = ctrl._authoritative_human_input_roots(store.load())
+    assert versioned_roots["{spec_dir}"] is None
+
+
 def test_routed_checkpoint_prestate_failure_records_only_deferred_tokens(
     tmp_path: Path,
 ) -> None:

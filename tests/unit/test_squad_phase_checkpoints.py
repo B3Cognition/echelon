@@ -664,6 +664,37 @@ def test_completion_checkpoint_inputs_reconstruct_from_durable_route(
     assert inputs["additional_spec_dirs"] == (published,)
 
 
+def test_constitution_completion_owns_canonical_workspace_path(
+    tmp_path: Path,
+) -> None:
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    controller._squad_dir = tmp_path / "runs" / "spec-run"
+    active = controller._squad_dir / "specs" / "001-demo"
+    active.mkdir(parents=True)
+    prepared = MagicMock()
+    prepared.intent.route = {
+        "kind": "routed",
+        "from_phase": "phase1-constitution",
+        "to_phase": "phase1-what",
+        "manual_phase_run": False,
+        "record_completion": True,
+        "checkpoint_policy_version": 2,
+        "checkpoint_policy": "required",
+    }
+    state = {
+        "run_id": "spec-run",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-run/specs/001-demo",
+    }
+
+    inputs = controller._completion_checkpoint_inputs(prepared, state)
+
+    assert inputs["additional_owned_paths"] == (
+        tmp_path / ".echelon" / "constitution.md",
+    )
+
+
 def test_squad_terminal_phase4_checkpoint_includes_accepted_kb_targets(
     monkeypatch,
     tmp_path: Path,
