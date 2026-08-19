@@ -286,7 +286,7 @@ phases:
     agent: echelon.synthesizer
     tier: exploration
     context_pack:
-      - all echelon.scout (SCOUT) outputs from {staging_dir}/
+      - all echelon.scout (SCOUT) outputs from {spec_dir}/
       - "{squad_dir}/reasoning-journal.jsonl [phase=phase1-discover]"
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
@@ -358,7 +358,7 @@ phases:
         allow_free_text: true
         allowed_target_phases: [phase1-tracker]
         context_state_keys: [user_message, phase]
-        context_paths: ["{staging_dir}/user-intent.md"]
+        context_paths: ["{spec_dir}/user-intent.md"]
     allowed_state_updates:
       - status
       - blocked_reason
@@ -411,8 +411,8 @@ phases:
         allowed_target_phases: [phase1-why1]
         context_state_keys: [user_message, phase, quality_scores]
         context_paths:
-          - "{staging_dir}/assumptions.md"
-          - "{staging_dir}/unknowns.md"
+          - "{spec_dir}/assumptions.md"
+          - "{spec_dir}/unknowns.md"
     allowed_state_updates:
       - quality_scores
       - status
@@ -445,11 +445,11 @@ phases:
     agent: echelon.chief
     tier: control
     context_pack:
-      - "{staging_dir}/glossary.md"
-      - "{staging_dir}/mental-model.md"
-      - "{staging_dir}/boundaries.md"
-      - "{staging_dir}/assumptions.md"
-      - "{staging_dir}/user-intent.md"
+      - "{spec_dir}/glossary.md"
+      - "{spec_dir}/mental-model.md"
+      - "{spec_dir}/boundaries.md"
+      - "{spec_dir}/assumptions.md"
+      - "{spec_dir}/user-intent.md"
     description: >
       echelon.chief (CHIEF) authors the canonical Echelon constitution
       to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain

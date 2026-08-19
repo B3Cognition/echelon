@@ -5,7 +5,9 @@
 
 ## 3. WHY1 Phase (Assumption Challenge — UNDERSTAND)
 
-> **Note:** Still in UNDERSTAND phase. Outputs go to staging area.
+Write canonical Phase A artifacts under `{spec_dir}` (`ACTIVE_SPEC_DIR`).
+`${STAGING_DIR}` is reserved for controller inputs and transient dispatch
+material; do not place canonical artifacts there.
 
 ### Context Pack Assembly
 
@@ -13,11 +15,11 @@ Read and include in the subagent prompt:
 
 | File | Path |
 |------|------|
-| `glossary.md` | `${STAGING_DIR}/glossary.md` |
-| `mental-model.md` | `${STAGING_DIR}/mental-model.md` |
-| `boundaries.md` | `${STAGING_DIR}/boundaries.md` |
-| `assumptions.md` | `${STAGING_DIR}/assumptions.md` |
-| `unknowns.md` | `${STAGING_DIR}/unknowns.md` |
+| `glossary.md` | `{spec_dir}/glossary.md` |
+| `mental-model.md` | `{spec_dir}/mental-model.md` |
+| `boundaries.md` | `{spec_dir}/boundaries.md` |
+| `assumptions.md` | `{spec_dir}/assumptions.md` |
+| `unknowns.md` | `{spec_dir}/unknowns.md` |
 | `sage-assumption-review-template.md` | `agents/exploration/templates/sage-assumption-review-template.md` |
 | `sage-issues-template.md` | `agents/exploration/templates/sage-issues-template.md` |
 | `calibration_map entry for echelon.sage (SAGE)` | Built by echelon.commander (COMMANDER) at init from `knowledge-base/calibration-profile.yaml`. Mark `[ABSENT]` on cold start — echelon.commander (COMMANDER) injects it via the Pre-Dispatch Calibration Injection protocol. |
@@ -33,12 +35,12 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.jsonl from ${STAGING_DIR}/; sage WHY1 output templates; calibration_map entry for echelon.sage (SAGE) from echelon.commander (COMMANDER) init (mark [ABSENT] if cold start)]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, and unknowns.md from {spec_dir}/; include reasoning-journal.jsonl from ${SQUAD_DIR}/; sage WHY1 output templates; calibration_map entry for echelon.sage (SAGE) from echelon.commander (COMMANDER) init (mark [ABSENT] if cold start)]
   </context>
 
   <instructions>
   You are SAGE. Read subagents/echelon.sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
-  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing echelon.investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing echelon.investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `{spec_dir}/` (`ACTIVE_SPEC_DIR`) using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

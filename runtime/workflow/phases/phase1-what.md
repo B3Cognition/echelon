@@ -12,9 +12,9 @@
 Read and include in the subagent prompt:
 
 - `.echelon/constitution.md` (read-only governance source created by CHIEF)
-- `${STAGING_DIR}/glossary.md` + `${STAGING_DIR}/mental-model.md` + `${STAGING_DIR}/boundaries.md`
-- `${STAGING_DIR}/assumptions.md` + `${STAGING_DIR}/unknowns.md`
-- `${STAGING_DIR}/reference-architectures.md` (if greenfield)
+- `{spec_dir}/glossary.md` + `{spec_dir}/mental-model.md` + `{spec_dir}/boundaries.md`
+- `{spec_dir}/assumptions.md` + `{spec_dir}/unknowns.md`
+- `{spec_dir}/reference-architectures.md` (if greenfield)
 - `${STAGING_DIR}/user-clarifications.md` (if present; fresh control-plane input on every WHAT pass)
 - `{spec_dir}/evidence-resolution.md` + `{spec_dir}/evidence-grades.md` (if Phase 1 INVESTIGATOR ran; treat recorded facts as authoritative evidence for this amendment)
 - `reasoning-journal.jsonl` (filtered to DISCOVER + WHY1 entries)
@@ -42,12 +42,12 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include read-only .echelon/constitution.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, evidence-resolution.md and evidence-grades.md if present, reference-architectures.md if greenfield, cartographer output templates, reasoning-journal.jsonl — staging artifacts from ${STAGING_DIR}/, user input]
+  [include read-only .echelon/constitution.md, canonical discovery artifacts from {spec_dir}/, evidence-resolution.md and evidence-grades.md if present, cartographer output templates, reasoning-journal.jsonl, fresh controller inputs from ${STAGING_DIR}/, and user input]
   </context>
 
   <instructions>
   You are CARTOGRAPHER. Read subagents/echelon.cartographer.md for your complete protocol.
-  Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with echelon.scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
+  Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}` and enhance it with the discovery artifacts already stored there. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.echelon/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   If `evidence-resolution.md` is present, apply its observed facts and confidence limits to the amendment. Do not re-investigate the same source, discard evidence because it conflicts with the prior draft, or invent facts beyond its stated gaps.
   Evidence routing is controller-owned. ALWAYS return `evidence_resolution_status: not_required` after an ordinary WHAT pass. When a declared input or directly relevant primary source must establish a project-specific fact before requirements can be amended, ALWAYS return `FAIL` with `evidence_resolution_status: pending` and a complete `evidence_requests` object. NEVER return `BLOCKED` merely because the missing fact is investigable; `BLOCKED` bypasses workflow transitions and is reserved for controller-owned operational failures.
@@ -79,7 +79,7 @@ The active runtime dispatches this role with the following request:
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `{spec_dir}/requirements-overview.md` exists (your 1-2 page Phase 1 requirements orientation; not the final delivery overview).
-  3. All discovery artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`; run-control files (`user-clarifications.md`, `governance-trail.json`, `escalation-request.md`) remain in staging.
+  3. All canonical discovery artifacts remain in `{spec_dir}/`; run-control files (`user-clarifications.md`, `governance-trail.json`, `escalation-request.md`) remain in staging.
   Creating an initial draft alone is NOT sufficient — enhancement with squad context is mandatory before returning.
   </instructions>
   ```

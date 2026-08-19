@@ -271,13 +271,13 @@ class TestPhaseGraph:
                 "material", "require_human", "clarification_resume", True,
                 frozenset({"phase1-tracker"}), frozenset({"phase1-tracker"}),
                 ("user_message", "phase"),
-                ("{staging_dir}/user-intent.md",), (),
+                ("{spec_dir}/user-intent.md",), (),
             ),
             ("provider_escalation", "phase1-why1", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
                 frozenset({"phase1-why1"}), frozenset({"phase1-why1"}),
                 ("user_message", "phase", "quality_scores"),
-                ("{staging_dir}/assumptions.md", "{staging_dir}/unknowns.md"), (),
+                ("{spec_dir}/assumptions.md", "{spec_dir}/unknowns.md"), (),
             ),
             ("provider_escalation", "phase1-why2", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
@@ -1790,3 +1790,29 @@ def test_phase_a_nodes_parse_explicit_checkpoint_and_rewind_policy() -> None:
         node = graph.get(phase_id)
         assert node.checkpoint in {"required", "none"}
         assert node.rewind in {"supported", "none"}
+
+
+def test_early_phase_graph_context_uses_durable_spec_paths() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    for phase_id in (
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
+        "phase1-why1",
+        "phase1-constitution",
+    ):
+        node = graph.get(phase_id)
+        assert all("{staging_dir}" not in item for item in node.context_pack), phase_id
+        for policy in node.human_input_policies:
+            assert all(
+                "{staging_dir}" not in path for path in policy.context_paths
+            ), phase_id
+
+    assert "{staging_dir}/user-clarifications.md" in graph.get(
+        "phase1-what"
+    ).context_pack
