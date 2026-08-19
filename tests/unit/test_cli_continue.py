@@ -1841,6 +1841,33 @@ def test_dispatch_cap_missing_published_evidence_retries_active_spec(
     assert action.phase == "phase1-understanding"
 
 
+def test_dispatch_cap_missing_spec_evidence_retries_early_phase_staging(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "run"
+    active_spec = run_dir / "specs" / "001-demo"
+    staging_dir = run_dir / "staging"
+    active_spec.mkdir(parents=True)
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "issues.md").write_text("# Issues\n", encoding="utf-8")
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-why1",
+            "blocked_reason": "phase_dispatch_limit_evidence_missing",
+            "spec_dir": str(active_spec),
+            "staging_dir": str(staging_dir),
+            "published_spec_dir": "specs/001-demo",
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_evidence_retry"
+    assert action.phase == "phase1-why1"
+
+
 def test_quality_remediation_resets_its_authoring_quality_phase_counts() -> None:
     state = {
         "phase_dispatch_counts": {

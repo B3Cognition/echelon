@@ -2684,6 +2684,25 @@ def test_dispatch_cap_uses_active_spec_when_published_copy_is_stale(
     assert controller._read_dispatch_cap_issues(store.load()) == "active issues"
 
 
+def test_dispatch_cap_uses_staging_issues_before_spec_artifacts_exist(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy("phase_dispatch_limit", phase_id="phase1-why1"),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-why1"}),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="semi",
+        policy=policy,
+    )
+    staging_issues = Path(store.load()["staging_dir"]) / "issues.md"
+    staging_issues.write_text("early Phase A issues", encoding="utf-8")
+
+    assert controller._read_dispatch_cap_issues(store.load()) == "early Phase A issues"
+
+
 @pytest.mark.parametrize(
     ("evidence", "expected_reason"),
     [

@@ -131,7 +131,7 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
         "behavioral": 0.55,
     }
     assert bundle.scores == {
-        "overall": 0.6978472499999999,
+        "overall": pytest.approx(0.69784725, abs=1e-12),
         "structure": 0.7269,
         "testability": 0.7356,
         "semantic": 0.5126,

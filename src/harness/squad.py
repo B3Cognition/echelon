@@ -11838,6 +11838,20 @@ class SquadController:
                 ) from exc
             if spec_dir is not None and spec_dir not in roots:
                 roots.append(spec_dir)
+        # Before WHAT creates the canonical spec artifacts, Phase 1 writes its
+        # issue register to staging. Once spec.md exists, staging is only an
+        # inbox and must not override missing canonical recovery evidence.
+        if not any((root / "spec.md").is_file() for root in roots):
+            try:
+                staging_dir = self._authoritative_human_input_roots(state)[
+                    "{staging_dir}"
+                ]
+            except HumanInputPolicyError as exc:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                ) from exc
+            if staging_dir is not None and staging_dir not in roots:
+                roots.append(staging_dir)
         if not roots:
             raise _DispatchCapEvidenceError(
                 "phase_dispatch_limit_evidence_missing"

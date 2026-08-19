@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
+from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 
@@ -763,6 +764,25 @@ def test_status_lists_active_spec_checkpoint_stash_and_other_runs(
     assert "cp-a (plan)" in output
     assert "stash-commit" in output
     assert "002-spec-b" in output
+
+
+def test_status_reports_checkpoint_not_yet_created_without_an_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_switchable_spec_run(tmp_path, "run-a", spec_id="001-spec-a")
+    _write_switchable_spec_run(tmp_path, "run-b", spec_id="002-spec-b")
+    (tmp_path / "runs" / ".current").write_text("run-a", encoding="utf-8")
+
+    with patch(
+        "echelon.spec_switch.validate_spec_checkpoint",
+        side_effect=SpecSwitchError("no checkpoint for run 'run-a' (run-a, 001-spec-a)"),
+    ):
+        _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "not yet created" in output
+    assert "unavailable: no checkpoint" not in output
 
 
 def test_status_reports_missing_deployed_runtime_not_legacy_extension_drift(

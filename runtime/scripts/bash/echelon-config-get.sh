@@ -69,12 +69,32 @@ fi
 
 # ─── config resolution ───────────────────────────────────────────────────────
 
+_yaml_python() {
+  local candidate
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  for candidate in "${ECHELON_PYTHON:-}" "${VIRTUAL_ENV:-}/bin/python" "$HOME/.echelon/venv/bin/python"; do
+    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  echo "echelon-config-get: no Python interpreter with PyYAML is available" >&2
+  return 1
+}
+
+if ! ECHELON_CONFIG_PYTHON="$(_yaml_python)"; then
+  exit 1
+fi
+
 _get_json() {
   if [[ ! -f "$REPO_ROOT/.echelon/config.yml" ]]; then
     echo "echelon-config-get: .echelon/config.yml not found" >&2
     return 1
   fi
-  REPO_ROOT="$REPO_ROOT" python3 -c '
+  REPO_ROOT="$REPO_ROOT" "$ECHELON_CONFIG_PYTHON" -c '
 import json
 import os
 from pathlib import Path
@@ -116,7 +136,7 @@ if ! _JSON="$(_get_json)"; then
 fi
 
 if [[ "$ENV_MODE" == "true" ]]; then
-  _ECHELON_JSON="$_JSON" _ECHELON_KEY="$KEY" python3 -c '
+  _ECHELON_JSON="$_JSON" _ECHELON_KEY="$KEY" "$ECHELON_CONFIG_PYTHON" -c '
 import sys, json, os
 
 key_path = os.environ["_ECHELON_KEY"]
@@ -141,7 +161,7 @@ for k, v in node.items():
     print(f"{env_key}={env_val}")
 '
 else
-  _ECHELON_JSON="$_JSON" _ECHELON_KEY="$KEY" python3 -c '
+  _ECHELON_JSON="$_JSON" _ECHELON_KEY="$KEY" "$ECHELON_CONFIG_PYTHON" -c '
 import sys, json, os
 
 key_path = os.environ["_ECHELON_KEY"]

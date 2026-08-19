@@ -64,7 +64,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.5"
+CLI_VERSION = "4.0.6"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -4123,17 +4123,28 @@ def _active_dispatch_cap_evidence_exists(
     run_state: dict,
     project_root: Path | None,
 ) -> bool:
-    """Whether the active run has the issues artifact a stale publication missed."""
+    """Whether the active run has recoverable dispatch-cap evidence."""
     if project_root is None:
         return False
     spec_ref = str(run_state.get("spec_dir") or "").strip()
-    if not spec_ref:
-        return False
-    spec_dir = Path(spec_ref)
-    if not spec_dir.is_absolute():
-        spec_dir = project_root / spec_dir
+    spec_dir: Path | None = None
     try:
-        return (spec_dir / "issues.md").is_file()
+        if spec_ref:
+            spec_dir = Path(spec_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = project_root / spec_dir
+            if (spec_dir / "issues.md").is_file():
+                return True
+            if (spec_dir / "spec.md").is_file():
+                return False
+
+        staging_ref = str(run_state.get("staging_dir") or "").strip()
+        if not staging_ref:
+            return False
+        staging_dir = Path(staging_ref)
+        if not staging_dir.is_absolute():
+            staging_dir = project_root / staging_dir
+        return (staging_dir / "issues.md").is_file()
     except OSError:
         return False
 
@@ -7964,7 +7975,7 @@ def _print_active_spec_status(project_root: Path) -> None:
         discover_spec_runs,
         resolve_active_spec_run,
     )
-    from echelon.spec_switch import validate_spec_checkpoint
+    from echelon.spec_switch import SpecSwitchError, validate_spec_checkpoint
 
     try:
         active = resolve_active_spec_run(project_root)
@@ -7979,6 +7990,11 @@ def _print_active_spec_status(project_root: Path) -> None:
     try:
         checkpoint = validate_spec_checkpoint(project_root, active)
         fields.append(("Checkpoint", f"{checkpoint.checkpoint_id} ({checkpoint.phase})"))
+    except SpecSwitchError as exc:
+        if str(exc).startswith("no checkpoint for run "):
+            fields.append(("Checkpoint", "not yet created"))
+        else:
+            fields.append(("Checkpoint", f"unavailable: {exc}"))
     except Exception as exc:
         # Status is diagnostic: invalid Git/checkpoint state must not suppress
         # the rest of the operator's orientation report.
