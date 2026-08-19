@@ -1257,7 +1257,9 @@ def _completion_checkpoint_from_commit(
         run_id=run_id,
         created_at=record["created_at"],
         completion_id=completion_id,
-        boundary_completion_id=completion_id,
+        boundary_completion_id=(
+            "" if source == "legacy-migration" else completion_id
+        ),
         rewind=rewind,
         rewind_reason=rewind_reason,
     )
@@ -1518,6 +1520,7 @@ def create_or_recover_completion_checkpoint(
     checkpoint_prestate: Mapping[str, object],
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    owned_paths_only: tuple[Path, ...] | None = None,
     force_commit: bool = False,
     source: str = "auto",
     rewind: str = "supported",
@@ -1546,6 +1549,12 @@ def create_or_recover_completion_checkpoint(
     )
     if type(force_commit) is not bool:
         raise PhaseCheckpointError("invalid completion checkpoint force flag")
+    if owned_paths_only is not None and (
+        type(owned_paths_only) is not tuple
+        or additional_spec_dirs
+        or additional_owned_paths
+    ):
+        raise PhaseCheckpointError("invalid exact checkpoint owned paths")
     if source not in {"auto", "user-committed", "legacy-migration"}:
         raise PhaseCheckpointError("invalid checkpoint source")
     if rewind not in {"supported", "none"}:
@@ -1596,8 +1605,17 @@ def create_or_recover_completion_checkpoint(
             "checkpoint spec does not match active spec directory"
         )
     owned_spec_dirs = (
-        active_spec,
-        *(Path(path).resolve() for path in additional_spec_dirs),
+        ()
+        if owned_paths_only is not None
+        else (
+            active_spec,
+            *(Path(path).resolve() for path in additional_spec_dirs),
+        )
+    )
+    effective_owned_paths = (
+        owned_paths_only
+        if owned_paths_only is not None
+        else additional_owned_paths
     )
     identity = _completion_commit_identity(
         completion_id=completion_value,
@@ -1721,7 +1739,7 @@ def create_or_recover_completion_checkpoint(
             changed = _owned_paths_have_changes(
                 root,
                 owned_spec_dirs,
-                additional_owned_paths,
+                effective_owned_paths,
             )
             try:
                 verified_head = run_git(
@@ -1754,30 +1772,38 @@ def create_or_recover_completion_checkpoint(
                 checkpoint_source=source,
             ),
         )
-        commit = _commit_spec_changes(
-            root,
-            owned_spec_dirs,
-            message,
-            additional_owned_paths,
+        commit = (
+            None
+            if owned_paths_only == ()
+            else _commit_spec_changes(
+                root,
+                owned_spec_dirs,
+                message,
+                effective_owned_paths,
+            )
         )
         if commit is None:
             if force_commit:
                 try:
-                    pathspecs = _owned_pathspecs(
-                        root,
-                        owned_spec_dirs,
-                        additional_owned_paths,
+                    pathspecs = (
+                        ()
+                        if owned_paths_only == ()
+                        else _owned_pathspecs(
+                            root,
+                            owned_spec_dirs,
+                            effective_owned_paths,
+                        )
                     )
-                    run_git(
-                        root,
+                    commit_args = [
                         "commit",
                         "--allow-empty",
                         "--only",
                         "-m",
                         message,
-                        "--",
-                        *pathspecs,
-                    )
+                    ]
+                    if pathspecs:
+                        commit_args.extend(("--", *pathspecs))
+                    run_git(root, *commit_args)
                     commit = run_git(
                         root,
                         "rev-parse",

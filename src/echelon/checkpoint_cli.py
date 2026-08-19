@@ -30,6 +30,7 @@ _USAGE = (
     "  echelon spec checkpoint accept --phase <phase-id> [--spec <id>] [--run-id <id>]\n"
     "  echelon spec checkpoint commit --phase <phase-id> [--spec <id>] "
     "[--run-id <id>] [--message <msg>]\n"
+    "  echelon spec checkpoint migrate [--spec <run-or-spec-id>] [--confirm]\n"
 )
 
 
@@ -41,8 +42,12 @@ def _parse_checkpoint_args(
         "list": frozenset({"--spec"}),
         "accept": frozenset({"--phase", "--spec", "--run-id"}),
         "commit": frozenset({"--phase", "--spec", "--run-id", "--message"}),
+        "migrate": frozenset({"--spec"}),
     }[subcommand]
-    flag_options = frozenset({"--strict"}) if subcommand == "list" else frozenset()
+    flag_options = {
+        "list": frozenset({"--strict"}),
+        "migrate": frozenset({"--confirm"}),
+    }.get(subcommand, frozenset())
     parsed: dict[str, str | bool] = {}
     index = 1
     while index < len(args):
@@ -114,7 +119,7 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     if subcommand in {"-h", "--help", "help"}:
         print(_USAGE)
         raise SystemExit(0)
-    if subcommand not in {"list", "accept", "commit"}:
+    if subcommand not in {"list", "accept", "commit", "migrate"}:
         print(_USAGE, file=sys.stderr)
         raise SystemExit(1)
 
@@ -154,6 +159,38 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     if type(state) is not dict:
         print("Checkpoint run state must be a JSON object.", file=sys.stderr)
         raise SystemExit(1)
+
+    if subcommand == "migrate":
+        from echelon.checkpoint_migration import (
+            LegacyCheckpointMigrationError,
+            apply_legacy_checkpoint_migration,
+            prepare_legacy_checkpoint_migration,
+        )
+
+        try:
+            plan = prepare_legacy_checkpoint_migration(project_root, run)
+            print(f"LEGACY CHECKPOINT MIGRATION - run {run.run_dir_name}\n")
+            if plan.files:
+                print("FILE                         ACTION")
+                for item in plan.files:
+                    print(f"{item.name:<28} {item.disposition}")
+            else:
+                print("(no allowlisted staging artifacts)")
+            if plan.ignored:
+                print("\nIgnored: " + ", ".join(plan.ignored))
+            if options.get("--confirm") is not True:
+                print(
+                    "\nConfirm with:\n  "
+                    "echelon spec checkpoint migrate "
+                    f"--spec {run.run_dir_name} --confirm"
+                )
+                return
+            checkpoint = apply_legacy_checkpoint_migration(project_root, plan)
+        except LegacyCheckpointMigrationError as exc:
+            print(f"Cannot migrate legacy checkpoints: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"Migration checkpoint {checkpoint.commit[:7]} recorded.")
+        return
 
     if subcommand == "accept":
         phase = str(options.get("--phase") or "")

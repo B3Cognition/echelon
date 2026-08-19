@@ -677,3 +677,51 @@ def test_checkpoint_list_prefers_existing_active_run_spec_over_published(
     out = capsys.readouterr().out
     assert "CHECKPOINTS - spec 001-simple-notes" in out
     assert "phase3-sentinel" in out
+
+
+def test_checkpoint_migrate_previews_then_confirms_exact_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    repo, spec_dir = _repo_with_spec(tmp_path)
+    run_dir = repo / "runs" / "spec-run-legacy"
+    staging = run_dir / "staging"
+    staging.mkdir(parents=True)
+    (staging / "glossary.md").write_text("terms\n", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "spec_id": "001-demo",
+                "feature_branch": "001-demo",
+                "spec_dir": spec_dir.relative_to(repo).as_posix(),
+                "state_revision": 0,
+                "completed_phases": ["phase1-discover"],
+                "phase": "phase1-why1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "runs/spec-run-legacy/state.json")
+    _git(repo, "commit", "-m", "test: add legacy run")
+
+    run_checkpoint_command(
+        ["migrate", "--spec", run_dir.name],
+        project_root=repo,
+    )
+
+    preview = capsys.readouterr().out
+    assert "glossary.md" in preview
+    assert (
+        f"echelon spec checkpoint migrate --spec {run_dir.name} --confirm"
+        in preview
+    )
+    assert not (spec_dir / "glossary.md").exists()
+
+    run_checkpoint_command(
+        ["migrate", "--spec", run_dir.name, "--confirm"],
+        project_root=repo,
+    )
+
+    assert (spec_dir / "glossary.md").read_text(encoding="utf-8") == "terms\n"
+    assert "Migration checkpoint" in capsys.readouterr().out
