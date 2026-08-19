@@ -12,13 +12,14 @@ ca_overlays:
     chunking_enabled: true
 
 # =============================================================================
-# EXECUTION — Full parallel, opus everywhere, no timeouts
+# EXECUTION — Full parallel, opus everywhere, long-running agent allowance
 # =============================================================================
 
 execution:
   max_parallel_agents: 5        # Max out parallelism
-  # Optional per-agent timeout. When omitted, Echelon uses the provider timeout.
-  # agent_timeout_seconds: 600
+  # Per-agent hard ceiling (seconds). The host LLM provider has a separate,
+  # longer timeout under harness.llm.timeout_ms.
+  agent_timeout_seconds: 3600
   max_retries: 3                # Resilient — retry hard before giving up
 
   # ALL tiers run on Opus — maximum reasoning power across the board

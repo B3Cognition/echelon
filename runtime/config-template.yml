@@ -16,9 +16,9 @@ execution:
   # @belief(claim: "3 parallel agents is the sweet spot balancing speed and coherence without context fragmentation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
   max_parallel_agents: 3
 
-  # Optional per-agent timeout (seconds). When omitted, Echelon uses the provider timeout.
-  # Enable this only when the workspace needs a stricter ceiling than its AI provider.
-  # agent_timeout_seconds: 600
+  # Per-agent hard ceiling (seconds). The host LLM provider has a separate,
+  # longer timeout under harness.llm.timeout_ms.
+  agent_timeout_seconds: 3600
 
   # Max retries per agent before skipping with warning
   # [range: 0-3] Higher = more resilient, but may waste tokens on stuck agents.
@@ -1246,7 +1246,7 @@ harness:
   #   cli: claude
   #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
   #   codex_inherit_user_config: false # Codex only; false excludes personal plugins/skills
-  #   timeout_ms: 1200000              # 20 minutes
+  #   timeout_ms: 43200000             # 12 hours (the default; optional override)
   #
   #   # OpenAI-compatible artifact-only provider example:
   #   # cli: openai-compatible

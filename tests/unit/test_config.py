@@ -501,7 +501,7 @@ def test_app_runtime_command_profile_accepts_single_command_strings() -> None:
 def test_llm_defaults():
     """LlmConfig has correct defaults when section absent."""
     config = _parse_config(MINIMAL)
-    assert config.llm.timeout_ms == 10_800_000
+    assert config.llm.timeout_ms == 43_200_000
     assert config.llm.config_dir is None
     assert config.llm.codex_inherit_user_config is False
 

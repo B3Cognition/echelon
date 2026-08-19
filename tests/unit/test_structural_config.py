@@ -23,12 +23,11 @@ def test_governance_artifacts_present():
     "relative_path",
     ["runtime/echelon-config.yml", "runtime/config-template.yml"],
 )
-def test_agent_timeout_is_documented_but_disabled_by_default(
+def test_agent_timeout_defaults_to_one_hour(
     relative_path: str,
 ) -> None:
     text = (ROOT / relative_path).read_text(encoding="utf-8")
     config = yaml.safe_load(text)
 
-    assert "agent_timeout_seconds" not in config["execution"]
-    assert "# agent_timeout_seconds:" in text
-    assert "uses the provider timeout" in text
+    assert config["execution"]["agent_timeout_seconds"] == 3600
+    assert "longer timeout under harness.llm.timeout_ms" in text

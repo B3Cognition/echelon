@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.4** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.5** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -668,6 +668,11 @@ configured HTTP endpoint. `ECHELON_LLM` or `harness.llm.cli` in
 `.echelon/config.yml` selects the provider. Old provider-native skill files are
 recognized only as migration compatibility; initialize or migrate the workspace
 so normal execution uses the Prosaic bundle.
+
+By default, Echelon allows each agent up to 60 minutes and the host LLM
+subprocess up to 12 hours. Override `execution.agent_timeout_seconds` for a
+workspace-specific agent ceiling or `harness.llm.timeout_ms` for a different
+provider ceiling.
 
 By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. `echelon workspace init` prompts for this local approval on an interactive TTY, and `echelon workspace init --allow-unsafe-host-execution` writes the same approval non-interactively to `.echelon/local.yml`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 

@@ -57,6 +57,7 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
     }
 )
 _JOURNAL_CONTEXT_MAX_BYTES = 24 * 1024
+_DEFAULT_AGENT_TIMEOUT_SECONDS = 60 * 60
 _WHY_STATE_CONTEXT_KEYS = (
     "run_id",
     "spec_id",
@@ -1465,10 +1466,14 @@ class PhaseExecutor(ABC):
         """Use provider-side result-only repair when the provider supports it."""
         kwargs: dict[str, object] = {}
         execution = self._resolved_config().get("execution", {})
-        if isinstance(execution, dict):
-            timeout_seconds = execution.get("agent_timeout_seconds")
-            if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
-                kwargs["timeout_ms"] = int(timeout_seconds * 1000)
+        timeout_seconds = (
+            execution.get("agent_timeout_seconds")
+            if isinstance(execution, dict)
+            else None
+        )
+        if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+            timeout_seconds = _DEFAULT_AGENT_TIMEOUT_SECONDS
+        kwargs["timeout_ms"] = int(timeout_seconds * 1000)
         if getattr(self._provider, "supports_result_contract", False):
             kwargs["result_contract"] = result_contract
         try:
