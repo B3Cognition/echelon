@@ -20,9 +20,9 @@ from echelon.git_helpers import (
 from harness.phase_checkpoints import (
     CHECKPOINT_LEDGER_REL,
     CHECKPOINT_LOCK_REL,
-    checkpoint_targets,
     load_checkpoint_ledger,
     resolve_checkpoint,
+    rewindable_checkpoint_targets,
 )
 
 
@@ -152,7 +152,7 @@ def prepare_rewind(
             commit=checkpoint_commit,
         )
     except (KeyError, ValueError) as exc:
-        available = checkpoint_targets(ledger)
+        available = rewindable_checkpoint_targets(ledger)
         message = str(exc.args[0]) if exc.args else f"checkpoint not found: {target}"
         suffix = (
             f"\nAvailable checkpoints: {', '.join(available)}"
@@ -160,6 +160,11 @@ def prepare_rewind(
             else "\nNo checkpoints are recorded for this spec."
         )
         raise RewindError(message + suffix) from exc
+    if checkpoint.rewind != "supported":
+        raise RewindError(
+            f"checkpoint {checkpoint.id!r} does not support rewind: "
+            f"{checkpoint.rewind_reason}"
+        )
     branch = current_branch(project_root)
     if checkpoint.spec_id not in branch:
         raise RewindError(

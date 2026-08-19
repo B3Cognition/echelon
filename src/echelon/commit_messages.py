@@ -19,6 +19,7 @@ class EchelonCommitMetadata:
     checkpoint_id: str = ""
     next_phase: str = ""
     completion_id: str = ""
+    checkpoint_source: str = ""
     retarget_revision: str = ""
     baseline_run_id: str = ""
     replacement_run_id: str = ""
@@ -52,6 +53,7 @@ def build_echelon_commit_message(subject: str, metadata: EchelonCommitMetadata) 
         ("Echelon-Checkpoint", metadata.checkpoint_id),
         ("Echelon-Next-Phase", metadata.next_phase),
         ("Echelon-Completion", metadata.completion_id),
+        ("Echelon-Checkpoint-Source", metadata.checkpoint_source),
         ("Echelon-Retarget-Revision", metadata.retarget_revision),
         ("Echelon-Baseline-Run", metadata.baseline_run_id),
         ("Echelon-Replacement-Run", metadata.replacement_run_id),

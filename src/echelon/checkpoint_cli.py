@@ -132,6 +132,30 @@ def _format_checkpoint_created_at(value: str) -> str:
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _manual_boundary_completion_id(project_root: Path, phase: str) -> str:
+    run_dir = _active_run_dir(project_root)
+    if run_dir is None:
+        return ""
+    try:
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if state.get("checkpoint_policy_version") != 2:
+        return ""
+    outcomes = state.get("phase_completion_outcomes")
+    if type(outcomes) is not list:
+        raise RuntimeError("versioned checkpoint outcomes are invalid")
+    for outcome in reversed(outcomes):
+        if (
+            type(outcome) is dict
+            and outcome.get("phase") == phase
+            and outcome.get("outcome") == "executed"
+            and isinstance(outcome.get("completion_id"), str)
+        ):
+            return str(outcome["completion_id"])
+    raise RuntimeError(f"phase {phase!r} has no executed completion to checkpoint")
+
+
 def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     subcommand = args[0] if args else "list"
     if subcommand in {"-h", "--help", "help"}:
@@ -169,6 +193,10 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
             spec_dir=spec_dir,
             phase=phase,
             run_id=_arg_value(args, "--run-id"),
+            boundary_completion_id=_manual_boundary_completion_id(
+                project_root,
+                phase,
+            ),
         )
         print(f"Accepted checkpoint baseline {checkpoint.id} at {checkpoint.commit[:7]}")
         return
@@ -185,6 +213,10 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
             phase=phase,
             run_id=_arg_value(args, "--run-id"),
             message=message,
+            boundary_completion_id=_manual_boundary_completion_id(
+                project_root,
+                phase,
+            ),
         )
         print(f"Committed checkpoint {checkpoint.id} at {checkpoint.commit[:7]}")
         return

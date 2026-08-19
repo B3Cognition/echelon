@@ -365,7 +365,11 @@ def _validate_route(value: object) -> dict[str, object]:
             "record_completion",
         }
         if versioned:
-            route_keys.update({"checkpoint_policy_version", "checkpoint_policy"})
+            route_keys.update({
+                "checkpoint_policy_version",
+                "checkpoint_policy",
+                "rewind_policy",
+            })
         _validate_exact_dict(
             value,
             frozenset(route_keys),
@@ -390,13 +394,17 @@ def _validate_route(value: object) -> dict[str, object]:
         if versioned:
             version = dict.__getitem__(value, "checkpoint_policy_version")
             policy = dict.__getitem__(value, "checkpoint_policy")
+            rewind = dict.__getitem__(value, "rewind_policy")
             if type(version) is not int or version != 2:
                 _raise("intent_invalid")
             if policy not in {"required", "none"}:
                 _raise("intent_invalid")
+            if rewind not in {"supported", "none"}:
+                _raise("intent_invalid")
             route.update({
                 "checkpoint_policy_version": version,
                 "checkpoint_policy": policy,
+                "rewind_policy": rewind,
             })
         return route
     if kind == "terminal":
@@ -2594,6 +2602,13 @@ def create_or_recover_completion_checkpoint(
             force_commit=(
                 route.get("checkpoint_policy_version") == 2
                 and route.get("checkpoint_policy") == "required"
+            ),
+            source="auto",
+            rewind=str(route.get("rewind_policy") or "supported"),
+            rewind_reason=(
+                "workflow-policy"
+                if route.get("rewind_policy") == "none"
+                else ""
             ),
             expected_receipt=expected_receipt,
             fault_hook=fault_hook,

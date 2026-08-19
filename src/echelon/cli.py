@@ -5340,6 +5340,7 @@ def _reset_rewind_state(
     spec_dir_ref: str,
     *,
     checkpoint_phases_before_target: set[str] | None = None,
+    boundary_completion_id: str = "",
 ) -> dict:
     rewound = dict(state)
     rewound["phase"] = phase
@@ -5388,7 +5389,38 @@ def _reset_rewind_state(
         rewound["tasks_lexicon_pass"] = None
         rewound["tasks_lexicon_attempts"] = 0
         rewound.pop("tasks_lexicon_gate_exhausted", None)
-    if checkpoint_phases_before_target is not None:
+    if rewound.get("checkpoint_policy_version") == 2:
+        from echelon.rewind import RewindError
+
+        outcomes = rewound.get("phase_completion_outcomes")
+        if type(outcomes) is not list or not boundary_completion_id:
+            raise RewindError("versioned checkpoint boundary is missing")
+        matches = [
+            index
+            for index, outcome in enumerate(outcomes)
+            if type(outcome) is dict
+            and outcome.get("completion_id") == boundary_completion_id
+            and outcome.get("phase") == phase
+            and outcome.get("outcome") == "executed"
+        ]
+        if len(matches) != 1:
+            raise RewindError("versioned checkpoint boundary is invalid")
+        retained_outcomes = outcomes[: matches[0]]
+        rewound["phase_completion_outcomes"] = retained_outcomes
+        completed: list[str] = []
+        for outcome in retained_outcomes:
+            if type(outcome) is not dict or outcome.get("outcome") != "executed":
+                continue
+            completed_phase = outcome.get("phase")
+            if isinstance(completed_phase, str) and completed_phase not in completed:
+                completed.append(completed_phase)
+        rewound["completed_phases"] = completed
+        counts = rewound.get("phase_dispatch_counts")
+        if isinstance(counts, dict):
+            rewound["phase_dispatch_counts"] = {
+                key: value for key, value in counts.items() if key in completed
+            }
+    elif checkpoint_phases_before_target is not None:
         completed = rewound.get("completed_phases")
         primary_predecessors: list[str] = []
         if phase in _ROADMAP_PHASES:
@@ -8651,9 +8683,9 @@ def _cmd_rewind(
 
     from echelon.rewind import RewindError, prepare_rewind
     from harness.phase_checkpoints import (
-        checkpoint_targets,
         load_checkpoint_ledger,
         resolve_checkpoint,
+        rewindable_checkpoint_targets,
         write_checkpoint_ledger,
     )
 
@@ -8665,7 +8697,7 @@ def _cmd_rewind(
             commit=checkpoint_commit,
         )
     except (KeyError, ValueError) as exc:
-        available = checkpoint_targets(ledger)
+        available = rewindable_checkpoint_targets(ledger)
         reason = str(exc.args[0]) if exc.args else (
             f"checkpoint not found for spec {ledger.spec_id}: {target}"
         )
@@ -8678,6 +8710,13 @@ def _cmd_rewind(
             )
         )
         print(f"✗ Cannot rewind to {target}.\n  {detail}", file=sys.stderr)
+        sys.exit(1)
+    if checkpoint.rewind != "supported":
+        print(
+            f"✗ Cannot rewind to {target}.\n"
+            f"  Checkpoint does not support rewind: {checkpoint.rewind_reason}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     from echelon.spec_lifecycle import (
@@ -8739,7 +8778,7 @@ def _cmd_rewind(
                             commit=checkpoint_commit,
                         )
                     except (KeyError, ValueError) as exc:
-                        available = checkpoint_targets(ledger)
+                        available = rewindable_checkpoint_targets(ledger)
                         reason = str(exc.args[0]) if exc.args else (
                             f"checkpoint not found for spec {ledger.spec_id}: {target}"
                         )
@@ -8749,6 +8788,11 @@ def _cmd_rewind(
                             else "\nNo checkpoints are recorded for this spec."
                         )
                         raise RewindError(reason + suffix) from exc
+                    if checkpoint.rewind != "supported":
+                        raise RewindError(
+                            "checkpoint does not support rewind: "
+                            f"{checkpoint.rewind_reason}"
+                        )
                     replacement_state = deepcopy(state)
 
                     recovery_dirty_paths = frozenset()
@@ -8851,6 +8895,9 @@ def _cmd_rewind(
                             spec_dir_ref,
                             checkpoint_phases_before_target=(
                                 checkpoint_phases_before_target
+                            ),
+                            boundary_completion_id=(
+                                checkpoint.boundary_completion_id
                             ),
                         )
                         store.save(rewound)

@@ -1533,7 +1533,7 @@ class SquadController:
                         validator="checkpoint_policy",
                     )
                 try:
-                    checkpoint_policy, _ = phase_checkpoint_policy(
+                    checkpoint_policy, rewind_policy = phase_checkpoint_policy(
                         self._graph,
                         from_phase,
                     )
@@ -1546,6 +1546,7 @@ class SquadController:
                 route.update({
                     "checkpoint_policy_version": checkpoint_version,
                     "checkpoint_policy": checkpoint_policy,
+                    "rewind_policy": rewind_policy,
                 })
             judgment_records = tuple(
                 self._completion_judgment_record(result)

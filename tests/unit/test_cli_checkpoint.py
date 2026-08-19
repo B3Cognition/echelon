@@ -148,6 +148,25 @@ def test_checkpoint_accept_refuses_dirty_files(tmp_path: Path) -> None:
         )
 
 
+def test_checkpoint_accept_moves_ledger_without_creating_commit(tmp_path: Path) -> None:
+    from harness.phase_checkpoints import accept_checkpoint_baseline
+
+    repo, spec_dir = _repo_with_spec(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+
+    checkpoint = accept_checkpoint_baseline(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase3-plan",
+        run_id="squad-1",
+        boundary_completion_id="a" * 32,
+    )
+
+    assert _git(repo, "rev-parse", "HEAD") == head
+    assert checkpoint.commit == head
+    assert checkpoint.boundary_completion_id == "a" * 32
+
+
 def test_checkpoint_commit_writes_echelon_trailers(tmp_path: Path) -> None:
     from harness.phase_checkpoints import commit_manual_checkpoint
 
@@ -160,6 +179,7 @@ def test_checkpoint_commit_writes_echelon_trailers(tmp_path: Path) -> None:
         phase="phase3-plan",
         run_id="squad-1",
         message="docs: accept manual Phase A checkpoint",
+        boundary_completion_id="a" * 32,
     )
 
     body = _git(repo, "log", "-1", "--format=%B")
@@ -167,6 +187,53 @@ def test_checkpoint_commit_writes_echelon_trailers(tmp_path: Path) -> None:
     assert "Co-authored-by: Echelon <echelon@b3cognition.dev>" in body
     assert "Echelon-Action: user-committed-checkpoint" in body
     assert "Echelon-Spec: 001-demo" in body
+    assert "Echelon-Completion: " + ("a" * 32) in body
+    assert "Echelon-Checkpoint-Source: user-committed" in body
+    assert checkpoint.boundary_completion_id == "a" * 32
+
+
+def test_checkpoint_accept_binds_latest_executed_phase_completion(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _repo_with_spec(tmp_path)
+    run_dir = repo / "runs" / "spec-20260820-000000"
+    run_dir.mkdir(parents=True)
+    (repo / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "checkpoint_policy_version": 2,
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "phase_completion_outcomes": [
+                    {
+                        "completion_id": "a" * 32,
+                        "phase": "phase3-plan",
+                        "outcome": "executed",
+                    },
+                    {
+                        "completion_id": "b" * 32,
+                        "phase": "phase3-plan",
+                        "outcome": "executed",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "runs")
+    _git(repo, "commit", "-m", "test: add run state")
+
+    run_checkpoint_command(
+        ["accept", "--phase", "phase3-plan", "--run-id", run_dir.name],
+        project_root=repo,
+    )
+
+    checkpoint = json.loads(
+        (spec_dir / ".echelon" / "checkpoints.json").read_text(encoding="utf-8")
+    )["checkpoints"][-1]
+    assert checkpoint["source"] == "user-accepted"
+    assert checkpoint["boundary_completion_id"] == "b" * 32
 
 
 def test_checkpoint_list_uses_active_spec_from_run_state(tmp_path: Path, capsys) -> None:

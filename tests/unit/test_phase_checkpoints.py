@@ -19,6 +19,7 @@ from harness.phase_checkpoints import (
     record_phase_checkpoint,
     restore_checkpoint_artifacts,
     resolve_checkpoint,
+    rewindable_checkpoint_targets,
 )
 from echelon.spec_retarget_history import (
     RetargetRecoveryProjection,
@@ -74,6 +75,128 @@ def test_checkpoint_ledger_round_trips_under_spec_dir(tmp_path: Path) -> None:
     )
     assert payload["spec_id"] == "001-demo"
     assert "completion_id" not in payload["checkpoints"][0]
+
+
+def test_unsupported_checkpoint_rewind_metadata_round_trips(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    checkpoint = PhaseCheckpoint(
+        id="legacy-migration",
+        spec_id="001-demo",
+        phase="phase1-discover",
+        next_phase="phase1-synthesizer",
+        commit="a" * 40,
+        metadata_commit="",
+        source="legacy-migration",
+        run_id="squad-1",
+        created_at="2026-08-20T00:00:00Z",
+        rewind="none",
+        rewind_reason="legacy-migration-boundary",
+    )
+
+    record_phase_checkpoint(spec_dir, checkpoint)
+
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_legacy_checkpoint_row_defaults_to_supported_rewind(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    metadata_dir = spec_dir / ".echelon"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "checkpoints.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "checkpoints": [
+                    {
+                        "id": "phase1-what",
+                        "spec_id": "001-demo",
+                        "phase": "phase1-what",
+                        "next_phase": "phase1-understanding",
+                        "commit": "a" * 40,
+                        "metadata_commit": "",
+                        "source": "auto",
+                        "run_id": "squad-1",
+                        "created_at": "2026-08-20T00:00:00Z",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    checkpoint = load_checkpoint_ledger(spec_dir).checkpoints[0]
+
+    assert checkpoint.rewind == "supported"
+    assert checkpoint.rewind_reason == ""
+
+
+def test_checkpoint_row_rejects_unsupported_rewind_without_reason(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    metadata_dir = spec_dir / ".echelon"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "checkpoints.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "checkpoints": [
+                    {
+                        "id": "legacy-migration",
+                        "spec_id": "001-demo",
+                        "phase": "phase1-what",
+                        "next_phase": "phase1-understanding",
+                        "commit": "a" * 40,
+                        "metadata_commit": "",
+                        "source": "legacy-migration",
+                        "run_id": "squad-1",
+                        "created_at": "2026-08-20T00:00:00Z",
+                        "rewind": "none",
+                        "rewind_reason": "",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PhaseCheckpointError, match="requires rewind reason"):
+        load_checkpoint_ledger(spec_dir)
+
+
+def test_rewindable_checkpoint_targets_excludes_unsupported_rows() -> None:
+    ledger = CheckpointLedger(
+        spec_id="001-demo",
+        checkpoints=[
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                "a" * 40,
+                "",
+                "auto",
+                "squad-1",
+                "2026-08-20T00:00:00Z",
+            ),
+            PhaseCheckpoint(
+                "legacy-migration",
+                "001-demo",
+                "phase1-discover",
+                "phase1-synthesizer",
+                "b" * 40,
+                "",
+                "legacy-migration",
+                "squad-1",
+                "2026-08-20T00:01:00Z",
+                rewind="none",
+                rewind_reason="legacy-migration-boundary",
+            ),
+        ],
+    )
+
+    assert rewindable_checkpoint_targets(ledger) == ["phase1-what"]
 
 
 def test_record_phase_checkpoint_rejects_wrong_spec_id(tmp_path: Path) -> None:
@@ -1420,10 +1543,14 @@ def test_completion_checkpoint_reuses_exact_ledger(tmp_path: Path) -> None:
     assert replayed == receipt
     assert _git(repo, "rev-list", "--count", "--all") == count_after
     assert checkpoint_module.checkpoint_ledger_path(spec_dir).read_bytes() == ledger_bytes
-    assert len(load_checkpoint_ledger(spec_dir).checkpoints) == 1
+    ledger = load_checkpoint_ledger(spec_dir)
+    assert len(ledger.checkpoints) == 1
     message = _git(repo, "show", "-s", "--format=%B", str(receipt["commit"]))
     assert f"Echelon-Completion: {COMPLETION_A}" in message
     assert "Echelon-Next-Phase: phase3-consensus" in message
+    assert "Echelon-Checkpoint-Source: auto" in message
+    assert ledger.checkpoints[0].boundary_completion_id == COMPLETION_A
+    assert ledger.checkpoints[0].rewind == "supported"
 
 
 def test_completion_checkpoint_preserves_same_phase_different_ids(

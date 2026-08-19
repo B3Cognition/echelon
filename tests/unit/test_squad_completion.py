@@ -2553,6 +2553,7 @@ def test_versioned_required_checkpoint_forces_no_change_commit(
             **ROUTED_ROUTE,
             "checkpoint_policy_version": 2,
             "checkpoint_policy": "required",
+            "rewind_policy": "supported",
         },
         effect_plan=("checkpoint",),
         checkpoint_prestate={"kind": "git_head", "head": base},
@@ -2568,6 +2569,10 @@ def test_versioned_required_checkpoint_forces_no_change_commit(
     assert _git_for_completion_checkpoint(project_root, "rev-parse", "HEAD") != base
     assert (
         "Co-authored-by: Echelon <echelon@b3cognition.dev>"
+        in _git_for_completion_checkpoint(project_root, "log", "-1", "--format=%B")
+    )
+    assert (
+        "Echelon-Checkpoint-Source: auto"
         in _git_for_completion_checkpoint(project_root, "log", "-1", "--format=%B")
     )
 

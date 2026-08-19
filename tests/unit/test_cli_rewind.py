@@ -15,7 +15,7 @@ from echelon.cli import (
     _cmd_rewind,
     _reset_rewind_state,
 )
-from echelon.rewind import RewindResult
+from echelon.rewind import RewindError, RewindResult, prepare_rewind
 from echelon.spec_lifecycle import PhaseAExecutionLock
 from harness.phase_checkpoints import (
     PhaseCheckpoint,
@@ -664,6 +664,65 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     ]
     assert "phase1-why2" not in rewound["completed_phases"]
     assert rewound["iteration"] == 0
+
+
+def test_versioned_rewind_prunes_outcomes_at_exact_completion_boundary() -> None:
+    first = "a" * 32
+    target = "b" * 32
+    later = "c" * 32
+    rewound = _reset_rewind_state(
+        {
+            "checkpoint_policy_version": 2,
+            "phase_completion_outcomes": [
+                {"completion_id": first, "phase": "phase1-discover", "outcome": "executed"},
+                {"completion_id": target, "phase": "phase1-what", "outcome": "executed"},
+                {"completion_id": later, "phase": "phase1-what", "outcome": "executed"},
+            ],
+            "completed_phases": ["phase1-discover", "phase1-what"],
+            "phase_dispatch_counts": {"phase1-discover": 1, "phase1-what": 2},
+        },
+        "phase1-what",
+        "runs/run-test/specs/001-demo",
+        boundary_completion_id=target,
+    )
+
+    assert rewound["phase_completion_outcomes"] == [
+        {"completion_id": first, "phase": "phase1-discover", "outcome": "executed"}
+    ]
+    assert rewound["completed_phases"] == ["phase1-discover"]
+    assert rewound["phase_dispatch_counts"] == {"phase1-discover": 1}
+
+
+def test_prepare_rewind_rejects_unsupported_checkpoint_before_git_access(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id="legacy-migration",
+            spec_id="001-demo",
+            phase="phase1-discover",
+            next_phase="phase1-synthesizer",
+            commit="a" * 40,
+            metadata_commit="",
+            source="legacy-migration",
+            run_id="squad-1",
+            created_at="2026-08-20T00:00:00Z",
+            rewind="none",
+            rewind_reason="legacy-migration-boundary",
+        ),
+    )
+
+    with pytest.raises(RewindError, match="legacy-migration-boundary"):
+        prepare_rewind(
+            project_root=tmp_path,
+            spec="001-demo",
+            spec_dir=spec_dir,
+            target="legacy-migration",
+            confirm=False,
+        )
 
 
 @pytest.mark.parametrize(
