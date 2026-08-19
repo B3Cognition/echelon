@@ -1420,3 +1420,90 @@ def test_workflow_validator_rejects_enum_for_undeclared_state_key(
 
     assert not report.ok
     assert any("state_update_enums keys must be a subset" in issue.message for issue in report.issues)
+
+
+def _checkpoint_policy_definition(
+    tmp_path: Path,
+    *,
+    discover_checkpoint: object = "required",
+    discover_rewind: object = "supported",
+) -> Path:
+    discover = {
+        "id": "phase1-discover",
+        "type": "agent",
+        "allowed_state_updates": [],
+        "transitions": [{"to": "done", "condition": "always"}],
+    }
+    if discover_checkpoint is not None:
+        discover["checkpoint"] = discover_checkpoint
+    if discover_rewind is not None:
+        discover["rewind"] = discover_rewind
+    return _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "init",
+                "type": "commander_internal",
+                "checkpoint": "none",
+                "rewind": "none",
+                "transitions": [
+                    {"to": "phase1-discover", "condition": "always"}
+                ],
+            },
+            discover,
+            {
+                "id": "done",
+                "type": "terminal",
+                "checkpoint": "none",
+                "rewind": "none",
+            },
+        ],
+    )
+
+
+def test_reachable_phase_requires_checkpoint_policy(tmp_path: Path) -> None:
+    definition = _checkpoint_policy_definition(
+        tmp_path,
+        discover_checkpoint=None,
+    )
+
+    report = validate_workflow_definition(definition_path=definition)
+
+    assert any(
+        issue.phase_id == "phase1-discover"
+        and "checkpoint must be required or none" in issue.message
+        for issue in report.issues
+    ), report.format()
+
+
+def test_required_checkpoint_requires_explicit_rewind_policy(
+    tmp_path: Path,
+) -> None:
+    definition = _checkpoint_policy_definition(
+        tmp_path,
+        discover_rewind=None,
+    )
+
+    report = validate_workflow_definition(definition_path=definition)
+
+    assert any(
+        issue.phase_id == "phase1-discover"
+        and "rewind must be supported or none" in issue.message
+        for issue in report.issues
+    ), report.format()
+
+
+def test_checkpoint_none_rejects_supported_rewind(tmp_path: Path) -> None:
+    definition = _checkpoint_policy_definition(
+        tmp_path,
+        discover_checkpoint="none",
+        discover_rewind="supported",
+    )
+
+    report = validate_workflow_definition(definition_path=definition)
+
+    assert any(
+        issue.phase_id == "phase1-discover"
+        and "rewind supported requires checkpoint required" in issue.message
+        for issue in report.issues
+    ), report.format()

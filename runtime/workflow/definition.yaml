@@ -190,6 +190,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: init
+    checkpoint: none
+    rewind: none
     label: "Initialization"
     spec_file: workflow/phases/init.md
     type: commander_internal
@@ -239,6 +241,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-discover
+    checkpoint: required
+    rewind: supported
     label: "Discovery (SCOUT)"
     spec_file: workflow/phases/phase1-discover.md
     type: agent
@@ -274,6 +278,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-synthesizer
+    checkpoint: required
+    rewind: supported
     label: "Knowledge Fusion (SYNTHESIZER)"
     spec_file: workflow/phases/phase1-synthesizer.md
     type: agent
@@ -301,6 +307,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-modeler
+    checkpoint: required
+    rewind: supported
     label: "Codebase Map (MODELER)"
     spec_file: workflow/phases/phase1-modeler.md
     type: agent
@@ -326,6 +334,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-tracker
+    checkpoint: required
+    rewind: supported
     label: "Intent Capture (TRACKER)"
     spec_file: workflow/phases/phase1-tracker.md
     type: agent
@@ -370,6 +380,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-why1
+    checkpoint: required
+    rewind: supported
     label: "Assumption Challenge (SAGE WHY1)"
     spec_file: workflow/phases/phase1-why1.md
     type: agent
@@ -425,6 +437,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-constitution
+    checkpoint: required
+    rewind: supported
     label: "Constitution Creation"
     spec_file: workflow/phases/phase1-constitution.md
     type: agent
@@ -452,6 +466,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-what
+    checkpoint: required
+    rewind: supported
     label: "Requirements (CARTOGRAPHER)"
     spec_file: workflow/phases/phase1-what.md
     type: agent
@@ -506,6 +522,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-understanding
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Spec Analysis (Understanding)"
     type: deterministic_understanding
     understanding_target: phase1-why2
@@ -517,6 +535,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-why2
+    checkpoint: required
+    rewind: supported
     label: "Spec Validation (SAGE WHY2)"
     spec_file: workflow/phases/phase1-why2.md
     type: agent
@@ -605,6 +625,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-investigate
+    checkpoint: required
+    rewind: supported
     label: "Evidence Resolution (INVESTIGATOR)"
     spec_file: workflow/phases/phase1-investigate.md
     type: agent
@@ -668,6 +690,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-lexicon-derive
+    checkpoint: required
+    rewind: supported
     label: "Derived Spec Lexicon Authoring"
     spec_file: workflow/phases/phase1-lexicon-derive.md
     type: agent
@@ -687,6 +711,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase1-lexicon
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Spec Lexicon Gate"
     type: deterministic_lexicon
     lexicon_artifact: spec
@@ -709,6 +735,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: checkpoint-assess
+    checkpoint: none
+    rewind: none
     label: "Phase 1 Checkpoint"
     type: human_gate
     human_input:
@@ -748,6 +776,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase2-decide
+    checkpoint: required
+    rewind: supported
     label: "Feasibility Gate (GATEKEEPER)"
     spec_file: workflow/phases/phase2-decide.md
     type: agent
@@ -785,6 +815,8 @@ phases:
         condition: always
 
   - id: phase2-feasibility-structural
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Feasibility Structural Gate"
     type: deterministic_structural
     structural_artifact: feasibility
@@ -809,6 +841,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase2-strategic-overview
+    checkpoint: required
+    rewind: supported
     label: "Strategic Overview (STRATEGIST)"
     spec_file: workflow/phases/phase2-strategic-overview.md
     type: agent
@@ -828,6 +862,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase2-tracker-alignment
+    checkpoint: required
+    rewind: supported
     label: "Intent Alignment Check (TRACKER)"
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
@@ -870,6 +906,8 @@ phases:
         condition: always
 
   - id: phase2-intent-alignment-structural
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Intent Alignment Structural Gate"
     type: deterministic_structural
     structural_artifact: intent-alignment-check
@@ -886,6 +924,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-how
+    checkpoint: required
+    rewind: supported
     label: "Architecture (ARCHITECT)"
     spec_file: workflow/phases/phase3-how.md
     type: agent
@@ -919,6 +959,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-specialists
+    checkpoint: required
+    rewind: supported
     label: "Specialist Consultation"
     spec_file: workflow/phases/phase3-specialists.md
     type: conditional_sequential
@@ -1016,6 +1058,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-sentinel
+    checkpoint: required
+    rewind: supported
     label: "Test Strategy (SENTINEL)"
     spec_file: workflow/phases/phase3-sentinel.md
     type: agent
@@ -1044,6 +1088,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-plan
+    checkpoint: required
+    rewind: supported
     label: "Implementation Planning (ORCHESTRATOR)"
     spec_file: workflow/phases/phase3-plan.md
     type: agent
@@ -1080,6 +1126,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-tasks-lexicon
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Tasks Lexicon Gate"
     type: deterministic_lexicon
     lexicon_artifact: tasks
@@ -1098,6 +1146,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-understanding
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Consensus Analysis (Understanding)"
     type: deterministic_understanding
     understanding_target: phase3-consensus
@@ -1109,6 +1159,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-consensus
+    checkpoint: required
+    rewind: supported
     label: "Consensus Gate (WHY3 + ASSESS2 → PLAN2)"
     spec_file: workflow/phases/phase3-consensus.md
     type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
@@ -1213,6 +1265,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-consensus-tasks-lexicon
+    checkpoint: required
+    rewind: supported
     label: "Deterministic Consensus Tasks Lexicon Gate"
     type: deterministic_lexicon
     lexicon_artifact: tasks
@@ -1257,6 +1311,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: checkpoint-plan
+    checkpoint: none
+    rewind: none
     label: "Phase 3 Checkpoint"
     type: human_gate
     human_input:
@@ -1295,6 +1351,8 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase4-document
+    checkpoint: required
+    rewind: supported
     label: "Finalization"
     spec_file: workflow/phases/phase4-document.md
     type: commander_internal
@@ -1424,16 +1482,22 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: done
+    checkpoint: none
+    rewind: none
     label: "Run Complete"
     type: terminal
 
   # --------------------------------------------------------------------------
   - id: terminal-blocked
+    checkpoint: none
+    rewind: none
     label: "Run Blocked"
     type: terminal
 
   # --------------------------------------------------------------------------
   - id: escalate
+    checkpoint: none
+    rewind: none
     label: "Human Escalation"
     type: terminal
     description: >

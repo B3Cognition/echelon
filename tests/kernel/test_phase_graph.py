@@ -16,6 +16,7 @@ from harness.controller_state_contracts import (
 from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
 )
+import harness.phase_graph as phase_graph_module
 from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
 
 PROSAIC_RUNTIME_DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
@@ -1757,3 +1758,35 @@ def test_experimental_artifact_quality_phases_are_registered():
         assert node.agent == contract["agent"]
         assert set(node.allowed_state_updates or []) == contract["updates"]
         assert node.transitions == [{"to": "done", "condition": "always"}]
+
+
+def test_phase_a_scope_is_reachable_from_init() -> None:
+    assert hasattr(phase_graph_module, "phase_a_phase_ids")
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    scoped = phase_graph_module.phase_a_phase_ids(graph)
+
+    assert scoped[0] == "init"
+    assert "phase1-discover" in scoped
+    assert "phase4-document" in scoped
+    assert {"done", "terminal-blocked", "escalate"} <= set(scoped)
+    assert "phase-exp-tasks-quality" not in scoped
+    assert "bugfix-1-init" not in scoped
+    assert "build-1-init" not in scoped
+
+
+def test_phase_a_nodes_parse_explicit_checkpoint_and_rewind_policy() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    scoped = phase_graph_module.phase_a_phase_ids(graph)
+
+    for phase_id in scoped:
+        node = graph.get(phase_id)
+        assert node.checkpoint in {"required", "none"}
+        assert node.rewind in {"supported", "none"}

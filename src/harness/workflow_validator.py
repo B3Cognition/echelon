@@ -14,7 +14,7 @@ from harness.controller_state_contract_requirements import (
     structural_phase_definition_errors,
 )
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
-from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_graph import PhaseGraph, PhaseNode, phase_a_phase_ids
 from harness.human_input import (
     HumanInputPolicy,
     HumanInputPolicyError,
@@ -231,6 +231,32 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
+    checkpoint_policy_enabled = any(
+        isinstance(phase, dict)
+        and ("checkpoint" in phase or "rewind" in phase)
+        for phase in phases
+    )
+    if checkpoint_policy_enabled:
+        for phase_id in phase_a_phase_ids(graph):
+            node = graph.get(phase_id)
+            if node.checkpoint not in {"required", "none"}:
+                issues.append(WorkflowValidationIssue(
+                    "checkpoint must be required or none",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+            if node.rewind not in {"supported", "none"}:
+                issues.append(WorkflowValidationIssue(
+                    "rewind must be supported or none",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+            if node.checkpoint == "none" and node.rewind == "supported":
+                issues.append(WorkflowValidationIssue(
+                    "rewind supported requires checkpoint required",
+                    phase_id=phase_id,
+                    path=path,
+                ))
     workflow_declares_human_input = any(
         isinstance(phase, dict) and "human_input" in phase
         for phase in phases
