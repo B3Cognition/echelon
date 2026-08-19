@@ -11704,6 +11704,11 @@ class SquadController:
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=conditional_skip,
+                checkpoint_policy=(
+                    node.checkpoint
+                    if node.checkpoint in {"required", "none"}
+                    else "none"
+                ),
                 token_usage_delta=(
                     self._deferred_provider_usage or {"tokens": 0}
                 )["tokens"],

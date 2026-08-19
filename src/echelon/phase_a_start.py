@@ -59,6 +59,9 @@ from echelon.target_normalization import normalize_target_set
 from harness.published_re_context import explicit_re_sources
 
 
+CHECKPOINT_POLICY_VERSION = 2
+
+
 class PhaseAStartError(RuntimeError):
     """Raised when a fresh spec cannot be activated safely."""
 
@@ -320,6 +323,8 @@ def _expected_retarget_prepared_state(
         "status": "preparing",
         "phase": "phase0-constitution",
         "completed_phases": [],
+        "checkpoint_policy_version": CHECKPOINT_POLICY_VERSION,
+        "phase_completion_outcomes": [],
         "user_message": baseline_state["user_message"],
         "autonomy_mode": baseline_state["autonomy_mode"],
         "spec_authoring_mode": normalize_spec_authoring_mode(
@@ -1037,6 +1042,8 @@ def _write_prepared_state(
         "run_id": run_id,
         "status": "preparing",
         "user_message": description,
+        "checkpoint_policy_version": CHECKPOINT_POLICY_VERSION,
+        "phase_completion_outcomes": [],
         **bootstrap.state_updates(),
     }
     (run_dir / "state.json").write_text(

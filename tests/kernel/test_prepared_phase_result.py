@@ -1734,6 +1734,34 @@ def test_routing_decision_tampering_breaks_attestation() -> None:
             to_phase="forged",
         )
 
+
+def test_routing_checkpoint_policy_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        checkpoint_policy="required",
+    )
+
+    object.__setattr__(decision, "checkpoint_policy", "none")
+
+    with pytest.raises(
+        PreparedPhaseResultAttestationError,
+        match="routing decision attestation mismatch",
+    ):
+        verify_prepared_routing_decision_attestation(
+            decision,
+            from_phase="provider",
+            to_phase="next",
+        )
+
 def test_routing_token_usage_delta_tampering_breaks_attestation() -> None:
     prepared = prepare_phase_result(
         PhaseNode(id="provider", type="agent", allowed_state_updates=[]),

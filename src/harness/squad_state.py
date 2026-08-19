@@ -2534,6 +2534,7 @@ class SquadStateStore:
         increment_iteration: bool = False,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
+        checkpoint_policy: str = "none",
         record_completion: bool = True,
         token_usage_delta: int = 0,
         dispatch_id: str | None = None,
@@ -2553,6 +2554,12 @@ class SquadStateStore:
                     json_path=f"$.{name}",
                     validator="type",
                 )
+        if checkpoint_policy not in {"required", "none"}:
+            raise StateAdvanceError(
+                "checkpoint policy must be required or none",
+                json_path="$.checkpoint_policy",
+                validator="enum",
+            )
         if type(snapshot) is not RoutingStateSnapshot:
             raise StateAdvanceError(
                 "routing decision requires a store snapshot",
@@ -2595,6 +2602,7 @@ class SquadStateStore:
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=conditional_skip,
+                checkpoint_policy=checkpoint_policy,
                 record_completion=record_completion,
                 token_usage_delta=token_usage_delta,
                 dispatch_id=dispatch_id,
@@ -2779,6 +2787,49 @@ class SquadStateStore:
                 if from_phase not in completed:
                     completed.append(from_phase)
                 next_state["completed_phases"] = completed
+                if next_state.get("checkpoint_policy_version") == 2:
+                    if not isinstance(completion_marker, Mapping):
+                        raise StateAdvanceError(
+                            "versioned completion requires a completion marker",
+                            json_path=(
+                                "$.transaction_state_updates."
+                                f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                            ),
+                            validator="completion_binding",
+                        )
+                    outcomes = next_state.get("phase_completion_outcomes")
+                    if type(outcomes) is not list:
+                        raise StateAdvanceError(
+                            "phase completion outcomes must be a list",
+                            json_path="$.phase_completion_outcomes",
+                            validator="type",
+                        )
+                    outcome = {
+                        "completion_id": completion_marker["completion_id"],
+                        "phase": from_phase,
+                        "next_phase": to_phase,
+                        "outcome": (
+                            "skipped" if decision.conditional_skip else "executed"
+                        ),
+                        "checkpoint": decision.checkpoint_policy,
+                    }
+                    matching = [
+                        row
+                        for row in outcomes
+                        if isinstance(row, Mapping)
+                        and row.get("completion_id") == outcome["completion_id"]
+                    ]
+                    if matching and matching != [outcome]:
+                        raise StateAdvanceError(
+                            "completion outcome conflicts with an existing completion ID",
+                            json_path="$.phase_completion_outcomes",
+                            validator="completion_binding",
+                        )
+                    if not matching:
+                        next_state["phase_completion_outcomes"] = [
+                            *outcomes,
+                            outcome,
+                        ]
             for key in prepared.state_removals:
                 next_state.pop(key, None)
             for key in transaction_removals:
