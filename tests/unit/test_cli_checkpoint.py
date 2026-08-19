@@ -1,11 +1,266 @@
 from pathlib import Path
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
 from echelon.checkpoint_cli import run_checkpoint_command
-from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from echelon.checkpoint_coverage import (
+    CheckpointCoverageError,
+    compute_spec_checkpoint_coverage,
+)
+from harness.phase_checkpoints import (
+    CheckpointLedger,
+    PhaseCheckpoint,
+    record_checkpoint_metadata,
+)
+
+
+class _CoverageGraph:
+    def __init__(self, policies: dict[str, tuple[str, str]]) -> None:
+        self._policies = policies
+
+    def get(self, phase: str) -> SimpleNamespace:
+        checkpoint, rewind = self._policies[phase]
+        return SimpleNamespace(checkpoint=checkpoint, rewind=rewind)
+
+
+def _write_switchable_run(
+    root: Path,
+    run_name: str,
+    *,
+    spec_id: str = "001-demo",
+    state_updates: dict[str, object] | None = None,
+) -> tuple[Path, Path]:
+    run_dir = root / "runs" / run_name
+    spec_dir = run_dir / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    state = {
+        "run_id": run_name,
+        "spec_id": spec_id,
+        "feature_branch": spec_id,
+        "spec_dir": spec_dir.relative_to(root).as_posix(),
+    }
+    state.update(state_updates or {})
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return run_dir, spec_dir
+
+
+@pytest.fixture(autouse=True)
+def _workspace_checkpoint_graph(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "harness.phase_graph.load_workspace_phase_graph",
+        lambda _root: (_CoverageGraph({}), tmp_path / ".echelon" / "runtime"),
+    )
+
+
+def test_checkpoint_coverage_joins_versioned_rows_by_completion_id() -> None:
+    graph = _CoverageGraph(
+        {
+            "phase1-discover": ("required", "supported"),
+            "phase1-modeler": ("required", "supported"),
+            "human-spec": ("none", "none"),
+        }
+    )
+    state = {
+        "checkpoint_policy_version": 2,
+        "run_id": "run-1",
+        "spec_id": "001-demo",
+        "phase_completion_outcomes": [
+            {"completion_id": "a" * 32, "phase": "phase1-discover", "outcome": "executed", "checkpoint": "required"},
+            {"completion_id": "b" * 32, "phase": "phase1-discover", "outcome": "executed", "checkpoint": "required"},
+            {"completion_id": "c" * 32, "phase": "phase1-modeler", "outcome": "skipped", "checkpoint": "required"},
+            {"completion_id": "d" * 32, "phase": "human-spec", "outcome": "executed", "checkpoint": "none"},
+            {"completion_id": "e" * 32, "phase": "phase1-modeler", "outcome": "executed", "checkpoint": "required", "legacy": True},
+        ],
+    }
+    ledger = CheckpointLedger(
+        spec_id="001-demo",
+        checkpoints=[
+            PhaseCheckpoint(
+                id="phase1-discover",
+                spec_id="001-demo",
+                phase="phase1-discover",
+                next_phase="phase1-synthesizer",
+                commit="1" * 40,
+                metadata_commit="",
+                source="auto",
+                run_id="run-1",
+                created_at="2026-08-20T00:00:00Z",
+                completion_id="a" * 32,
+                boundary_completion_id="a" * 32,
+            )
+        ],
+    )
+
+    coverage = compute_spec_checkpoint_coverage(graph, state, ledger)
+
+    assert [row.status for row in coverage] == [
+        "recorded",
+        "missing",
+        "skipped",
+        "not-checkpointed",
+        "legacy-migrated",
+    ]
+    assert [row.completion_id for row in coverage[:2]] == ["a" * 32, "b" * 32]
+
+
+def test_checkpoint_coverage_never_marks_legacy_untracked_as_missing() -> None:
+    graph = _CoverageGraph({"phase1-discover": ("required", "supported")})
+
+    coverage = compute_spec_checkpoint_coverage(
+        graph,
+        {"completed_phases": ["phase1-discover", "phase1-discover"]},
+        CheckpointLedger(spec_id="001-demo", checkpoints=[]),
+    )
+
+    assert [(row.phase, row.status) for row in coverage] == [
+        ("phase1-discover", "legacy-untracked")
+    ]
+
+
+def test_checkpoint_coverage_rejects_duplicate_completion_ids() -> None:
+    graph = _CoverageGraph({"phase1-discover": ("required", "supported")})
+    outcome = {
+        "completion_id": "a" * 32,
+        "phase": "phase1-discover",
+        "outcome": "executed",
+        "checkpoint": "required",
+    }
+
+    with pytest.raises(CheckpointCoverageError, match="duplicate phase completion"):
+        compute_spec_checkpoint_coverage(
+            graph,
+            {
+                "checkpoint_policy_version": 2,
+                "phase_completion_outcomes": [outcome, dict(outcome)],
+            },
+            CheckpointLedger(spec_id="001-demo", checkpoints=[]),
+        )
+
+
+def test_checkpoint_coverage_rejects_checkpoint_identity_drift() -> None:
+    graph = _CoverageGraph({"phase1-discover": ("required", "supported")})
+    checkpoint = PhaseCheckpoint(
+        id="phase1-modeler",
+        spec_id="001-demo",
+        phase="phase1-modeler",
+        next_phase="phase1-tracker",
+        commit="1" * 40,
+        metadata_commit="",
+        source="auto",
+        run_id="run-1",
+        created_at="2026-08-20T00:00:00Z",
+        completion_id="a" * 32,
+    )
+
+    with pytest.raises(CheckpointCoverageError, match="identity drift"):
+        compute_spec_checkpoint_coverage(
+            graph,
+            {
+                "checkpoint_policy_version": 2,
+                "run_id": "run-1",
+                "spec_id": "001-demo",
+                "phase_completion_outcomes": [
+                    {
+                        "completion_id": "a" * 32,
+                        "phase": "phase1-discover",
+                        "outcome": "executed",
+                        "checkpoint": "required",
+                    }
+                ],
+            },
+            CheckpointLedger(spec_id="001-demo", checkpoints=[checkpoint]),
+        )
+
+
+def test_checkpoint_list_strict_reports_missing_from_empty_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    run_dir, _ = _write_switchable_run(
+        tmp_path,
+        "spec-run-1",
+        state_updates={
+            "checkpoint_policy_version": 2,
+            "phase_completion_outcomes": [
+                {"completion_id": "a" * 32, "phase": "phase1-discover", "outcome": "executed", "checkpoint": "required"}
+            ],
+        },
+    )
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.phase_graph.load_workspace_phase_graph",
+        lambda _root: (
+            _CoverageGraph({"phase1-discover": ("required", "supported")}),
+            tmp_path / ".echelon" / "runtime",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run_checkpoint_command(["list", "--strict"], project_root=tmp_path)
+
+    assert exc.value.code == 2
+    output = capsys.readouterr().out
+    assert "(none)" in output
+    assert "COVERAGE" in output
+    assert "missing" in output
+
+
+def test_checkpoint_list_rejects_ambiguous_numeric_spec_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_switchable_run(tmp_path, "spec-run-a", spec_id="001-alpha")
+    _write_switchable_run(tmp_path, "spec-run-b", spec_id="001-beta")
+
+    with pytest.raises(SystemExit) as exc:
+        run_checkpoint_command(["list", "--spec", "001"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert "spec-run-a" in error
+    assert "spec-run-b" in error
+
+
+def test_checkpoint_list_strict_does_not_fail_legacy_untracked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    run_dir, _ = _write_switchable_run(
+        tmp_path,
+        "spec-run-1",
+        state_updates={"completed_phases": ["phase1-discover"]},
+    )
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.phase_graph.load_workspace_phase_graph",
+        lambda _root: (
+            _CoverageGraph({"phase1-discover": ("required", "supported")}),
+            tmp_path / ".echelon" / "runtime",
+        ),
+    )
+
+    run_checkpoint_command(["list", "--strict"], project_root=tmp_path)
+
+    assert "legacy-untracked" in capsys.readouterr().out
+
+
+def test_checkpoint_list_rejects_unknown_arguments(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir, _ = _write_switchable_run(tmp_path, "spec-run-1")
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        run_checkpoint_command(["list", "--unknown"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "Usage:" in capsys.readouterr().err
 
 
 def test_checkpoint_list_requires_spec_when_no_active_spec(tmp_path: Path, capsys) -> None:
@@ -19,8 +274,7 @@ def test_checkpoint_list_requires_spec_when_no_active_spec(tmp_path: Path, capsy
 
 
 def test_checkpoint_list_prints_spec_scoped_ledger(tmp_path: Path, capsys) -> None:
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
+    _, spec_dir = _write_switchable_run(tmp_path, "spec-run-1")
     record_checkpoint_metadata(
         spec_dir,
         PhaseCheckpoint(
@@ -48,8 +302,7 @@ def test_checkpoint_list_explains_ledger_order_and_marks_latest_phase_occurrence
     tmp_path: Path,
     capsys,
 ) -> None:
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
+    _, spec_dir = _write_switchable_run(tmp_path, "spec-run-1")
     checkpoints = [
         PhaseCheckpoint(
             id="phase1-what",
@@ -201,10 +454,12 @@ def test_checkpoint_accept_binds_latest_executed_phase_completion(
     (repo / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (run_dir / "state.json").write_text(
         json.dumps(
-            {
-                "checkpoint_policy_version": 2,
-                "spec_id": "001-demo",
-                "spec_dir": "specs/001-demo",
+                {
+                    "checkpoint_policy_version": 2,
+                    "run_id": run_dir.name,
+                    "spec_id": "001-demo",
+                    "feature_branch": "001-demo",
+                    "spec_dir": "specs/001-demo",
                 "phase_completion_outcomes": [
                     {
                         "completion_id": "a" * 32,
@@ -237,7 +492,13 @@ def test_checkpoint_accept_binds_latest_executed_phase_completion(
 
 
 def test_checkpoint_list_uses_active_spec_from_run_state(tmp_path: Path, capsys) -> None:
-    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir = (
+        tmp_path
+        / "runs"
+        / "spec-20260704-120000"
+        / "specs"
+        / "001-demo"
+    )
     spec_dir.mkdir(parents=True)
     record_checkpoint_metadata(
         spec_dir,
@@ -254,10 +515,16 @@ def test_checkpoint_list_uses_active_spec_from_run_state(tmp_path: Path, capsys)
         ),
     )
     run_dir = tmp_path / "runs" / "spec-20260704-120000"
-    run_dir.mkdir(parents=True)
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (run_dir / "state.json").write_text(
-        json.dumps({"spec_dir": "runs/spec-20260704-120000/specs/001-demo"}),
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "spec_id": "001-demo",
+                "feature_branch": "001-demo",
+                "spec_dir": "runs/spec-20260704-120000/specs/001-demo",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -308,9 +575,11 @@ def test_checkpoint_list_spec_prefers_matching_active_staging_spec(
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (run_dir / "state.json").write_text(
         json.dumps(
-            {
-                "spec_id": "001-simple-notes",
-                "spec_dir": "runs/spec-20260704-120000/staging",
+                {
+                    "run_id": run_dir.name,
+                    "spec_id": "001-simple-notes",
+                    "feature_branch": "001-simple-notes",
+                    "spec_dir": "runs/spec-20260704-120000/staging",
             }
         ),
         encoding="utf-8",
@@ -348,9 +617,11 @@ def test_checkpoint_list_without_spec_uses_active_staging_spec(
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (run_dir / "state.json").write_text(
         json.dumps(
-            {
-                "spec_id": "001-simple-notes",
-                "spec_dir": "runs/spec-20260704-120000/staging",
+                {
+                    "run_id": run_dir.name,
+                    "spec_id": "001-simple-notes",
+                    "feature_branch": "001-simple-notes",
+                    "spec_dir": "runs/spec-20260704-120000/staging",
             }
         ),
         encoding="utf-8",
@@ -390,9 +661,11 @@ def test_checkpoint_list_prefers_existing_active_run_spec_over_published(
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (run_dir / "state.json").write_text(
         json.dumps(
-            {
-                "spec_id": "001-simple-notes",
-                "spec_dir": "runs/spec-20260704-120000/specs/001-simple-notes",
+                {
+                    "run_id": run_dir.name,
+                    "spec_id": "001-simple-notes",
+                    "feature_branch": "001-simple-notes",
+                    "spec_dir": "runs/spec-20260704-120000/specs/001-simple-notes",
                 "published_spec_dir": "specs/001-simple-notes",
             }
         ),
