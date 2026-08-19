@@ -5315,6 +5315,67 @@ class TestSquadControllerBasics:
         assert state["phase"] == "init"
         assert state["interrupted_phase"] == "init"
 
+    def test_cancel_after_agent_returns_prevents_blocked_decision(self, tmp_path):
+        """A deferred Ctrl-C wins over an agent's trailing BLOCKED envelope."""
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-discover")
+
+        def interrupted_agent(*_args, **_kwargs):
+            ctrl._cancelled = True
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        provider.exec_agent.side_effect = interrupted_agent
+
+        result = ctrl.run("msg", "banzai")
+
+        state = store.load()
+        assert result.status == "interrupted"
+        assert state["status"] == "interrupted"
+        assert state["phase"] == "phase1-discover"
+        assert state["interrupted_phase"] == "phase1-discover"
+        assert "blocked_decision" not in state
+
+    def test_bare_agent_block_is_retryable_not_a_commander_decision(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {},
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-discover")
+
+        result = ctrl.run("msg", "banzai")
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "agent_blocked"
+        assert state["recovery_instruction"] == {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "agent_blocked",
+            "phase": "phase1-discover",
+            "requires_human_input": False,
+        }
+        assert "blocked_decision" not in state
+
     def test_sigint_handler_defers_state_store_io(self, tmp_path):
         ctrl, store = _controller(tmp_path)
 

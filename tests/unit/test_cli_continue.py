@@ -2338,3 +2338,63 @@ def test_continue_retries_interrupted_phase(
     assert state["phase"] == "phase1-discover"
     assert state["status"] == "running"
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
+
+
+def test_continue_recovers_legacy_failed_generic_agent_block(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-agent-block",
+        status="failed",
+        source_kind="controller_safeguard",
+        producer_id="agent_blocked",
+        source_phase="phase1-discover",
+        reason_code="agent_blocked",
+        classification="material",
+        question="A generic agent block was incorrectly treated as material.",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="clarification_resume",
+        autonomy_mode="banzai",
+        source_state_revision=3,
+        attempts=2,
+        failure_code="provider_failed",
+        now="2026-08-19T14:50:41+00:00",
+    )
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-discover",
+            "blocked_reason": "agent_blocked",
+            "completed_phases": ["init"],
+            "user_message": "make terminal ascii art",
+            "autonomy_mode": "banzai",
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                reason_code="agent_blocked",
+                phase="",
+                requires_human_input=False,
+                schema_version=2,
+                decision_id="dec-legacy-agent-block",
+            ).to_dict(),
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert "blocked_decision" not in state
+    assert "recovery_instruction" not in state
+    assert calls == [["make terminal ascii art", "--mode", "banzai"]]

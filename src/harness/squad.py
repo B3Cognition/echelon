@@ -5354,6 +5354,20 @@ class SquadController:
                 self._block_after_executor_contract_failure(node, exc)
                 return SquadResult.from_state(self._state_store.load())
 
+            # SIGINT is deferred until the executor returns so we never tear
+            # down an in-flight filesystem operation.  Once it has returned,
+            # cancellation must win over result interpretation: a trailing
+            # BLOCKED envelope must not start a COMMANDER decision loop after
+            # the operator asked to stop.
+            if self._cancelled:
+                state = self._state_store.load()
+                state["status"] = "interrupted"
+                state["phase"] = phase
+                state["interrupted_phase"] = phase
+                state["blocked_reason"] = None
+                self._state_store.save(state)
+                return SquadResult.from_state(self._state_store.load())
+
             if isinstance(result, ExecutorBlockedResult):
                 snapshot = self._state_store.capture_routing_snapshot(
                     expected_phase=node.id,
@@ -5405,11 +5419,19 @@ class SquadController:
                 prepared.control_updates,
             )
             if blocked_result:
-                if node.type == "agent" and self._route_agent_block_to_commander(
-                    node,
-                    blocked_result,
-                    prepared_result,
-                    snapshot,
+                # A bare BLOCKED result has no material ambiguity.  It is a
+                # retryable dispatch failure (and is a common provider shape
+                # after an interrupted turn), not a reason to manufacture a
+                # clarification request.
+                if (
+                    node.type == "agent"
+                    and blocked_result != "agent_blocked"
+                    and self._route_agent_block_to_commander(
+                        node,
+                        blocked_result,
+                        prepared_result,
+                        snapshot,
+                    )
                 ):
                     continue
                 self._block_after_executor_failure(
@@ -5417,6 +5439,11 @@ class SquadController:
                     blocked_result,
                     prepared_result,
                     snapshot=snapshot,
+                    recovery_instruction=(
+                        retry_phase_recovery(phase, blocked_result)
+                        if blocked_result == "agent_blocked"
+                        else None
+                    ),
                 )
                 return SquadResult.from_state(self._state_store.load())
 

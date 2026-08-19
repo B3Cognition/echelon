@@ -3462,6 +3462,49 @@ def _active_v2_decision(state: dict) -> dict[str, object] | None:
     return decision if decision["status"] != "resolved" else None
 
 
+def _retryable_failed_agent_block_phase(run_state: dict) -> str | None:
+    """Return the retry phase for a legacy bare-agent-block decision.
+
+    Older controllers treated a bare agent ``BLOCKED`` envelope as material and
+    could make a run unrecoverable after COMMANDER's provider retries failed.
+    Because this decision records neither an agent reason nor a real question,
+    retrying its source phase is safer than asking the operator to invent one.
+    The identity check is deliberately narrow so genuine failed decisions remain
+    manual-recovery cases.
+    """
+    raw_decision = run_state.get("blocked_decision")
+    if not isinstance(raw_decision, dict):
+        return None
+    try:
+        from harness.blocked_decision import validate_blocked_decision_v2
+
+        decision = validate_blocked_decision_v2(raw_decision)
+    except ValueError:
+        return None
+    if (
+        decision["status"] != "failed"
+        or decision["source_kind"] != "controller_safeguard"
+        or decision["producer_id"] != "agent_blocked"
+        or decision["reason_code"] != "agent_blocked"
+        or str(run_state.get("blocked_reason") or "").strip() != "agent_blocked"
+    ):
+        return None
+    phase = str(decision["source_phase"] or "").strip()
+    return phase if phase and phase != "terminal-blocked" else None
+
+
+def _discard_retryable_failed_agent_block_decision(state: dict) -> bool:
+    """Discard only an obsolete generic-agent-block decision before retrying."""
+    if _retryable_failed_agent_block_phase(state) is None:
+        return False
+    state.pop("blocked_decision", None)
+    state.pop("recovery_instruction", None)
+    state.pop("escalation_question", None)
+    state.pop("escalation_options", None)
+    state.pop("escalation_resolved", None)
+    return True
+
+
 def _supersede_quality_guard_decision(state: dict) -> bool:
     """Close the obsolete WHY safeguard when quality remediation supersedes it.
 
@@ -4138,6 +4181,19 @@ def _classify_run_recovery(
                 "The exhausted proportional repair loop was explicitly stopped. "
                 "Ordinary continue cannot reopen it; deliberately amend the request "
                 "or quality policy and start a new run."
+            ),
+        )
+
+    retryable_agent_block_phase = _retryable_failed_agent_block_phase(run_state)
+    if retryable_agent_block_phase:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="agent_blocked",
+            phase=retryable_agent_block_phase,
+            command="echelon spec continue",
+            note=(
+                "will retry a generic agent block; no material ambiguity was "
+                "recorded"
             ),
         )
 
@@ -8207,6 +8263,19 @@ def _cmd_continue_impl(
             )
 
     action = _classify_run_recovery(state, project_root=project_root)
+    if (
+        decision is not None
+        and action.kind == "retry_phase"
+        and _discard_retryable_failed_agent_block_decision(state)
+    ):
+        (squad_dir / "state.json").write_text(
+            _json.dumps(state, indent=2, ensure_ascii=False)
+        )
+        decision = None
+        print(
+            "[squad] discarding obsolete generic-agent-block decision; retrying the phase.",
+            flush=True,
+        )
     if decision is not None:
         if action.kind == "resolve_decision":
             run_args = [user_message, "--mode", mode]
