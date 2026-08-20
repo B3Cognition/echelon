@@ -5173,6 +5173,8 @@ class SquadController:
                     "user_message",
                     "autonomy_mode",
                     "spec_authoring_mode",
+                    "checkpoint_policy_version",
+                    "phase_completion_outcomes",
                     "implementation_targets",
                     "retarget",
                     "product_inputs",

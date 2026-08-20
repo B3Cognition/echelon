@@ -163,6 +163,15 @@ skipped and 1 deselected after excluding only
 The implementation range is `f6aab6d1..HEAD` on
 `codex/egr-082-spec-checkpoints`.
 
+Fresh-workspace validation on 2026-08-20 found that controller initialization
+was not preserving the prepared run's `checkpoint_policy_version` and
+`phase_completion_outcomes`, silently downgrading a new run to legacy coverage
+before its first dispatch. The controller now preserves both bootstrap fields,
+with integration coverage exercising the real initialization path. A deployed
+runtime workspace then proved automatic `phase1-discover` commit creation,
+strict checkpoint listing, Echelon attribution, preview-only rewind, and
+confirmed whole-commit rewind. The focused 1,255-test matrix passed again.
+
 ## EGR-145: Make `echelon spec rewind` Validate Against Actual Checkpoints
 
 **Priority:** P1

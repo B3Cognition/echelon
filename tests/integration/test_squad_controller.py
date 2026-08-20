@@ -941,7 +941,7 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
     return ctrl, store
 
 
-def test_prepared_run_preserves_spec_authoring_mode_during_initialization(
+def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -952,19 +952,18 @@ def test_prepared_run_preserves_spec_authoring_mode_during_initialization(
             "status": "preparing",
             "user_message": "Build carefully",
             "spec_authoring_mode": "perfectionist",
+            "checkpoint_policy_version": 2,
+            "phase_completion_outcomes": [],
         }
     )
-    observed: dict[str, object] = {}
-
-    def capture_state(*_args: object, **_kwargs: object) -> SquadResult:
-        observed.update(store.load())
-        return SquadResult.from_state(store.load())
-
-    monkeypatch.setattr(ctrl, "_run_locked", capture_state)
+    monkeypatch.setattr(ctrl._graph, "entry_phase", lambda: "terminal-blocked")
 
     ctrl.run("Build carefully", "banzai")
 
+    observed = store.load()
     assert observed["spec_authoring_mode"] == "perfectionist"
+    assert observed["checkpoint_policy_version"] == 2
+    assert observed["phase_completion_outcomes"] == []
 
 
 def _install_test_clarification_policy(
