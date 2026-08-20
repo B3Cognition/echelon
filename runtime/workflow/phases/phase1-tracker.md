@@ -7,12 +7,16 @@
 
 > **Note:** echelon.tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which echelon.gatekeeper (GATEKEEPER) needs to honor rule #3 ("ALWAYS preserve user intent; NEVER override user intent").
 
+Write canonical Phase A artifacts under `{spec_dir}` (`ACTIVE_SPEC_DIR`).
+`${STAGING_DIR}` is reserved for controller inputs and transient dispatch
+material; do not place canonical artifacts there.
+
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
 
 - User input (the original request)
-- ALL DISCOVER outputs (from `${STAGING_DIR}/`)
+- ALL DISCOVER outputs (from `{spec_dir}/`)
 - `.echelon/runtime/templates/user-intent-template.md`
 - `.echelon/runtime/templates/stakeholder-model-template.md`
 - `reasoning-journal.jsonl`
@@ -25,12 +29,12 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include user input (the original request), all DISCOVER outputs from ${STAGING_DIR}/, tracker intent templates, reasoning-journal.jsonl]
+  [include user input (the original request), all DISCOVER outputs from {spec_dir}/, tracker intent templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are TRACKER. Read subagents/echelon.tracker.md for your complete protocol.
-  Read the user's original request and echelon.scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md` using the provided template. Produce `stakeholder-model.md` when multiple stakeholders are detectable. Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
+  Read the user's original request and echelon.scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md` using the provided template. Produce `stakeholder-model.md` when multiple stakeholders are detectable. Produce outputs in `{spec_dir}/` (`ACTIVE_SPEC_DIR`). Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -38,7 +42,7 @@ The active runtime dispatches this role with the following request:
 
 ### Expected Outputs
 
-- `user-intent.md` (in staging, later moved to spec directory)
+- `{spec_dir}/user-intent.md`
 - `stakeholder-model.md` (if multiple stakeholders are detectable)
 
 ### Routing Verdict Contract — MANDATORY

@@ -16,6 +16,7 @@ from harness.controller_state_contracts import (
 from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
 )
+import harness.phase_graph as phase_graph_module
 from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
 
 PROSAIC_RUNTIME_DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
@@ -270,13 +271,13 @@ class TestPhaseGraph:
                 "material", "require_human", "clarification_resume", True,
                 frozenset({"phase1-tracker"}), frozenset({"phase1-tracker"}),
                 ("user_message", "phase"),
-                ("{staging_dir}/user-intent.md",), (),
+                ("{spec_dir}/user-intent.md",), (),
             ),
             ("provider_escalation", "phase1-why1", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
                 frozenset({"phase1-why1"}), frozenset({"phase1-why1"}),
                 ("user_message", "phase", "quality_scores"),
-                ("{staging_dir}/assumptions.md", "{staging_dir}/unknowns.md"), (),
+                ("{spec_dir}/assumptions.md", "{spec_dir}/unknowns.md"), (),
             ),
             ("provider_escalation", "phase1-why2", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
@@ -1757,3 +1758,61 @@ def test_experimental_artifact_quality_phases_are_registered():
         assert node.agent == contract["agent"]
         assert set(node.allowed_state_updates or []) == contract["updates"]
         assert node.transitions == [{"to": "done", "condition": "always"}]
+
+
+def test_phase_a_scope_is_reachable_from_init() -> None:
+    assert hasattr(phase_graph_module, "phase_a_phase_ids")
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    scoped = phase_graph_module.phase_a_phase_ids(graph)
+
+    assert scoped[0] == "init"
+    assert "phase1-discover" in scoped
+    assert "phase4-document" in scoped
+    assert {"done", "terminal-blocked", "escalate"} <= set(scoped)
+    assert "phase-exp-tasks-quality" not in scoped
+    assert "bugfix-1-init" not in scoped
+    assert "build-1-init" not in scoped
+
+
+def test_phase_a_nodes_parse_explicit_checkpoint_and_rewind_policy() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    scoped = phase_graph_module.phase_a_phase_ids(graph)
+
+    for phase_id in scoped:
+        node = graph.get(phase_id)
+        assert node.checkpoint in {"required", "none"}
+        assert node.rewind in {"supported", "none"}
+
+
+def test_early_phase_graph_context_uses_durable_spec_paths() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    for phase_id in (
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
+        "phase1-why1",
+        "phase1-constitution",
+    ):
+        node = graph.get(phase_id)
+        assert all("{staging_dir}" not in item for item in node.context_pack), phase_id
+        for policy in node.human_input_policies:
+            assert all(
+                "{staging_dir}" not in path for path in policy.context_paths
+            ), phase_id
+
+    assert "{staging_dir}/user-clarifications.md" in graph.get(
+        "phase1-what"
+    ).context_pack

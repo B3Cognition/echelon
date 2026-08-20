@@ -69,6 +69,11 @@ from harness.human_input import (
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.checkpoint_policy import (
+    CheckpointPolicyError,
+    checkpoint_additional_owned_paths,
+    phase_checkpoint_policy,
+)
 from harness.phase_a_readiness import (
     PhaseAReadinessResult,
     unresolved_constitution_template_markers,
@@ -1518,6 +1523,31 @@ class SquadController:
                 "manual_phase_run": manual_phase_run,
                 "record_completion": record_completion,
             }
+            checkpoint_version = snapshot.state.get("checkpoint_policy_version")
+            checkpoint_policy = "none"
+            if checkpoint_version is not None:
+                if type(checkpoint_version) is not int or checkpoint_version != 2:
+                    raise StateAdvanceError(
+                        "unsupported checkpoint policy version",
+                        json_path="$.checkpoint_policy_version",
+                        validator="checkpoint_policy",
+                    )
+                try:
+                    checkpoint_policy, rewind_policy = phase_checkpoint_policy(
+                        self._graph,
+                        from_phase,
+                    )
+                except CheckpointPolicyError as exc:
+                    raise StateAdvanceError(
+                        str(exc),
+                        json_path="$.checkpoint_policy",
+                        validator="checkpoint_policy",
+                    ) from exc
+                route.update({
+                    "checkpoint_policy_version": checkpoint_version,
+                    "checkpoint_policy": checkpoint_policy,
+                    "rewind_policy": rewind_policy,
+                })
             judgment_records = tuple(
                 self._completion_judgment_record(result)
                 for result in judgments
@@ -1535,13 +1565,17 @@ class SquadController:
                     )
                 ):
                     effects.append("timing")
-                active_spec_dir = self._active_phase_a_spec_dir(
-                    snapshot.state
-                )
-                if (
-                    active_spec_dir is not None
-                    and active_spec_dir.exists()
-                ):
+                active_spec_dir = self._active_phase_a_spec_dir(snapshot.state)
+                if checkpoint_version == 2:
+                    if checkpoint_policy == "required" and not conditional_skip:
+                        if active_spec_dir is None or not active_spec_dir.exists():
+                            raise StateAdvanceError(
+                                f"phase_checkpoint_target_missing: {from_phase}",
+                                json_path="$.spec_dir",
+                                validator="checkpoint_target",
+                            )
+                        effects.append("checkpoint")
+                elif active_spec_dir is not None and active_spec_dir.exists():
                     effects.append("checkpoint")
                 if quality_effect is not None:
                     effects.append("quality")
@@ -1637,7 +1671,15 @@ class SquadController:
         if spec_dir is not None and not spec_dir.exists():
             spec_dir = None
         additional_spec_dirs: tuple[Path, ...] = ()
-        additional_owned_paths: tuple[Path, ...] = ()
+        additional_owned_paths = (
+            checkpoint_additional_owned_paths(
+                self._project_root,
+                str(route.get("from_phase") or ""),
+                state,
+            )
+            if route.get("checkpoint_policy_version") == 2
+            else ()
+        )
         if (
             spec_dir is not None
             and route.get("from_phase") == "phase4-document"
@@ -1652,10 +1694,15 @@ class SquadController:
                 and published.resolve() != spec_dir.resolve()
             ):
                 additional_spec_dirs = (published,)
-            additional_owned_paths = accepted_kb_target_paths(
-                self._project_root,
-                str(state.get("run_id") or ""),
-            )
+            additional_owned_paths = tuple(dict.fromkeys(
+                (
+                    *additional_owned_paths,
+                    *accepted_kb_target_paths(
+                        self._project_root,
+                        str(state.get("run_id") or ""),
+                    ),
+                )
+            ))
         return {
             "project_root": self._project_root,
             "spec_dir": spec_dir,
@@ -4390,9 +4437,12 @@ class SquadController:
                 raise HumanInputPolicyError(
                     f"persisted {key} root identity does not match the run"
                 )
+        spec_root = self._validated_spec_root(state)
+        if spec_root is None and "checkpoint_policy_version" not in state:
+            spec_root = expected["staging_dir"]
         return {
             "{staging_dir}": expected["staging_dir"],
-            "{spec_dir}": self._validated_spec_root(state),
+            "{spec_dir}": spec_root,
             "{context_dir}": expected["context_dir"],
             "{squad_dir}": expected["squad_dir"],
         }
@@ -11704,6 +11754,9 @@ class SquadController:
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=conditional_skip,
+                checkpoint_policy=str(
+                    completion.intent.route.get("checkpoint_policy") or "none"
+                ),
                 token_usage_delta=(
                     self._deferred_provider_usage or {"tokens": 0}
                 )["tokens"],

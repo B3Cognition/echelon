@@ -356,23 +356,29 @@ def _validate_route(value: object) -> dict[str, object]:
         _raise("intent_invalid")
     kind = dict.get(value, "kind")
     if kind == "routed":
+        versioned = "checkpoint_policy_version" in value
+        route_keys = {
+            "kind",
+            "from_phase",
+            "to_phase",
+            "manual_phase_run",
+            "record_completion",
+        }
+        if versioned:
+            route_keys.update({
+                "checkpoint_policy_version",
+                "checkpoint_policy",
+                "rewind_policy",
+            })
         _validate_exact_dict(
             value,
-            frozenset(
-                {
-                    "kind",
-                    "from_phase",
-                    "to_phase",
-                    "manual_phase_run",
-                    "record_completion",
-                }
-            ),
+            frozenset(route_keys),
         )
         manual = dict.__getitem__(value, "manual_phase_run")
         record = dict.__getitem__(value, "record_completion")
         if type(manual) is not bool or type(record) is not bool:
             _raise("intent_invalid")
-        return {
+        route = {
             "kind": "routed",
             "from_phase": _validate_bounded_string(
                 dict.__getitem__(value, "from_phase"),
@@ -385,6 +391,22 @@ def _validate_route(value: object) -> dict[str, object]:
             "manual_phase_run": manual,
             "record_completion": record,
         }
+        if versioned:
+            version = dict.__getitem__(value, "checkpoint_policy_version")
+            policy = dict.__getitem__(value, "checkpoint_policy")
+            rewind = dict.__getitem__(value, "rewind_policy")
+            if type(version) is not int or version != 2:
+                _raise("intent_invalid")
+            if policy not in {"required", "none"}:
+                _raise("intent_invalid")
+            if rewind not in {"supported", "none"}:
+                _raise("intent_invalid")
+            route.update({
+                "checkpoint_policy_version": version,
+                "checkpoint_policy": policy,
+                "rewind_policy": rewind,
+            })
+        return route
     if kind == "terminal":
         _validate_exact_dict(
             value,
@@ -2577,6 +2599,17 @@ def create_or_recover_completion_checkpoint(
             checkpoint_prestate=intent.checkpoint_prestate,
             additional_spec_dirs=additional_spec_dirs,
             additional_owned_paths=additional_owned_paths,
+            force_commit=(
+                route.get("checkpoint_policy_version") == 2
+                and route.get("checkpoint_policy") == "required"
+            ),
+            source="auto",
+            rewind=str(route.get("rewind_policy") or "supported"),
+            rewind_reason=(
+                "workflow-policy"
+                if route.get("rewind_policy") == "none"
+                else ""
+            ),
             expected_receipt=expected_receipt,
             fault_hook=fault_hook,
         )

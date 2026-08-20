@@ -2538,6 +2538,45 @@ def _apply_completion_checkpoint(
     )
 
 
+def test_versioned_required_checkpoint_forces_no_change_commit(
+    tmp_path: Path,
+) -> None:
+    project_root, spec_dir, legacy = _prepare_completion_checkpoint(tmp_path)
+    base = _git_for_completion_checkpoint(project_root, "rev-parse", "HEAD")
+    prepared = prepare_controller_completion(
+        project_root,
+        legacy._squad_dir,
+        completion_id="f" * 32,
+        origin="routed",
+        publication={"kind": "none"},
+        route={
+            **ROUTED_ROUTE,
+            "checkpoint_policy_version": 2,
+            "checkpoint_policy": "required",
+            "rewind_policy": "supported",
+        },
+        effect_plan=("checkpoint",),
+        checkpoint_prestate={"kind": "git_head", "head": base},
+        context_reason="versioned required checkpoint",
+        mine_phase_a=False,
+        judgment_payload_sha256=(),
+        judgments=(),
+    )
+
+    receipt = _apply_completion_checkpoint(project_root, spec_dir, prepared)
+
+    assert receipt["outcome"] == "committed"
+    assert _git_for_completion_checkpoint(project_root, "rev-parse", "HEAD") != base
+    assert (
+        "Co-authored-by: Echelon <echelon@b3cognition.dev>"
+        in _git_for_completion_checkpoint(project_root, "log", "-1", "--format=%B")
+    )
+    assert (
+        "Echelon-Checkpoint-Source: auto"
+        in _git_for_completion_checkpoint(project_root, "log", "-1", "--format=%B")
+    )
+
+
 def test_completion_checkpoint_wrapper_binds_intent_and_one_ahead_receipt(
     tmp_path: Path,
 ) -> None:

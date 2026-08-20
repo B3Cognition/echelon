@@ -7,11 +7,15 @@
 
 echelon.synthesizer (SYNTHESIZER) fuses ALL DISCOVER outputs into a unified knowledge base. This is mandatory — WHY1 must receive synthesized output, not raw fragments.
 
+Write canonical Phase A artifacts under `{spec_dir}` (`ACTIVE_SPEC_DIR`).
+`${STAGING_DIR}` is reserved for controller inputs and transient dispatch
+material; do not place canonical artifacts there.
+
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
 
-- ALL DISCOVER outputs (every .md file produced in step 2)
+- ALL DISCOVER outputs under `{spec_dir}` (every .md file produced in step 2)
 - reasoning-journal.jsonl (DISCOVER entries)
 - `.echelon/runtime/templates/glossary-template.md`
 - `.echelon/runtime/templates/mental-model-template.md`
@@ -37,7 +41,7 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are SYNTHESIZER. Read subagents/echelon.synthesizer.md for your complete protocol.
-  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `{spec_dir}/` (`ACTIVE_SPEC_DIR`) using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

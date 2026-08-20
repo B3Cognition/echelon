@@ -537,6 +537,7 @@ class PreparedRoutingDecision:
     increment_iteration: bool
     manual_phase_run: bool
     conditional_skip: bool
+    checkpoint_policy: str
     record_completion: bool
     token_usage_delta: int
     judgment_payload_sha256: tuple[str, ...]
@@ -902,6 +903,7 @@ def _routing_attestation_facts(
     increment_iteration: object,
     manual_phase_run: object,
     conditional_skip: object,
+    checkpoint_policy: object,
     record_completion: object,
     token_usage_delta: object,
     judgment_payload_sha256: object,
@@ -934,6 +936,7 @@ def _routing_attestation_facts(
         "increment_iteration": _attestable_value(increment_iteration),
         "manual_phase_run": _attestable_value(manual_phase_run),
         "conditional_skip": _attestable_value(conditional_skip),
+        "checkpoint_policy": _attestable_value(checkpoint_policy),
         "record_completion": _attestable_value(record_completion),
         "token_usage_delta": _attestable_value(token_usage_delta),
         "judgment_payload_sha256": _attestable_value(
@@ -968,6 +971,7 @@ def _create_routing_attestation(
     increment_iteration: bool,
     manual_phase_run: bool,
     conditional_skip: bool,
+    checkpoint_policy: str,
     record_completion: bool,
     token_usage_delta: int,
     judgment_payload_sha256: tuple[str, ...],
@@ -989,6 +993,7 @@ def _create_routing_attestation(
         increment_iteration=increment_iteration,
         manual_phase_run=manual_phase_run,
         conditional_skip=conditional_skip,
+        checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
         judgment_payload_sha256=judgment_payload_sha256,
@@ -1032,6 +1037,7 @@ def prepare_routing_decision(
     increment_iteration: bool = False,
     manual_phase_run: bool = False,
     conditional_skip: bool = False,
+    checkpoint_policy: str = "none",
     record_completion: bool = True,
     token_usage_delta: int = 0,
     transaction_state_updates: Mapping[str, Any] | None = None,
@@ -1094,6 +1100,10 @@ def prepare_routing_decision(
     if type(token_usage_delta) is not int or token_usage_delta < 0:
         raise PreparedPhaseResultAttestationError(
             "routing decision token usage delta is invalid"
+        )
+    if checkpoint_policy not in {"required", "none"}:
+        raise PreparedPhaseResultAttestationError(
+            "routing decision checkpoint policy is invalid"
         )
 
     if queued_state_updates is None:
@@ -1258,6 +1268,7 @@ def prepare_routing_decision(
         increment_iteration=increment_iteration,
         manual_phase_run=manual_phase_run,
         conditional_skip=conditional_skip,
+        checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
         judgment_payload_sha256=sealed_digests,
@@ -1279,6 +1290,7 @@ def prepare_routing_decision(
         increment_iteration=increment_iteration,
         manual_phase_run=manual_phase_run,
         conditional_skip=conditional_skip,
+        checkpoint_policy=checkpoint_policy,
         record_completion=record_completion,
         token_usage_delta=token_usage_delta,
         judgment_payload_sha256=sealed_digests,
@@ -1319,6 +1331,7 @@ def verify_prepared_routing_decision_attestation(
         increment_iteration=decision.increment_iteration,
         manual_phase_run=decision.manual_phase_run,
         conditional_skip=decision.conditional_skip,
+        checkpoint_policy=decision.checkpoint_policy,
         record_completion=decision.record_completion,
         token_usage_delta=decision.token_usage_delta,
         judgment_payload_sha256=decision.judgment_payload_sha256,

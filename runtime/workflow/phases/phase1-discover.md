@@ -5,10 +5,13 @@
 
 ## 2. DISCOVER Phase (UNDERSTAND)
 
-> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so
-> outputs go to the staging area. Echelon's Phase A bootstrap has already
-> reserved the full run-local spec directory; CARTOGRAPHER moves product
-> artifacts there during WHAT.
+> **Note:** This is the UNDERSTAND phase. Echelon's Phase A bootstrap has
+> already reserved the full run-local spec directory, so canonical discovery
+> artifacts are durable from their first producer.
+
+Write canonical Phase A artifacts under `{spec_dir}` (`ACTIVE_SPEC_DIR`).
+`${STAGING_DIR}` is reserved for controller inputs and transient dispatch
+material; do not place canonical artifacts there.
 
 ### Context Pack Assembly
 
@@ -38,7 +41,7 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are SCOUT. Read subagents/echelon.scout.md for your complete protocol.
-  Your mode is `{greenfield|brownfield}`. Produce all outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for every significant insight, assumption, or decision.
+  Your mode is `{greenfield|brownfield}`. Produce all outputs in `{spec_dir}/` (`ACTIVE_SPEC_DIR`) using the provided templates. Return journal entries in `echelon_result.journal_entries` for every significant insight, assumption, or decision.
   Product inputs are discovery evidence only in this phase. Never return `product_input_updates` from DISCOVER.
   </instructions>
   ```
@@ -47,7 +50,7 @@ The active runtime dispatches this role with the following request:
 
 ### Expected Outputs
 
-Verify these files were created in `${STAGING_DIR}/`:
+Verify these files were created in `{spec_dir}/`:
 
 - `glossary.md`
 - `mental-model.md`

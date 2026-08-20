@@ -102,8 +102,10 @@ class TestSynthesizerTemplates:
         text = MODELER_PHASE.read_text(encoding="utf-8")
 
         assert "synthesis.md" not in text
-        assert "${STAGING_DIR}/mental-model.md" in text
-        assert "${STAGING_DIR}/contradictions-and-gaps.md" in text
+        assert "{spec_dir}/mental-model.md" in text
+        assert "{spec_dir}/contradictions-and-gaps.md" in text
+        assert "${STAGING_DIR}" in text
+        assert "do not place canonical artifacts there" in text
 
     def test_workflow_definition_lists_core_synthesizer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")

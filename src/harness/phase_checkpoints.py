@@ -38,6 +38,7 @@ _COMPLETION_TRAILER_KEYS = (
     "Echelon-Next-Phase",
     "Echelon-Checkpoint",
     "Echelon-Completion",
+    "Echelon-Checkpoint-Source",
     "Echelon-Retarget-Revision",
     "Echelon-Baseline-Run",
     "Echelon-Replacement-Run",
@@ -65,6 +66,13 @@ _CHECKPOINT_ROW_KEYS = frozenset(
         "created_at",
     }
 )
+_CHECKPOINT_OPTIONAL_ROW_KEYS = frozenset({
+    "completion_id",
+    "boundary_completion_id",
+    "rewind",
+    "rewind_reason",
+})
+_SAFE_REWIND_REASON_PATTERN = re.compile(r"\A[a-z][a-z0-9_-]{0,63}\Z")
 
 
 class PhaseCheckpointError(RuntimeError):
@@ -83,6 +91,9 @@ class PhaseCheckpoint:
     run_id: str
     created_at: str
     completion_id: str = ""
+    boundary_completion_id: str = ""
+    rewind: str = "supported"
+    rewind_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -115,11 +126,41 @@ def load_checkpoint_ledger(spec_dir: Path) -> CheckpointLedger:
     if not path.exists():
         return CheckpointLedger(spec_id=_spec_id_from_dir(spec_dir), checkpoints=[])
     raw = json.loads(path.read_text(encoding="utf-8"))
-    checkpoints = [PhaseCheckpoint(**item) for item in raw.get("checkpoints", [])]
+    try:
+        checkpoints = [PhaseCheckpoint(**item) for item in raw.get("checkpoints", [])]
+    except TypeError as exc:
+        raise PhaseCheckpointError("checkpoint ledger row mismatch") from exc
+    for checkpoint in checkpoints:
+        _validate_checkpoint_completion_ids(checkpoint)
+        _validate_checkpoint_rewind(checkpoint)
     return CheckpointLedger(
         spec_id=str(raw.get("spec_id") or _spec_id_from_dir(spec_dir)),
         checkpoints=checkpoints,
     )
+
+
+def _validate_checkpoint_rewind(checkpoint: PhaseCheckpoint) -> None:
+    if checkpoint.rewind not in {"supported", "none"}:
+        raise PhaseCheckpointError("invalid checkpoint rewind policy")
+    if type(checkpoint.rewind_reason) is not str:
+        raise PhaseCheckpointError("invalid checkpoint rewind reason")
+    if checkpoint.rewind == "supported" and checkpoint.rewind_reason:
+        raise PhaseCheckpointError("supported checkpoint cannot have rewind reason")
+    if checkpoint.rewind == "none" and _SAFE_REWIND_REASON_PATTERN.fullmatch(
+        checkpoint.rewind_reason
+    ) is None:
+        raise PhaseCheckpointError("unsupported checkpoint requires rewind reason")
+
+
+def _validate_checkpoint_completion_ids(checkpoint: PhaseCheckpoint) -> None:
+    for field, value in (
+        ("completion", checkpoint.completion_id),
+        ("boundary completion", checkpoint.boundary_completion_id),
+    ):
+        if type(value) is not str or (
+            value and _COMPLETION_ID_PATTERN.fullmatch(value) is None
+        ):
+            raise PhaseCheckpointError(f"invalid checkpoint {field} identity")
 
 
 def _strict_checkpoint_string(
@@ -155,8 +196,9 @@ def _strict_checkpoint_row(value: object, *, spec_id: str) -> PhaseCheckpoint:
     if type(value) is not dict:
         raise PhaseCheckpointError("invalid retarget checkpoint ledger row")
     keys = frozenset(value)
-    allowed = (_CHECKPOINT_ROW_KEYS, _CHECKPOINT_ROW_KEYS | {"completion_id"})
-    if keys not in allowed:
+    if not _CHECKPOINT_ROW_KEYS <= keys or not keys <= (
+        _CHECKPOINT_ROW_KEYS | _CHECKPOINT_OPTIONAL_ROW_KEYS
+    ):
         raise PhaseCheckpointError("invalid retarget checkpoint ledger row keys")
     row_spec_id = _strict_checkpoint_string(value["spec_id"], field="spec_id")
     if row_spec_id != spec_id:
@@ -190,6 +232,32 @@ def _strict_checkpoint_row(value: object, *, spec_id: str) -> PhaseCheckpoint:
         raise PhaseCheckpointError(
             "invalid retarget checkpoint ledger completion_id"
         )
+    boundary_completion_id = value.get("boundary_completion_id", "")
+    if boundary_completion_id:
+        boundary_completion_id = _strict_checkpoint_string(
+            boundary_completion_id,
+            field="boundary_completion_id",
+        )
+        if _COMPLETION_ID_PATTERN.fullmatch(boundary_completion_id) is None:
+            raise PhaseCheckpointError(
+                "invalid retarget checkpoint ledger boundary_completion_id"
+            )
+    elif type(boundary_completion_id) is not str:
+        raise PhaseCheckpointError(
+            "invalid retarget checkpoint ledger boundary_completion_id"
+        )
+    rewind = value.get("rewind", "supported")
+    rewind_reason = value.get("rewind_reason", "")
+    if rewind not in {"supported", "none"}:
+        raise PhaseCheckpointError("invalid checkpoint rewind policy")
+    if type(rewind_reason) is not str:
+        raise PhaseCheckpointError("invalid checkpoint rewind reason")
+    if rewind == "supported" and rewind_reason:
+        raise PhaseCheckpointError("supported checkpoint cannot have rewind reason")
+    if rewind == "none" and _SAFE_REWIND_REASON_PATTERN.fullmatch(
+        rewind_reason
+    ) is None:
+        raise PhaseCheckpointError("unsupported checkpoint requires rewind reason")
     return PhaseCheckpoint(
         id=_strict_checkpoint_string(value["id"], field="id"),
         spec_id=row_spec_id,
@@ -204,6 +272,9 @@ def _strict_checkpoint_row(value: object, *, spec_id: str) -> PhaseCheckpoint:
         run_id=_strict_checkpoint_string(value["run_id"], field="run_id"),
         created_at=_strict_checkpoint_timestamp(value["created_at"]),
         completion_id=completion_id,
+        boundary_completion_id=boundary_completion_id,
+        rewind=rewind,
+        rewind_reason=rewind_reason,
     )
 
 
@@ -384,6 +455,8 @@ def _checkpoint_ledger_bytes(ledger: CheckpointLedger) -> bytes:
         record = asdict(item)
         if not item.completion_id:
             record.pop("completion_id")
+        if not item.boundary_completion_id:
+            record.pop("boundary_completion_id")
         checkpoints.append(record)
     payload = {
         "spec_id": ledger.spec_id,
@@ -455,6 +528,8 @@ def _record_phase_checkpoint_unlocked(
 ) -> CheckpointLedger:
     """Record one validated checkpoint while the caller holds the ledger lock."""
 
+    _validate_checkpoint_completion_ids(checkpoint)
+    _validate_checkpoint_rewind(checkpoint)
     ledger = load_checkpoint_ledger(spec_dir)
     if checkpoint.completion_id:
         matches = [
@@ -582,6 +657,21 @@ def checkpoint_targets(ledger: CheckpointLedger) -> list[str]:
             seen.add(value)
             targets.append(value)
     return targets
+
+
+def rewindable_checkpoint_targets(ledger: CheckpointLedger) -> list[str]:
+    """Return selectors for checkpoints whose stored policy permits rewind."""
+
+    return checkpoint_targets(
+        CheckpointLedger(
+            spec_id=ledger.spec_id,
+            checkpoints=[
+                checkpoint
+                for checkpoint in ledger.checkpoints
+                if checkpoint.rewind == "supported"
+            ],
+        )
+    )
 
 
 def new_checkpoint_id(phase: str, source: str = "auto") -> str:
@@ -921,7 +1011,8 @@ def _load_completion_checkpoint_ledger(
     for item in raw["checkpoints"]:
         if (
             type(item) is not dict
-            or set(item) not in (legacy_keys, legacy_keys | {"completion_id"})
+            or not legacy_keys <= set(item)
+            or not set(item) <= legacy_keys | _CHECKPOINT_OPTIONAL_ROW_KEYS
         ):
             raise PhaseCheckpointError("checkpoint ledger row mismatch")
         try:
@@ -943,6 +1034,25 @@ def _load_completion_checkpoint_ledger(
             is None
         ):
             raise PhaseCheckpointError("checkpoint ledger row mismatch")
+        if (
+            checkpoint.boundary_completion_id
+            and _COMPLETION_ID_PATTERN.fullmatch(
+                checkpoint.boundary_completion_id
+            ) is None
+        ):
+            raise PhaseCheckpointError("checkpoint ledger row mismatch")
+        if checkpoint.rewind not in {"supported", "none"}:
+            raise PhaseCheckpointError("invalid checkpoint rewind policy")
+        if checkpoint.rewind == "supported" and checkpoint.rewind_reason:
+            raise PhaseCheckpointError(
+                "supported checkpoint cannot have rewind reason"
+            )
+        if checkpoint.rewind == "none" and _SAFE_REWIND_REASON_PATTERN.fullmatch(
+            checkpoint.rewind_reason
+        ) is None:
+            raise PhaseCheckpointError(
+                "unsupported checkpoint requires rewind reason"
+            )
         checkpoints.append(checkpoint)
     return (
         CheckpointLedger(
@@ -1000,6 +1110,7 @@ def _completion_commit_identity(
     spec_id: str,
     phase: str,
     next_phase: str,
+    source: str,
 ) -> dict[str, str]:
     return {
         "Echelon-Origin": "phase-a",
@@ -1010,6 +1121,7 @@ def _completion_commit_identity(
         "Echelon-Next-Phase": next_phase,
         "Echelon-Checkpoint": phase,
         "Echelon-Completion": completion_id,
+        "Echelon-Checkpoint-Source": source,
     }
 
 
@@ -1130,6 +1242,9 @@ def _completion_checkpoint_from_commit(
     spec_id: str,
     phase: str,
     next_phase: str,
+    source: str,
+    rewind: str,
+    rewind_reason: str,
 ) -> PhaseCheckpoint:
     return PhaseCheckpoint(
         id=phase,
@@ -1138,10 +1253,15 @@ def _completion_checkpoint_from_commit(
         next_phase=next_phase,
         commit=record["commit"],
         metadata_commit="",
-        source="auto",
+        source=source,
         run_id=run_id,
         created_at=record["created_at"],
         completion_id=completion_id,
+        boundary_completion_id=(
+            "" if source == "legacy-migration" else completion_id
+        ),
+        rewind=rewind,
+        rewind_reason=rewind_reason,
     )
 
 
@@ -1400,7 +1520,11 @@ def create_or_recover_completion_checkpoint(
     checkpoint_prestate: Mapping[str, object],
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    owned_paths_only: tuple[Path, ...] | None = None,
     force_commit: bool = False,
+    source: str = "auto",
+    rewind: str = "supported",
+    rewind_reason: str = "",
     expected_receipt: object | None = None,
     fault_hook: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
@@ -1425,6 +1549,22 @@ def create_or_recover_completion_checkpoint(
     )
     if type(force_commit) is not bool:
         raise PhaseCheckpointError("invalid completion checkpoint force flag")
+    if owned_paths_only is not None and (
+        type(owned_paths_only) is not tuple
+        or additional_spec_dirs
+        or additional_owned_paths
+    ):
+        raise PhaseCheckpointError("invalid exact checkpoint owned paths")
+    if source not in {"auto", "user-committed", "legacy-migration"}:
+        raise PhaseCheckpointError("invalid checkpoint source")
+    if rewind not in {"supported", "none"}:
+        raise PhaseCheckpointError("invalid checkpoint rewind policy")
+    if rewind == "supported" and rewind_reason:
+        raise PhaseCheckpointError("supported checkpoint cannot have rewind reason")
+    if rewind == "none" and _SAFE_REWIND_REASON_PATTERN.fullmatch(
+        rewind_reason
+    ) is None:
+        raise PhaseCheckpointError("unsupported checkpoint requires rewind reason")
     common = _checkpoint_receipt_common(
         completion_id=completion_value,
         run_id=run_value,
@@ -1465,8 +1605,17 @@ def create_or_recover_completion_checkpoint(
             "checkpoint spec does not match active spec directory"
         )
     owned_spec_dirs = (
-        active_spec,
-        *(Path(path).resolve() for path in additional_spec_dirs),
+        ()
+        if owned_paths_only is not None
+        else (
+            active_spec,
+            *(Path(path).resolve() for path in additional_spec_dirs),
+        )
+    )
+    effective_owned_paths = (
+        owned_paths_only
+        if owned_paths_only is not None
+        else additional_owned_paths
     )
     identity = _completion_commit_identity(
         completion_id=completion_value,
@@ -1474,6 +1623,7 @@ def create_or_recover_completion_checkpoint(
         spec_id=spec_value,
         phase=phase_value,
         next_phase=next_value,
+        source=source,
     )
     with _checkpoint_ledger_lock(active_spec):
         ledger_was_present = checkpoint_ledger_path(active_spec).exists()
@@ -1513,6 +1663,9 @@ def create_or_recover_completion_checkpoint(
                 spec_id=spec_value,
                 phase=phase_value,
                 next_phase=next_value,
+                source=source,
+                rewind=rewind,
+                rewind_reason=rewind_reason,
             )
             if (
                 not _record_has_exact_identity(
@@ -1551,6 +1704,9 @@ def create_or_recover_completion_checkpoint(
                 spec_id=spec_value,
                 phase=phase_value,
                 next_phase=next_value,
+                source=source,
+                rewind=rewind,
+                rewind_reason=rewind_reason,
             )
             _record_completion_checkpoint_unlocked(
                 active_spec,
@@ -1583,7 +1739,7 @@ def create_or_recover_completion_checkpoint(
             changed = _owned_paths_have_changes(
                 root,
                 owned_spec_dirs,
-                additional_owned_paths,
+                effective_owned_paths,
             )
             try:
                 verified_head = run_git(
@@ -1613,32 +1769,41 @@ def create_or_recover_completion_checkpoint(
                 checkpoint_id=phase_value,
                 next_phase=next_value,
                 completion_id=completion_value,
+                checkpoint_source=source,
             ),
         )
-        commit = _commit_spec_changes(
-            root,
-            owned_spec_dirs,
-            message,
-            additional_owned_paths,
+        commit = (
+            None
+            if owned_paths_only == ()
+            else _commit_spec_changes(
+                root,
+                owned_spec_dirs,
+                message,
+                effective_owned_paths,
+            )
         )
         if commit is None:
             if force_commit:
                 try:
-                    pathspecs = _owned_pathspecs(
-                        root,
-                        owned_spec_dirs,
-                        additional_owned_paths,
+                    pathspecs = (
+                        ()
+                        if owned_paths_only == ()
+                        else _owned_pathspecs(
+                            root,
+                            owned_spec_dirs,
+                            effective_owned_paths,
+                        )
                     )
-                    run_git(
-                        root,
+                    commit_args = [
                         "commit",
                         "--allow-empty",
                         "--only",
                         "-m",
                         message,
-                        "--",
-                        *pathspecs,
-                    )
+                    ]
+                    if pathspecs:
+                        commit_args.extend(("--", *pathspecs))
+                    run_git(root, *commit_args)
                     commit = run_git(
                         root,
                         "rev-parse",
@@ -1680,6 +1845,9 @@ def create_or_recover_completion_checkpoint(
             spec_id=spec_value,
             phase=phase_value,
             next_phase=next_value,
+            source=source,
+            rewind=rewind,
+            rewind_reason=rewind_reason,
         )
         _record_completion_checkpoint_unlocked(
             active_spec,
@@ -1896,6 +2064,7 @@ def _preflight_prebuilt_completion_checkpoint(
         spec_id=spec_value,
         phase=phase_value,
         next_phase=next_value,
+        source="auto",
     )
     trailers = _parse_commit_trailers(record["message"])
     candidate_values = trailers.get("Echelon-Selected-Candidate", ())
@@ -1926,6 +2095,7 @@ def _preflight_prebuilt_completion_checkpoint(
             checkpoint_id=phase_value,
             next_phase=next_value,
             completion_id=completion_value,
+            checkpoint_source="auto",
         ),
     )
     expected_message = (
@@ -1987,6 +2157,9 @@ def _preflight_prebuilt_completion_checkpoint(
         spec_id=spec_value,
         phase=phase_value,
         next_phase=next_value,
+        source="auto",
+        rewind="supported",
+        rewind_reason="",
     )
     receipt = _committed_checkpoint_receipt(common, commit)
     if expected is not None and expected != receipt:
@@ -3092,7 +3265,12 @@ def accept_checkpoint_baseline(
     spec_dir: Path,
     phase: str,
     run_id: str,
+    boundary_completion_id: str = "",
 ) -> PhaseCheckpoint:
+    if boundary_completion_id and _COMPLETION_ID_PATTERN.fullmatch(
+        boundary_completion_id
+    ) is None:
+        raise PhaseCheckpointError("invalid checkpoint boundary completion identity")
     if _has_staged_or_unstaged_changes(project_root):
         raise RuntimeError("dirty worktree cannot be accepted; commit, stash, or discard changes first")
 
@@ -3108,6 +3286,7 @@ def accept_checkpoint_baseline(
         source="user-accepted",
         run_id=run_id,
         created_at=datetime.now(timezone.utc).isoformat(),
+        boundary_completion_id=boundary_completion_id,
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint
@@ -3120,7 +3299,12 @@ def commit_manual_checkpoint(
     phase: str,
     run_id: str,
     message: str,
+    boundary_completion_id: str = "",
 ) -> PhaseCheckpoint:
+    if boundary_completion_id and _COMPLETION_ID_PATTERN.fullmatch(
+        boundary_completion_id
+    ) is None:
+        raise PhaseCheckpointError("invalid checkpoint boundary completion identity")
     spec_id = _spec_id_from_dir(spec_dir)
     checkpoint_id = new_checkpoint_id(phase, "user-committed")
     commit_message = build_echelon_commit_message(
@@ -3132,6 +3316,8 @@ def commit_manual_checkpoint(
             run_id=run_id,
             phase=phase,
             checkpoint_id=checkpoint_id,
+            completion_id=boundary_completion_id,
+            checkpoint_source="user-committed",
         ),
     )
     commit = _commit_spec_changes(project_root, (spec_dir,), commit_message)
@@ -3147,6 +3333,7 @@ def commit_manual_checkpoint(
         source="user-committed",
         run_id=run_id,
         created_at=datetime.now(timezone.utc).isoformat(),
+        boundary_completion_id=boundary_completion_id,
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint

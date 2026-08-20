@@ -188,6 +188,7 @@ def _advance(
     increment_iteration: bool = False,
     manual_phase_run: bool = False,
     conditional_skip: bool = False,
+    checkpoint_policy: str = "none",
     token_usage_delta: int = 0,
     dispatch_id: str | None = None,
     transaction_state_updates: dict[str, object] | None = None,
@@ -204,6 +205,7 @@ def _advance(
         increment_iteration=increment_iteration,
         manual_phase_run=manual_phase_run,
         conditional_skip=conditional_skip,
+        checkpoint_policy=checkpoint_policy,
         token_usage_delta=token_usage_delta,
         dispatch_id=dispatch_id,
         transaction_state_updates=transaction_state_updates,
@@ -1571,6 +1573,53 @@ class TestSquadStateStore:
             store.advance_controller_completion(one_ahead)
         assert store.load() == after
 
+    def test_versioned_controller_completion_advances_with_bound_policy(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state["checkpoint_policy_version"] = 2
+        state["phase_completion_outcomes"] = []
+        store.save(state)
+        prepared = prepare_controller_completion(
+            tmp_path,
+            store.squad_dir,
+            completion_id="c" * 32,
+            origin="routed",
+            publication={"kind": "none"},
+            route={
+                "kind": "routed",
+                "from_phase": "init",
+                "to_phase": "next",
+                "manual_phase_run": False,
+                "record_completion": True,
+                "checkpoint_policy_version": 2,
+                "checkpoint_policy": "none",
+                "rewind_policy": "none",
+            },
+            effect_plan=("journal",),
+            checkpoint_prestate={"kind": "none"},
+            context_reason="versioned state transition test",
+            mine_phase_a=False,
+            judgment_payload_sha256=(),
+            judgments=(),
+        )
+        _commit_routed_completion(store, prepared)
+        one_ahead = _rewrite_completion_receipts(
+            tmp_path,
+            store,
+            prepared,
+            {"journal": {"schema_version": 1}},
+        )
+
+        store.advance_controller_completion(one_ahead)
+
+        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
+            "complete"
+        )
+
     def test_routed_controller_completion_final_clear_is_exact(
         self,
         tmp_path,
@@ -2720,6 +2769,139 @@ class TestSquadStateStore:
         assert state["last_dispatch"]["conditional_skip"] is True
         assert "manual_phase_run" not in state["last_dispatch"]
         assert receipt.conditional_skip is True
+
+    def test_versioned_run_records_idempotent_completion_outcomes(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-modeler")
+        state = store.load()
+        state["checkpoint_policy_version"] = 2
+        state["phase_completion_outcomes"] = []
+        store.save(state)
+
+        first = _prepare_completion(
+            tmp_path,
+            store,
+            completion_id="a" * 32,
+            effect_plan=(),
+            from_phase="phase1-modeler",
+            to_phase="phase1-modeler",
+        )
+        original_save = store._save_unlocked
+
+        def save_then_raise(next_state):
+            original_save(next_state)
+            raise OSError("injected route save ambiguity")
+
+        with patch.object(store, "_save_unlocked", side_effect=save_then_raise):
+            _advance(
+                store,
+                "phase1-modeler",
+                "phase1-modeler",
+                _result("DONE", phase_id="phase1-modeler"),
+                conditional_skip=True,
+                checkpoint_policy="required",
+                dispatch_id=first.marker.completion_id,
+                transaction_state_updates={
+                    PENDING_CONTROLLER_COMPLETION_KEY: first.marker.to_dict(),
+                },
+            )
+
+        second = _prepare_completion(
+            tmp_path,
+            store,
+            completion_id="b" * 32,
+            effect_plan=(),
+            from_phase="phase1-modeler",
+            to_phase="phase1-tracker",
+        )
+        _advance(
+            store,
+            "phase1-modeler",
+            "phase1-tracker",
+            _result("DONE", phase_id="phase1-modeler"),
+            checkpoint_policy="required",
+            dispatch_id=second.marker.completion_id,
+            transaction_state_updates={
+                PENDING_CONTROLLER_COMPLETION_KEY: second.marker.to_dict(),
+            },
+        )
+
+        assert store.load()["phase_completion_outcomes"] == [
+            {
+                "completion_id": "a" * 32,
+                "phase": "phase1-modeler",
+                "next_phase": "phase1-modeler",
+                "outcome": "skipped",
+                "checkpoint": "required",
+            },
+            {
+                "completion_id": "b" * 32,
+                "phase": "phase1-modeler",
+                "next_phase": "phase1-tracker",
+                "outcome": "executed",
+                "checkpoint": "required",
+            },
+        ]
+
+    def test_checkpoint_policy_requires_a_supported_value(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-modeler")
+
+        with pytest.raises(StateAdvanceError) as raised:
+            _advance(
+                store,
+                "phase1-modeler",
+                "phase1-tracker",
+                _result("DONE", phase_id="phase1-modeler"),
+                checkpoint_policy="sometimes",
+            )
+
+        assert raised.value.json_path == "$.checkpoint_policy"
+
+    def test_completion_id_collision_with_different_outcome_is_rejected(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-modeler")
+        state = store.load()
+        state["checkpoint_policy_version"] = 2
+        state["phase_completion_outcomes"] = [{
+            "completion_id": "a" * 32,
+            "phase": "phase1-modeler",
+            "next_phase": "phase1-tracker",
+            "outcome": "executed",
+            "checkpoint": "required",
+        }]
+        store.save(state)
+        before = store.load()
+        completion = _prepare_completion(
+            tmp_path,
+            store,
+            completion_id="a" * 32,
+            effect_plan=(),
+            from_phase="phase1-modeler",
+            to_phase="phase1-modeler",
+        )
+
+        with pytest.raises(StateAdvanceError) as raised:
+            _advance(
+                store,
+                "phase1-modeler",
+                "phase1-modeler",
+                _result("DONE", phase_id="phase1-modeler"),
+                checkpoint_policy="required",
+                dispatch_id=completion.marker.completion_id,
+                transaction_state_updates={
+                    PENDING_CONTROLLER_COMPLETION_KEY: completion.marker.to_dict(),
+                },
+            )
+
+        assert raised.value.validator == "completion_binding"
+        assert store.load() == before
 
     def test_conditional_skip_identity_requires_a_boolean(self, tmp_path):
         store = _store(tmp_path)

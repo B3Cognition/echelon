@@ -365,6 +365,7 @@ def _restore_checkpoint_message(
             checkpoint_id=_RESTORE_PHASE,
             next_phase=next_phase,
             completion_id=completion_id,
+            checkpoint_source="auto",
         ),
     )
     return (

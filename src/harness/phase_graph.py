@@ -58,6 +58,8 @@ class PhaseNode:
     id: str
     type: str                          # agent | staged_parallel | commander_internal | ...
     label: str = ""
+    checkpoint: Optional[str] = None
+    rewind: Optional[str] = None
     spec_file: Optional[str] = None
     agent: Optional[str] = None        # dash-notation dispatch id
     understanding_target: Optional[str] = None
@@ -246,6 +248,8 @@ class PhaseGraph:
                 id=p["id"],
                 type=p.get("type", "agent"),
                 label=p.get("label", ""),
+                checkpoint=p.get("checkpoint"),
+                rewind=p.get("rewind"),
                 spec_file=p.get("spec_file"),
                 agent=p.get("agent"),
                 understanding_target=p.get("understanding_target"),
@@ -329,6 +333,34 @@ class PhaseGraph:
             for node in self._phases.values()
             for t in node.transitions
         }
+
+
+def phase_a_phase_ids(graph: PhaseGraph) -> tuple[str, ...]:
+    """Return graph nodes reachable from the Phase A entry point."""
+    pending = [graph.entry_phase()]
+    known_phase_ids = frozenset(graph.all_phase_ids())
+    seen: set[str] = set()
+    phase_ids: list[str] = []
+
+    while pending:
+        phase_id = pending.pop(0)
+        if phase_id in seen:
+            continue
+        seen.add(phase_id)
+        if phase_id not in known_phase_ids:
+            continue
+        node = graph.get(phase_id)
+        phase_ids.append(phase_id)
+        if node.type == "terminal":
+            continue
+        for transition in node.transitions:
+            if not isinstance(transition, dict):
+                continue
+            target = transition.get("to")
+            if isinstance(target, str) and target not in seen:
+                pending.append(target)
+
+    return tuple(phase_ids)
 
 
 def load_workspace_phase_graph(project_root: Path) -> tuple[PhaseGraph, Path]:

@@ -614,6 +614,47 @@ def test_phase1_what_treats_spec_dir_as_authoritative_path():
     assert "{spec_dir}/spec.md" in text
 
 
+def test_early_phase_prompts_keep_canonical_artifacts_in_spec_dir():
+    phase_names = (
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
+        "phase1-why1",
+    )
+
+    for phase_name in phase_names:
+        prompt = RUNTIME_ROOT / "workflow" / "phases" / f"{phase_name}.md"
+        text = prompt.read_text()
+        assert "{spec_dir}" in text or "ACTIVE_SPEC_DIR" in text, phase_name
+        assert "outputs in `${STAGING_DIR}/`" not in text, phase_name
+        assert "created in `${STAGING_DIR}/`" not in text, phase_name
+
+
+def test_phase1_what_consumes_discovery_artifacts_in_place():
+    prompt = RUNTIME_ROOT / "workflow" / "phases" / "phase1-what.md"
+    text = prompt.read_text()
+
+    for artifact in (
+        "glossary.md",
+        "mental-model.md",
+        "boundaries.md",
+        "assumptions.md",
+        "unknowns.md",
+    ):
+        assert f"{{spec_dir}}/{artifact}" in text
+        assert f"${{STAGING_DIR}}/{artifact}" not in text
+    assert "move discovery artifacts" not in text
+    assert "moved from `${STAGING_DIR}/`" not in text
+    assert "${STAGING_DIR}/user-clarifications.md" in text
+
+
+def test_constitution_prompt_keeps_canonical_workspace_output():
+    prompt = RUNTIME_ROOT / "workflow" / "phases" / "phase1-constitution.md"
+
+    assert ".echelon/constitution.md" in prompt.read_text()
+
+
 def test_phase2_decide_routes_kill_status_through_echelon_result():
     prompt = RUNTIME_ROOT / "workflow" / "phases" / "phase2-decide.md"
     text = prompt.read_text()

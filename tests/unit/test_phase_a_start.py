@@ -11,6 +11,7 @@ import subprocess
 import pytest
 
 from echelon.phase_a_start import (
+    CHECKPOINT_POLICY_VERSION,
     PhaseAStartError,
     start_phase_a_spec,
     start_retarget_phase_a_spec,
@@ -190,8 +191,21 @@ def test_first_spec_starts_on_sibling_branch_and_selects_discoverable_run(
     state = json.loads((outcome.run_dir / "state.json").read_text())
     assert state["status"] == "preparing"
     assert state["run_id"] == "run-b"
+    assert state["checkpoint_policy_version"] == CHECKPOINT_POLICY_VERSION == 2
+    assert state["phase_completion_outcomes"] == []
     assert state["feature_branch"] == outcome.bootstrap.feature_branch
     assert (repo / state["spec_dir"]).is_dir()
+
+
+def test_historical_run_state_is_not_upgraded_during_resolution(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+
+    run = resolve_active_spec_run(repo)
+    state = json.loads((run.run_dir / "state.json").read_text(encoding="utf-8"))
+
+    assert "checkpoint_policy_version" not in state
+    assert "phase_completion_outcomes" not in state
 
 
 def test_first_spec_refuses_unmanaged_nondefault_checkout(tmp_path: Path) -> None:
@@ -403,6 +417,8 @@ def test_retarget_bootstrap_keeps_spec_and_branch_but_creates_new_run(
     assert set(_git(repo, "branch", "--format=%(refname:short)").splitlines()) == before_branches
     assert (repo / "runs" / ".current").read_text(encoding="utf-8").strip() == "squad-retarget-1"
     assert state["implementation_targets"] == ["apps/web", "services/api"]
+    assert state["checkpoint_policy_version"] == CHECKPOINT_POLICY_VERSION
+    assert state["phase_completion_outcomes"] == []
     assert state["retarget"]["baseline_run_id"] == baseline.run_id
     assert state["retarget"]["status"] == "checkpointed"
     assert state["phase"] == "phase0-constitution"

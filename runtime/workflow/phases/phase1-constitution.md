@@ -10,7 +10,7 @@
 
 You are CHIEF. Operate in **Creation mode**.
 
-The five staging files in your context pack (glossary, mental-model, boundaries,
+The five `{spec_dir}` files in your context pack (glossary, mental-model, boundaries,
 assumptions, user-intent) are your raw material. Follow your Creation mode
 protocol from `chief.md` exactly.
 
