@@ -80,6 +80,7 @@ from harness.phase_a_readiness import (
     validate_phase_a_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
+from harness.spec_frontmatter import write_text_atomic
 from harness.phase1_quality import (
     AuthoritativeQualityAssessment,
     build_legacy_phase1_quality_certificate,
@@ -92,6 +93,7 @@ from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateSnapshot,
     candidate_artifact_preimage_digests,
+    is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
     initialize_repair_state,
     load_quality_candidate_manifest,
@@ -5499,6 +5501,22 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
+            constitution_promotion_error = self._promote_constitution_draft(
+                node
+            )
+            if constitution_promotion_error is not None:
+                self._block_after_executor_failure(
+                    phase,
+                    constitution_promotion_error,
+                    prepared_result,
+                    snapshot=snapshot,
+                    recovery_instruction=retry_phase_recovery(
+                        phase,
+                        constitution_promotion_error,
+                    ),
+                )
+                return SquadResult.from_state(self._state_store.load())
+
             prepared_publication: PreparedSquadPublication | None = None
             try:
                 prepared_publication = (
@@ -5536,6 +5554,11 @@ class SquadController:
                 phase,
                 snapshot.state,
             )
+            if node.id == "phase1-constitution":
+                # CHIEF is deliberately denied writes to .echelon.  This
+                # controller-owned state update is emitted only after the
+                # validated run-local draft has been atomically promoted.
+                routing_updates["constitution_status"] = "exists"
             if prepared_publication is not None:
                 routing_updates.update(
                     self._product_input_publication_state_updates(
@@ -8110,6 +8133,8 @@ class SquadController:
             and node.lexicon_artifact == "tasks"
         ):
             self._materialize_implementation_targets()
+        if node.id == "phase1-constitution":
+            self._materialize_constitution_current_snapshot()
         if node.id not in _QUALITY_DEBT_DOWNSTREAM_PHASES:
             return node
         state = self._state_store.load()
@@ -8207,6 +8232,75 @@ class SquadController:
             state["spec_quality_debt_context"] = context
             self._state_store.save(state)
         return dispatched
+
+    def _materialize_constitution_current_snapshot(self) -> None:
+        """Expose a current constitution copy without exposing `.echelon` writes."""
+        from echelon.constitution import canonical_constitution_path
+
+        canonical = canonical_constitution_path(self._project_root)
+        snapshot = self._squad_dir / "constitution.current.md"
+        try:
+            metadata = os.lstat(canonical)
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+                metadata.st_mode
+            ):
+                snapshot.unlink(missing_ok=True)
+                return
+            text = canonical.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            snapshot.unlink(missing_ok=True)
+            return
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ControllerStateContractViolation(
+                "canonical constitution cannot be staged for CHIEF",
+                contract="constitution_publication",
+                json_path="$.constitution",
+                validator="artifact",
+            ) from exc
+        if unresolved_constitution_template_markers(text):
+            snapshot.unlink(missing_ok=True)
+            return
+        try:
+            write_text_atomic(snapshot, text)
+        except OSError as exc:
+            raise ControllerStateContractViolation(
+                "canonical constitution snapshot cannot be staged for CHIEF",
+                contract="constitution_publication",
+                json_path="$.constitution",
+                validator="snapshot",
+            ) from exc
+
+    def _promote_constitution_draft(self, node: PhaseNode) -> str | None:
+        """Validate and atomically publish CHIEF's protected-root draft.
+
+        Agents are forbidden from writing ``.echelon`` because it contains
+        controller-owned runtime configuration. CHIEF therefore authors a
+        durable run-local draft; the controller is the sole publisher of the
+        canonical constitution after a successful agent result is prepared.
+        """
+        if node.id != "phase1-constitution":
+            return None
+
+        draft = self._squad_dir / "constitution.draft.md"
+        try:
+            metadata = os.lstat(draft)
+            if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(
+                metadata.st_mode
+            ):
+                return "constitution_draft_invalid"
+            text = draft.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return "constitution_draft_invalid"
+        if not text.strip() or unresolved_constitution_template_markers(text):
+            return "constitution_draft_invalid"
+
+        from echelon.constitution import canonical_constitution_path
+
+        try:
+            write_text_atomic(canonical_constitution_path(self._project_root), text)
+        except OSError:
+            return "constitution_draft_publish_failed"
+        return None
 
     def _apply_product_input_updates(
         self,
@@ -9324,18 +9418,20 @@ class SquadController:
         if numeric_pass is False and normalized_provider_verdict == "PASS":
             hard_blockers.append("numeric_provider_mismatch")
 
-        issue_ids = tuple(
-            str(issue.get("issue_id") or "") for issue in authoritative_issues
+        actionable_issue_ids = tuple(
+            str(issue.get("issue_id") or "")
+            for issue in authoritative_issues
+            if is_actionable_sage_issue(issue)
         )
         route_ids = tuple(
             str(route.get("issue_id") or "") for route in exact_routes
         )
         if sage_verdict == "FAIL":
             if (
-                not issue_ids
-                or len(route_ids) != len(issue_ids)
+                not actionable_issue_ids
+                or len(route_ids) != len(actionable_issue_ids)
                 or len(set(route_ids)) != len(route_ids)
-                or set(route_ids) != set(issue_ids)
+                or set(route_ids) != set(actionable_issue_ids)
                 or any(route.get("route") != "spec_repair" for route in exact_routes)
             ):
                 hard_blockers.append("sage_finding_route_mismatch")

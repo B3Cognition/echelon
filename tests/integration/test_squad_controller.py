@@ -5401,6 +5401,9 @@ class TestSquadControllerBasics:
             spec_authoring_mode="perfectionist",
         )
         _mark_constitution_complete(tmp_path, store)
+        (ctrl._squad_dir / "constitution.draft.md").write_text(
+            "# Constitution\n\nReal project rules.\n", encoding="utf-8"
+        )
         state = store.load()
         state["re_generation"] = 1
         state["spec_dir"] = "specs/001-test"
@@ -5456,6 +5459,9 @@ class TestSquadControllerBasics:
             spec_authoring_mode="perfectionist",
         )
         _mark_constitution_complete(tmp_path, store)
+        (ctrl._squad_dir / "constitution.draft.md").write_text(
+            "# Constitution\n\nReal project rules.\n", encoding="utf-8"
+        )
         state = store.load()
         state["re_generation"] = 1
         state["spec_dir"] = "specs/001-test"
@@ -6831,6 +6837,9 @@ class TestSquadControllerBasics:
             spec_authoring_mode="perfectionist",
         )
         _mark_constitution_complete(tmp_path, store)
+        (ctrl._squad_dir / "constitution.draft.md").write_text(
+            "# Constitution\n\nReal project rules.\n", encoding="utf-8"
+        )
         state = store.load()
         state["spec_id"] = "001-test"
         # This routing-focused test intentionally produces no Phase A artifact
@@ -7533,6 +7542,65 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_explicit_advisory_sage_issue_does_not_require_a_repair_route(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Only required SAGE amendments become proportional quality debt."""
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        advisory = """
+### ISS-ADVISORY: Non-blocking reviewer handoff
+- **Severity:** LOW
+- **Type:** incompleteness
+- **Description:** The test planner should derive an outcome from the requirement text.
+- **Affected artifact:** spec.md
+- **Affected section:** Requirements
+- **Evidence:** The certified gate passes and no specification amendment is needed.
+- **Recommendation:** Carry this observation into test planning.
+- **Responsible agent:** HOW
+- **Action Required:** None — advisory. No amendment requested.
+
+"""
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("- **LOW:** 1", "- **LOW:** 2")
+            .replace("### Resolution Guidance", advisory + "### Resolution Guidance"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert next_phase == "terminal-blocked"
+        assert "blocked_decision" in persisted
+        assert persisted.get("blocked_reason") != (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0"
+        ]
+
+        assert ctrl.resume_with_human_input("continue_with_debt") is True
+        accepted = store.load()
+        assert [
+            finding["issue_id"]
+            for finding in accepted["spec_quality_debt_authorization"][
+                "qualitative_debt"
+            ]
+        ] == ["ISS-QUALITY-0"]
+
     def test_replaced_sage_evidence_between_assessment_and_candidate_fails_closed(
         self,
         tmp_path: Path,
@@ -11331,6 +11399,10 @@ class TestConstitutionPhase:
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        (ctrl._squad_dir / "constitution.draft.md").write_text(
+            "# Project Constitution\n\n## Core Principles\n\nReal rules.\n",
+            encoding="utf-8",
+        )
 
         with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
             result = ctrl.run("msg", "banzai")
@@ -11454,6 +11526,74 @@ Modified principles:
             "exec_agent was not called — phase1-constitution is still a harness no-op. "
             "It must be type=agent so CHIEF gets dispatched."
         )
+
+    def test_controller_promotes_chief_run_local_draft_before_advancing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """CHIEF never needs write authority over the protected .echelon root."""
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
+        draft = ctrl._squad_dir / "constitution.draft.md"
+        draft.write_text(
+            "# Project Constitution\n\n## Core Principles\n\nReal rules.\n",
+            encoding="utf-8",
+        )
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            result = ctrl.run("msg", "banzai")
+
+        canonical = tmp_path / ".echelon" / "constitution.md"
+        assert result.status == "done"
+        assert canonical.read_text(encoding="utf-8") == draft.read_text(
+            encoding="utf-8"
+        )
+        assert store.load()["constitution_status"] == "exists"
+        assert "phase1-constitution" in store.load()["completed_phases"]
+
+    def test_controller_refuses_incomplete_chief_draft_without_advancing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """An incomplete draft cannot create constitution provenance."""
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
+        (ctrl._squad_dir / "constitution.draft.md").write_text(
+            "# [PROJECT_NAME] Constitution\n",
+            encoding="utf-8",
+        )
+
+        result = ctrl.run("msg", "banzai")
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "constitution_draft_invalid"
+        assert "phase1-constitution" not in state["completed_phases"]
+        assert not (tmp_path / ".echelon" / "constitution.md").exists()
+
+    def test_controller_stages_canonical_snapshot_for_chief_amendment(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Amendment mode reads only the controller-managed run-local copy."""
+        ctrl, _store = _controller(tmp_path)
+        canonical = tmp_path / ".echelon" / "constitution.md"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_text(
+            "# Project Constitution\n\n## Core Principles\n\nReal rules.\n",
+            encoding="utf-8",
+        )
+
+        ctrl._materialize_controller_phase_inputs(
+            ctrl._graph.get("phase1-constitution")
+        )
+
+        assert (ctrl._squad_dir / "constitution.current.md").read_text(
+            encoding="utf-8"
+        ) == canonical.read_text(encoding="utf-8")
 
 
 class TestCommanderJudgmentStateUpdates:

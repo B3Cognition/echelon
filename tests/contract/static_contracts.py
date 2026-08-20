@@ -908,9 +908,15 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
 
     checks = [
         PatternCheck(
-            "CHIEF owns the canonical constitution",
+            "CHIEF authors the controller-published constitution draft",
             chief,
-            r"sole author of the project constitution.*create and amend `\.echelon/constitution\.md`",
+            r"sole author of the project constitution.*author only the\s+run-local `\$\{SQUAD_DIR\}/constitution\.draft\.md`",
+            flags,
+        ),
+        PatternCheck(
+            "CHIEF never writes the protected canonical constitution path",
+            chief,
+            r"NEVER.*write to `\.echelon/constitution\.md`",
             flags,
         ),
         PatternCheck(

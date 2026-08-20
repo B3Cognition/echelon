@@ -92,6 +92,7 @@ class TestSageTemplates:
         text = AGENT.read_text(encoding="utf-8")
 
         assert "report PASS but flag the borderline metrics" not in text
+        assert "If you find only MEDIUM/LOW issues:** Report PASS" not in text
         assert "PASS means no required amendments remain" in text
         assert "NEVER return `verdict: PASS`" in text
         assert "mandatory amendments" in text

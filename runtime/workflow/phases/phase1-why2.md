@@ -147,11 +147,14 @@ echelon_result:
           supplied_reference_ids: [IN-REF-...]
 ```
 
-Every WHY2 result MUST also classify its findings in the control plane. For a
-passing review return `evidence_resolution_status: not_required` with an empty
-list. For a failing review, include one entry for every blocking finding. The
-`route` value must be exactly `spec_repair`, `evidence_resolution`, or
-`human_decision`:
+Every WHY2 result MUST also classify its required findings in the control
+plane. For a passing review return `evidence_resolution_status: not_required`
+with an empty list. For a failing review, include one entry for every finding
+whose `Action Required` is not an explicit advisory. An explicit advisory uses
+either `Action Required: None` or `Action Required: None — advisory. <brief
+handoff>` and is omitted from `finding_routes`; it must not be presented as
+repair debt. The `route` value must be exactly `spec_repair`,
+`evidence_resolution`, or `human_decision`:
 
 ```yaml
 echelon_result:

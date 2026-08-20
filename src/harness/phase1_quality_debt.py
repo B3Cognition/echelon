@@ -24,6 +24,7 @@ from echelon.strict_json import loads_strict_json
 from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateIntegrityError,
+    is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
     load_quality_candidate_manifest,
     require_current_authoritative_sage_evidence_snapshot,
@@ -431,7 +432,9 @@ def _verify_restored_candidate(
             "quality-debt candidate contains a hard SAGE blocker"
         )
     issues_by_id = {
-        issue["issue_id"]: issue for issue in authoritative_issues
+        issue["issue_id"]: issue
+        for issue in authoritative_issues
+        if is_actionable_sage_issue(issue)
     }
     route_issue_ids = [
         str(route.get("issue_id") or "")

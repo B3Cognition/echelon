@@ -18,7 +18,7 @@
 - **Evidence:** <quote or specific finding>
 - **Recommendation:** <specific fix>
 - **Responsible agent:** <DISCOVER | WHAT | HOW>
-- **Action Required:** <the next concrete action; use `None` only when advisory>
+- **Action Required:** <the next concrete action; for an advisory use `None` or `None — advisory. <brief handoff>`>
 
 ### Resolution Guidance
 - **Decision required:** <exact decision, or `No user decision — agent repair`>

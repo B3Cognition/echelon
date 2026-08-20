@@ -16,17 +16,19 @@ protocol from `chief.md` exactly.
 
 ## Expected Output
 
-- `.echelon/constitution.md` — filled, verified, no unfilled placeholders
+- `${SQUAD_DIR}/constitution.draft.md` — filled, verified, no unfilled
+  placeholders. This is the CHIEF-authored candidate for the canonical
+  constitution.
+
+The controller owns the protected `.echelon/` root. After CHIEF returns
+`DONE`, it validates this draft and atomically publishes it as
+`.echelon/constitution.md`; CHIEF must never write that canonical path.
 
 ## State Contract
 
-The harness reads `state_updates.constitution_status` to record that the
-constitution was created. Emit:
-
-```yaml
-state_updates:
-  constitution_status: "exists"
-```
+Do not emit `constitution_status`. The controller records
+`constitution_status: "exists"` only after draft validation and canonical
+publication succeed.
 
 ## echelon_result Contract
 
@@ -34,15 +36,15 @@ state_updates:
 echelon_result:
   verdict: DONE
   output_files:
-    - .echelon/constitution.md
-  state_updates:
-    constitution_status: "exists"
+    - ${SQUAD_DIR}/constitution.draft.md
+  state_updates: {}
 ```
 
 ## Mode-Specific Notes
 
-- If `.echelon/constitution.md` already exists with real content (no
-  `[PROJECT_NAME]` marker), the constitution was previously created. Emit
-  `verdict: DONE` immediately without re-invoking the skill.
+- If `${SQUAD_DIR}/constitution.current.md` is present, it is a
+  controller-staged read-only snapshot of the current canonical constitution.
+  Use it only for Amendment mode and write the amended result to
+  `${SQUAD_DIR}/constitution.draft.md`.
 - `constitution_status: "exists"` in state.json skips this phase on subsequent
   runs — the harness will not re-dispatch CHIEF for creation.
