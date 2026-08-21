@@ -3480,7 +3480,7 @@ def test_commander_runtime_prompt_contains_the_complete_strict_contract(
         "  decision:\n"
         '    selected_option_id: "<exact allowed option id>"\n'
         "    answer_text: null\n"
-        '    rationale: "<non-empty explanation, at most 2,000 characters>"\n'
+        '    rationale: "<non-empty explanation, at most 4,096 characters>"\n'
         "    confidence: high\n"
     ) in prompt
     assert "confidence must be exactly high, medium, or low" in prompt

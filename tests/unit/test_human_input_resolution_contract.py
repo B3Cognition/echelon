@@ -50,6 +50,24 @@ def test_decision_resolution_accepts_the_exact_choice_envelope() -> None:
     assert resolution.confidence == "high"
 
 
+def test_decision_resolution_accepts_a_4096_character_rationale() -> None:
+    rationale = "r" * 4_096
+
+    resolution = validate_decision_resolution_result(
+        _decision_resolution_payload(
+            decision={
+                "selected_option_id": "approve",
+                "answer_text": None,
+                "rationale": rationale,
+                "confidence": "high",
+            }
+        ),
+        options=OPTIONS,
+    )
+
+    assert resolution.rationale == rationale
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -180,7 +198,7 @@ def test_decision_resolution_rejects_mixed_type_extra_field_names(
                 decision={
                     "selected_option_id": "approve",
                     "answer_text": None,
-                    "rationale": "r" * 2_001,
+                    "rationale": "r" * 4_097,
                     "confidence": "high",
                 }
             ),

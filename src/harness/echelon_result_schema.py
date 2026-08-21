@@ -28,6 +28,9 @@ SUPPORTED_STATE_UPDATE_TYPES = frozenset({
 })
 
 
+DECISION_RESOLUTION_RATIONALE_MAX_CHARS = 4_096
+
+
 @dataclass(frozen=True)
 class EchelonResultContract:
     """Dispatch-scoped contract for the state mutation control plane.
@@ -386,10 +389,11 @@ def validate_decision_resolution_result(
     if (
         not isinstance(rationale, str)
         or not rationale.strip()
-        or len(rationale) > 2_000
+        or len(rationale) > DECISION_RESOLUTION_RATIONALE_MAX_CHARS
     ):
         raise EchelonResultValidationError(
-            "decision resolution rationale must be a non-empty string of at most 2,000 characters"
+            "decision resolution rationale must be a non-empty string of at most "
+            f"{DECISION_RESOLUTION_RATIONALE_MAX_CHARS:,} characters"
         )
     confidence = decision["confidence"]
     if not isinstance(confidence, str) or confidence not in {"high", "medium", "low"}:

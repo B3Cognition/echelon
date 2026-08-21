@@ -36,6 +36,14 @@ def content_terms(text: str) -> list[tuple[str, int]]:
     for lineno, line in enumerate(text.splitlines(), start=1):
         if line.lstrip().startswith("#"):
             continue
+        # A controlled-grammar constraint can retain a source-local
+        # measurement identifier (for example ``view_count = 1``). Those
+        # identifiers are schema-local variables rather than domain concepts,
+        # so requiring glossary entries would make a faithful derived artifact
+        # impossible whenever the rich source introduces one. The surrounding
+        # REQ/AC block remains subject to all structural and source-ID checks.
+        if line.lstrip().startswith("CONSTRAINT:"):
+            continue
         value = _LABEL_RE.sub("", line)
         for match in _TERM_RE.finditer(value):
             out.append((match.group(1), lineno))

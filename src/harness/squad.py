@@ -43,6 +43,7 @@ from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
 )
 from harness.echelon_result_schema import (
+    DECISION_RESOLUTION_RATIONALE_MAX_CHARS,
     EchelonResultContract,
     EchelonResultValidationError,
     validate_decision_resolution_result,
@@ -4607,7 +4608,8 @@ class SquadController:
             "  decision:\n"
             '    selected_option_id: "<exact allowed option id>"\n'
             "    answer_text: null\n"
-            '    rationale: "<non-empty explanation, at most 2,000 characters>"\n'
+            "    rationale: \"<non-empty explanation, at most "
+            f"{DECISION_RESOLUTION_RATIONALE_MAX_CHARS:,} characters>\"\n"
             "    confidence: high\n\n"
             "For free text, selected_option_id must be null and answer_text "
             "must be a non-empty string. Set exactly one of selected_option_id "
@@ -5857,6 +5859,15 @@ class SquadController:
             raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
 
         existing = self._state_store.load()
+        if self._state_store.discard_failed_automatic_decision_for_manual_phase_replay(
+            phase_id
+        ):
+            print(
+                "[squad] retrying failed automatic Banzai decision via manual "
+                f"phase replay: {phase_id}",
+                flush=True,
+            )
+            existing = self._state_store.load()
         if self._unresolved_human_input_decision(existing) is not None:
             return self._unresolved_human_input_result(existing)
         if (
@@ -5905,6 +5916,8 @@ class SquadController:
             self._state_store.save(state)
             self._ensure_telemetry_manifest()
             self._refresh_run_context(f"manual phase replay {phase_id}")
+
+        self._isolate_manual_phase_spec_dir()
 
         phase = phase_id
         guarded_phase = self._guard_constitution_provenance(phase)
@@ -6052,10 +6065,9 @@ class SquadController:
             )
             return SquadResult.from_state(self._state_store.load())
 
-        routing_updates = self._planned_phase_a_publication_updates(
-            phase,
-            snapshot.state,
-        )
+        # Manual phase replay records only its routing result.  It must not
+        # synthesize publication identity or queue publication work.
+        routing_updates: dict[str, object] = {}
         if prepared_publication is not None:
             routing_updates.update(
                 self._product_input_publication_state_updates(
@@ -6098,6 +6110,64 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
+
+    def _isolate_manual_phase_spec_dir(self) -> None:
+        """Point a manual replay at its private Phase A worktree.
+
+        Older runs can retain ``spec_dir`` as their project-visible target.
+        Never let that historical representation turn a repair replay into an
+        implicit publication: make (or reuse) ``runs/<run>/specs/<id>`` before
+        the executor assembles its prompt.
+        """
+        state = self._state_store.load()
+        spec_id = str(state.get("spec_id") or "").strip()
+        if not spec_id:
+            return
+
+        current = self._active_phase_a_spec_dir(dict(state))
+        source_ref = str(state.get("phase_run_source_spec_dir") or "").strip()
+        source = (
+            self._absolute_project_path(source_ref)
+            if source_ref
+            else None
+        )
+        run_roots = (self._squad_dir.resolve(), (self._project_root / "runs").resolve())
+
+        def is_run_local(path: Path | None) -> bool:
+            if path is None or not path.exists() or not path.is_dir():
+                return False
+            resolved = path.resolve()
+            return any(
+                resolved.is_relative_to(root)
+                for root in run_roots
+            )
+
+        run_local = (
+            source
+            if is_run_local(source)
+            else current
+            if is_run_local(current)
+            else self._squad_dir / "specs" / spec_id
+        )
+        if not run_local.exists() and current is not None and current.is_dir():
+            self._copy_controller_tree(
+                current,
+                run_local,
+                exclude_echelon=True,
+            )
+        else:
+            run_local.mkdir(parents=True, exist_ok=True)
+
+        run_local_ref = self._repo_relative_or_absolute(run_local)
+        if (
+            str(state.get("spec_dir") or "").strip() == run_local_ref
+            and str(state.get("phase_run_source_spec_dir") or "").strip()
+            == run_local_ref
+        ):
+            return
+        state["spec_dir"] = run_local_ref
+        state["phase_run_source_spec_dir"] = run_local_ref
+        self._state_store.save(state)
 
     def _skip_phase_if_condition_false(
         self,
@@ -6736,58 +6806,6 @@ class SquadController:
             ),
         )
 
-    def _manual_publication_spec_dir(
-        self,
-        state: Mapping[str, object],
-    ) -> Path | None:
-        spec_ref = str(
-            state.get("published_spec_dir") or state.get("spec_dir") or ""
-        ).strip()
-        if not spec_ref:
-            return None
-        spec_dir = self._absolute_project_path(spec_ref)
-        metadata = self._lstat_or_none(spec_dir)
-        if metadata is None:
-            return None
-        if (
-            stat.S_ISLNK(metadata.st_mode)
-            or not stat.S_ISDIR(metadata.st_mode)
-        ):
-            raise OSError("manual publication target is not a directory")
-        self._project_relative_target(spec_dir / "ARTIFACTS.md")
-        return spec_dir
-
-    def _stage_manual_phase_effects(
-        self,
-        transaction: SquadPublicationTransaction,
-        state: Mapping[str, object],
-    ) -> int:
-        target = self._manual_publication_spec_dir(state)
-        if target is None:
-            return 0
-        virtual = transaction.build_path(
-            Path("work/manual/specs") / target.name
-        )
-        self._copy_controller_tree(
-            target,
-            virtual,
-            exclude_echelon=True,
-        )
-        self._publish_manual_phase_artifacts(
-            state,
-            spec_dir_override=virtual,
-            strict=True,
-        )
-        return self._add_owned_file_diff(
-            transaction,
-            virtual_root=virtual,
-            target_root=target,
-            owned_relative_paths={
-                Path("constitution.md"),
-                Path("ARTIFACTS.md"),
-            },
-        )
-
     def _phase_a_preparation_failure(
         self,
         blocker: str,
@@ -7147,10 +7165,14 @@ class SquadController:
         *,
         manual_phase_run: bool,
     ) -> PreparedSquadPublication | None:
+        if manual_phase_run:
+            # A manual replay is a run-local repair.  Phase A publication is
+            # exclusively owned by phase4-document in the normal controller
+            # progression, after its readiness checks complete.
+            return None
         needs_product = self._product_effects_requested(result, phase, state)
         needs_phase_a = phase == "phase4-document"
-        needs_manual = manual_phase_run and not needs_phase_a
-        if not (needs_product or needs_phase_a or needs_manual):
+        if not (needs_product or needs_phase_a):
             return None
 
         transaction = SquadPublicationTransaction.begin(
@@ -7189,11 +7211,6 @@ class SquadController:
                 if not readiness.ready:
                     raise _PhaseAReadinessCommitError(readiness)
                 operation_count += phase_a_operations
-            elif needs_manual:
-                operation_count += self._stage_manual_phase_effects(
-                    transaction,
-                    staged_state,
-                )
             if operation_count == 0:
                 self._discard_uncommitted_publication(transaction)
                 return None
@@ -7226,7 +7243,7 @@ class SquadController:
             raise
         except (Exception, SystemExit) as exc:
             self._discard_uncommitted_publication(transaction)
-            if needs_phase_a or needs_manual:
+            if needs_phase_a:
                 raise self._phase_a_preparation_failure(
                     "failed to stage controller-owned spec artifacts"
                 ) from exc
@@ -7243,39 +7260,6 @@ class SquadController:
             prepared.marker.transaction_id
         )
         return deepcopy(updates) if updates is not None else {}
-
-    def _publish_manual_phase_artifacts(
-        self,
-        state: Mapping[str, object] | None = None,
-        *,
-        spec_dir_override: Path | None = None,
-        strict: bool = False,
-    ) -> None:
-        """Refresh project-visible spec metadata after a targeted phase run."""
-        state = (
-            dict(state)
-            if state is not None
-            else self._state_store.load()
-        )
-        spec_dir = spec_dir_override
-        if spec_dir is None:
-            spec_ref = str(
-                state.get("published_spec_dir") or state.get("spec_dir") or ""
-            ).strip()
-            if not spec_ref:
-                return
-            spec_dir = Path(spec_ref)
-            if not spec_dir.is_absolute():
-                spec_dir = self._project_root / spec_dir
-        if not spec_dir.exists() or not spec_dir.is_dir():
-            return
-        self._publish_constitution_snapshot(spec_dir)
-        try:
-            write_artifact_index(spec_dir)
-        except OSError:
-            if strict:
-                raise
-            logger.warning("Could not refresh artifact index for %s", spec_dir)
 
     def _planned_phase_a_publication_updates(
         self,
@@ -9404,9 +9388,14 @@ class SquadController:
         exact_routes = tuple(dict(route) for route in routes)
         hard_blockers: list[str] = []
 
-        if sage_verdict == "PASS" and authoritative_issues:
+        actionable_issue_ids = tuple(
+            str(issue.get("issue_id") or "")
+            for issue in authoritative_issues
+            if is_actionable_sage_issue(issue)
+        )
+        if sage_verdict == "PASS" and actionable_issue_ids:
             hard_blockers.append("sage_pass_with_issues")
-        if sage_verdict == "FAIL" and not authoritative_issues:
+        if sage_verdict == "FAIL" and not actionable_issue_ids:
             hard_blockers.append("sage_fail_without_issues")
         if (
             normalized_provider_verdict in {"PASS", "FAIL"}
@@ -9417,12 +9406,6 @@ class SquadController:
             hard_blockers.append("provider_quality_verdict_invalid")
         if numeric_pass is False and normalized_provider_verdict == "PASS":
             hard_blockers.append("numeric_provider_mismatch")
-
-        actionable_issue_ids = tuple(
-            str(issue.get("issue_id") or "")
-            for issue in authoritative_issues
-            if is_actionable_sage_issue(issue)
-        )
         route_ids = tuple(
             str(route.get("issue_id") or "") for route in exact_routes
         )
@@ -9459,7 +9442,7 @@ class SquadController:
             numeric_pass
             and normalized_provider_verdict == "PASS"
             and sage_verdict == "PASS"
-            and not authoritative_issues
+            and not actionable_issue_ids
             and not exact_routes
             and not unique_blockers
         )
@@ -9505,11 +9488,6 @@ class SquadController:
             for issue in authoritative_issues
         ):
             reasons.append("critical_sage_issue")
-        if any(
-            issue.get("type") == "contradiction"
-            for issue in authoritative_issues
-        ):
-            reasons.append("sage_contradiction")
         if any(
             str(finding.get("route") or "").strip()
             not in {"", "spec_repair"}
@@ -10998,7 +10976,10 @@ class SquadController:
         except QualityCandidateIntegrityError:
             return self._proportional_integrity_failure()
 
-        if assessment.hard_blockers:
+        if (
+            assessment.hard_blockers
+            and assessment.hard_blockers != ("sage_contradiction",)
+        ):
             return self._proportional_integrity_failure()
         if assessment.ordinary_pass:
             try:
@@ -11071,7 +11052,7 @@ class SquadController:
             not isinstance(assessment, AuthoritativeQualityAssessment)
             or not assessment.proportional_failure
             or assessment.ordinary_pass
-            or assessment.hard_blockers
+            or assessment.hard_blockers not in {(), ("sage_contradiction",)}
         ):
             raise QualityCandidateIntegrityError(
                 "proportional failure assessment is invalid"
@@ -11130,6 +11111,11 @@ class SquadController:
                     ),
                 },
             }, None
+
+        if assessment.hard_blockers == ("sage_contradiction",):
+            raise QualityCandidateIntegrityError(
+                "a SAGE contradiction cannot be accepted as quality debt"
+            )
 
         reason_code = (
             "proportional_quality_extension_exhausted"

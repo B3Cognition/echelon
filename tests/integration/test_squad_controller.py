@@ -4271,50 +4271,11 @@ class TestAgentResultIntegrity:
         assert visible_ledger["requirements"][0]["disposition"] == "included"
         assert not stale_evidence.exists()
 
-    @pytest.mark.parametrize("fault_point", ["constitution", "artifact_index"])
-    def test_manual_publication_staging_failure_keeps_visible_spec_identical(
+    @pytest.mark.parametrize("phase", ["phase3-plan", "phase4-document"])
+    def test_manual_replay_prepares_no_external_publication(
         self,
         tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        fault_point: str,
-    ) -> None:
-        import harness.squad as squad_module
-        from harness.squad import _PhaseAReadinessCommitError
-
-        ctrl, store, result, _, published = (
-            self._phase_a_publication_staging_fixture(tmp_path)
-        )
-        before = self._visible_tree_bytes(published)
-        if fault_point == "constitution":
-            original = ctrl._publish_constitution_snapshot
-
-            def fault(*args, **kwargs):
-                original(*args, **kwargs)
-                raise OSError("injected manual constitution failure")
-
-            monkeypatch.setattr(ctrl, "_publish_constitution_snapshot", fault)
-        else:
-            original = squad_module.write_artifact_index
-
-            def fault(*args, **kwargs):
-                original(*args, **kwargs)
-                raise OSError("injected manual index failure")
-
-            monkeypatch.setattr(squad_module, "write_artifact_index", fault)
-
-        with pytest.raises(_PhaseAReadinessCommitError):
-            ctrl._prepare_external_phase_effects(
-                result,
-                "phase3-plan",
-                store.load(),
-                manual_phase_run=True,
-            )
-
-        assert self._visible_tree_bytes(published) == before
-
-    def test_manual_publication_staging_owns_only_generated_files(
-        self,
-        tmp_path: Path,
+        phase: str,
     ) -> None:
         ctrl, store, result, _, published = (
             self._phase_a_publication_staging_fixture(tmp_path)
@@ -4323,56 +4284,13 @@ class TestAgentResultIntegrity:
 
         prepared = ctrl._prepare_external_phase_effects(
             result,
-            "phase3-plan",
+            phase,
             store.load(),
             manual_phase_run=True,
         )
 
-        assert prepared is not None
-        manifest = json.loads(
-            (
-                ctrl._squad_dir
-                / ".publication-outbox"
-                / prepared.marker.transaction_id
-                / "manifest.json"
-            ).read_text(encoding="utf-8")
-        )
-        assert {
-            operation["target"] for operation in manifest["operations"]
-        } == {
-            "specs/001-themed-ascii-animation/ARTIFACTS.md",
-            "specs/001-themed-ascii-animation/constitution.md",
-        }
+        assert prepared is None
         assert self._visible_tree_bytes(published) == before
-
-    def test_manual_phase4_publication_staging_uses_full_phase_a_path(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        ctrl, store, result, _, _ = (
-            self._phase_a_publication_staging_fixture(tmp_path)
-        )
-
-        prepared = ctrl._prepare_external_phase_effects(
-            result,
-            "phase4-document",
-            store.load(),
-            manual_phase_run=True,
-        )
-
-        assert prepared is not None
-        manifest = json.loads(
-            (
-                ctrl._squad_dir
-                / ".publication-outbox"
-                / prepared.marker.transaction_id
-                / "manifest.json"
-            ).read_text(encoding="utf-8")
-        )
-        targets = {operation["target"] for operation in manifest["operations"]}
-        assert "specs/001-themed-ascii-animation/spec.md" in targets
-        assert "specs/001-themed-ascii-animation/run-history.json" in targets
-        assert "specs/001-themed-ascii-animation/feature-metadata.yml" in targets
 
     def test_publication_staging_keeps_target_materialization_out_of_checkpoint(
         self,
@@ -7542,6 +7460,44 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_repairable_sage_contradiction_routes_to_what_not_candidate_integrity(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A valid SAGE contradiction is a repairable quality failure, not corrupt state."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("- **HIGH:** 0", "- **HIGH:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("**Severity:** LOW", "**Severity:** HIGH")
+            .replace("**Type:** incompleteness", "**Type:** contradiction"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-what"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0"
+        ]
+        findings = persisted["quality_gate_remediation"][
+            "qualitative_findings"
+        ]
+        assert findings[0]["type"] == "contradiction"
+
     def test_explicit_advisory_sage_issue_does_not_require_a_repair_route(
         self,
         tmp_path: Path,
@@ -7600,6 +7556,55 @@ class TestProportionalQualityController:
                 "qualitative_debt"
             ]
         ] == ["ISS-QUALITY-0"]
+
+    def test_passing_sage_advisories_do_not_become_integrity_failures(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A PASS may preserve advisory handoffs without blocking progress."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        _make_authoritative_sage_assessment_passing(ctrl)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        advisory = """### ISS-ADVISORY: Non-blocking reviewer handoff
+- **Severity:** LOW
+- **Type:** incompleteness
+- **Description:** The test planner should derive an outcome from the requirement text.
+- **Affected artifact:** spec.md
+- **Affected section:** Requirements
+- **Evidence:** The certified gate passes and no specification amendment is needed.
+- **Recommendation:** Carry this observation into test planning.
+- **Responsible agent:** HOW
+- **Action Required:** None — advisory. No amendment requested.
+
+"""
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("- **LOW:** 0", "- **LOW:** 1")
+            .replace("No issues found.\n", advisory),
+            encoding="utf-8",
+        )
+        result.echelon_result["verdict"] = "PASS"
+        result.echelon_result["state_updates"]["finding_routes"] = {
+            "findings": []
+        }
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-lexicon-derive"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0"
+        ]
 
     def test_replaced_sage_evidence_between_assessment_and_candidate_fails_closed(
         self,
@@ -9486,6 +9491,88 @@ class TestProportionalQualityController:
             "stop",
         ]
         assert calls == {"why2": 1, "what": 0, "understanding": 0}
+
+    def test_manual_replay_replaces_failed_banzai_safeguard_decision(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        invalid = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": "extend_once",
+                    "answer_text": None,
+                    "rationale": "r" * 4_097,
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        accepted = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": "continue_with_debt",
+                    "answer_text": None,
+                    "rationale": "Accept the explicitly bounded residual debt.",
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store, calls = _run_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+            autonomy_mode="banzai",
+            commander_results=(invalid, invalid),
+        )
+
+        blocked = ctrl.run_single_phase(
+            "phase1-why2",
+            user_message="trigger failed automatic decision",
+            mode="banzai",
+        )
+        assert blocked.status == "blocked"
+        failed = store.load()["blocked_decision"]
+        assert failed["status"] == "failed"
+        assert failed["failure_code"] == "invalid_resolution_result"
+
+        original_exec_agent = ctrl._provider.exec_agent.side_effect
+
+        def replay_exec_agent(
+            root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            if "# COMMANDER DECISION RESOLUTION" in prompt:
+                return accepted
+            return original_exec_agent(root, prompt, **kwargs)
+
+        ctrl._provider.exec_agent.side_effect = replay_exec_agent
+        replayed = ctrl.run_single_phase(
+            "phase1-why2",
+            user_message="replay the failed automatic decision",
+            mode="banzai",
+        )
+
+        state = store.load()
+        assert replayed.status == "running"
+        assert state["phase"] == "phase1-lexicon-derive"
+        assert state["blocked_decision"]["status"] == "resolved"
+        assert state["blocked_decision"]["selected_option_id"] == (
+            "continue_with_debt"
+        )
+        assert calls == {"why2": 2, "what": 0, "understanding": 0}
 
     def test_run_candidate_capture_cas_failure_has_no_orphan_and_retry_converges(
         self,
@@ -12296,11 +12383,6 @@ class TestPreparedTransitionBoundary:
             lambda *_: success_effects.append("product"),
         )
         monkeypatch.setattr(
-            ctrl,
-            "_publish_manual_phase_artifacts",
-            lambda *_: success_effects.append("publication"),
-        )
-        monkeypatch.setattr(
             store,
             "advance",
             lambda *_args, **_kwargs: success_effects.append("advance"),
@@ -13536,11 +13618,6 @@ class TestFailClosedControllerPreparation:
             return original_advance(*args, **kwargs)
 
         monkeypatch.setattr(store, "advance", record_advance)
-        monkeypatch.setattr(
-            ctrl,
-            "_publish_manual_phase_artifacts",
-            lambda *_: None,
-        )
         monkeypatch.setattr(
             ctrl,
             "_apply_declared_phase_timing_transition",

@@ -64,7 +64,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.8"
+CLI_VERSION = "4.0.9"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -7473,22 +7473,35 @@ def _build_target_continue_spec_dir(project_root: Path, current_state: dict) -> 
 def _resolve_phase_target_spec_dir(
     project_root: Path,
     current_state: dict,
+    run_dir: Path,
     spec_arg: str = "",
 ) -> Path | None:
-    """Resolve the project-visible spec dir for a manual phase run."""
+    """Resolve the run-local spec dir for a manual phase replay.
+
+    Manual replays are repairs to the active Phase A worktree.  They must never
+    dispatch an agent against the project-visible published spec directory.
+    """
     from harness.spec_frontmatter import find_spec_dir
 
+    selected: Path | None = None
     value = spec_arg.strip()
     if value:
         candidate = Path(value)
         if candidate.exists() and candidate.is_dir():
-            return candidate if candidate.is_absolute() else project_root / candidate
-        return find_spec_dir(value, project_root)
+            selected = candidate if candidate.is_absolute() else project_root / candidate
+        else:
+            selected = find_spec_dir(value, project_root)
+    else:
+        selected = _build_target_continue_spec_dir(project_root, current_state)
+        if selected is None:
+            selected = _single_project_spec_dir(project_root)
 
-    target = _build_target_continue_spec_dir(project_root, current_state)
-    if target is not None:
-        return target
-    return _single_project_spec_dir(project_root)
+    spec_id = str(current_state.get("spec_id") or "").strip()
+    if selected is not None:
+        spec_id = selected.name
+    if not spec_id:
+        return None
+    return run_dir / "specs" / spec_id
 
 
 def _phase_state_updates_for_target(
@@ -7502,21 +7515,33 @@ def _phase_state_updates_for_target(
 
     target_spec_dir.mkdir(parents=True, exist_ok=True)
 
-    source_ref = str(current_state.get("spec_dir") or "").strip()
-    if source_ref:
+    source_refs = [
+        str(current_state.get("phase_run_source_spec_dir") or "").strip(),
+        str(current_state.get("spec_dir") or "").strip(),
+        str(current_state.get("published_spec_dir") or "").strip(),
+        f"specs/{target_spec_dir.name}",
+    ]
+    for source_ref in source_refs:
+        if not source_ref:
+            continue
         source = Path(source_ref)
         if not source.is_absolute():
             source = project_root / source
         if source.exists() and source.is_dir() and source.resolve() != target_spec_dir.resolve():
             _copy_missing_tree(source, target_spec_dir)
+            break
+
+    published_ref = str(current_state.get("published_spec_dir") or "").strip()
+    if not published_ref:
+        published_ref = f"specs/{target_spec_dir.name}"
+    target_ref = _repo_relative_or_absolute(target_spec_dir, project_root)
 
     updates: dict[str, str] = {
         "spec_id": target_spec_dir.name,
-        "spec_dir": _repo_relative_or_absolute(target_spec_dir, project_root),
-        "published_spec_dir": _repo_relative_or_absolute(target_spec_dir, project_root),
+        "spec_dir": target_ref,
+        "published_spec_dir": published_ref,
+        "phase_run_source_spec_dir": target_ref,
     }
-    if source_ref:
-        updates["phase_run_source_spec_dir"] = source_ref
     return updates
 
 
@@ -9697,7 +9722,12 @@ def _cmd_phase(
 
     state_store = SquadStateStore(run_dir)
     current_state = state_store.load()
-    target_spec_dir = _resolve_phase_target_spec_dir(project_root, current_state, spec_arg)
+    target_spec_dir = _resolve_phase_target_spec_dir(
+        project_root,
+        current_state,
+        run_dir,
+        spec_arg,
+    )
     if spec_arg and target_spec_dir is None:
         print(f"✗ Spec not found for --spec {spec_arg!r}", file=sys.stderr)
         sys.exit(1)

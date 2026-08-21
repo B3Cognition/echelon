@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -573,14 +574,20 @@ def test_successful_manual_lexicon_derivation_points_to_deterministic_gate(
     assert "echelon spec continue" not in output
 
 
-def test_phase_run_records_manual_replay_and_targets_spec_dir(
+def test_phase_run_keeps_manual_replay_in_run_local_spec_copy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _initialize_active_run(tmp_path)
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+    published_spec_dir = tmp_path / "specs" / "001-demo"
+    published_spec_dir.mkdir(parents=True)
+    published_spec = published_spec_dir / "spec.md"
+    published_spec.write_text("# Published Demo\n", encoding="utf-8")
+    state_store = SquadStateStore(tmp_path / "runs" / "run-active")
+    state_store.initialize("run-active", "banzai", "repair", 0, "phase1-what")
+    state = state_store.load()
+    state["completed_phases"] = ["phase1-constitution"]
+    state_store.save(state)
 
     class FakeProvider:
         def __init__(self, _config: object) -> None:
@@ -589,18 +596,27 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
         def exec_agent(
             self,
             project_root: str,
-            _prompt: str,
+            prompt: str,
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            constitution = Path(project_root) / "specs" / "001-demo" / "constitution.md"
-            constitution.parent.mkdir(parents=True, exist_ok=True)
-            constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
+            match = re.search(r"^ACTIVE_SPEC_DIR=(.+)$", prompt, re.MULTILINE)
+            assert match is not None
+            active_spec_dir = Path(match.group(1))
+            active_spec_dir.mkdir(parents=True, exist_ok=True)
+            (active_spec_dir / "spec.md").write_text(
+                "# Run-local repair\n",
+                encoding="utf-8",
+            )
+            (active_spec_dir / "requirements-overview.md").write_text(
+                "# Requirements Overview\n",
+                encoding="utf-8",
+            )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {"constitution_status": "complete"},
+                    "state_updates": {"evidence_resolution_status": "not_required"},
                     "journal_entries": [],
                 },
                 raw_output="",
@@ -609,9 +625,11 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
             )
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
+    constitution = tmp_path / ".echelon" / "constitution.md"
+    constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
 
     _cmd_phase(
-        ["run", "phase1-constitution", "--spec", "001"],
+        ["run", "phase1-what", "--spec", "001"],
         project_root=tmp_path,
         ext_dir=EXT_DIR,
     )
@@ -620,15 +638,19 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
     current = (run_dir / ".current").read_text(encoding="utf-8").strip()
     state = json.loads((run_dir / current / "state.json").read_text(encoding="utf-8"))
 
-    assert state["phase"] == "phase1-what"
-    assert state["spec_dir"] == "specs/001-demo"
+    assert state["phase"] == "phase1-understanding"
+    assert state["spec_dir"] == "runs/run-active/specs/001-demo"
     assert state["published_spec_dir"] == "specs/001-demo"
-    assert state["last_dispatch"]["phase_id"] == "phase1-constitution"
+    assert state["last_dispatch"]["phase_id"] == "phase1-what"
     assert state["last_dispatch"]["manual_phase_run"] is True
-    assert state["manual_phase_runs"][0]["phase_id"] == "phase1-constitution"
-    assert "phase1-constitution" in state["completed_phases"]
-    assert (spec_dir / "constitution.md").read_text(encoding="utf-8").startswith("# Constitution")
-    assert (spec_dir / "ARTIFACTS.md").exists()
+    assert state["manual_phase_runs"][0]["phase_id"] == "phase1-what"
+    assert "phase1-what" in state["completed_phases"]
+    run_local_spec_dir = tmp_path / state["spec_dir"]
+    assert (run_local_spec_dir / "spec.md").read_text(encoding="utf-8") == "# Run-local repair\n"
+    assert (run_local_spec_dir / "requirements-overview.md").exists()
+    assert not (published_spec_dir / "constitution.md").exists()
+    assert not (published_spec_dir / "ARTIFACTS.md").exists()
+    assert published_spec.read_text(encoding="utf-8") == "# Published Demo\n"
 
 
 @pytest.mark.parametrize(

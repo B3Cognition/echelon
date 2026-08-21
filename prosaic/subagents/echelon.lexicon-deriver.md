@@ -57,6 +57,47 @@ provider-free `phase1-lexicon` node.
 - If the source cannot be translated without changing its meaning, return
   `FAIL` and describe the exact source location. Do not modify the source.
 
+## Required Lexicon Form
+
+`requirements.lexicon.md` is a **Lexicon program**, not a Markdown summary.
+Do not write Markdown headings, prose sections, bullet lists, tables, or
+backtick-delimited constraint expressions in it. Only `#` comment metadata is
+permitted outside the controlled-grammar blocks.
+
+Begin with exact current-source metadata, then the required program header:
+
+```text
+# SOURCE: spec.md
+# SOURCE_SHA256: <64 lowercase hex digest of the current spec.md bytes>
+ARTIFACT: SPEC
+TITLE: <concise feature title>
+```
+
+Translate each source functional or non-functional requirement to a `REQ`
+block and each source acceptance criterion to an `AC` block. Use only the
+labels the grammar accepts. This is the required shape:
+
+```text
+REQ: FR-001
+GIVEN: <source-derived precondition>
+WHEN: <source-derived trigger>
+THEN: <one normative outcome using SHALL or SHALL NOT>
+OUTPUT: <observable result>
+CONSTRAINT: <source-derived measurable constraint>
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: <source-derived precondition>
+WHEN: <source-derived trigger>
+THEN: <observable outcome>
+CONSTRAINT: <source-derived measurable constraint>
+```
+
+`CONSTRAINT:` values may retain source-local measurement identifiers such as
+`view_count = 1`; they are not glossary concepts. Every other snake_case or
+CamelCase content term must resolve through the supplied glossary. Keep source
+provenance in the blocks above rather than adding explanatory Markdown.
+
 ## Result Contract
 
 Return exactly one derived output:

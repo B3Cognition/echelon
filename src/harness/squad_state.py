@@ -2183,6 +2183,56 @@ class SquadStateStore:
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
 
+    def discard_failed_automatic_decision_for_manual_phase_replay(
+        self,
+        phase_id: str,
+    ) -> bool:
+        """Clear one failed automatic safeguard before replaying its phase.
+
+        A Banzai controller-safeguard decision has no operator answer to
+        preserve.  If its automatic resolution failed, an explicit replay of
+        the same source phase is the durable recovery action: it re-runs the
+        phase and creates a fresh, sealed decision if one is still needed.
+        This deliberately cannot clear human gates, non-Banzai decisions, or
+        decisions from another phase.
+        """
+        if not isinstance(phase_id, str) or not phase_id.strip():
+            raise StateAdvanceError(
+                "manual replay phase identity is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        normalized_phase = phase_id.strip()
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            raw_decision = before.get("blocked_decision")
+            if not _is_human_input_decision_v2(raw_decision):
+                return False
+            decision = validate_blocked_decision_v2(raw_decision)
+            validate_decision_recovery_pair(
+                decision,
+                before.get("recovery_instruction"),
+            )
+            if (
+                decision["status"] != "failed"
+                or decision["source_kind"] != "controller_safeguard"
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_phase"] != normalized_phase
+            ):
+                return False
+
+            desired = deepcopy(before)
+            desired.pop("blocked_decision", None)
+            desired.pop("recovery_instruction", None)
+            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                desired.pop(key, None)
+            desired["status"] = "running"
+            desired["phase"] = normalized_phase
+            desired["blocked_reason"] = None
+            return bool(
+                self._commit_human_input_state_unlocked(before, desired)
+            )
+
     def apply_human_input_state_resolution(
         self,
         decision_id: str,
