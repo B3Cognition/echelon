@@ -10,6 +10,16 @@ from harness.stacks.resolver import ResolvedStacks
 CommandLocator = Callable[[str], str | None]
 CommandRunner = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
+REGISTRY_PROBE_COMMANDS: dict[str, list[str]] = {
+    "statsperform-nexus": [
+        "npm",
+        "view",
+        "@statsperform/playbook-cli",
+        "version",
+        "--registry=https://nexus.statsperform.tools/repository/public-npm/",
+    ],
+}
+
 
 @dataclass(frozen=True)
 class StackPreflightFinding:
@@ -104,6 +114,36 @@ def run_stack_preflight(
             )
 
     for registry in resolved.required_registries:
+        command = REGISTRY_PROBE_COMMANDS.get(registry)
+        if command is not None:
+            executable = command[0]
+            location = checked_commands.get(executable)
+            if executable not in checked_commands:
+                location = locator(executable)
+                checked_commands[executable] = location
+            if location is None:
+                findings.append(
+                    StackPreflightFinding(
+                        severity="warning",
+                        code="STACK_REGISTRY_UNVERIFIED",
+                        message=(
+                            f"Registry `{registry}` could not be probed because "
+                            f"`{executable}` is not available on PATH."
+                        ),
+                        command=command,
+                    )
+                )
+            else:
+                findings.extend(
+                    _run_registry_probe(
+                        registry=registry,
+                        command=command,
+                        runner=runner,
+                        timeout_seconds=timeout_seconds,
+                    )
+                )
+            continue
+
         findings.append(
             StackPreflightFinding(
                 severity="warning",
@@ -192,6 +232,53 @@ def _run_tool_probe(
                 f"{completed.returncode}.{detail}"
             ),
             tool_id=tool_id,
+            command=command,
+        )
+    ]
+
+
+def _run_registry_probe(
+    *,
+    registry: str,
+    command: list[str],
+    runner: CommandRunner,
+    timeout_seconds: int,
+) -> list[StackPreflightFinding]:
+    """Run a read-only package lookup using the registry's configured npm auth."""
+    try:
+        completed = runner(command, timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return [
+            StackPreflightFinding(
+                severity="warning",
+                code="STACK_REGISTRY_PROBE_TIMEOUT",
+                message=(
+                    f"Registry `{registry}` probe timed out after {timeout_seconds}s."
+                ),
+                command=command,
+            )
+        ]
+    except OSError as exc:
+        return [
+            StackPreflightFinding(
+                severity="warning",
+                code="STACK_REGISTRY_PROBE_ERROR",
+                message=f"Registry `{registry}` probe could not run: {exc}.",
+                command=command,
+            )
+        ]
+
+    if completed.returncode == 0:
+        return []
+
+    detail = _probe_detail(completed)
+    return [
+        StackPreflightFinding(
+            severity="warning",
+            code="STACK_REGISTRY_PROBE_FAILED",
+            message=(
+                f"Registry `{registry}` probe exited {completed.returncode}.{detail}"
+            ),
             command=command,
         )
     ]
