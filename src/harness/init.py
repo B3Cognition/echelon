@@ -32,6 +32,7 @@ except ImportError:
 from harness.app_runtime_detection import AppRuntimeDetectionResult, detect_app_runtime
 from harness.config import (
     CANONICAL_CONFIG_PATH,
+    CANONICAL_LOCAL_CONFIG_PATH,
     HarnessConfig,
     VALID_CONTAINER_CLIS,
 )
@@ -298,22 +299,42 @@ def _detect_llm_cli() -> str:
     return "claude"  # default; will error at runtime if not installed
 
 
-def _resolve_harness_llm_config(
-    existing: dict,
+def _write_local_llm_config(
+    base: Path,
     *,
     detected_cli: str,
-) -> dict:
-    """Preserve workspace LLM provider unless ECHELON_LLM explicitly overrides it."""
-    harness = existing.get("harness")
-    existing_llm = harness.get("llm") if isinstance(harness, dict) else {}
-    llm = dict(existing_llm) if isinstance(existing_llm, dict) else {}
+) -> None:
+    """Persist the developer-selected LLM provider in ignored local config."""
+    local_file = base / CANONICAL_LOCAL_CONFIG_PATH
+    existing: dict = {}
+    if yaml is not None and local_file.exists():
+        loaded = yaml.safe_load(local_file.read_text(encoding="utf-8")) or {}
+        if not isinstance(loaded, dict):
+            raise InitError(f"local config must be a mapping: {local_file}")
+        existing = loaded
+
+    harness = existing.setdefault("harness", {})
+    if not isinstance(harness, dict):
+        raise InitError("local config harness section must be a mapping")
+    llm = harness.setdefault("llm", {})
+    if not isinstance(llm, dict):
+        raise InitError("local config harness.llm section must be a mapping")
 
     env = os.environ.get("ECHELON_LLM", "").strip()
     if env in ("claude", "copilot", "opencode", "codex"):
         llm["cli"] = env
     elif not llm.get("cli"):
         llm["cli"] = detected_cli
-    return llm
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    if yaml is not None:
+        local_file.write_text(
+            yaml.dump(existing, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+    else:
+        import json
+
+        local_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 
@@ -579,8 +600,9 @@ def init_harness(
         "ci_skip_tag": config.ci_skip_tag,
         "pr_host": config.pr_host,
         "bind_mount_ack": config.bind_mount_ack,
-        "llm": _resolve_harness_llm_config(existing, detected_cli=_detect_llm_cli()),
     }
+
+    _write_local_llm_config(base, detected_cli=_detect_llm_cli())
 
     if yaml is not None:
         # Merge into the canonical config while preserving squad settings.

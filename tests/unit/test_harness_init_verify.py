@@ -12,7 +12,7 @@ from harness.config import load_config
 from harness.init import (
     _apply_verify_command_detection,
     _harness_config_file,
-    _resolve_harness_llm_config,
+    _write_local_llm_config,
 )
 
 
@@ -117,24 +117,32 @@ def test_harness_init_uses_canonical_config_for_legacy_workspace(tmp_path: Path)
 
 
 @pytest.mark.unit
-def test_harness_init_preserves_existing_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_harness_init_writes_detected_llm_provider_to_local_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("ECHELON_LLM", raising=False)
 
-    llm = _resolve_harness_llm_config(
-        {"harness": {"llm": {"cli": "codex", "timeout_ms": 600_000}}},
-        detected_cli="claude",
+    _write_local_llm_config(
+        tmp_path,
+        detected_cli="codex",
     )
 
-    assert llm == {"cli": "codex", "timeout_ms": 600_000}
+    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
+    assert local["harness"]["llm"]["cli"] == "codex"
 
 
 @pytest.mark.unit
-def test_harness_init_env_llm_overrides_existing_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_harness_init_env_llm_overrides_local_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ECHELON_LLM", "opencode")
+    local_path = tmp_path / ".echelon" / "local.yml"
+    local_path.parent.mkdir(parents=True)
+    local_path.write_text("harness:\n  llm:\n    cli: codex\n", encoding="utf-8")
 
-    llm = _resolve_harness_llm_config(
-        {"harness": {"llm": {"cli": "codex", "timeout_ms": 600_000}}},
+    _write_local_llm_config(
+        tmp_path,
         detected_cli="claude",
     )
 
-    assert llm == {"cli": "opencode", "timeout_ms": 600_000}
+    local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+    assert local["harness"]["llm"]["cli"] == "opencode"

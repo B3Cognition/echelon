@@ -564,6 +564,20 @@ def _ensure_local_config_ignored(project_dir: Path) -> None:
     gitignore.write_text(f"{existing}{suffix}{entry}\n", encoding="utf-8")
 
 
+def _assert_local_config_untracked(project_dir: Path) -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", ".echelon/local.yml"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        raise ValueError(
+            ".echelon/local.yml is tracked; remove it from Git before storing "
+            "developer-local LLM settings"
+        )
+
+
 def _write_unsafe_host_execution_local_override(project_dir: Path, yaml_module) -> Path:
     local_cfg = project_dir / ".echelon" / "local.yml"
     local_cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -728,23 +742,38 @@ def _cmd_init(
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
+    local_cfg = project_dir / ".echelon" / "local.yml"
     try:
+        _assert_local_config_untracked(project_dir)
+        local_config = (
+            yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
+            if local_cfg.exists()
+            else {}
+        )
+        if not isinstance(local_config, dict):
+            raise ValueError(f"local config must be a mapping: {local_cfg}")
         selected_llm_cli = _apply_workspace_llm_selection(
-            config,
+            local_config,
             llm_cli=llm_cli,
             openai_base_url=openai_base_url,
             openai_model=openai_model,
             openai_api_key_file=openai_api_key_file,
             openai_api_key_env=openai_api_key_env,
         )
+        local_cfg.parent.mkdir(parents=True, exist_ok=True)
+        local_cfg.write_text(
+            yaml.dump(local_config, default_flow_style=False, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        _ensure_local_config_ignored(project_dir)
     except Exception as e:
-        print(f"✗ Cannot write workspace LLM provider: {e}", file=sys.stderr)
+        print(f"✗ Cannot write local LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
     echelon_cfg.write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"✓ LLM provider configured: {selected_llm_cli}")
+    print(f"✓ local LLM provider configured: {selected_llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
@@ -1273,6 +1302,11 @@ def _cmd_harness_init(
         command_name=_command_display(command_prefix, args),
     )
     bind_mount_ack = os.environ.get("HARNESS_BIND_MOUNT_ACK", "").lower() in ("true", "1", "yes")
+    try:
+        _assert_local_config_untracked(Path(base_dir))
+    except ValueError as exc:
+        print(f"✗ {command_prefix} failed: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     from harness.init import init_harness, InitError
     try:
@@ -1284,6 +1318,8 @@ def _cmd_harness_init(
     except InitError as e:
         print(f"✗ {command_prefix} failed: {e}", file=sys.stderr)
         sys.exit(1)
+
+    _ensure_local_config_ignored(Path(base_dir))
 
     config_file = _project_echelon_config(Path(base_dir))
     from harness.paths import mirror_path as _mirror_path_fn

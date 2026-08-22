@@ -1242,8 +1242,9 @@ harness:
 
   # --- LLM Provider ---
 
-  # LLM provider used by Echelon commands.
-  # Overrides ECHELON_LLM env var when set.
+  # LLM provider settings are developer-local. Configure them with
+  # `echelon workspace init --llm <provider>`, which writes .echelon/local.yml.
+  # ECHELON_LLM overrides the local setting for the current process.
   # Build-capable CLIs: claude (default) | copilot | opencode | codex
   # Artifact-only API provider: openai-compatible
   # llm:
