@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import ClassVar, Literal, Mapping
 import unicodedata
@@ -1258,6 +1258,7 @@ class SourceBaselineRootV1:
 @dataclass(frozen=True, slots=True)
 class AcceptedDependencySetV2:
     by_role: Mapping[str, AcceptedArtifactV2]
+    payloads_by_hash: Mapping[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.by_role, Mapping):
@@ -1277,6 +1278,55 @@ class AcceptedDependencySetV2:
             "by_role",
             MappingProxyType(dict(sorted(copied.items()))),
         )
+        if not isinstance(self.payloads_by_hash, Mapping):
+            raise Protocol22SchemaError(
+                "AcceptedDependencySetV2.payloads_by_hash must be a mapping"
+            )
+        payloads: dict[str, bytes] = {}
+        for artifact_hash, payload in self.payloads_by_hash.items():
+            digest_value(
+                artifact_hash,
+                "AcceptedDependencySetV2 payload content address",
+            )
+            if not isinstance(payload, bytes):
+                raise Protocol22SchemaError(
+                    "AcceptedDependencySetV2 payload values must be bytes"
+                )
+            if content_digest(payload) != artifact_hash:
+                raise Protocol22SchemaError(
+                    "dependency payload does not match its content address"
+                )
+            payloads[artifact_hash] = payload
+        object.__setattr__(
+            self,
+            "payloads_by_hash",
+            MappingProxyType(dict(sorted(payloads.items()))),
+        )
+
+    def payload_for_role(self, role: str) -> bytes:
+        artifact = self.by_role.get(role)
+        if artifact is None:
+            raise Protocol22SchemaError(
+                f"accepted dependency role is missing: {role}"
+            )
+        payload = self.payloads_by_hash.get(artifact.artifact_hash)
+        if payload is None:
+            raise Protocol22SchemaError(
+                f"accepted dependency payload is missing for role: {role}"
+            )
+        return payload
+
+    def payload_for_hash(self, artifact_hash: str) -> bytes:
+        digest_value(
+            artifact_hash,
+            "AcceptedDependencySetV2 requested payload hash",
+        )
+        payload = self.payloads_by_hash.get(artifact_hash)
+        if payload is None:
+            raise Protocol22SchemaError(
+                f"accepted dependency closure payload is missing: {artifact_hash}"
+            )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)

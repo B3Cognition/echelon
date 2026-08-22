@@ -286,6 +286,36 @@ def test_accepted_dependency_set_is_closed_sorted_and_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_accepted_dependency_payloads_are_hash_verified_and_immutable() -> None:
+    payload = canonical_json_bytes({"accepted": True})
+    artifact_hash = content_digest(payload)
+    closure_payload = canonical_json_bytes({"transitive": True})
+    closure_hash = content_digest(closure_payload)
+    dependencies = AcceptedDependencySetV2(
+        by_role={
+            "domain_inventory": AcceptedArtifactV2(
+                digest("inventory-key"), artifact_hash
+            )
+        },
+        payloads_by_hash={
+            artifact_hash: payload,
+            closure_hash: closure_payload,
+        },
+    )
+
+    assert dependencies.payload_for_role("domain_inventory") == payload
+    assert dependencies.payload_for_hash(closure_hash) == closure_payload
+    with pytest.raises(TypeError):
+        dependencies.payloads_by_hash[artifact_hash] = b"changed"  # type: ignore[index]
+    with pytest.raises(Protocol22SchemaError, match="content address"):
+        replace(dependencies, payloads_by_hash={artifact_hash: b"changed"})
+    with pytest.raises(Protocol22SchemaError, match="payload.*missing"):
+        AcceptedDependencySetV2(
+            by_role=dependencies.by_role,
+        ).payload_for_role("domain_inventory")
+
+
+@pytest.mark.unit
 def test_deterministic_assessment_truth_values_bind_diagnostics() -> None:
     accepted = DeterministicAssessmentInputV2(
         canonical_schema_valid=True,
