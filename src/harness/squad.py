@@ -274,6 +274,12 @@ class _DispatchCapEvidenceError(HumanInputPolicyError):
         self.reason_code = reason_code
 
 
+def _human_input_policy_error_code(error: HumanInputPolicyError) -> str:
+    """Return a stable diagnostic code without exposing provider-controlled text."""
+    del error
+    return "human_input_policy_invalid"
+
+
 class _BoundedUtf8Builder:
     """Accumulate text without encoding or retaining more than one byte budget."""
 
@@ -901,6 +907,7 @@ class SquadController:
         implementation_targets: list[str] | None = None,
         re_sources: list[str] | None = None,
         product_inputs: object | None = None,
+        stack_contract: dict[str, object] | None = None,
     ) -> None:
         existing_state = state_store.load()
         resolved_squad_dir = squad_dir or state_store.squad_dir
@@ -944,6 +951,7 @@ class SquadController:
         self._implementation_targets = list(implementation_targets or [])
         self._re_sources = list(re_sources or [])
         self._product_inputs = product_inputs
+        self._stack_contract = dict(stack_contract or {})
         self._prepared_product_input_updates: dict[
             str,
             dict[str, object],
@@ -5246,6 +5254,7 @@ class SquadController:
                 ),
                 ignore_re=self._ignore_re,
                 requested_re_sources=self._re_sources,
+                stack_contract=self._stack_contract,
             )
             if prepared_identity:
                 initialized = self._state_store.load()
@@ -10503,7 +10512,7 @@ class SquadController:
                     "provider question and controller safeguard overlap"
                 )
             request = provider_request or routing.human_input
-        except HumanInputPolicyError:
+        except HumanInputPolicyError as exc:
             self._discard_publication_without_authority(
                 prepared_publication,
             )
@@ -10513,7 +10522,7 @@ class SquadController:
                 StateAdvanceError(
                     "provider human-input preparation failed",
                     json_path="$.state_updates.escalation_question",
-                    validator="human_input_policy",
+                    validator=_human_input_policy_error_code(exc),
                 ),
                 decision=decision,
                 token_usage_delta=decision.token_usage_delta,
@@ -11966,6 +11975,9 @@ class SquadController:
             f"{json.dumps(valid_phases, indent=2)}\n\n"
             f"**State:**\n```json\n{json.dumps(state, indent=2)}\n```\n\n"
         )
+        from harness.squad_executors import _render_controller_owned_prompt_context
+
+        context += _render_controller_owned_prompt_context(state)
         context = read_prompt_markdown(commander_path).body + "\n\n" + context
         with self._telemetry_provider.dispatch(
             DispatchContext(node.id, "COMMANDER", "judgment", 1)

@@ -7005,6 +7005,19 @@ def _resolve_spec_run_implementation_targets(
     return resolved
 
 
+def _fresh_stack_contract_or_exit(project_root: Path) -> dict[str, object]:
+    """Freeze selected-stack guidance before a fresh controller run starts."""
+    from harness.stack_contract import StackContractError, build_stack_contract
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        selection = get_stack_selection(project_root, definitions)
+        return build_stack_contract(selection, definitions)
+    except (StackError, StackContractError, StackSelectionError) as exc:
+        print(f"✗ echelon spec run: selected stack contract is invalid: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -7273,6 +7286,7 @@ def _cmd_run(
             print(f"✗ echelon spec run: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
 
+    stack_contract = _fresh_stack_contract_or_exit(project_root) if is_fresh else None
     provider = SquadCliProvider(config)
     from harness.phase_graph import load_workspace_phase_graph
     graph, ext_dir = load_workspace_phase_graph(project_root)
@@ -7304,6 +7318,7 @@ def _cmd_run(
         implementation_targets=implementation_targets,
         re_sources=re_sources,
         product_inputs=product_inputs,
+        stack_contract=stack_contract,
     )
 
     _print_cost_summary(project_root)

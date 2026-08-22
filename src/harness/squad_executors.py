@@ -35,6 +35,7 @@ from harness.agent_context import (
     write_context_budget_report,
 )
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.stack_contract import render_stack_contract
 from harness.state_transaction_namespace import store_owned_update_keys
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
@@ -545,6 +546,22 @@ def _render_product_input_context(state: dict) -> str:
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_controller_owned_prompt_context(state: dict) -> str:
+    """Render immutable run inputs shared by every provider dispatch."""
+    stack_context = render_stack_contract(state.get("stack_contract"))
+    staging_dir = state.get("staging_dir")
+    if not isinstance(staging_dir, str) or not staging_dir:
+        return stack_context
+    receipt_path = Path(staging_dir) / "user-clarifications.md"
+    try:
+        receipt = receipt_path.read_text(encoding="utf-8")
+    except OSError:
+        return stack_context
+    if not receipt.strip():
+        return stack_context
+    return stack_context + "## Resolved Clarifications\n\n" + receipt.strip() + "\n\n"
 
 
 def _render_controller_repair_context(state: dict) -> str:
@@ -1859,6 +1876,7 @@ class PhaseExecutor(ABC):
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_owned_prompt_context(state)}"
             f"{_render_controller_repair_context(state)}"
             f"{_render_issue_resolution_context(state)}"
             f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
@@ -2004,6 +2022,7 @@ class PhaseExecutor(ABC):
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
+            + _render_controller_owned_prompt_context(state)
             + _render_controller_repair_context(state)
             + _render_published_re_context(state)
             + self._extension_path_context()
@@ -2671,6 +2690,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_owned_prompt_context(state)}"
             f"{_render_controller_repair_context(state)}"
             f"{_render_certified_understanding_context(state, mode_label)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
@@ -2912,6 +2932,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
+                        + _render_controller_owned_prompt_context(state)
                         + _render_controller_repair_context(state)
                     )
                     prompt = prompt.replace("{spec_dir}", spec_dir_ref)
