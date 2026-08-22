@@ -33,6 +33,7 @@ class ReV2Paths:
     ledger: Path
     candidates: Path
     objects: Path
+    inputs: Path
 
     @classmethod
     def for_run(cls, run_dir: Path) -> "ReV2Paths":
@@ -48,6 +49,7 @@ class ReV2Paths:
             ledger=root / "ledger.jsonl",
             candidates=root / "candidates",
             objects=root / "objects",
+            inputs=root / "inputs",
         )
 
 
