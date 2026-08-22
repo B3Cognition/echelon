@@ -27,6 +27,7 @@ from harness.re_v2.protocol_22.execution import (
     Protocol22ExecutionStore,
     ProviderExecutionDependenciesV1,
     StagingReady,
+    preview_dispatch_reservation,
 )
 from harness.re_v2.protocol_22.graph import (
     build_protocol_22_graph,
@@ -144,6 +145,28 @@ def _candidate_root(tmp_path: Path, payload: bytes | None = b'{"ok":true}') -> P
         (root / "baseline.json").write_bytes(payload)
         (root / "baseline.json").chmod(0o600)
     return root
+
+
+def test_dispatch_preview_matches_provider_preparation_without_filesystem_writes(
+    tmp_path: Path,
+) -> None:
+    item, dependencies = _provider_dependencies()
+    before = tuple(tmp_path.iterdir())
+
+    preview = preview_dispatch_reservation(
+        item,
+        "initial_generation",
+        dependencies,
+    )
+
+    assert tuple(tmp_path.iterdir()) == before
+    prepared = _store(tmp_path).prepare_execution(
+        item,
+        "initial_generation",
+        dependencies,
+    )
+    assert preview.dispatch_id == prepared.dispatch_id
+    assert preview.reservation == prepared.reservation
 
 
 def _object_path(objects: ObjectStore, object_hash: str) -> Path:

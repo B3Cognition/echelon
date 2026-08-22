@@ -127,6 +127,8 @@ class Protocol22Controller:
         # Preserve recovery's non-mutating pinned-authority return before the
         # run lock itself is allowed to create a lock file.
         initial = recover_protocol_22_run(self.context, self.fault_hook)
+        if initial.operational_state in {"paused", "terminal"}:
+            self._materialize_accepted_l1()
         stopped = _stopped_recovery(initial)
         if stopped is not None:
             return stopped
@@ -138,6 +140,7 @@ class Protocol22Controller:
             )
             maximum_steps = len(self.context.graph.templates) * 3 + 4
             for _step in range(maximum_steps):
+                self._materialize_accepted_l1()
                 stopped = _stopped_recovery(recovery)
                 if stopped is not None:
                     return stopped
@@ -183,6 +186,11 @@ class Protocol22Controller:
             raise Protocol22ControllerError(
                 "protocol-2.2 controller exceeded its closed dispatch bound"
             )
+
+    def _materialize_accepted_l1(self) -> None:
+        from .materialization import validate_or_repair_materialization
+
+        validate_or_repair_materialization(self.context, self.fault_hook)
 
     def _execute_one(
         self,

@@ -548,6 +548,94 @@ class StartedExecutionLeaseV1:
             raise Protocol22ExecutionError(str(exc)) from exc
 
 
+@dataclass(frozen=True, slots=True)
+class DispatchPreviewV1:
+    """Pure dispatch identity and reservation preview for read-only status."""
+
+    dispatch_id: str
+    reservation: DispatchReservationV1 | InProcessDispatchReservationV1
+
+
+def preview_dispatch_reservation(
+    work_item: WorkItemV2,
+    attempt_kind: str,
+    dependencies: PreparationDependenciesV1,
+) -> DispatchPreviewV1:
+    """Calculate the exact next reservation without publishing any objects."""
+    _validate_item_executor(work_item, dependencies.executor)
+    _validate_installed(dependencies.executor, dependencies.registry)
+    dispatch_id = _dispatch_id(work_item, attempt_kind)
+    executor = dependencies.executor
+    if isinstance(dependencies, ProviderExecutionDependenciesV1):
+        if (attempt_kind == "initial_generation") != (
+            not dependencies.retry_diagnostics
+        ):
+            raise Protocol22ExecutionError(
+                "provider retry diagnostics must exist exactly for retry attempts"
+            )
+        if executor.execution_mode != "api":
+            raise Protocol22ExecutionError(
+                "provider preview requires API execution mode"
+            )
+        schema_hash = content_digest(dependencies.response_schema_bytes)
+        envelope = render_provider_request_envelope(
+            work_item,
+            dispatch_id,
+            dependencies.agent_bytes,
+            dependencies.context_bytes,
+            executor,
+            schema_hash,
+            dependencies.retry_diagnostics,
+        )
+        reservation = calculate_bounded_dispatch_reservation(
+            envelope,
+            dependencies.response_schema_bytes,
+            executor,
+            dependencies.tokenizer,
+        )
+        return DispatchPreviewV1(dispatch_id, reservation)
+    if isinstance(dependencies, DeterministicExecutionDependenciesV1):
+        if attempt_kind != "initial_generation":
+            raise Protocol22ExecutionError(
+                "deterministic preview cannot use a retry attempt"
+            )
+        if (
+            executor.execution_mode != "in_process"
+            or executor.reservation_calculator.calculator_id != IN_PROCESS_CALCULATOR_ID
+        ):
+            raise Protocol22ExecutionError(
+                "deterministic preview requires bounded in-process execution"
+            )
+        _validate_invocation(
+            work_item,
+            dependencies.invocation,
+            dependencies.workspace_partition_hash,
+        )
+        return DispatchPreviewV1(
+            dispatch_id,
+            InProcessDispatchReservationV1(
+                billable_tokens=0,
+                active_ms=executor.limits.max_active_ms_per_dispatch,
+            ),
+        )
+    raise Protocol22ExecutionError(
+        "dispatch preview dependencies select no closed execution branch"
+    )
+
+
+def dispatch_id_for(work_item: WorkItemV2, attempt_kind: str) -> str:
+    """Return the deterministic dispatch identity without publishing state."""
+    if not isinstance(work_item, WorkItemV2):
+        raise Protocol22ExecutionError("dispatch identity requires WorkItemV2")
+    if attempt_kind not in {
+        "initial_generation",
+        "result_contract_retry",
+        "artifact_contract_retry",
+    }:
+        raise Protocol22ExecutionError("dispatch identity has unsupported attempt kind")
+    return _dispatch_id(work_item, attempt_kind)
+
+
 class Protocol22ExecutionStore:
     """Content-address execution bytes and publish one no-clobber capture commit."""
 
@@ -2192,7 +2280,9 @@ __all__ = (
     "Committed",
     "Conflict",
     "DeterministicExecutionDependenciesV1",
+    "dispatch_id_for",
     "DeterministicRawResultV1",
+    "DispatchPreviewV1",
     "InProcessDispatchReservationV1",
     "Missing",
     "PreparedExecutionV1",
@@ -2202,4 +2292,5 @@ __all__ = (
     "StagingReady",
     "StartedExecutionLeaseV1",
     "ValidatedCaptureClosureV1",
+    "preview_dispatch_reservation",
 )

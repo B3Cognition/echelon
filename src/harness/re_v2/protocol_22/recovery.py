@@ -310,6 +310,22 @@ def recover_protocol_22_run(
     )
 
 
+def installed_authority_mismatches(
+    inputs: ValidatedProtocol22Inputs,
+    registry: InstalledAuthorityRegistry,
+) -> tuple[AuthorityMismatch, ...]:
+    """Expose the pure installed-versus-pinned authority comparison."""
+    if not isinstance(inputs, ValidatedProtocol22Inputs):
+        raise Protocol22RecoveryError(
+            "authority comparison requires authenticated protocol-2.2 inputs"
+        )
+    if not isinstance(registry, InstalledAuthorityRegistry):
+        raise Protocol22RecoveryError(
+            "authority comparison requires InstalledAuthorityRegistry"
+        )
+    return _installed_mismatches(inputs, registry)
+
+
 def recover_protocol_22_run_locked(
     context: Protocol22RunContext,
     fault_hook: FaultHook | None = None,
@@ -1480,8 +1496,7 @@ def _validate_orphan_work_failure(
         event.type == "candidate_persisted"
         and event.payload["candidate_id"] == receipt.candidate_id
         and event.payload["work_item_id"] == receipt.work_item_id
-        and event.payload["execution_capture_hash"]
-        == receipt.execution_capture_hash
+        and event.payload["execution_capture_hash"] == receipt.execution_capture_hash
         for event in events
     ):
         raise Protocol22RecoveryError(
@@ -1712,6 +1727,7 @@ __all__ = (
     "Protocol22RecoveryResult",
     "Protocol22RunContext",
     "candidate_reconstructs_result_contract",
+    "installed_authority_mismatches",
     "protocol_22_run_lock",
     "recover_protocol_22_run",
     "recover_protocol_22_run_locked",

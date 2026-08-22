@@ -535,6 +535,8 @@ def _baseline_context(
     scripts: Mapping[str, list[str]] | None = None,
     tokenizer_override: object | None = None,
     source_domains: Mapping[str, tuple[str, ...]] | None = None,
+    active_ms_limit: int | None = None,
+    token_limit: int | None = None,
 ) -> tuple[Protocol22RunContext, _ScriptedProvider]:
     if source_domains is None:
         input_set, raw_manifest = _input_fixture()
@@ -553,7 +555,16 @@ def _baseline_context(
                 content_digest(source_schema): source_schema,
             },
         )
-    manifest = replace(raw_manifest, run_id=f"re-baseline-controller-{tmp_path.name}")
+    budget = raw_manifest.initial_budget_policy
+    if active_ms_limit is not None:
+        budget = replace(budget, active_ms_limit=active_ms_limit)
+    if token_limit is not None:
+        budget = replace(budget, token_limit=token_limit)
+    manifest = replace(
+        raw_manifest,
+        run_id=f"re-baseline-controller-{tmp_path.name}",
+        initial_budget_policy=budget,
+    )
     paths = create_protocol_22_run_store(
         tmp_path / manifest.run_id, manifest, input_set
     )
