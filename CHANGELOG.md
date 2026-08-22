@@ -162,6 +162,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-165 layered compact RE baseline** — Opt-in RE v2 protocol `2.2`
+  now makes the bounded L0 inventory and L1 compact baseline an explicit
+  dependency graph with source-, content-, partition-, domain-, layer-,
+  policy-, producer-, and verifier-scoped artifact identity. `echelon re run
+  --engine v2` defaults to the compact baseline goal, while `--goal inventory`
+  remains a deterministic L0-only option. The baseline uses one pinned,
+  tool-free bounded API call per domain or source overview, exact conservative
+  reservations when provider usage is unavailable, one shared retry at most,
+  controller certification, immutable run-local JSON/Markdown projections,
+  explicit debt and rational coverage, terminal banners, and crash recovery
+  from committed captures without paid redispatch. RE v1 remains the default
+  engine; checkpoint adoption, semantic audit epochs, workspace synthesis,
+  selective L2-L4 deepening, and atomic repair remain EGR-166 through EGR-170.
+
 - **EGR-164 opt-in pinned RE v2 kernel** — `echelon re run --engine v2`
   now freezes the source, pins engine/protocol, partition, goals,
   provider/result contract, artifact policy, and independent budgets, then

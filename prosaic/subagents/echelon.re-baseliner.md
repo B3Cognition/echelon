@@ -48,7 +48,7 @@ NEVER add paths, hashes, sizes, scope, dependencies, evidence, verdicts, or cove
 3. Preserve claim and unknown order. Sort evidence references only as required by the supplied schema.
 4. Return no controller-owned fields and make no completeness, audit, synthesis, or exhaustive-quality claim.
 
-## Output Contract
+## Output Block
 
 ```yaml
 echelon_result:

@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Lock, Thread
 import time
-from typing import Mapping
+from typing import Callable, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +23,7 @@ class CapturedRequest:
 @dataclass(frozen=True, slots=True)
 class ScriptedResponse:
     status: int = 200
-    body: object = field(default_factory=dict)
+    body: object | Callable[[CapturedRequest], object] = field(default_factory=dict)
     delay_seconds: float = 0.0
     headers: Mapping[str, str] = field(default_factory=dict)
 
@@ -69,11 +69,16 @@ class ScriptedBoundedApi:
                     response = fixture._select_response(captured)
                 if response.delay_seconds:
                     time.sleep(response.delay_seconds)
+                response_body = (
+                    response.body(captured)
+                    if callable(response.body)
+                    else response.body
+                )
                 payload = (
-                    response.body
-                    if isinstance(response.body, bytes)
+                    response_body
+                    if isinstance(response_body, bytes)
                     else json.dumps(
-                        response.body,
+                        response_body,
                         sort_keys=True,
                         separators=(",", ":"),
                     ).encode("utf-8")

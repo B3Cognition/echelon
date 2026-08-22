@@ -148,6 +148,12 @@ class Protocol22Controller:
                     raise Protocol22ControllerError(
                         "ready recovery omitted ledger or budget authority"
                     )
+                if self._resume_durable_dispatch(recovery):
+                    recovery = recover_protocol_22_run_locked(
+                        self.context,
+                        self.fault_hook,
+                    )
+                    continue
                 if self._record_exhausted_abandonment(recovery):
                     recovery = recover_protocol_22_run_locked(
                         self.context,
@@ -191,6 +197,203 @@ class Protocol22Controller:
         from .materialization import validate_or_repair_materialization
 
         validate_or_repair_materialization(self.context, self.fault_hook)
+
+    def _resume_durable_dispatch(
+        self,
+        recovery: Protocol22RecoveryResult,
+    ) -> bool:
+        """Finish post-execution work solely from committed run authority."""
+        if recovery.ledger is None or recovery.budget is None:
+            return False
+        ledger = recovery.ledger
+        latest_by_work: dict[str, EventRecord] = {}
+        for event in recovery.events:
+            if event.type == "dispatch_started":
+                latest_by_work[str(event.payload["work_item_id"])] = event
+        for started in sorted(latest_by_work.values(), key=lambda event: event.seq):
+            work_item_id = str(started.payload["work_item_id"])
+            item = _reconstruct_work_item(self.context, ledger, work_item_id)
+            if item is None:
+                raise Protocol22ControllerError(
+                    "durable dispatch cannot be reconstructed from graph authority"
+                )
+            if (
+                ledger.artifact_for_key(item.output_key.identity) is not None
+                or ledger.work_failure(item.work_item_id) is not None
+                or ledger.executor_failure(item.executor_contract_hash) is not None
+            ):
+                continue
+            dispatch_id = str(started.payload["dispatch_id"])
+            observation = next(
+                (
+                    event
+                    for event in recovery.events
+                    if event.type == "dispatch_observed"
+                    and event.payload["dispatch_id"] == dispatch_id
+                ),
+                None,
+            )
+            if observation is None:
+                continue
+            state = self.context.execution_store.capture_state(dispatch_id)
+            if not isinstance(state, Committed):
+                raise Protocol22ControllerError(
+                    "observed durable dispatch has no committed capture"
+                )
+            attempt_kind = str(started.payload["attempt_kind"])
+            dependencies = resolve_execution_dependencies(
+                self.context,
+                item,
+                attempt_kind,
+            )
+            if isinstance(dependencies, DeterministicExecutionDependenciesV1):
+                self._resume_deterministic_dispatch(item, state, ledger)
+                return True
+            if not isinstance(dependencies, ProviderExecutionDependenciesV1):
+                raise Protocol22ControllerError(
+                    "durable dispatch has no closed execution branch"
+                )
+            return self._resume_provider_dispatch(
+                item,
+                state,
+                dependencies,
+                observation,
+                ledger,
+                recovery.budget,
+                attempt_kind,
+            )
+        return False
+
+    def _resume_deterministic_dispatch(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+        ledger: Protocol22LedgerView,
+    ) -> None:
+        certifications = [
+            receipt
+            for receipt_id, receipt in ledger.certifications.items()
+            if ledger.certification_work_items[receipt_id].work_item_id
+            == item.work_item_id
+        ]
+        if len(certifications) > 1:
+            raise Protocol22ControllerError(
+                "deterministic dispatch has multiple certification receipts"
+            )
+        if certifications:
+            certification = certifications[0]
+            if certification.verdict == "accepted":
+                self._accept_artifact(item, certification, None)
+            else:
+                self._record_executor_failure(
+                    item,
+                    committed,
+                    "deterministic_artifact_invalid",
+                    tuple(certification.assessment.normalized_diagnostics),
+                )
+            return
+        self._certify_deterministic_capture(item, committed)
+
+    def _resume_provider_dispatch(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+        dependencies: ProviderExecutionDependenciesV1,
+        observation: EventRecord,
+        ledger: Protocol22LedgerView,
+        budget: BudgetDecisionV2,
+        attempt_kind: str,
+    ) -> bool:
+        candidate_event = next(
+            (
+                event
+                for event in self.context.event_store.replay()
+                if event.type == "candidate_persisted"
+                and event.payload["dispatch_id"] == committed.dispatch_id
+            ),
+            None,
+        )
+        if candidate_event is None:
+            raise Protocol22ControllerError(
+                "provider dispatch has no durable candidate event"
+            )
+        candidate_id = str(candidate_event.payload["candidate_id"])
+        assessments = [
+            assessment
+            for assessment in ledger.candidate_assessments.values()
+            if assessment.candidate_id == candidate_id
+        ]
+        if len(assessments) > 1:
+            raise Protocol22ControllerError(
+                "provider candidate has multiple assessment receipts"
+            )
+        if assessments:
+            assessment = assessments[0]
+            if assessment.outcome == "certified":
+                if assessment.certification_receipt_id is None:
+                    raise Protocol22ControllerError(
+                        "certified candidate has no certification receipt"
+                    )
+                certification = ledger.certifications[
+                    assessment.certification_receipt_id
+                ]
+                self._accept_artifact(item, certification, assessment.identity)
+                return True
+            if budget.item_attempt_available(item):
+                return False
+            failure_class, reason_code = _artifact_failure(
+                tuple(assessment.normalized_diagnostics)
+            )
+            self._retry_or_fail_work_item(
+                item,
+                committed,
+                candidate_id=candidate_id,
+                candidate_assessment_id=assessment.identity,
+                failure_class=failure_class,
+                reason_code=reason_code,
+                diagnostics=tuple(assessment.normalized_diagnostics),
+            )
+            return True
+
+        prepared = self.context.execution_store.prepare_execution(
+            item,
+            attempt_kind,
+            dependencies,
+        )
+        self.context.execution_store.validate_prepared_execution(
+            prepared,
+            item,
+            dependencies,
+        )
+        if _usage_exceeds_reservation(observation.payload, prepared):
+            self._record_provider_executor_failure(
+                item,
+                committed,
+                candidate_id,
+                "usage_exceeded_reservation",
+            )
+            return True
+        raw_status = observation.payload["raw_result_contract_status"]
+        if raw_status == "invalid" and not candidate_reconstructs_result_contract(
+            item,
+            committed.closure,
+            self.context.object_store,
+            self.context.inputs,
+        ):
+            if budget.item_attempt_available(item):
+                return False
+            self._retry_or_fail_work_item(
+                item,
+                committed,
+                candidate_id=candidate_id,
+                candidate_assessment_id=None,
+                failure_class="result_contract",
+                reason_code="result_unrecoverable",
+                diagnostics=("result_unrecoverable",),
+            )
+            return True
+        self._certify_provider_candidate(item, committed, candidate_id)
+        return True
 
     def _execute_one(
         self,
@@ -346,6 +549,14 @@ class Protocol22Controller:
             self.fault_hook,
         )
         self._append_deterministic_observation(committed)
+        self._certify_deterministic_capture(item, committed)
+
+    def _certify_deterministic_capture(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+    ) -> None:
+        payload = committed.closure.deterministic_artifact_bytes
         if payload is None:
             self._record_executor_failure(
                 item,
@@ -354,6 +565,7 @@ class Protocol22Controller:
                 ("deterministic_execution_failed",),
             )
             return
+        accepted = accepted_dependencies_for(self.context, item)
         verifier = _runtime_for(
             self.context.verifiers,
             item.verifier_id,
@@ -646,6 +858,10 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(
+            self.fault_hook,
+            f"{event_type}:{result.candidate_assessment.identity}",
+        )
         if result.certification.verdict == "accepted":
             self._accept_artifact(
                 item,
@@ -695,6 +911,7 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(self.fault_hook, f"candidate_rejected:{assessment.identity}")
         self._retry_or_fail_work_item(
             item,
             committed,
@@ -754,6 +971,7 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(self.fault_hook, f"work_item_failed:{receipt.identity}")
 
     def _record_provider_executor_failure(
         self,
@@ -783,6 +1001,7 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(self.fault_hook, f"executor_failed:{receipt.identity}")
 
     def _record_pre_dispatch_executor_failure(
         self,
@@ -810,6 +1029,7 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(self.fault_hook, f"executor_failed:{receipt.identity}")
 
     def _record_exhausted_abandonment(
         self,
@@ -865,6 +1085,7 @@ class Protocol22Controller:
                 },
                 occurred_at=self.context.clock(),
             )
+            _fault(self.fault_hook, f"work_item_failed:{receipt.identity}")
             return True
         return False
 
@@ -944,6 +1165,7 @@ class Protocol22Controller:
             },
             occurred_at=self.context.clock(),
         )
+        _fault(self.fault_hook, f"executor_failed:{receipt.identity}")
 
 
 def _result_from_recovery(

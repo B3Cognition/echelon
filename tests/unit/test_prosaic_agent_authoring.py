@@ -20,8 +20,8 @@ def _rule_sections(body: str) -> list[str]:
 
 
 def _output_contract(body: str) -> dict[str, object]:
-    match = re.search(r"(?ms)^## Output Contract\n+```yaml\n(.*?)```", body)
-    assert match is not None, "baseliner must expose a machine-readable output contract"
+    match = re.search(r"(?ms)^## Output Block\n+```yaml\n(.*?)```", body)
+    assert match is not None, "baseliner must expose a machine-readable output block"
     loaded = yaml.safe_load(match.group(1))
     assert isinstance(loaded, dict)
     return loaded

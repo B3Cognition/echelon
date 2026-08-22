@@ -217,10 +217,18 @@ def test_dry_run_rejects_activation_before_run_creation(tmp_path: Path) -> None:
         tmp_path,
         relative_path="src/echelon/cli.py",
         replace=(
-            "    create_run_store(run_dir, manifest)\n"
+            "    create_protocol_22_run_store(\n"
+            "        run_dir,\n"
+            "        prepared.manifest,\n"
+            "        prepared.inputs,\n"
+            "    )\n"
             "    _activate_re_v2_run(workspace_root, run_id)",
             "    _activate_re_v2_run(workspace_root, run_id)\n"
-            "    create_run_store(run_dir, manifest)",
+            "    create_protocol_22_run_store(\n"
+            "        run_dir,\n"
+            "        prepared.manifest,\n"
+            "        prepared.inputs,\n"
+            "    )",
         ),
     )
 
