@@ -44,7 +44,7 @@ from harness.repair_loop import (
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
-from harness.spec_frontmatter import find_spec_dir, read_targets
+from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
 from harness.stacks.context import build_stack_context
 from harness.visual_ralph import VisualRalphController
 from harness.state import (
