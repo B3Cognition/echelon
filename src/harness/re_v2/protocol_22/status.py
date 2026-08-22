@@ -43,7 +43,7 @@ from .recovery import (
 from .schema import load_canonical_object
 
 
-_BANNERS = {
+_BASELINE_BANNERS = {
     "complete": "L1 COMPACT BASELINE COMPLETE",
     "paused": "L1 COMPACT BASELINE PAUSED — BUDGET AUTHORIZATION REQUIRED",
     "pinned_authority_unavailable": (
@@ -51,6 +51,15 @@ _BANNERS = {
     ),
     "failed": "L1 COMPACT BASELINE INCOMPLETE — TERMINAL WORK-ITEM FAILURES",
     "in_progress": "L1 COMPACT BASELINE IN PROGRESS",
+}
+_INVENTORY_BANNERS = {
+    "complete": "L0 INVENTORY COMPLETE",
+    "paused": "L0 INVENTORY PAUSED — BUDGET AUTHORIZATION REQUIRED",
+    "pinned_authority_unavailable": (
+        "L0 INVENTORY UNAVAILABLE — PINNED AUTHORITY REQUIRED"
+    ),
+    "failed": "L0 INVENTORY INCOMPLETE — TERMINAL WORK-ITEM FAILURES",
+    "in_progress": "L0 INVENTORY IN PROGRESS",
 }
 _NOT_RUN = {
     "exhaustive_re": "not run",
@@ -244,11 +253,12 @@ def _status_document(
             },
         },
         "authority": dict(authority),
-        "banner": _BANNERS[status],
+        "banner": _banner_for(manifest, status),
         "baselines": _baseline_documents(ledger),
         "budget": _budget_document(budget),
         "context_estimates": _context_estimates(ledger, objects),
         "continuable": status == "paused",
+        "completion_scope": _completion_scope(manifest),
         "domains": _domain_documents(
             partition,
             templates,
@@ -287,7 +297,8 @@ def _unavailable_document(
             "status": "pinned_authority_unavailable",
             "mismatches": _mismatch_documents(mismatches),
         },
-        "banner": _BANNERS["pinned_authority_unavailable"],
+        "banner": _banner_for(manifest, "pinned_authority_unavailable"),
+        "completion_scope": _completion_scope(manifest),
         "continuable": False,
         "engine": manifest.engine,
         "engine_protocol_version": manifest.engine_protocol_version,
@@ -310,6 +321,26 @@ def _mismatch_documents(mismatches: tuple[object, ...]) -> list[dict[str, object
         }
         for item in mismatches
     ]
+
+
+def _banner_for(manifest: RunManifestV2, status: str) -> str:
+    banners = (
+        _INVENTORY_BANNERS
+        if manifest.requested_goals == ("inventory",)
+        else _BASELINE_BANNERS
+    )
+    try:
+        return banners[status]
+    except KeyError as exc:  # pragma: no cover - internal closed status catalog
+        raise Protocol22StatusError(f"unsupported protocol-2.2 status: {status}") from exc
+
+
+def _completion_scope(manifest: RunManifestV2) -> str:
+    return (
+        "deterministic L0 inventory only"
+        if manifest.requested_goals == ("inventory",)
+        else "compact L1 baseline only"
+    )
 
 
 def _plan_documents(
@@ -1093,7 +1124,7 @@ def _render_human(document: Mapping[str, object]) -> str:
             "workspace synthesis: not run",
             "selective deepening: not run",
             "exhaustive RE: not run",
-            "completion scope: compact L1 baseline only",
+            f"completion scope: {document['completion_scope']}",
             "=" * 72,
             str(document["banner"]),
         )

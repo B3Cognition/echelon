@@ -20,7 +20,9 @@ T = TypeVar("T")
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
-_SAFE_PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_SAFE_PATH_SEGMENT_RE = re.compile(
+    r"(?:[A-Za-z0-9]|\.[A-Za-z0-9_])[A-Za-z0-9._-]*\Z"
+)
 
 
 def exact_object(

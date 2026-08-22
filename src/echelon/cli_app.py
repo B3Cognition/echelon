@@ -150,6 +150,11 @@ class ReEngine(str, Enum):
     V2 = "v2"
 
 
+class ReGoal(str, Enum):
+    BASELINE = "baseline"
+    INVENTORY = "inventory"
+
+
 re_memory_app = typer.Typer(
     add_completion=False,
     help="Mine workspace reverse-engineering memory in MemPalace.",
@@ -859,8 +864,18 @@ def re_run(
         "--shadow",
         help="For v2 only, explain the authoritative plan without dispatching work.",
     ),
+    goal: list[ReGoal] = typer.Option(
+        [],
+        "--goal",
+        case_sensitive=True,
+        help="For v2 only: baseline (default) or inventory.",
+    ),
 ) -> None:
     """Run or resume workspace reverse engineering; publish explicitly afterward."""
+    if len(goal) > 1:
+        raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
+    if goal and engine is not ReEngine.V2:
+        raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
     args = ["--re-policy", re_policy]
     _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
@@ -872,6 +887,8 @@ def re_run(
         args.append("--no-reuse")
     if engine is ReEngine.V2:
         args.extend(["--engine", engine.value])
+    if goal:
+        args.extend(["--goal", goal[0].value])
     if shadow:
         args.append("--shadow")
     _legacy_cli()._cmd_re_run(args)

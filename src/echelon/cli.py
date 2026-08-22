@@ -142,7 +142,7 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
-  re run [--engine v1|v2] [--shadow]
+  re run [--engine v1|v2] [--goal baseline|inventory] [--shadow]
                     [--re-policy none|cached-only|changed|refresh-all]
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
@@ -11898,11 +11898,13 @@ def _format_missing_workspace_artifacts(paths: list[str]) -> str:
 
 def _parse_re_creation_engine_options(
     args: list[str],
-) -> tuple[str, bool, list[str]]:
+) -> tuple[str, bool, str, list[str]]:
     """Remove additive v2 creation switches without changing the v1 parser."""
     engine = "v1"
     engine_seen = False
     shadow = False
+    goal = "baseline"
+    goal_seen = False
     remaining: list[str] = []
     index = 0
     while index < len(args):
@@ -11924,6 +11926,18 @@ def _parse_re_creation_engine_options(
                 raise ValueError("--shadow may be supplied only once")
             shadow = True
             index += 1
+        elif arg == "--goal":
+            if goal_seen or index + 1 >= len(args):
+                raise ValueError("--goal requires exactly one of baseline or inventory")
+            goal = args[index + 1].strip()
+            goal_seen = True
+            index += 2
+        elif arg.startswith("--goal="):
+            if goal_seen:
+                raise ValueError("--goal requires exactly one of baseline or inventory")
+            goal = arg.split("=", 1)[1].strip()
+            goal_seen = True
+            index += 1
         else:
             remaining.append(arg)
             index += 1
@@ -11931,7 +11945,11 @@ def _parse_re_creation_engine_options(
         raise ValueError("--engine requires v1 or v2")
     if shadow and engine != "v2":
         raise ValueError("--shadow is valid only with --engine v2")
-    return engine, shadow, remaining
+    if goal not in {"baseline", "inventory"}:
+        raise ValueError("--goal requires baseline or inventory")
+    if goal_seen and engine != "v2":
+        raise ValueError("--goal is valid only with --engine v2")
+    return engine, shadow, goal, remaining
 
 
 def _re_v2_now() -> str:
@@ -12008,6 +12026,307 @@ def _activate_re_v2_run(project_root: Path, run_id: str) -> None:
         os.replace(temporary, marker)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _re_v22_agent_bytes(project_root: Path) -> bytes | None:
+    path = (
+        project_root.resolve()
+        / ".echelon"
+        / "prosaic"
+        / "subagents"
+        / "echelon.re-baseliner.md"
+    )
+    if not path.exists() and not path.is_symlink():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"unsafe echelon.re-baseliner authority: {path}")
+    try:
+        before = path.stat(follow_symlinks=False)
+        payload = path.read_bytes()
+        after = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise ValueError(f"cannot read echelon.re-baseliner authority: {exc}") from exc
+    if (
+        (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+        or not payload
+    ):
+        raise ValueError("echelon.re-baseliner authority changed while reading")
+    try:
+        payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError("echelon.re-baseliner authority must be UTF-8") from exc
+    return payload
+
+
+def _re_v22_implementation_digest(*modules: object) -> str:
+    from harness.re_v2.protocol_22.authorities import implementation_closure_digest
+
+    files: dict[str, bytes] = {}
+    for module in modules:
+        module_name = str(getattr(module, "__name__", ""))
+        module_path_value = getattr(module, "__file__", None)
+        if not module_name or not isinstance(module_path_value, str):
+            raise ValueError("protocol-2.2 implementation authority has no source file")
+        module_path = Path(module_path_value)
+        if module_path.suffix == ".pyc" and module_path.with_suffix(".py").is_file():
+            module_path = module_path.with_suffix(".py")
+        if module_path.is_symlink() or not module_path.is_file():
+            raise ValueError(
+                f"protocol-2.2 implementation authority is unavailable: {module_name}"
+            )
+        files[module_name.replace(".", "/") + ".py"] = module_path.read_bytes()
+    return implementation_closure_digest(files)
+
+
+def _re_v22_partition_authorities() -> object:
+    import harness.re_domain_manifest as domain_manifest_module
+    import harness.re_v2.protocol_22.partition as partition_module
+    from harness.re_v2.protocol_22.partition import (
+        ImplementationAuthorityV1,
+        PartitionAuthoritiesV1,
+    )
+
+    return PartitionAuthoritiesV1(
+        partitioner=ImplementationAuthorityV1(
+            id="existing-domain-partitioner",
+            version="5",
+            implementation_digest=_re_v22_implementation_digest(
+                partition_module,
+                domain_manifest_module,
+            ),
+        ),
+        ownership_policy=ImplementationAuthorityV1(
+            id="explicit-domain-ownership",
+            version="1",
+            implementation_digest=_re_v22_implementation_digest(
+                partition_module
+            ),
+        ),
+    )
+
+
+def _re_v22_installed_registry(
+    project_root: Path,
+) -> tuple[object, bytes | None, dict[str, bytes]]:
+    import harness.re_domain_manifest as domain_manifest_module
+    import harness.re_v2.protocol_22.baseline as baseline_module
+    import harness.re_v2.protocol_22.context as context_module
+    import harness.re_v2.protocol_22.controller as controller_module
+    import harness.re_v2.protocol_22.evidence as evidence_module
+    import harness.re_v2.protocol_22.execution as execution_module
+    import harness.re_v2.protocol_22.inventory as inventory_module
+    import harness.re_v2.protocol_22.partition as partition_module
+    import harness.re_v2.protocol_22.provider as provider_module
+    import harness.re_v2.protocol_22.response_schemas as response_schema_module
+    import harness.re_v2.protocol_22.runtime as runtime_module
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.authorities import InstalledAuthorityRegistry
+    from harness.re_v2.protocol_22.executors import (
+        BOUNDED_API_ADAPTER_ID,
+        COMPACT_RENDERER_ID,
+        COMPACT_VERIFIER_ID,
+        CONSERVATIVE_TOKENIZER_ID,
+        DISPATCH_CALCULATOR_ID,
+        IN_PROCESS_ADAPTER_ID,
+        IN_PROCESS_CALCULATOR_ID,
+        OPENAI_USAGE_NORMALIZER_ID,
+        ZERO_USAGE_NORMALIZER_ID,
+    )
+    from harness.re_v2.protocol_22.response_schemas import (
+        canonical_response_schema_bytes,
+    )
+
+    agent = _re_v22_agent_bytes(project_root)
+    schemas = {
+        kind: canonical_response_schema_bytes(kind)
+        for kind in ("domain-baseline", "source-overview")
+    }
+    registry = InstalledAuthorityRegistry(
+        executor_implementations={
+            BOUNDED_API_ADAPTER_ID: _re_v22_implementation_digest(provider_module),
+            IN_PROCESS_ADAPTER_ID: _re_v22_implementation_digest(
+                controller_module,
+                execution_module,
+                inventory_module,
+                evidence_module,
+                context_module,
+                runtime_module,
+            ),
+        },
+        renderer_implementations={
+            COMPACT_RENDERER_ID: _re_v22_implementation_digest(
+                provider_module,
+                response_schema_module,
+            ),
+        },
+        tokenizer_implementations={
+            CONSERVATIVE_TOKENIZER_ID: _re_v22_implementation_digest(
+                provider_module
+            ),
+        },
+        calculator_implementations={
+            DISPATCH_CALCULATOR_ID: _re_v22_implementation_digest(provider_module),
+            IN_PROCESS_CALCULATOR_ID: _re_v22_implementation_digest(
+                execution_module
+            ),
+        },
+        normalizer_implementations={
+            ZERO_USAGE_NORMALIZER_ID: _re_v22_implementation_digest(execution_module),
+            OPENAI_USAGE_NORMALIZER_ID: _re_v22_implementation_digest(
+                provider_module
+            ),
+        },
+        verifier_implementations={
+            COMPACT_VERIFIER_ID: _re_v22_implementation_digest(baseline_module),
+        },
+        partitioner_implementations={
+            "existing-domain-partitioner": _re_v22_implementation_digest(
+                partition_module,
+                domain_manifest_module,
+            ),
+        },
+        ownership_implementations={
+            "explicit-domain-ownership": _re_v22_implementation_digest(
+                partition_module
+            ),
+        },
+        agent_contracts=(
+            {"echelon.re-baseliner": content_digest(agent)}
+            if agent is not None
+            else {}
+        ),
+        response_schemas={
+            kind: content_digest(payload) for kind, payload in schemas.items()
+        },
+    )
+    return registry, agent, schemas
+
+
+@dataclass(frozen=True, slots=True)
+class _Protocol22Creation:
+    snapshot: object
+    manifest: object
+    inputs: object
+
+
+def _prepare_re_v22_creation(
+    workspace_root: Path,
+    *,
+    goal: str,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> _Protocol22Creation:
+    from harness.config import load_config
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_22.authorities import validate_installed_authorities
+    from harness.re_v2.protocol_22.executors import resolve_executor_catalog
+    from harness.re_v2.protocol_22.graph import build_protocol_22_graph
+    from harness.re_v2.protocol_22.inputs import Protocol22InputSet
+    from harness.re_v2.protocol_22.model import (
+        BudgetPolicyV2,
+        CatalogReferenceV1,
+        RunManifestV2,
+    )
+    from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
+    from harness.re_v2.protocol_22.policies import build_compact_v1_policy_catalog
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    workspace_manifest = discover_workspace(workspace_root)
+    snapshot = capture_workspace_snapshot(
+        workspace_root,
+        workspace_manifest.sources,
+        _re_v2_snapshot_root(workspace_root),
+    )
+    partition_authorities = _re_v22_partition_authorities()
+    workspace_partition = build_workspace_partition_catalog(
+        snapshot,
+        workspace_manifest,
+        partition_authorities,
+    )
+    artifact_policy = build_compact_v1_policy_catalog()
+    registry, agent, schemas = _re_v22_installed_registry(workspace_root)
+    if (
+        registry.require("partitioner", partition_authorities.partitioner.id)
+        != partition_authorities.partitioner.implementation_digest
+        or registry.require(
+            "ownership", partition_authorities.ownership_policy.id
+        )
+        != partition_authorities.ownership_policy.implementation_digest
+    ):
+        raise ValueError("protocol-2.2 partition authority changed during preflight")
+    try:
+        config = load_config(workspace_root, squad_only=True)
+    except Exception as exc:
+        if exc.__class__.__module__ != "harness.config":
+            raise
+        raise ValueError(str(exc)) from exc
+    executor_contract = resolve_executor_catalog(config, goal, registry)
+    mismatches = validate_installed_authorities(executor_contract, registry)
+    if mismatches:
+        details = ", ".join(
+            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
+        )
+        raise ValueError(f"protocol-2.2 installed authority mismatch: {details}")
+    immutable_objects: dict[str, bytes] = {}
+    if goal == "baseline":
+        if agent is None:
+            raise ValueError("missing installed agent authority echelon.re-baseliner")
+        immutable_objects[content_digest(agent)] = agent
+        for payload in schemas.values():
+            immutable_objects[content_digest(payload)] = payload
+    inputs = Protocol22InputSet(
+        workspace_partition=workspace_partition,
+        artifact_policy=artifact_policy,
+        executor_contract=executor_contract,
+        immutable_objects=immutable_objects,
+    )
+    run_id = _new_re_v2_run_id(workspace_root)
+    partition_manifest_id = _re_v2_partition_manifest_id(
+        workspace_manifest,
+        snapshot,
+    )
+    manifest = RunManifestV2(
+        schema_version=2,
+        engine="re-v2",
+        engine_protocol_version="2.2",
+        run_id=run_id,
+        created_at=_re_v2_now(),
+        source_snapshot_id=snapshot.snapshot_id,
+        source_snapshot_kind="workspace-git-composite",
+        partition_manifest_id=partition_manifest_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            object_hash=content_digest(
+                canonical_json_bytes(workspace_partition.to_json_dict())
+            ),
+            relative_path="workspace-partition.json",
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            object_hash=content_digest(
+                canonical_json_bytes(artifact_policy.to_json_dict())
+            ),
+            relative_path="artifact-policy.json",
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            object_hash=content_digest(
+                canonical_json_bytes(executor_contract.to_json_dict())
+            ),
+            relative_path="executor-contract.json",
+        ),
+        requested_goals=(goal,),
+        initial_budget_policy=BudgetPolicyV2.for_goal(
+            goal,
+            token_limit=token_limit if token_limit is not None else 5_000_000,
+            active_ms_limit=(
+                time_limit_minutes * 60_000
+                if time_limit_minutes is not None
+                else 180 * 60_000
+            ),
+        ),
+        parent_run_id=None,
+    )
+    build_protocol_22_graph(manifest, inputs)
+    return _Protocol22Creation(snapshot, manifest, inputs)
 
 
 class _DeterministicInventoryCertifier:
@@ -12144,6 +12463,178 @@ def _load_re_v2_snapshot(project_root: Path, manifest: object) -> object:
     return snapshot
 
 
+def _re_v22_credential_loader(project_root: Path) -> object:
+    from harness.config import load_config
+
+    def load() -> tuple[str, str] | None:
+        try:
+            config = load_config(project_root, squad_only=True)
+        except Exception as exc:
+            if exc.__class__.__module__ != "harness.config":
+                raise
+            raise ValueError(str(exc)) from exc
+        environment_name = config.llm.api_key_env
+        configured_file = config.llm.api_key_file
+        value: str | None = None
+        if configured_file:
+            path = Path(configured_file).expanduser()
+            if not path.is_absolute():
+                path = project_root / path
+            try:
+                value = path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise ValueError(f"cannot read configured API key file: {exc}") from exc
+        else:
+            value = os.environ.get(environment_name or "OPENAI_API_KEY")
+        if not value:
+            return None
+        return "authorization", f"Bearer {value}"
+
+    return load
+
+
+def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> object:
+    from types import MappingProxyType
+
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+    from harness.re_v2.protocol_22.evidence import PinnedSnapshotReaderV1
+    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
+    from harness.re_v2.protocol_22.execution import (
+        DeterministicExecutionDependenciesV1,
+        Protocol22ExecutionStore,
+        ProviderExecutionDependenciesV1,
+    )
+    from harness.re_v2.protocol_22.graph import build_protocol_22_graph
+    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
+    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_22.model import (
+        DeterministicInvocationInputV1,
+        DeterministicInvocationV1,
+        RunManifestV2,
+    )
+    from harness.re_v2.protocol_22.provider import BoundedApiBaselineExecutor
+    from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+    from harness.re_v2.protocol_22.runtime import (
+        ConservativeTokenizerV1,
+        DeterministicRuntimeV1,
+    )
+    from harness.re_v2.run_store import ReV2Paths
+    from harness.re_v2.snapshot import validate_source_snapshot
+
+    if not isinstance(manifest, RunManifestV2):
+        raise ValueError("protocol-2.2 context requires a schema-2 manifest")
+    paths = ReV2Paths.for_run(run_dir)
+    inputs = load_protocol_22_inputs(paths, manifest)
+    graph = build_protocol_22_graph(manifest, inputs)
+    registry, _agent, _schemas = _re_v22_installed_registry(project_root)
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot_reader = PinnedSnapshotReaderV1(snapshot, inputs.workspace_partition)
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol22Ledger(paths, objects)
+    runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
+    context_ref: dict[str, object] = {}
+    workspace_bytes = canonical_json_bytes(inputs.workspace_partition.to_json_dict())
+    workspace_hash = content_digest(workspace_bytes)
+
+    def dependencies_for(item: object, _attempt_kind: str) -> object:
+        executor = inputs.executor_contract.entry_for(
+            getattr(item, "producer_family")
+        )
+        context = context_ref["context"]
+        accepted = accepted_dependencies_for(context, item)
+        if executor.execution_mode == "api":
+            renderer = executor.request_renderer
+            if renderer is None:
+                raise ValueError("protocol-2.2 provider executor has no renderer")
+            schema_hash = next(
+                (
+                    reference.schema_hash
+                    for reference in renderer.response_schemas
+                    if reference.artifact_kind
+                    == getattr(getattr(item, "output_key"), "artifact_kind")
+                ),
+                None,
+            )
+            if schema_hash is None:
+                raise ValueError("protocol-2.2 provider item has no response schema")
+            return ProviderExecutionDependenciesV1(
+                executor=executor,
+                registry=registry,
+                agent_bytes=objects.read_blob(renderer.agent_contract_hash),
+                context_bytes=accepted.payload_for_role("context_bundle"),
+                response_schema_bytes=objects.read_blob(schema_hash),
+                tokenizer=ConservativeTokenizerV1.for_executor(executor),
+            )
+        invocation_inputs = tuple(
+            DeterministicInvocationInputV1(
+                role=role,
+                object_hash=accepted_artifact.artifact_hash,
+            )
+            for role, accepted_artifact in accepted.by_role.items()
+        )
+        uses_workspace_partition = set(accepted.by_role) == {"workspace_partition"}
+        return DeterministicExecutionDependenciesV1(
+            executor=executor,
+            registry=registry,
+            invocation=DeterministicInvocationV1(
+                schema_version=1,
+                producer_family=getattr(item, "producer_family"),
+                output_key=getattr(item, "output_key"),
+                artifact_policy_hash=getattr(
+                    getattr(item, "output_key"), "layer_policy_hash"
+                ),
+                inputs=invocation_inputs,
+            ),
+            workspace_partition_hash=(
+                workspace_hash if uses_workspace_partition else None
+            ),
+            referenced_objects=(
+                {workspace_hash: workspace_bytes}
+                if uses_workspace_partition
+                else dict(accepted.payloads_by_hash)
+            ),
+        )
+
+    producer_registrations = {
+        entry.producer_family: runtime
+        for entry in inputs.executor_contract.entries
+        if entry.execution_mode == "in_process"
+    }
+    provider_registrations = {
+        entry.adapter_id: BoundedApiBaselineExecutor(
+            entry,
+            credential_loader=_re_v22_credential_loader(project_root),
+            tokenizer=ConservativeTokenizerV1.for_executor(entry),
+        )
+        for entry in inputs.executor_contract.entries
+        if entry.execution_mode == "api"
+    }
+    verifier_registrations = {
+        entry.verifier.verifier_id: runtime
+        for entry in inputs.executor_contract.entries
+    }
+    context = Protocol22RunContext(
+        paths=paths,
+        inputs=inputs,
+        graph=graph,
+        event_store=EventStore(paths, protocol=PROTOCOL_22_EVENTS),
+        object_store=objects,
+        ledger=ledger,
+        execution_store=Protocol22ExecutionStore(paths, objects),
+        installed_authorities=registry,
+        dependencies_for=dependencies_for,
+        executors=MappingProxyType(provider_registrations),
+        producers=MappingProxyType(producer_registrations),
+        verifiers=MappingProxyType(verifier_registrations),
+        snapshot_validator=lambda: validate_source_snapshot(snapshot),
+    )
+    context_ref["context"] = context
+    return context
+
+
 def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.candidates import CandidateStore
     from harness.re_v2.events import EventStore
@@ -12154,6 +12645,10 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.status import validate_supported_v2_manifest
 
     manifest = load_run_manifest(run_dir)
+    from harness.re_v2.protocol_22.model import RunManifestV2
+
+    if isinstance(manifest, RunManifestV2):
+        return _re_v22_context(project_root, run_dir, manifest)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -12182,6 +12677,11 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
 
 
 def _run_re_v2_shadow(context: object) -> None:
+    from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+
+    if isinstance(context, Protocol22RunContext):
+        _run_re_v22_shadow(context)
+        return
     from harness.re_v2.budget import evaluate_budget
     from harness.re_v2.planner import plan_next
     from harness.re_v2.recovery import recover_run
@@ -12208,7 +12708,274 @@ def _run_re_v2_shadow(context: object) -> None:
     print(render_v2_status(context.paths.root.parent), end="")
 
 
+def _run_re_v22_shadow(context: object) -> None:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.artifacts import AcceptedDependencySetV2
+    from harness.re_v2.protocol_22.execution import (
+        ProviderExecutionDependenciesV1,
+        preview_dispatch_reservation,
+    )
+    from harness.re_v2.protocol_22.graph import (
+        AcceptedArtifactV2,
+        instantiate_ready_item,
+    )
+    from harness.re_v2.protocol_22.policies import policy_for
+    from harness.re_v2.protocol_22.runtime import ConservativeTokenizerV1
+    from harness.re_v2.protocol_22.status import render_protocol_22_status
+    from harness.re_v2.run_store import load_run_manifest
+
+    entries = {
+        entry.producer_family: entry
+        for entry in context.inputs.executor_contract.entries
+    }
+    api_families = {
+        entry.producer_family
+        for entry in entries.values()
+        if entry.execution_mode == "api"
+    }
+    provider_templates = tuple(
+        template
+        for template in context.graph.templates
+        if template.producer_family in api_families
+    )
+    deterministic_count = len(context.graph.templates) - len(provider_templates)
+    maximum_shared_retries = sum(
+        template.max_shared_retries for template in provider_templates
+    )
+    templates = {template.template_id: template for template in context.graph.templates}
+    produced: dict[str, AcceptedArtifactV2] = {}
+    payloads: dict[str, bytes] = {}
+    exact_contexts: list[tuple[str, str | None, int]] = []
+    bounded_contexts: list[tuple[str, str | None, int, int]] = []
+    exact_provider_reservations: dict[str, object] = {}
+    remaining = {template.template_id: template for template in context.graph.templates}
+    while True:
+        progressed = False
+        for template_id, template in tuple(remaining.items()):
+            if any(
+                dependency not in produced
+                for dependency in template.required_template_ids
+            ):
+                continue
+            accepted_by_template = {
+                dependency: produced[dependency]
+                for dependency in template.required_template_ids
+            }
+            item = instantiate_ready_item(
+                template,
+                accepted_by_template,
+                context.inputs,
+            )
+            by_role = {
+                _re_v22_dependency_role(templates[dependency]): produced[dependency]
+                for dependency in template.required_template_ids
+            }
+            accepted = AcceptedDependencySetV2(by_role, payloads)
+            entry = entries[item.producer_family]
+            if entry.execution_mode == "api":
+                renderer = entry.request_renderer
+                if renderer is None:
+                    raise ValueError("shadow provider executor has no renderer")
+                schema_hash = next(
+                    reference.schema_hash
+                    for reference in renderer.response_schemas
+                    if reference.artifact_kind == item.output_key.artifact_kind
+                )
+                dependencies = ProviderExecutionDependenciesV1(
+                    executor=entry,
+                    registry=context.installed_authorities,
+                    agent_bytes=context.object_store.read_blob(
+                        renderer.agent_contract_hash
+                    ),
+                    context_bytes=accepted.payload_for_role("context_bundle"),
+                    response_schema_bytes=context.object_store.read_blob(schema_hash),
+                    tokenizer=ConservativeTokenizerV1.for_executor(entry),
+                )
+                exact_provider_reservations[template.template_id] = (
+                    preview_dispatch_reservation(
+                        item,
+                        "initial_generation",
+                        dependencies,
+                    ).reservation
+                )
+                del remaining[template_id]
+                progressed = True
+                continue
+            payload = context.producers[item.producer_family].produce(item, accepted)
+            artifact_hash = content_digest(payload)
+            produced[template.template_id] = AcceptedArtifactV2(
+                item.output_key.identity,
+                artifact_hash,
+            )
+            payloads[artifact_hash] = payload
+            if template.artifact_kind.endswith("context-bundle"):
+                exact_contexts.append(
+                    (
+                        template.scope.source_id,
+                        template.scope.domain_key,
+                        len(payload),
+                    )
+                )
+            del remaining[template_id]
+            progressed = True
+        if not progressed:
+            break
+    for template in remaining.values():
+        if template.artifact_kind != "source-overview-context-bundle":
+            continue
+        policy = policy_for(
+            context.inputs.artifact_policy,
+            template.layer,
+            template.artifact_kind,
+        )
+        byte_bound = min(
+            value
+            for value in (
+                policy.max_canonical_json_bytes,
+                policy.max_context_bundle_bytes,
+            )
+            if value is not None
+        )
+        token_bound = policy.max_conservative_input_tokens or byte_bound
+        bounded_contexts.append(
+            (
+                template.scope.source_id,
+                template.scope.domain_key,
+                byte_bound,
+                token_bound,
+            )
+        )
+
+    initial_tokens = 0
+    initial_active_ms = 0
+    retry_tokens = 0
+    retry_active_ms = 0
+    for template in context.graph.templates:
+        entry = entries[template.producer_family]
+        initial_active_ms += entry.limits.max_active_ms_per_dispatch
+        if entry.execution_mode != "api":
+            continue
+        context_limit = entry.limits.provider_context_tokens
+        if context_limit is None:
+            raise ValueError("shadow provider executor has no context limit")
+        hard_tokens = min(
+            entry.limits.max_billable_tokens_per_dispatch,
+            context_limit,
+        )
+        exact = exact_provider_reservations.get(template.template_id)
+        initial_tokens += (
+            exact.billable_tokens if exact is not None else hard_tokens
+        )
+        retry_tokens += template.max_shared_retries * hard_tokens
+        retry_active_ms += (
+            template.max_shared_retries
+            * entry.limits.max_active_ms_per_dispatch
+        )
+
+    print("RE V2 — PROTOCOL 2.2 SHADOW PLAN")
+    print(f"deterministic initial dispatches: {deterministic_count}")
+    print(f"provider initial dispatches: {len(provider_templates)}")
+    print(f"maximum shared-retry dispatches: {maximum_shared_retries}")
+    for source_id, domain_key, byte_count in sorted(
+        exact_contexts,
+        key=lambda value: (value[0], value[1] or ""),
+    ):
+        scope = f"{source_id}/{domain_key}" if domain_key else source_id
+        print(
+            "context exact: "
+            f"scope={scope} canonical_bytes={byte_count} "
+            f"conservative_input_tokens={byte_count}"
+        )
+    for source_id, domain_key, byte_bound, token_bound in sorted(
+        bounded_contexts,
+        key=lambda value: (value[0], value[1] or ""),
+    ):
+        scope = f"{source_id}/{domain_key}" if domain_key else source_id
+        print(
+            "context worst-case bound: "
+            f"scope={scope} canonical_bytes<={byte_bound} "
+            f"conservative_input_tokens<={token_bound}"
+        )
+    for entry in sorted(
+        (value for value in entries.values() if value.execution_mode == "api"),
+        key=lambda value: value.producer_family,
+    ):
+        print(
+            "per-dispatch hard limits: "
+            f"executor={entry.adapter_id} "
+            f"context_tokens={entry.limits.provider_context_tokens} "
+            f"completion_tokens={entry.limits.max_completion_tokens_per_call} "
+            f"billable_tokens={entry.limits.max_billable_tokens_per_dispatch} "
+            f"active_ms={entry.limits.max_active_ms_per_dispatch}"
+        )
+    print(
+        "whole-run initial reservation: "
+        f"tokens={initial_tokens} active_ms={initial_active_ms}"
+    )
+    print(
+        "whole-run shared-retry reservation: "
+        f"tokens={retry_tokens} active_ms={retry_active_ms}"
+    )
+    manifest = load_run_manifest(context.paths.root.parent)
+    token_limit = manifest.initial_budget_policy.token_limit
+    active_limit = manifest.initial_budget_policy.active_ms_limit
+    print(
+        "authorized ceilings: "
+        f"tokens={token_limit if token_limit is not None else 'unlimited'} "
+        f"active_ms={active_limit if active_limit is not None else 'unlimited'}"
+    )
+    insufficient: list[str] = []
+    if token_limit is not None and token_limit < initial_tokens + retry_tokens:
+        insufficient.append("tokens")
+    if active_limit is not None and active_limit < initial_active_ms + retry_active_ms:
+        insufficient.append("active_ms")
+    if insufficient:
+        print(
+            "warning: authorized ceilings cannot cover the whole-run worst case "
+            f"({', '.join(insufficient)})"
+        )
+    else:
+        print("authorization: ceilings cover the whole-run worst case")
+    print("provider requests issued: 0")
+    print(render_protocol_22_status(context.paths.root.parent, context=context), end="")
+
+
+def _re_v22_dependency_role(template: object) -> str:
+    kind = str(getattr(template, "artifact_kind"))
+    domain_key = getattr(getattr(template, "scope"), "domain_key")
+    static = {
+        "source-inventory": "source_inventory",
+        "source-partition": "source_partition",
+        "source-evidence-pack": "source_evidence_pack",
+        "domain-inventory": "domain_inventory",
+        "domain-evidence-pack": "domain_evidence_pack",
+        "domain-context-bundle": "context_bundle",
+        "source-overview-context-bundle": "context_bundle",
+        "source-overview": "source_overview",
+    }
+    if kind in static:
+        return static[kind]
+    if kind == "domain-baseline" and domain_key is not None:
+        return f"domain:{domain_key}"
+    raise ValueError(f"unsupported protocol-2.2 dependency role: {kind}")
+
+
 def _run_re_v2_live(context: object) -> None:
+    from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+
+    if isinstance(context, Protocol22RunContext):
+        from harness.re_v2.protocol_22.controller import Protocol22Controller
+        from harness.re_v2.protocol_22.status import render_protocol_22_status
+
+        Protocol22Controller(context).run_until_stopped()
+        print(
+            render_protocol_22_status(
+                context.paths.root.parent,
+                context=context,
+            ),
+            end="",
+        )
+        return
     from harness.re_v2.controller import ReV2Controller
     from harness.re_v2.status import render_v2_status
 
@@ -12222,61 +12989,26 @@ def _run_re_v2_create(
     token_limit: int | None,
     time_limit_minutes: int | None,
     shadow: bool,
+    goal: str,
 ) -> None:
-    from harness.re_v2.model import (
-        RE_V2_ENGINE,
-        RE_V2_SCHEMA_1_PROTOCOLS,
-        BudgetPolicy,
-        RunManifest,
-    )
-    from harness.re_v2.run_store import create_run_store
-    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+    from harness.re_v2.protocol_22.inputs import create_protocol_22_run_store
 
+    if goal not in {"baseline", "inventory"}:
+        raise ValueError("protocol-2.2 goal must be baseline or inventory")
     workspace_root = project_root.resolve()
-    workspace_manifest = discover_workspace(workspace_root)
-    snapshot = capture_workspace_snapshot(
+    prepared = _prepare_re_v22_creation(
         workspace_root,
-        workspace_manifest.sources,
-        _re_v2_snapshot_root(workspace_root),
+        goal=goal,
+        token_limit=token_limit,
+        time_limit_minutes=time_limit_minutes,
     )
-    partition_manifest_id = _re_v2_partition_manifest_id(
-        workspace_manifest, snapshot
-    )
-    run_id = _new_re_v2_run_id(workspace_root)
+    run_id = str(getattr(prepared.manifest, "run_id"))
     run_dir = workspace_root / "runs" / run_id
-    manifest = RunManifest(
-        schema_version=1,
-        engine=RE_V2_ENGINE,
-        # Protocol-2.2 creation is wired atomically with its catalogs in the
-        # dedicated CLI path; this legacy constructor remains schema 1.
-        engine_protocol_version=RE_V2_SCHEMA_1_PROTOCOLS[-1],
-        run_id=run_id,
-        created_at=_re_v2_now(),
-        source_snapshot_id=snapshot.snapshot_id,
-        source_snapshot_kind=snapshot.kind,
-        partition_manifest_id=partition_manifest_id,
-        requested_goals=("inventory",),
-        initial_budget_policy=BudgetPolicy(
-            token_limit=token_limit if token_limit is not None else 5_000_000,
-            active_ms_limit=(
-                time_limit_minutes * 60_000
-                if time_limit_minutes is not None
-                else 180 * 60_000
-            ),
-            provider_attempt_limit=1,
-            artifact_generation_attempt_limit=1,
-            semantic_repair_round_limit=0,
-            result_contract_retry_limit=0,
-        ),
-        provider_contract={
-            "provider": "deterministic-inventory",
-            "provider_protocol_version": "re-v2-l0-v1",
-            "result_contract_id": "deterministic-inventory-v1",
-        },
-        artifact_policy_versions={"L0": "egr-164-v1"},
-        parent_run_id=None,
+    create_protocol_22_run_store(
+        run_dir,
+        prepared.manifest,
+        prepared.inputs,
     )
-    create_run_store(run_dir, manifest)
     _activate_re_v2_run(workspace_root, run_id)
     context = _re_v2_context(workspace_root, run_dir)
     if shadow:
@@ -12301,6 +13033,17 @@ def _run_re_v2_continue(
     token_limit: int | None,
     time_limit_minutes: int | None,
 ) -> None:
+    from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+
+    project_root = run_dir.resolve().parent.parent
+    context = _re_v2_context(project_root, run_dir)
+    if isinstance(context, Protocol22RunContext):
+        _run_re_v22_continue(
+            context,
+            token_limit=token_limit,
+            time_limit_minutes=time_limit_minutes,
+        )
+        return
     from harness.re_v2.budget import (
         BudgetDimension,
         authorize_resource_increase,
@@ -12308,8 +13051,6 @@ def _run_re_v2_continue(
     )
     from harness.re_v2.recovery import recover_run
 
-    project_root = run_dir.resolve().parent.parent
-    context = _re_v2_context(project_root, run_dir)
     recovered = recover_run(context)
     terminal_types = {"run_completed", "run_finalized_partial", "run_failed"}
     if recovered.events and recovered.events[-1].type in terminal_types:
@@ -12383,11 +13124,115 @@ def _run_re_v2_continue(
     _run_re_v2_live(context)
 
 
+def _run_re_v22_continue(
+    context: object,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> None:
+    from harness.re_v2.protocol_22.recovery import (
+        protocol_22_run_lock,
+        recover_protocol_22_run,
+        recover_protocol_22_run_locked,
+    )
+
+    requested = {
+        "tokens": token_limit,
+        "active_ms": (
+            time_limit_minutes * 60_000
+            if time_limit_minutes is not None
+            else None
+        ),
+    }
+
+    def validate(recovered: object) -> list[tuple[str, int, int | None]]:
+        state = str(getattr(recovered, "operational_state"))
+        changes = [
+            (dimension, value)
+            for dimension, value in requested.items()
+            if value is not None
+        ]
+        if state == "terminal":
+            if changes:
+                raise ValueError(
+                    "terminal protocol-2.2 runs cannot receive budget authorization"
+                )
+            return []
+        if state == "pinned_authority_unavailable":
+            if changes:
+                raise ValueError(
+                    "protocol-2.2 budget authorization requires restored pinned authority"
+                )
+            return []
+        if state == "paused":
+            if not changes:
+                raise ValueError(
+                    "paused protocol-2.2 continuation requires a strictly higher "
+                    "token or active-time ceiling"
+                )
+            budget = getattr(recovered, "budget", None)
+            if budget is None:
+                raise ValueError("paused protocol-2.2 recovery omitted budget authority")
+            validated: list[tuple[str, int, int | None]] = []
+            for dimension, new_value in changes:
+                old_value = (
+                    budget.token_limit
+                    if dimension == "tokens"
+                    else budget.active_ms_limit
+                )
+                if old_value is not None and new_value <= old_value:
+                    raise ValueError(
+                        f"protocol-2.2 {dimension} ceiling must be strictly higher "
+                        f"than {old_value}"
+                    )
+                validated.append((dimension, new_value, old_value))
+            return validated
+        if changes:
+            raise ValueError(
+                "protocol-2.2 budget authorization requires a paused run"
+            )
+        return []
+
+    recovered = recover_protocol_22_run(context)
+    changes = validate(recovered)
+    if str(recovered.operational_state) in {
+        "terminal",
+        "pinned_authority_unavailable",
+    }:
+        _run_re_v2_live(context)
+        return
+    if not changes:
+        _run_re_v2_live(context)
+        return
+
+    with protocol_22_run_lock(context.paths):
+        recovered = recover_protocol_22_run_locked(context)
+        changes = validate(recovered)
+        for dimension, new_value, old_value in changes:
+            context.event_store.append(
+                "budget_authorized",
+                {
+                    "authorized_by": "echelon-cli",
+                    "dimension": dimension,
+                    "new_value": new_value,
+                    "old_value": old_value,
+                    "reason": "CLI resource ceiling increase",
+                },
+                occurred_at=_re_v2_now(),
+            )
+        context.event_store.append(
+            "run_resumed",
+            {"reason": "CLI continuation after resource authorization"},
+            occurred_at=_re_v2_now(),
+        )
+    _run_re_v2_live(context)
+
+
 def _cmd_re_run(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        engine, shadow, lifecycle_args = _parse_re_creation_engine_options(args)
+        engine, shadow, goal, lifecycle_args = _parse_re_creation_engine_options(args)
         (
             policy,
             re_max_inner,
@@ -12411,7 +13256,7 @@ def _cmd_re_run(args: list[str]) -> None:
                 )
             if policy != "changed" or reset or no_reuse or profile is not None:
                 raise ValueError(
-                    "v2 inventory creation does not accept v1 policy, reset, reuse, or profile options"
+                    "v2 creation does not accept v1 policy, reset, reuse, or profile options"
                 )
             try:
                 _run_re_v2_create(
@@ -12419,6 +13264,7 @@ def _cmd_re_run(args: list[str]) -> None:
                     token_limit=token_limit,
                     time_limit_minutes=time_limit_minutes,
                     shadow=shadow,
+                    goal=goal,
                 )
             except RuntimeError as exc:
                 raise ValueError(str(exc)) from exc
