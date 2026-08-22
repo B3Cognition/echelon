@@ -198,7 +198,7 @@ def _domain_fixture(
     inventory_template = dependency_templates["domain-inventory"]
     evidence_template = dependency_templates["domain-evidence-pack"]
     evidence_path = path or f"{root}/main.py"
-    source_payload = f"{root} behavior\n".encode()
+    source_payload = f"{source.source_id}:{root}\n".encode()
     inventory_bytes = _inventory_bytes(
         inventory_template,
         kind="domain-inventory",
@@ -326,6 +326,7 @@ def _domain_baseline_bytes(
 
 @dataclass(frozen=True)
 class _SourceFixture:
+    graph: Protocol22Graph
     inputs: ValidatedProtocol22Inputs
     item: WorkItemV2
     dependencies: AcceptedDependencySetV2
@@ -389,11 +390,19 @@ def _source_fixture(
         for value in dependency_templates.values()
         if value.artifact_kind == "source-evidence-pack"
     )
-    source_payload = b"source entry\n"
+    source_record = source.files[0]
+    source_root = next(
+        domain.source_relative_root
+        for domain in source.domains
+        if source_record.source_relative_path.startswith(
+            f"{domain.source_relative_root}/"
+        )
+    )
+    source_payload = f"{source.source_id}:{source_root}\n".encode()
     source_inventory = _inventory_bytes(
         source_inventory_template,
         kind="source-inventory",
-        path="main.py",
+        path=source_record.source_relative_path,
         ownership="source",
         payload=source_payload,
         partition_id=None,
@@ -402,7 +411,7 @@ def _source_fixture(
         source_evidence_template,
         inputs.artifact_policy,
         source_inventory,
-        path="main.py",
+        path=source_record.source_relative_path,
         ownership="source",
         payload=source_payload,
     )
@@ -443,6 +452,7 @@ def _source_fixture(
         inputs,
     )
     return _SourceFixture(
+        graph=graph,
         inputs=inputs,
         item=item,
         dependencies=AcceptedDependencySetV2(
