@@ -6927,7 +6927,13 @@ def _resolve_spec_run_implementation_targets(
             raise SystemExit(1)
         if len(manifest.sources) == 1:
             return [manifest.sources[0].path]
-        return ["."]
+        print(
+            "✗ echelon spec run: no implementation target was resolved.\n"
+            "  Declare a source root or pass --target <source-id-or-path>.\n"
+            "  The orchestration workspace is not an implementation target.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     resolved: list[str] = []
     by_id = {source.id: source.path for source in manifest.sources}
@@ -7083,6 +7089,14 @@ def _cmd_run(
             print(
                 f"✗ echelon spec run: {moved} moved to 'echelon re run'.\n"
                 "  Run reverse engineering explicitly, then start the spec run.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        elif args[i].startswith("--"):
+            option = args[i].split("=", 1)[0]
+            replacement = " use --target <source-id-or-path>." if option == "--source" else ""
+            print(
+                f"✗ echelon spec run: unknown option {option!r}.{replacement}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -10030,6 +10044,44 @@ def _cmd_resume(
         f"## User answers\n\n"
         f"{answer}\n"
     )
+
+    # A clarification is authoritative control-plane input, not merely prompt
+    # prose. Persist its generated, immutable policy before any resumed agent
+    # dispatch and route stale Phase A artifacts through a narrow WHAT repair.
+    from echelon.feature_policy import (
+        derive_feature_policy,
+        persist_feature_policy,
+        reconcile_feature_artifacts,
+    )
+
+    blocked_decision = state.get("blocked_decision")
+    decision_id = (
+        str(blocked_decision.get("id") or "").strip()
+        if isinstance(blocked_decision, dict)
+        else ""
+    ) or f"clarification-{state.get('run_id') or squad_dir.name}"
+    feature_policy = derive_feature_policy(answer, decision_id=decision_id)
+    persist_feature_policy(staging_dir, feature_policy)
+    state["feature_policy"] = feature_policy
+    policy_spec_ref = str(state.get("spec_dir") or "").strip()
+    policy_spec_dir = Path(policy_spec_ref) if policy_spec_ref else None
+    if policy_spec_dir is not None and not policy_spec_dir.is_absolute():
+        policy_spec_dir = project_root / policy_spec_dir
+    if policy_spec_dir is not None:
+        try:
+            policy_spec_dir = policy_spec_dir.resolve()
+            policy_spec_dir.relative_to(project_root.resolve())
+        except ValueError:
+            policy_spec_dir = None
+    if policy_spec_dir is not None and policy_spec_dir.is_dir():
+        reconciliation = reconcile_feature_artifacts(policy_spec_dir, feature_policy)
+        state["feature_policy_reconciliation"] = reconciliation
+        if reconciliation["requires_repair"]:
+            state["phase"] = "phase1-what"
+
+    from echelon.context_builder import build_run_context
+    context_result = build_run_context(project_root, squad_dir, user_request=str(state.get("user_message") or ""))
+    state["context_dir"] = str(context_result.context_dir)
 
     from harness.phase_graph import load_workspace_phase_graph
     graph, ext_dir = load_workspace_phase_graph(project_root)

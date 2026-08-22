@@ -364,6 +364,8 @@ scoring:
   # @belief(claim: "0.0–1.0 normalized range enables consistent cross-agent score comparison and aggregation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: low)
   confidence_min: 0.0
   confidence_max: 1.0
+  # Minimum normalized confidence required for phase-agent findings.
+  confidence_threshold: 0.7
 
   # Evidence grades (from most to least reliable)
   evidence_grades:

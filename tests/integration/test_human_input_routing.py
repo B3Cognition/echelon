@@ -651,7 +651,11 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     assert decision_id in capsys.readouterr().out
     assert store.load()["blocked_decision"]["id"] == decision_id
 
-    answer = "Credentials are now available."
+    answer = (
+        "One static greeting; no auth, persistence, routing, backend, deployment, "
+        "or public hosting requirement; bootstrap is in scope; do not require "
+        "compliance scan, axe suite, or Playwright visual-regression work."
+    )
     _cmd_resume(
         [answer],
         project_root=tmp_path,
@@ -665,6 +669,13 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     assert resumed["resolved_by"] == "user"
     clarification = Path(resumed_state["staging_dir"]) / "user-clarifications.md"
     assert answer in clarification.read_text(encoding="utf-8")
+    policy_path = Path(resumed_state["staging_dir"]) / "feature-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    assert policy["scope"]["deployment"] == "descoped"
+    assert policy["verification"]["accessibility_suite"] == "not_required"
+    assert resumed_state["feature_policy"] == policy
+    context = Path(resumed_state["context_dir"]) / "current-feature-context.md"
+    assert "Authoritative Feature Policy" in context.read_text(encoding="utf-8")
     provider.exec_agent.assert_not_called()
 
 

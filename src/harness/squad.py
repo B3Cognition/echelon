@@ -116,6 +116,7 @@ from harness.prepared_phase_result import (
     prepare_phase_result,
 )
 from harness.quality_scores import (
+    effective_quality_gate_thresholds,
     explicit_quality_pass,
     normalize_why_quality_scores,
     resolve_quality_gate_thresholds,
@@ -1118,8 +1119,9 @@ class SquadController:
         return self._project_root / ".echelon" / "config.yml"
 
     def _quality_gate_thresholds(self) -> dict:
-        return resolve_quality_gate_thresholds(
-            self._project_root,
+        return effective_quality_gate_thresholds(
+            resolve_quality_gate_thresholds(self._project_root),
+            self._state_store.load().get("feature_policy"),
         )
 
     def _normalize_why_result_quality_scores(
@@ -3815,8 +3817,39 @@ class SquadController:
             directory_fd = -1
         if directory_fd >= 0:
             os.close(directory_fd)
+        from echelon.feature_policy import (
+            derive_feature_policy,
+            persist_feature_policy,
+            reconcile_feature_artifacts,
+        )
+
+        feature_policy = derive_feature_policy(
+            answer,
+            decision_id=str(decision["id"]),
+        )
+        staging_dir = self._authoritative_human_input_roots(state)["{staging_dir}"]
+        assert staging_dir is not None
+        persist_feature_policy(staging_dir, feature_policy)
+        updates: dict[str, object] = {
+            "status": "running",
+            "phase": route,
+            "feature_policy": feature_policy,
+        }
+        spec_dir = self._validated_spec_root(state)
+        if spec_dir is not None and spec_dir.is_dir():
+            reconciliation = reconcile_feature_artifacts(spec_dir, feature_policy)
+            updates["feature_policy_reconciliation"] = reconciliation
+            if reconciliation["requires_repair"]:
+                updates["phase"] = "phase1-what"
+                route = "phase1-what"
+        context_result = build_run_context(
+            self._project_root,
+            self._squad_dir,
+            user_request=str(state.get("user_message") or ""),
+        )
+        updates["context_dir"] = str(context_result.context_dir)
         return _HumanInputResolutionEffects(
-            state_updates={"status": "running", "phase": route},
+            state_updates=updates,
             state_removals=frozenset(),
             route=route,
         )
