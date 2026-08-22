@@ -7286,7 +7286,17 @@ def _cmd_run(
             print(f"✗ echelon spec run: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
 
-    stack_contract = _fresh_stack_contract_or_exit(project_root) if is_fresh else None
+    stack_contract: dict[str, object] | None = None
+    if is_fresh:
+        stack_contract = _fresh_stack_contract_or_exit(project_root)
+    elif not isinstance(existing_state.get("stack_contract"), dict):
+        # Runs created before stack contracts existed have no immutable stack
+        # authority to preserve. Freeze the current valid selection once and
+        # make the migration visible; all later resumes use state.json only.
+        stack_contract = _fresh_stack_contract_or_exit(project_root)
+        existing_state["stack_contract"] = stack_contract
+        state_store.save(existing_state)
+        print("[squad] captured selected stack contract for legacy run", flush=True)
     provider = SquadCliProvider(config)
     from harness.phase_graph import load_workspace_phase_graph
     graph, ext_dir = load_workspace_phase_graph(project_root)
