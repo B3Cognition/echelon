@@ -154,6 +154,30 @@ class AppRuntimeConfig:
 
 
 @dataclass
+class ReV2BaselineHeaderConfig:
+    """One non-secret routing header for the bounded RE v2 API adapter."""
+
+    name: str
+    value: str
+
+
+@dataclass
+class ReV2BaselineConfig:
+    """Capability data required by the bounded protocol-2.2 baseline adapter."""
+
+    model_revision: Optional[str] = None
+    revision_authority: Optional[str] = None
+    provider_context_tokens: Optional[int] = None
+    reasoning_effort: Optional[str] = None
+    top_p: str = "1.0"
+    seed: Optional[int] = None
+    request_path: str = "/chat/completions"
+    api_protocol_version: str = "1"
+    non_secret_headers: tuple[ReV2BaselineHeaderConfig, ...] = ()
+    fixed_framing_byte_upper_bound: int = 4096
+
+
+@dataclass
 class LlmConfig:
     """Configuration for host-side LLM CLI subprocesses."""
     enabled: bool = False              # true when llm section is present in config
@@ -168,6 +192,7 @@ class LlmConfig:
     api_key_file: Optional[str] = None  # file containing API key for API providers
     temperature: float = 0.2
     max_tokens: Optional[int] = None
+    re_v2_baseline: ReV2BaselineConfig = field(default_factory=ReV2BaselineConfig)
     features: Dict[str, object] = field(default_factory=dict)
 
 
@@ -557,7 +582,78 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
         api_key_file=str(raw["api_key_file"]) if raw.get("api_key_file") else None,
         temperature=float(raw.get("temperature", 0.2)),
         max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
+        re_v2_baseline=_parse_re_v2_baseline(raw),
         features=_parse_llm_features(raw),
+    )
+
+
+def _parse_re_v2_baseline(raw_llm: Dict[str, Any]) -> ReV2BaselineConfig:
+    raw = raw_llm.get("re_v2_baseline", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            "llm.re_v2_baseline must be a mapping",
+            field_path="llm.re_v2_baseline",
+        )
+
+    headers_raw = raw.get("non_secret_headers", [])
+    if not isinstance(headers_raw, list):
+        raise ValidationError(
+            "llm.re_v2_baseline.non_secret_headers must be a list",
+            field_path="llm.re_v2_baseline.non_secret_headers",
+        )
+    headers: list[ReV2BaselineHeaderConfig] = []
+    for index, header in enumerate(headers_raw):
+        if not isinstance(header, dict) or set(header) != {"name", "value"}:
+            raise ValidationError(
+                "llm.re_v2_baseline.non_secret_headers entries must contain exactly name and value",
+                field_path=f"llm.re_v2_baseline.non_secret_headers[{index}]",
+            )
+        headers.append(
+            ReV2BaselineHeaderConfig(
+                name=str(header["name"]),
+                value=str(header["value"]),
+            )
+        )
+
+    seed = raw.get("seed")
+    if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):
+        raise ValidationError(
+            "llm.re_v2_baseline.seed must be an integer or null",
+            field_path="llm.re_v2_baseline.seed",
+        )
+    provider_context_tokens = raw.get("provider_context_tokens")
+    if provider_context_tokens is not None and (
+        not isinstance(provider_context_tokens, int)
+        or isinstance(provider_context_tokens, bool)
+    ):
+        raise ValidationError(
+            "llm.re_v2_baseline.provider_context_tokens must be an integer or null",
+            field_path="llm.re_v2_baseline.provider_context_tokens",
+        )
+    framing = raw.get("fixed_framing_byte_upper_bound", 4096)
+    if not isinstance(framing, int) or isinstance(framing, bool):
+        raise ValidationError(
+            "llm.re_v2_baseline.fixed_framing_byte_upper_bound must be an integer",
+            field_path="llm.re_v2_baseline.fixed_framing_byte_upper_bound",
+        )
+
+    def optional_string(name: str) -> Optional[str]:
+        value = raw.get(name)
+        return str(value) if value is not None else None
+
+    return ReV2BaselineConfig(
+        model_revision=optional_string("model_revision"),
+        revision_authority=optional_string("revision_authority"),
+        provider_context_tokens=provider_context_tokens,
+        reasoning_effort=optional_string("reasoning_effort"),
+        top_p=str(raw.get("top_p", "1.0")),
+        seed=seed,
+        request_path=str(raw.get("request_path", "/chat/completions")),
+        api_protocol_version=str(raw.get("api_protocol_version", "1")),
+        non_secret_headers=tuple(headers),
+        fixed_framing_byte_upper_bound=framing,
     )
 
 

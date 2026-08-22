@@ -1261,6 +1261,17 @@ harness:
   #   # api_key_file: ~/.omlx_token
   #   # temperature: 0.2
   #   # max_tokens: 8192
+  #   # re_v2_baseline:               # bounded protocol-2.2 baseline capability
+  #   #   model_revision: gpt-example-2026-08-01
+  #   #   revision_authority: provider_resolved_revision
+  #   #   provider_context_tokens: 200000
+  #   #   reasoning_effort: null
+  #   #   top_p: "1.0"
+  #   #   seed: null
+  #   #   request_path: /chat/completions
+  #   #   api_protocol_version: "1"
+  #   #   non_secret_headers: []
+  #   #   fixed_framing_byte_upper_bound: 4096
   #   # features:
   #   #   streaming: true
   #   #   stream_preview: true

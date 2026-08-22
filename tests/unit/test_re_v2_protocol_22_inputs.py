@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from harness.config import HarnessConfig, LlmConfig, ReV2BaselineConfig
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.protocol_22.authorities import InstalledAuthorityRegistry
+from harness.re_v2.protocol_22.executors import resolve_executor_catalog
 from harness.re_v2.protocol_22.inputs import (
     Protocol22InputSet,
     Protocol22InputStoreError,
@@ -29,6 +32,10 @@ from harness.re_v2.protocol_22.partition import (
     source_partition_id,
 )
 from harness.re_v2.protocol_22.policies import build_compact_v1_policy_catalog
+from harness.re_v2.protocol_22.response_schemas import (
+    canonical_response_schema_bytes,
+    response_schema_hash,
+)
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError
 from harness.re_v2.run_store import (
     ReV2Paths,
@@ -118,38 +125,59 @@ def _input_fixture() -> tuple[Protocol22InputSet, RunManifestV2]:
     artifact_policy = build_compact_v1_policy_catalog()
 
     agent = b"canonical baseliner contract\n"
-    domain_schema = canonical_json_bytes(
-        {"schema_version": 1, "title": "domain-baseline"}
-    )
-    source_schema = canonical_json_bytes(
-        {"schema_version": 1, "title": "source-overview"}
-    )
+    domain_schema = canonical_response_schema_bytes("domain-baseline")
+    source_schema = canonical_response_schema_bytes("source-overview")
     objects = {
         content_digest(agent): agent,
         content_digest(domain_schema): domain_schema,
         content_digest(source_schema): source_schema,
     }
-    executor_contract = {
-        "schema_version": 1,
-        "entries": [
-            {
-                "producer_family": "compact-baseline",
-                "request_renderer": {
-                    "agent_contract_hash": content_digest(agent),
-                    "response_schemas": [
-                        {
-                            "artifact_kind": "domain-baseline",
-                            "schema_hash": content_digest(domain_schema),
-                        },
-                        {
-                            "artifact_kind": "source-overview",
-                            "schema_hash": content_digest(source_schema),
-                        },
-                    ],
-                },
-            }
-        ],
-    }
+    registry = InstalledAuthorityRegistry(
+        executor_implementations={
+            "bounded-api-baseline-v1": digest("api executor"),
+            "re-v2-in-process-v1": digest("in-process executor"),
+        },
+        renderer_implementations={
+            "compact-baseline-renderer-v1": digest("renderer"),
+        },
+        tokenizer_implementations={
+            "utf8-byte-upper-bound-v1": digest("tokenizer"),
+        },
+        calculator_implementations={
+            "bounded-dispatch-v1": digest("dispatch calculator"),
+            "bounded-in-process-v1": digest("in-process calculator"),
+        },
+        normalizer_implementations={
+            "deterministic-zero-usage-v1": digest("zero normalizer"),
+            "openai-usage-v1": digest("openai normalizer"),
+        },
+        verifier_implementations={},
+        partitioner_implementations={},
+        ownership_implementations={},
+        agent_contracts={"echelon.re-baseliner": content_digest(agent)},
+        response_schemas={
+            "domain-baseline": response_schema_hash("domain-baseline"),
+            "source-overview": response_schema_hash("source-overview"),
+        },
+    )
+    config = HarnessConfig(
+        provider="docker",
+        llm=LlmConfig(
+            enabled=True,
+            cli="openai-compatible",
+            base_url="https://api.example.test/v1",
+            model="gpt-example",
+            temperature=0.2,
+            max_tokens=8192,
+            timeout_ms=300_000,
+            re_v2_baseline=ReV2BaselineConfig(
+                model_revision="gpt-example-2026-08-01",
+                revision_authority="provider_resolved_revision",
+                provider_context_tokens=200_000,
+            ),
+        ),
+    )
+    executor_contract = resolve_executor_catalog(config, "baseline", registry)
     inputs = Protocol22InputSet(
         workspace_partition=workspace_partition,
         artifact_policy=artifact_policy,
@@ -158,7 +186,7 @@ def _input_fixture() -> tuple[Protocol22InputSet, RunManifestV2]:
     )
     workspace_bytes = canonical_json_bytes(workspace_partition.to_json_dict())
     policy_bytes = canonical_json_bytes(artifact_policy.to_json_dict())
-    executor_bytes = canonical_json_bytes(executor_contract)
+    executor_bytes = canonical_json_bytes(executor_contract.to_json_dict())
     base = manifest_v2(run_id="re-inputs")
     manifest = replace(
         base,

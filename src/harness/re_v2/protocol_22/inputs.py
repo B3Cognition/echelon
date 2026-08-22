@@ -18,6 +18,10 @@ from harness.re_v2.run_store import (
     load_run_manifest,
 )
 
+from .executors import (
+    ExecutorContractCatalogV1,
+    Protocol22ExecutorError,
+)
 from .model import CatalogReferenceV1, RunManifestV2
 from .partition import (
     Protocol22PartitionError,
@@ -30,10 +34,7 @@ from .policies import (
 from .schema import (
     Protocol22SchemaError,
     digest_value,
-    exact_object,
-    literal,
     load_canonical_object,
-    safe_id,
 )
 
 
@@ -48,7 +49,7 @@ class Protocol22InputStoreError(RuntimeError):
 class Protocol22InputSet:
     workspace_partition: WorkspacePartitionCatalogV1
     artifact_policy: ArtifactPolicyCatalogV1
-    executor_contract: object
+    executor_contract: ExecutorContractCatalogV1
     immutable_objects: Mapping[str, bytes]
 
     def __post_init__(self) -> None:
@@ -59,6 +60,10 @@ class Protocol22InputSet:
         if not isinstance(self.artifact_policy, ArtifactPolicyCatalogV1):
             raise Protocol22InputStoreError(
                 "artifact_policy must be ArtifactPolicyCatalogV1"
+            )
+        if not isinstance(self.executor_contract, ExecutorContractCatalogV1):
+            raise Protocol22InputStoreError(
+                "executor_contract must be ExecutorContractCatalogV1"
             )
         if not isinstance(self.immutable_objects, Mapping):
             raise Protocol22InputStoreError("immutable_objects must be a mapping")
@@ -92,7 +97,7 @@ class Protocol22InputSet:
 class ValidatedProtocol22Inputs:
     workspace_partition: WorkspacePartitionCatalogV1
     artifact_policy: ArtifactPolicyCatalogV1
-    executor_contract: Mapping[str, object]
+    executor_contract: ExecutorContractCatalogV1
     immutable_objects: Mapping[str, bytes]
 
     def __post_init__(self) -> None:
@@ -108,8 +113,6 @@ class _PreparedInputs:
     workspace_payload: bytes
     artifact_policy_payload: bytes
     executor_payload: bytes
-    executor_contract: Mapping[str, object]
-    referenced_object_roles: Mapping[str, frozenset[str]]
 
 
 def create_protocol_22_run_store(
@@ -251,9 +254,14 @@ def load_protocol_22_inputs(
             paths.inputs, manifest.executor_contract_catalog, "executor contract"
         )
         executor = load_canonical_object(
-            executor_payload, _decode_executor_catalog_envelope
+            executor_payload, ExecutorContractCatalogV1.from_json_dict
         )
-    except (Protocol22SchemaError, Protocol22PartitionError, Protocol22PolicyError) as exc:
+    except (
+        Protocol22SchemaError,
+        Protocol22PartitionError,
+        Protocol22PolicyError,
+        Protocol22ExecutorError,
+    ) as exc:
         raise Protocol22InputStoreError(
             f"invalid immutable protocol-2.2 catalog: {exc}"
         ) from exc
@@ -311,6 +319,7 @@ def _prepare_inputs(
         Protocol22SchemaError,
         Protocol22PartitionError,
         Protocol22PolicyError,
+        Protocol22ExecutorError,
     ) as exc:
         raise Protocol22InputStoreError(
             f"invalid protocol-2.2 immutable input: {exc}"
@@ -351,126 +360,39 @@ def _prepare_inputs(
         workspace_payload=workspace_payload,
         artifact_policy_payload=policy_payload,
         executor_payload=executor_payload,
-        executor_contract=executor,
-        referenced_object_roles=MappingProxyType(dict(roles)),
     )
 
 
 def _executor_catalog_payload(
     value: object,
-) -> tuple[bytes, Mapping[str, object]]:
-    if isinstance(value, Mapping):
-        raw = value
-    else:
-        serializer = getattr(value, "to_json_dict", None)
-        if not callable(serializer):
-            raise Protocol22InputStoreError(
-                "executor_contract must be a mapping or closed catalog value"
-            )
-        raw = serializer()
-    payload = canonical_json_bytes(raw)
-    decoded = load_canonical_object(payload, _decode_executor_catalog_envelope)
+) -> tuple[bytes, ExecutorContractCatalogV1]:
+    if not isinstance(value, ExecutorContractCatalogV1):
+        raise Protocol22InputStoreError(
+            "executor_contract must be ExecutorContractCatalogV1"
+        )
+    payload = canonical_json_bytes(value.to_json_dict())
+    decoded = load_canonical_object(
+        payload, ExecutorContractCatalogV1.from_json_dict
+    )
+    if decoded != value:
+        raise Protocol22InputStoreError(
+            "executor contract catalog does not round-trip canonically"
+        )
     return payload, decoded
 
 
-def _decode_executor_catalog_envelope(value: object) -> Mapping[str, object]:
-    """Validate Task 5's immutable envelope; Task 6 closes every entry field."""
-    raw = exact_object(
-        value,
-        frozenset({"schema_version", "entries"}),
-        "ExecutorContractCatalogV1",
-    )
-    literal(raw["schema_version"], 1, "ExecutorContractCatalogV1.schema_version")
-    entries = raw["entries"]
-    if not isinstance(entries, list) or not entries:
-        raise Protocol22SchemaError(
-            "ExecutorContractCatalogV1.entries must be a nonempty array"
-        )
-    families: list[str] = []
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, Mapping):
-            raise Protocol22SchemaError(
-                f"ExecutorContractCatalogV1.entries[{index}] must be an object"
-            )
-        if "producer_family" not in entry or "request_renderer" not in entry:
-            raise Protocol22SchemaError(
-                "executor entries require producer_family and request_renderer"
-            )
-        families.append(
-            safe_id(
-                entry["producer_family"],
-                f"ExecutorContractCatalogV1.entries[{index}].producer_family",
-            )
-        )
-    if tuple(families) != tuple(sorted(set(families))):
-        raise Protocol22SchemaError(
-            "ExecutorContractCatalogV1.entries must be sorted and unique by producer_family"
-        )
-    return raw
-
-
 def _referenced_object_roles(
-    executor: Mapping[str, object],
+    executor: ExecutorContractCatalogV1,
 ) -> Mapping[str, frozenset[str]]:
     roles: dict[str, set[str]] = {}
-    entries = executor.get("entries")
-    if not isinstance(entries, list):
-        raise Protocol22InputStoreError(
-            "executor contract entries must be a canonical array"
-        )
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, Mapping):
-            raise Protocol22InputStoreError(
-                f"executor contract entry {index} must be an object"
-            )
-        renderer = entry["request_renderer"]
+    for entry in executor.entries:
+        renderer = entry.request_renderer
         if renderer is None:
             continue
-        if not isinstance(renderer, Mapping):
-            raise Protocol22InputStoreError(
-                f"executor entry {index} request_renderer must be an object or null"
-            )
-        if "agent_contract_hash" not in renderer or "response_schemas" not in renderer:
-            raise Protocol22InputStoreError(
-                f"executor entry {index} renderer omits immutable object references"
-            )
-        try:
-            agent_hash = digest_value(
-                renderer["agent_contract_hash"],
-                f"executor entry {index} agent_contract_hash",
-            )
-        except Protocol22SchemaError as exc:
-            raise Protocol22InputStoreError(str(exc)) from exc
+        agent_hash = renderer.agent_contract_hash
         roles.setdefault(agent_hash, set()).add("agent_contract")
-        schemas = renderer["response_schemas"]
-        if not isinstance(schemas, (list, tuple)):
-            raise Protocol22InputStoreError(
-                f"executor entry {index} response_schemas must be an array"
-            )
-        kinds: list[str] = []
-        for schema_index, schema in enumerate(schemas):
-            try:
-                row = exact_object(
-                    schema,
-                    frozenset({"artifact_kind", "schema_hash"}),
-                    f"executor entry {index} response_schemas[{schema_index}]",
-                )
-                artifact_kind = safe_id(
-                    row["artifact_kind"],
-                    f"executor entry {index} response schema artifact_kind",
-                )
-                schema_hash = digest_value(
-                    row["schema_hash"],
-                    f"executor entry {index} response schema hash",
-                )
-            except Protocol22SchemaError as exc:
-                raise Protocol22InputStoreError(str(exc)) from exc
-            kinds.append(artifact_kind)
-            roles.setdefault(schema_hash, set()).add("response_schema")
-        if tuple(kinds) != tuple(sorted(set(kinds))):
-            raise Protocol22InputStoreError(
-                f"executor entry {index} response schemas must be sorted and unique"
-            )
+        for schema in renderer.response_schemas:
+            roles.setdefault(schema.schema_hash, set()).add("response_schema")
     return MappingProxyType(
         {key: frozenset(value) for key, value in sorted(roles.items())}
     )
