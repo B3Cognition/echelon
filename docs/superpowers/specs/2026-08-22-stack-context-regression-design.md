@@ -35,25 +35,40 @@ non-actionable controller failure after substantial token use.
 
 ### Runtime compatibility boundary
 
-The workflow validator will always require every Phase A node reachable from
-the graph entry point to declare a valid checkpoint/rewind pair. The CLI
-runtime-loading boundary will run that validator before a spec controller is
-constructed. An invalid deployed runtime fails with a direct compatibility
-error rather than entering `init` and later failing route construction.
+The deployed workflow declares a controller-runtime compatibility version. The
+running controller requires that exact version and runs workflow validation
+when the public Phase A runtime guard is called. That guard executes before
+`_cmd_run` creates targets, source configuration, run state, or a provider.
+
+The validator will also always require every Phase A node reachable from the
+graph entry point to declare a valid checkpoint/rewind pair. A workflow that
+lacks the version or policy coverage fails with a direct compatibility error
+and a migration command, rather than entering `init` and later failing route
+construction. The explicit version protects future controller/runtime changes
+that are not expressible as checkpoint policy validation.
 
 ### Immutable stack contract
 
 At fresh run initialization, the controller resolves the workspace stack
-selection (explicit, effective, and dependency-resolved IDs) and stores a
-serializable snapshot in `state.json`. The snapshot is controller-owned run
-input. Continuing a run uses the existing snapshot and never rereads mutable
-workspace selection as an authority.
+selection and stores a serializable, versioned stack contract in `state.json`.
+For each effective and dependency-resolved stack it captures the immutable
+semantic fields agents need: identity/version, description, archetypes,
+provided capabilities, required commands/registries, approved tools, and the
+verbatim, size-bounded content and digest of every referenced stack context
+file. Snapshot creation fails clearly if trusted stack guidance exceeds the
+defined contract budget; it must not silently truncate a constraint. The
+snapshot is controller-owned run input. Continuing a run uses the existing
+snapshot and never rereads mutable workspace selection or stack files as an
+authority.
 
 The shared prompt assembly adds one `Selected Stack Contract` section to every
-provider-facing prompt path. It lists the effective and resolved IDs and
-states that stack constraints govern product shape, constitution choices,
-requirements, architecture/HOW plans, implementation guidance, and tests.
-The phase-specific agents retain their existing responsibilities; this shared
+provider-facing prompt path, including ordinary agents, sequential/parallel
+agents, and controller judgment dispatches. It renders the complete snapshot,
+including captured stack-context content; it never rereads current workspace
+stack files while assembling a resumed prompt. It states that stack constraints
+govern product shape, constitution choices,
+requirements, architecture/HOW plans, implementation guidance, and tests. The
+phase-specific agents retain their existing responsibilities; this shared
 section supplies the same immutable constraint to all of them.
 
 ### Clarification retry context
@@ -67,25 +82,28 @@ remains controller-owned; providers do not write it.
 ### Actionable input diagnostics
 
 When `HumanInputPolicyError` is caught while preparing a provider question,
-the controller will record its bounded validation message in the durable
-controller diagnostic. It will not store the provider's free-form raw output.
+the controller maps it to a stable, allowlisted diagnostic code and records
+that code in the durable controller diagnostic. It does not store the
+provider's free-form raw output or interpolate provider-controlled values into
+the diagnostic.
 
 ## Tests
 
-- A workflow with missing checkpoint/rewind policies fails validation even
-  when no node declares either field.
-- Spec runtime loading rejects that invalid deployed workflow before dispatch.
-- A fresh run snapshots the stack selection; a continuation preserves it after
-  workspace config changes.
-- Both standard and nested/parallel provider prompt assembly include the stack
-  contract and resolved clarification receipt.
-- Provider human-input preparation exposes the safe policy error, while a
+- A workflow with a missing compatibility version or missing checkpoint/rewind
+  policies fails validation even when no node declares either field.
+- The public spec runtime guard rejects that invalid deployed workflow before
+  target initialization, run state creation, or provider construction.
+- A fresh run snapshots semantic stack contracts and verified context files; a
+  continuation preserves that snapshot after workspace config changes.
+- Every standard, nested/parallel, and judgment provider prompt includes the
+  stack contract and resolved clarification receipt.
+- Provider human-input preparation exposes an allowlisted safe policy code, while a
   valid resolved clarification makes a retry prompt contain its answer.
 
 ## Acceptance criteria
 
-A fresh stack-selected hello-world run has the resolved stack contract in
-TRACKER and every later provider prompt. If TRACKER asks a clarification and
+A fresh stack-selected hello-world run has the resolved semantic stack contract
+in TRACKER and every later provider prompt. If TRACKER asks a clarification and
 the controller resolves it, the next TRACKER prompt includes that answer. An
-incompatible deployed workflow is rejected before it can initialize a run or
-consume provider tokens.
+incompatible deployed workflow is rejected before it can initialize a target,
+write run state, construct a provider, or consume provider tokens.
