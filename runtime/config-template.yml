@@ -1200,6 +1200,8 @@ deploy:
 #
 # Infrastructure capabilities such as Postgres, Kafka, and Flink should be
 # selected through their own stacks when those stacks exist.
+# Manage the committed selection with `echelon stack enable <id>`,
+# `echelon stack disable <id>`, or `echelon stack select <id>...`.
 stacks:
   selected: []
   # Optional guard. When set, selected stacks must apply to at least one listed

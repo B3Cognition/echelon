@@ -1809,6 +1809,60 @@ def stack_preflight(
     legacy_cli._cmd_stack(args, project_root=Path.cwd())
 
 
+@stack_app.command("enable")
+def stack_enable(
+    stack_ids: list[str] = typer.Argument(..., help="Stack IDs to add to the project selection."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Add stacks to the committed project selection."""
+    legacy_cli = _legacy_cli()
+    args = ["enable", *stack_ids]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("disable")
+def stack_disable(
+    stack_ids: list[str] = typer.Argument(..., help="Explicit stack IDs to remove."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Remove explicitly selected stacks from the committed project config."""
+    legacy_cli = _legacy_cli()
+    args = ["disable", *stack_ids]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("select")
+def stack_select(
+    stack_ids: Optional[list[str]] = typer.Argument(
+        None,
+        help="Complete explicit selection; omit all IDs to clear it.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Replace the committed project stack selection."""
+    legacy_cli = _legacy_cli()
+    args = ["select", *(stack_ids or [])]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("selected")
+def stack_selected(
+    json_output: bool = typer.Option(False, "--json", help="Print selection as JSON."),
+) -> None:
+    """Show explicit, effective, and implied project stack selection."""
+    legacy_cli = _legacy_cli()
+    args = ["selected"]
+    if json_output:
+        args.append("--json")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
 def _option_pairs(**values: object) -> list[str]:
     pairs: list[str] = []
     for key, value in values.items():

@@ -1136,10 +1136,13 @@ def test_benchmark_help_declares_run_and_show_contracts():
 
 
 @pytest.mark.unit
-def test_stack_help_declares_detection_and_preflight_options():
+def test_stack_help_declares_detection_preflight_and_selection_options():
     list_help = invoke_help("stack", "list")
     detect_help = invoke_help("stack", "detect")
     preflight_help = invoke_help("stack", "preflight")
+    enable_help = invoke_help("stack", "enable")
+    select_help = invoke_help("stack", "select")
+    selected_help = invoke_help("stack", "selected")
 
     assert list_help.exit_code == 0
     assert "--json" in list_help.output
@@ -1155,6 +1158,12 @@ def test_stack_help_declares_detection_and_preflight_options():
     assert "--from-detect" in preflight_help.output
     assert "--probe-tools" in preflight_help.output
     assert "--json" in preflight_help.output
+    assert enable_help.exit_code == 0
+    assert "--dry-run" in enable_help.output
+    assert select_help.exit_code == 0
+    assert "--dry-run" in select_help.output
+    assert selected_help.exit_code == 0
+    assert "--json" in selected_help.output
 
 
 @pytest.mark.unit
@@ -1193,6 +1202,29 @@ def test_stack_detect_repeated_artifacts_route_to_legacy_stack(monkeypatch):
         "--format",
         "yaml",
     ]]
+
+
+@pytest.mark.unit
+def test_stack_selection_commands_route_to_legacy_stack(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_stack",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    run(["stack", "enable", "statsperform-playbook", "--dry-run"])
+    run(["stack", "disable", "statsperform-playbook"])
+    run(["stack", "select", "statsperform-msa-service"])
+    run(["stack", "selected", "--json"])
+
+    assert calls == [
+        ["enable", "statsperform-playbook", "--dry-run"],
+        ["disable", "statsperform-playbook"],
+        ["select", "statsperform-msa-service"],
+        ["selected", "--json"],
+    ]
 
 
 @pytest.mark.unit

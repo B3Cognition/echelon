@@ -13025,6 +13025,11 @@ from harness.stacks import (  # noqa: E402  (CLI command helpers)
 )
 from harness.stacks.errors import StackError  # noqa: E402
 from harness.stacks.paths import find_stack_extension_root  # noqa: E402
+from echelon.stack_selection import (  # noqa: E402
+    StackSelectionError,
+    change_stack_selection,
+    get_stack_selection,
+)
 
 
 def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
@@ -13036,7 +13041,11 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
             "  echelon stack detect [--target <path>] [--artifacts <path>] "
             "[--write] [--format text|yaml] [--json]\n"
             "  echelon stack preflight [--stack <id>] "
-            "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]"
+            "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]\n"
+            "  echelon stack selected [--json]\n"
+            "  echelon stack enable <stack-id>... [--dry-run]\n"
+            "  echelon stack disable <stack-id>... [--dry-run]\n"
+            "  echelon stack select [<stack-id>...] [--dry-run]"
         )
         return
 
@@ -13053,8 +13062,82 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
         _cmd_stack_preflight(args[1:], project_root=project_root)
         return
 
+    if subcmd == "enable":
+        _cmd_stack_selection_change("enable", args[1:], project_root=project_root)
+        return
+
+    if subcmd == "disable":
+        _cmd_stack_selection_change("disable", args[1:], project_root=project_root)
+        return
+
+    if subcmd == "select":
+        _cmd_stack_selection_change("select", args[1:], project_root=project_root)
+        return
+
+    if subcmd == "selected":
+        _cmd_stack_selected(args[1:], project_root=project_root)
+        return
+
     print(f"echelon stack: unknown subcommand '{subcmd}'", file=sys.stderr)
     sys.exit(1)
+
+
+def _cmd_stack_selection_change(
+    operation: str,
+    args: list[str],
+    *,
+    project_root: Path,
+) -> None:
+    dry_run = "--dry-run" in args
+    stack_ids = [arg for arg in args if arg != "--dry-run"]
+    if operation != "select" and not stack_ids:
+        print(f"echelon stack {operation}: requires at least one stack ID", file=sys.stderr)
+        sys.exit(1)
+    try:
+        selection = change_stack_selection(
+            project_root,
+            stack_ids,
+            _load_stack_definitions_for_project(project_root),
+            operation=operation,
+            dry_run=dry_run,
+        )
+    except (StackError, StackSelectionError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    prefix = "Dry run: " if dry_run else ""
+    label = {"enable": "Enabled", "disable": "Disabled", "select": "Selected"}[operation]
+    values = ", ".join(stack_ids if operation == "disable" else selection.explicit) or "none"
+    print(f"{prefix}{label} stacks: {values}")
+    if dry_run:
+        import yaml
+
+        print(yaml.safe_dump({"stacks": {"selected": selection.explicit}}, sort_keys=False).rstrip())
+    if selection.local_override:
+        print("Warning: .echelon/local.yml overrides stacks.selected.")
+
+
+def _cmd_stack_selected(args: list[str], *, project_root: Path) -> None:
+    if any(arg != "--json" for arg in args):
+        print("echelon stack selected: only --json is supported", file=sys.stderr)
+        sys.exit(1)
+    try:
+        selection = get_stack_selection(
+            project_root,
+            _load_stack_definitions_for_project(project_root),
+        )
+    except (StackError, StackSelectionError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    if "--json" in args:
+        import json
+
+        print(json.dumps(selection.__dict__, indent=2))
+        return
+    print(f"Explicit stacks: {', '.join(selection.explicit) or 'none'}")
+    print(f"Effective stacks: {', '.join(selection.effective) or 'none'}")
+    print(f"Resolved stacks: {', '.join(selection.resolved) or 'none'}")
+    if selection.local_override:
+        print("Warning: .echelon/local.yml overrides stacks.selected.")
 
 
 def _cmd_stack_list(args: list[str], *, project_root: Path) -> None:

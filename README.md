@@ -1223,6 +1223,16 @@ independently rather than allowing either one to hide the other.
 Legacy aliases may still exist for older scripts, but current docs and operator
 guidance use the `spec` and `delivery` namespaces.
 
+### Stack selection
+
+List bundled profiles with `echelon stack list`. Persist a project selection in
+`.echelon/config.yml` with `echelon stack enable <id>`, remove explicitly
+selected IDs with `echelon stack disable <id>`, or replace the full selection
+with `echelon stack select <id>...` (omit IDs to clear it). Use
+`echelon stack selected` to show the explicit project setting, the effective
+setting after local overrides, and implied stacks. Each mutation accepts
+`--dry-run` to validate the proposed selection without writing config.
+
 ## Codegen Pipeline
 
 SOAR-backed codegen is an optional Phase B build strategy. Install it explicitly:
