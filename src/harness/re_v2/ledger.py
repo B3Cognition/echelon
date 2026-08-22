@@ -155,6 +155,13 @@ class ObjectStore:
         self._verify(object_hash, set())
         return True
 
+    def read_blob(self, object_hash: str) -> bytes:
+        """Return one verified immutable blob, never a tree manifest."""
+        payload = self._verify(object_hash, set())
+        if _parse_tree_manifest(payload) is not None:
+            raise ReV2LedgerError("object is a tree, not a blob")
+        return payload
+
     def _verify(self, object_hash: str, active: set[str]) -> bytes:
         path = self._path(object_hash)
         payload = _read_regular_file(path, f"object {object_hash}")

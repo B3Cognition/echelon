@@ -192,6 +192,30 @@ def test_blob_is_published_at_its_content_address_and_existing_bytes_are_verifie
     assert object_path(objects, object_hash).read_bytes() == b"corrupt"
 
 
+def test_read_blob_reopens_and_reverifies_immutable_bytes(tmp_path: Path) -> None:
+    objects = ObjectStore(tmp_path / "objects")
+    payload = b"canonical deterministic artifact\n"
+    object_hash = objects.put_blob(payload)
+
+    assert objects.read_blob(object_hash) == payload
+
+    object_path(objects, object_hash).chmod(0o600)
+    object_path(objects, object_hash).write_bytes(b"corrupt")
+    with pytest.raises(ReV2LedgerError, match="hash mismatch"):
+        objects.read_blob(object_hash)
+
+
+def test_read_blob_rejects_tree_objects(tmp_path: Path) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "artifact.txt").write_bytes(b"artifact")
+    objects = ObjectStore(tmp_path / "objects")
+    tree_hash = objects.put_tree(tree)
+
+    with pytest.raises(ReV2LedgerError, match="tree.*not a blob"):
+        objects.read_blob(tree_hash)
+
+
 def test_concurrent_identical_blob_writers_never_clobber_the_object(
     tmp_path: Path,
 ) -> None:
