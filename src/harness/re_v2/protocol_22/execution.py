@@ -237,6 +237,7 @@ class ProviderExecutionDependenciesV1:
     context_bytes: bytes
     response_schema_bytes: bytes
     tokenizer: RequestTokenizerV1
+    retry_diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.executor, ExecutorContractEntryV1):
@@ -254,6 +255,16 @@ class ProviderExecutionDependenciesV1:
                 raise Protocol22ExecutionError(
                     f"provider dependency {field_name} must be bytes"
                 )
+        if not isinstance(self.retry_diagnostics, (list, tuple)):
+            raise Protocol22ExecutionError(
+                "provider retry diagnostics must be an array"
+            )
+        diagnostics = tuple(self.retry_diagnostics)
+        if diagnostics and diagnostics != tuple(sorted(set(diagnostics))):
+            raise Protocol22ExecutionError(
+                "provider retry diagnostics must be sorted and unique"
+            )
+        object.__setattr__(self, "retry_diagnostics", diagnostics)
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,9 +409,7 @@ class DeterministicRawResultV1:
             raise Protocol22ExecutionError(
                 "DeterministicRawResultV1.timed_out must be boolean"
             )
-        if self.artifact_bytes is not None and (
-            self.exit_code != 0 or self.timed_out
-        ):
+        if self.artifact_bytes is not None and (self.exit_code != 0 or self.timed_out):
             raise Protocol22ExecutionError(
                 "deterministic artifact requires successful local execution"
             )
@@ -619,6 +628,12 @@ class Protocol22ExecutionStore:
         fault_hook: FaultHook | None,
     ) -> PreparedExecutionV1:
         executor = dependencies.executor
+        if (attempt_kind == "initial_generation") != (
+            not dependencies.retry_diagnostics
+        ):
+            raise Protocol22ExecutionError(
+                "provider retry diagnostics must exist exactly for retry attempts"
+            )
         if executor.execution_mode != "api":
             raise Protocol22ExecutionError(
                 "provider preparation requires API execution mode"
@@ -633,6 +648,7 @@ class Protocol22ExecutionStore:
             dependencies.context_bytes,
             executor,
             schema_hash,
+            dependencies.retry_diagnostics,
         )
         envelope_hash = self.object_store.put_blob(
             canonical_json_bytes(envelope.to_json_dict())
@@ -679,8 +695,7 @@ class Protocol22ExecutionStore:
         executor = dependencies.executor
         if (
             executor.execution_mode != "in_process"
-            or executor.reservation_calculator.calculator_id
-            != IN_PROCESS_CALCULATOR_ID
+            or executor.reservation_calculator.calculator_id != IN_PROCESS_CALCULATOR_ID
         ):
             raise Protocol22ExecutionError(
                 "deterministic preparation requires bounded in-process execution"
@@ -785,7 +800,9 @@ class Protocol22ExecutionStore:
             raise Protocol22ExecutionError(
                 f"prepared execution closure is invalid: {exc}"
             ) from exc
-        raise Protocol22ExecutionError("prepared execution dependency branch is invalid")
+        raise Protocol22ExecutionError(
+            "prepared execution dependency branch is invalid"
+        )
 
     def _validate_prepared_provider(
         self,
@@ -811,6 +828,7 @@ class Protocol22ExecutionStore:
             ),
             dependencies.executor,
             content_digest(dependencies.response_schema_bytes),
+            dependencies.retry_diagnostics,
         )
         schema_hash = content_digest(dependencies.response_schema_bytes)
         try:
@@ -888,7 +906,9 @@ class Protocol22ExecutionStore:
         try:
             observed = self._process_probe(process_identity.pid)
         except Exception as exc:
-            raise Protocol22ExecutionError("started lease process probe failed") from exc
+            raise Protocol22ExecutionError(
+                "started lease process probe failed"
+            ) from exc
         if observed != process_identity.process_start_identity:
             raise Protocol22ExecutionError(
                 "started lease process identity is not currently live"
@@ -1008,9 +1028,7 @@ class Protocol22ExecutionStore:
                 timed_out=result.outcome == "timed_out",
                 output_truncated=stdout.capture_kind == "terminal_tail",
                 provider_name=prepared.provider_envelope.provider_id,
-                resolved_model_revision=(
-                    prepared.provider_envelope.model_revision
-                ),
+                resolved_model_revision=(prepared.provider_envelope.model_revision),
             )
             return self._persist_capture(capture, fault_hook)
         except Protocol22ExecutionError:
@@ -1167,8 +1185,7 @@ class Protocol22ExecutionStore:
             execution_input.identity != commit.execution_input_hash
             or execution_input.dispatch_id != capture.dispatch_id
             or execution_input.work_item_id != capture.work_item_id
-            or execution_input.executor_contract_hash
-            != capture.executor_contract_hash
+            or execution_input.executor_contract_hash != capture.executor_contract_hash
         ):
             raise Protocol22ExecutionError(
                 "capture commit identity does not match execution input/capture"
@@ -1225,13 +1242,11 @@ class Protocol22ExecutionStore:
                 or provider_envelope.work_item_id != capture.work_item_id
                 or provider_envelope.executor_contract_hash
                 != capture.executor_contract_hash
-                or provider_envelope.model_revision
-                != capture.resolved_model_revision
+                or provider_envelope.model_revision != capture.resolved_model_revision
                 or provider_envelope.provider_id != capture.provider_name
                 or candidate_inventory.dispatch_id != capture.dispatch_id
                 or candidate_inventory.work_item_id != capture.work_item_id
-                or candidate_inventory.identity
-                != capture.candidate_inventory_hash
+                or candidate_inventory.identity != capture.candidate_inventory_hash
             ):
                 raise Protocol22ExecutionError(
                     "provider capture closure identity/revision mismatch"
@@ -1476,10 +1491,7 @@ class Protocol22ExecutionStore:
                 "candidate capture commit is no longer authoritative"
             )
         capture = current.closure.capture
-        if (
-            capture.execution_mode != "api"
-            or capture.candidate_inventory_hash is None
-        ):
+        if capture.execution_mode != "api" or capture.candidate_inventory_hash is None:
             raise Protocol22ExecutionError(
                 "deterministic capture cannot create PersistedCandidateV2"
             )
@@ -1631,12 +1643,9 @@ def _validate_installed(
         ) from exc
     if mismatches:
         detail = ", ".join(
-            f"{item.authority_kind}:{item.authority_id}"
-            for item in mismatches
+            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
         )
-        raise Protocol22ExecutionError(
-            f"installed authority mismatch: {detail}"
-        )
+        raise Protocol22ExecutionError(f"installed authority mismatch: {detail}")
 
 
 def _validate_invocation(
@@ -1658,9 +1667,7 @@ def _validate_invocation(
         "source-inventory": frozenset({"workspace_partition"}),
         "domain-inventory": frozenset({"workspace_partition"}),
         "source-partition": frozenset({"workspace_partition"}),
-        "source-evidence-pack": frozenset(
-            {"source_inventory", "source_partition"}
-        ),
+        "source-evidence-pack": frozenset({"source_inventory", "source_partition"}),
         "domain-evidence-pack": frozenset({"domain_inventory"}),
         "domain-context-bundle": frozenset(
             {"domain_inventory", "domain_evidence_pack"}
@@ -1682,9 +1689,8 @@ def _validate_invocation(
         roles_valid = False
     hashes = tuple(sorted(value.object_hash for value in invocation.inputs))
     if kind in {"source-inventory", "domain-inventory", "source-partition"}:
-        closure_valid = (
-            workspace_partition_hash is not None
-            and hashes == (workspace_partition_hash,)
+        closure_valid = workspace_partition_hash is not None and hashes == (
+            workspace_partition_hash,
         )
     else:
         closure_valid = (
@@ -1752,9 +1758,7 @@ def _capture_candidate_entries(
                     raise Protocol22ExecutionError(
                         f"candidate entry changed while capturing: {name}"
                     )
-                entries.append(
-                    CandidateInventoryEntryV1(name, kind, mode, 0, None)
-                )
+                entries.append(CandidateInventoryEntryV1(name, kind, mode, 0, None))
         if names != sorted(
             os.listdir(root_fd),
             key=lambda item: item.encode("utf-8"),
@@ -1938,7 +1942,9 @@ def _read_named_blob(
     try:
         return object_store.read_blob(object_hash)
     except (ReV2LedgerError, Protocol22SchemaError) as exc:
-        raise Protocol22ExecutionError(f"missing or corrupt {label} blob: {exc}") from exc
+        raise Protocol22ExecutionError(
+            f"missing or corrupt {label} blob: {exc}"
+        ) from exc
 
 
 def _candidate_relative_path(value: object) -> str:
@@ -2007,7 +2013,9 @@ def _open_directory_path_nofollow(path: Path) -> int:
             "directory-relative no-follow operations are unavailable"
         )
     absolute = path.absolute()
-    if not absolute.is_absolute() or any(part in {".", ".."} for part in absolute.parts):
+    if not absolute.is_absolute() or any(
+        part in {".", ".."} for part in absolute.parts
+    ):
         raise Protocol22ExecutionError(f"unsafe directory path: {path}")
     current = os.open("/", os.O_RDONLY | _DIRECTORY | _CLOEXEC)
     try:

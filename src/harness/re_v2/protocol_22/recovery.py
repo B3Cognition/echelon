@@ -9,7 +9,7 @@ producer and never reissues a dispatch once ``dispatch_started`` is durable.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import fcntl
 import os
 import stat
@@ -310,6 +310,56 @@ def recover_protocol_22_run(
     )
 
 
+def recover_protocol_22_run_locked(
+    context: Protocol22RunContext,
+    fault_hook: FaultHook | None = None,
+) -> Protocol22RecoveryResult:
+    """Recover while the caller owns :func:`protocol_22_run_lock`.
+
+    The immutable and installed authority checks are deliberately repeated so
+    callers cannot use this entry point to bypass the non-mutating pinned-
+    authority boundary.  This function does not acquire the lock itself.
+    """
+    if not isinstance(context, Protocol22RunContext):
+        raise Protocol22RecoveryError("recovery requires Protocol22RunContext")
+    try:
+        manifest, inputs, graph = _validate_immutable_authority(context)
+        mismatches = _installed_mismatches(inputs, context.installed_authorities)
+        if mismatches:
+            unavailable = PinnedAuthorityUnavailable(mismatches)
+            return Protocol22RecoveryResult(
+                manifest=manifest,
+                inputs=inputs,
+                graph=graph,
+                events=(),
+                ledger=None,
+                budget=None,
+                dispatch_actions={},
+                operational_state="pinned_authority_unavailable",
+                unavailable=unavailable,
+            )
+        return _recover_locked(context, manifest, inputs, graph, fault_hook)
+    except Protocol22RecoveryError:
+        raise
+    except (
+        OSError,
+        ReV2BudgetV22Error,
+        ReV2EventError,
+        ReV2LedgerError,
+        Protocol22AuthorityError,
+        Protocol22ExecutionError,
+        Protocol22GraphError,
+        Protocol22InputStoreError,
+        Protocol22ProviderError,
+        Protocol22SchemaError,
+        ReV2RunStoreError,
+        ValueError,
+    ) as exc:
+        raise Protocol22RecoveryError(
+            f"protocol-2.2 recovery authority is invalid: {exc}"
+        ) from exc
+
+
 def _recover_with_valid_authority(
     context: Protocol22RunContext,
     manifest: RunManifestV2,
@@ -449,6 +499,13 @@ def _exclusive_run_lock(paths: ReV2Paths) -> Iterator[None]:
             finally:
                 os.close(lock_fd)
         os.close(root_fd)
+
+
+@contextmanager
+def protocol_22_run_lock(paths: ReV2Paths) -> Iterator[None]:
+    """Own the one process-wide mutation lock for a protocol-2.2 run."""
+    with _exclusive_run_lock(paths):
+        yield
 
 
 def _validate_immutable_authority(
@@ -745,7 +802,7 @@ def _dispatch_authority(
             "started dispatch work item is outside the immutable graph"
         )
     attempt_kind = str(payload["attempt_kind"])
-    dependencies = context.dependencies_for(item, attempt_kind)
+    dependencies = resolve_execution_dependencies(context, item, attempt_kind)
     if not isinstance(
         dependencies,
         (ProviderExecutionDependenciesV1, DeterministicExecutionDependenciesV1),
@@ -1419,6 +1476,17 @@ def _validate_orphan_work_failure(
         for event in events
     ):
         raise Protocol22RecoveryError("orphan work failure capture authority mismatch")
+    if receipt.candidate_id is not None and not any(
+        event.type == "candidate_persisted"
+        and event.payload["candidate_id"] == receipt.candidate_id
+        and event.payload["work_item_id"] == receipt.work_item_id
+        and event.payload["execution_capture_hash"]
+        == receipt.execution_capture_hash
+        for event in events
+    ):
+        raise Protocol22RecoveryError(
+            "orphan work failure candidate authority mismatch"
+        )
 
 
 def _validate_orphan_executor_failure(
@@ -1465,7 +1533,7 @@ def _prepare_next_dispatch(
     )
     if attempt_kind is None:
         return
-    dependencies = context.dependencies_for(item, attempt_kind)
+    dependencies = resolve_execution_dependencies(context, item, attempt_kind)
     if dependencies.registry != context.installed_authorities:
         raise Protocol22RecoveryError(
             "prepared dependencies do not use validated installed authority"
@@ -1482,6 +1550,82 @@ def _prepare_next_dispatch(
         dependencies,
     )
     actions.setdefault(prepared.dispatch_id, "prepared")
+
+
+def resolve_execution_dependencies(
+    context: Protocol22RunContext,
+    item: WorkItemV2,
+    attempt_kind: str,
+) -> PreparationDependenciesV1:
+    """Bind retry diagnostics to the immutable dependency resolver output."""
+    dependencies = context.dependencies_for(item, attempt_kind)
+    if not isinstance(
+        dependencies,
+        (ProviderExecutionDependenciesV1, DeterministicExecutionDependenciesV1),
+    ):
+        raise Protocol22RecoveryError(
+            "dependency resolver returned no closed execution branch"
+        )
+    if not isinstance(dependencies, ProviderExecutionDependenciesV1):
+        if attempt_kind != "initial_generation":
+            raise Protocol22RecoveryError(
+                "deterministic execution cannot consume retry diagnostics"
+            )
+        return dependencies
+    diagnostics = _retry_diagnostics(context, item, attempt_kind)
+    if dependencies.retry_diagnostics not in {(), diagnostics}:
+        raise Protocol22RecoveryError(
+            "dependency resolver supplied conflicting retry diagnostics"
+        )
+    return replace(dependencies, retry_diagnostics=diagnostics)
+
+
+def _retry_diagnostics(
+    context: Protocol22RunContext,
+    item: WorkItemV2,
+    attempt_kind: str,
+) -> tuple[str, ...]:
+    if attempt_kind == "initial_generation":
+        return ()
+    events = context.event_store.replay()
+    if attempt_kind == "result_contract_retry":
+        abandoned = any(
+            event.type == "dispatch_abandoned"
+            and event.payload["work_item_id"] == item.work_item_id
+            for event in events
+        )
+        return (
+            "execution_outcome_indeterminate" if abandoned else "result_unrecoverable",
+        )
+    if attempt_kind != "artifact_contract_retry":
+        raise Protocol22RecoveryError("unsupported provider retry kind")
+    rejected = next(
+        (
+            event
+            for event in reversed(events)
+            if event.type == "candidate_rejected"
+            and event.payload["work_item_id"] == item.work_item_id
+        ),
+        None,
+    )
+    if rejected is None:
+        raise Protocol22RecoveryError(
+            "artifact retry has no preceding candidate rejection"
+        )
+    assessment_id = str(rejected.payload["candidate_assessment_id"])
+    assessment = next(
+        (
+            value
+            for value in context.ledger.replay().candidate_assessments.values()
+            if value.identity == assessment_id
+        ),
+        None,
+    )
+    if assessment is None or not assessment.normalized_diagnostics:
+        raise Protocol22RecoveryError(
+            "artifact retry has no exact normalized diagnostics"
+        )
+    return tuple(assessment.normalized_diagnostics)
 
 
 def _is_pristine_preparation_state(
@@ -1568,5 +1712,8 @@ __all__ = (
     "Protocol22RecoveryResult",
     "Protocol22RunContext",
     "candidate_reconstructs_result_contract",
+    "protocol_22_run_lock",
     "recover_protocol_22_run",
+    "recover_protocol_22_run_locked",
+    "resolve_execution_dependencies",
 )

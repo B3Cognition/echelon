@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar, Literal, Mapping
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 
 from .schema import (
     Protocol22SchemaError,
@@ -15,6 +15,7 @@ from .schema import (
     exact_object,
     integer_or_none,
     literal,
+    load_canonical_object,
     nonnegative_int,
     one_of,
     optional_digest,
@@ -153,8 +154,9 @@ class BudgetPolicyV2(_CanonicalIdentity):
 
     def matches_goal(self, goal: str) -> bool:
         selected = one_of(goal, _GOALS, "goal")
-        return tuple(getattr(self, field) for field in self.ATTEMPT_FIELDS) == (
-            self.GOAL_ATTEMPTS[selected]
+        return (
+            tuple(getattr(self, field) for field in self.ATTEMPT_FIELDS)
+            == (self.GOAL_ATTEMPTS[selected])
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -234,7 +236,9 @@ class ArtifactKeyV2(_CanonicalIdentity):
     )
 
     def __post_init__(self) -> None:
-        literal(self.identity_schema_version, 2, "ArtifactKeyV2.identity_schema_version")
+        literal(
+            self.identity_schema_version, 2, "ArtifactKeyV2.identity_schema_version"
+        )
         if not isinstance(self.scope, ArtifactScope):
             raise Protocol22SchemaError("ArtifactKeyV2.scope must be an ArtifactScope")
         optional_digest(self.partition_id, "ArtifactKeyV2.partition_id")
@@ -453,7 +457,9 @@ class WorkItemV2(_CanonicalIdentity):
         literal(self.identity_schema_version, 2, "WorkItemV2.identity_schema_version")
         digest_value(self.template_id, "WorkItemV2.template_id")
         if not isinstance(self.output_key, ArtifactKeyV2):
-            raise Protocol22SchemaError("WorkItemV2.output_key must be an ArtifactKeyV2")
+            raise Protocol22SchemaError(
+                "WorkItemV2.output_key must be an ArtifactKeyV2"
+            )
         object.__setattr__(
             self,
             "required_artifact_hashes",
@@ -509,7 +515,9 @@ def instantiate_work_item_v2(
             raise Protocol22SchemaError(
                 f"output_key.{field} does not match WorkTemplateV2.{field}"
             )
-    copied = {field: getattr(template, field) for field in WorkItemV2.COPIED_TEMPLATE_FIELDS}
+    copied = {
+        field: getattr(template, field) for field in WorkItemV2.COPIED_TEMPLATE_FIELDS
+    }
     return WorkItemV2(
         identity_schema_version=2,
         template_id=template.template_id,
@@ -537,6 +545,51 @@ class ProviderMessageV1:
     def from_json_dict(cls, value: object) -> "ProviderMessageV1":
         raw = exact_object(value, frozenset(cls.FIELDS), "ProviderMessageV1")
         return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class RetryDiagnosticsV1:
+    """Closed controller-owned diagnostics supplied only to one shared retry."""
+
+    schema_version: int
+    diagnostics: tuple[str, ...]
+
+    FIELDS: ClassVar[tuple[str, ...]] = ("schema_version", "diagnostics")
+
+    def __post_init__(self) -> None:
+        literal(self.schema_version, 1, "RetryDiagnosticsV1.schema_version")
+        if not isinstance(self.diagnostics, (list, tuple)):
+            raise Protocol22SchemaError(
+                "RetryDiagnosticsV1.diagnostics must be an array"
+            )
+        values = tuple(self.diagnostics)
+        if not values or len(values) > 64 or values != tuple(sorted(set(values))):
+            raise Protocol22SchemaError(
+                "RetryDiagnosticsV1.diagnostics must be nonempty, sorted, and unique"
+            )
+        for value in values:
+            if (
+                not isinstance(value, str)
+                or not value
+                or value.strip() != value
+                or "\r" in value
+                or len(value.encode("utf-8")) > 1024
+            ):
+                raise Protocol22SchemaError(
+                    "RetryDiagnosticsV1 contains an invalid diagnostic"
+                )
+        object.__setattr__(self, "diagnostics", values)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "diagnostics": list(self.diagnostics),
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "RetryDiagnosticsV1":
+        raw = exact_object(value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(raw["schema_version"], raw["diagnostics"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,7 +719,9 @@ class ProviderRequestEnvelopeV1(_CanonicalIdentity):
         safe_id(self.provider_id, "ProviderRequestEnvelopeV1.provider_id")
         text_value(self.model_id, "ProviderRequestEnvelopeV1.model_id")
         text_value(self.model_revision, "ProviderRequestEnvelopeV1.model_revision")
-        optional_text(self.reasoning_effort, "ProviderRequestEnvelopeV1.reasoning_effort")
+        optional_text(
+            self.reasoning_effort, "ProviderRequestEnvelopeV1.reasoning_effort"
+        )
         if not isinstance(self.messages, (list, tuple)) or any(
             not isinstance(message, ProviderMessageV1) for message in self.messages
         ):
@@ -674,10 +729,21 @@ class ProviderRequestEnvelopeV1(_CanonicalIdentity):
                 "ProviderRequestEnvelopeV1.messages must contain ProviderMessageV1 values"
             )
         object.__setattr__(self, "messages", tuple(self.messages))
-        if tuple(message.role for message in self.messages) != ("system", "user"):
+        roles = tuple(message.role for message in self.messages)
+        if roles not in {("system", "user"), ("system", "user", "user")}:
             raise Protocol22SchemaError(
-                "ProviderRequestEnvelopeV1.messages must be ordered system then user"
+                "ProviderRequestEnvelopeV1.messages must contain system then user context and optional user retry diagnostics"
             )
+        if len(self.messages) == 3:
+            diagnostics_bytes = self.messages[2].content_utf8.encode("utf-8")
+            diagnostics = load_canonical_object(
+                diagnostics_bytes,
+                RetryDiagnosticsV1.from_json_dict,
+            )
+            if canonical_json_bytes(diagnostics.to_json_dict()) != diagnostics_bytes:
+                raise Protocol22SchemaError(
+                    "retry diagnostics message must be canonical JSON bytes"
+                )
         if not isinstance(self.response_format, ProviderResponseFormatV1):
             raise Protocol22SchemaError(
                 "ProviderRequestEnvelopeV1.response_format must be ProviderResponseFormatV1"
@@ -716,7 +782,9 @@ class ProviderRequestEnvelopeV1(_CanonicalIdentity):
         raw = exact_object(value, frozenset(cls.FIELDS), "ProviderRequestEnvelopeV1")
         messages = raw["messages"]
         if not isinstance(messages, (list, tuple)):
-            raise Protocol22SchemaError("ProviderRequestEnvelopeV1.messages must be an array")
+            raise Protocol22SchemaError(
+                "ProviderRequestEnvelopeV1.messages must be an array"
+            )
         return cls(
             schema_version=raw["schema_version"],
             dispatch_id=raw["dispatch_id"],
@@ -728,7 +796,9 @@ class ProviderRequestEnvelopeV1(_CanonicalIdentity):
             model_revision=raw["model_revision"],
             reasoning_effort=raw["reasoning_effort"],
             messages=tuple(ProviderMessageV1.from_json_dict(item) for item in messages),
-            response_format=ProviderResponseFormatV1.from_json_dict(raw["response_format"]),
+            response_format=ProviderResponseFormatV1.from_json_dict(
+                raw["response_format"]
+            ),
             generation=ProviderGenerationV1.from_json_dict(raw["generation"]),
             tools=raw["tools"],
             tool_choice=raw["tool_choice"],
@@ -818,13 +888,17 @@ class DeterministicInvocationV1(_CanonicalIdentity):
         raw = exact_object(value, frozenset(cls.FIELDS), "DeterministicInvocationV1")
         inputs = raw["inputs"]
         if not isinstance(inputs, (list, tuple)):
-            raise Protocol22SchemaError("DeterministicInvocationV1.inputs must be an array")
+            raise Protocol22SchemaError(
+                "DeterministicInvocationV1.inputs must be an array"
+            )
         return cls(
             schema_version=raw["schema_version"],
             producer_family=raw["producer_family"],
             output_key=ArtifactKeyV2.from_json_dict(raw["output_key"]),
             artifact_policy_hash=raw["artifact_policy_hash"],
-            inputs=tuple(DeterministicInvocationInputV1.from_json_dict(item) for item in inputs),
+            inputs=tuple(
+                DeterministicInvocationInputV1.from_json_dict(item) for item in inputs
+            ),
         )
 
 
@@ -861,8 +935,12 @@ class ExecutionInputV1(_CanonicalIdentity):
             self.executor_contract_hash,
             "ExecutionInputV1.executor_contract_hash",
         )
-        optional_digest(self.agent_contract_hash, "ExecutionInputV1.agent_contract_hash")
-        optional_digest(self.context_bundle_hash, "ExecutionInputV1.context_bundle_hash")
+        optional_digest(
+            self.agent_contract_hash, "ExecutionInputV1.agent_contract_hash"
+        )
+        optional_digest(
+            self.context_bundle_hash, "ExecutionInputV1.context_bundle_hash"
+        )
         optional_digest(
             self.provider_request_envelope_hash,
             "ExecutionInputV1.provider_request_envelope_hash",
@@ -873,14 +951,17 @@ class ExecutionInputV1(_CanonicalIdentity):
             raise Protocol22SchemaError(
                 "ExecutionInputV1.deterministic_invocation must be an invocation or null"
             )
-        provider_branch = all(
-            value is not None
-            for value in (
-                self.agent_contract_hash,
-                self.context_bundle_hash,
-                self.provider_request_envelope_hash,
+        provider_branch = (
+            all(
+                value is not None
+                for value in (
+                    self.agent_contract_hash,
+                    self.context_bundle_hash,
+                    self.provider_request_envelope_hash,
+                )
             )
-        ) and self.deterministic_invocation is None
+            and self.deterministic_invocation is None
+        )
         deterministic_branch = (
             self.deterministic_invocation is not None
             and self.agent_contract_hash is None
@@ -988,7 +1069,9 @@ class ExecutionCaptureV1(_CanonicalIdentity):
         literal(self.schema_version, 1, "ExecutionCaptureV1.schema_version")
         safe_id(self.dispatch_id, "ExecutionCaptureV1.dispatch_id")
         digest_value(self.work_item_id, "ExecutionCaptureV1.work_item_id")
-        digest_value(self.execution_input_hash, "ExecutionCaptureV1.execution_input_hash")
+        digest_value(
+            self.execution_input_hash, "ExecutionCaptureV1.execution_input_hash"
+        )
         digest_value(
             self.executor_contract_hash,
             "ExecutionCaptureV1.executor_contract_hash",
@@ -1074,7 +1157,10 @@ class ExecutionCaptureV1(_CanonicalIdentity):
                 self.result_kind == "deterministic_artifact"
                 and self.deterministic_artifact_hash is None
             )
-            or (self.result_kind == "none" and self.deterministic_artifact_hash is not None)
+            or (
+                self.result_kind == "none"
+                and self.deterministic_artifact_hash is not None
+            )
         ):
             raise Protocol22SchemaError(
                 "in_process execution requires the deterministic result branch"
@@ -1228,7 +1314,9 @@ class RunManifestV2(_CanonicalIdentity):
             self.artifact_policy_catalog,
             self.executor_contract_catalog,
         )
-        if any(not isinstance(reference, CatalogReferenceV1) for reference in references):
+        if any(
+            not isinstance(reference, CatalogReferenceV1) for reference in references
+        ):
             raise Protocol22SchemaError(
                 "RunManifestV2 catalog references must be CatalogReferenceV1 values"
             )
@@ -1240,7 +1328,9 @@ class RunManifestV2(_CanonicalIdentity):
                 "RunManifestV2 catalog references must be three distinct references"
             )
         if not isinstance(self.requested_goals, (list, tuple)):
-            raise Protocol22SchemaError("RunManifestV2.requested_goals must be an array")
+            raise Protocol22SchemaError(
+                "RunManifestV2.requested_goals must be an array"
+            )
         goals = tuple(self.requested_goals)
         if goals not in {("baseline",), ("inventory",)}:
             raise Protocol22SchemaError(
@@ -1326,6 +1416,7 @@ __all__ = (
     "ProviderMessageV1",
     "ProviderRequestEnvelopeV1",
     "ProviderResponseFormatV1",
+    "RetryDiagnosticsV1",
     "RunManifestV2",
     "WorkItemV2",
     "WorkTemplateV2",

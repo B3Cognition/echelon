@@ -419,11 +419,19 @@ def test_work_failure_capture_and_abandonment_authority_are_exclusive() -> None:
     assert abandoned.dispatch_abandonment_event_hash == digest("abandoned")
 
 
-def test_work_failure_candidate_fields_are_paired_and_match_assessment(
+def test_work_failure_candidate_fields_distinguish_unassessed_result_candidate(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="candidate.*paired"):
-        _work_failure(candidate_id=digest("candidate"))
+    unassessed = _work_failure(candidate_id=digest("candidate"))
+    assert unassessed.candidate_assessment_id is None
+    with pytest.raises(ValueError, match="only result-contract"):
+        _work_failure(
+            candidate_id=digest("candidate"),
+            failure_class="artifact_contract",
+            reason_code="authorial_schema_invalid",
+        )
+    with pytest.raises(ValueError, match="assessment requires"):
+        _work_failure(candidate_assessment_id=digest("assessment"))
 
     ledger, objects = _ledger(tmp_path)
     capture = objects.put_blob(b"capture: invalid candidate")

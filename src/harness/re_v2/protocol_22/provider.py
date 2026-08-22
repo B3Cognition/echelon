@@ -32,6 +32,7 @@ from .model import (
     ProviderMessageV1,
     ProviderRequestEnvelopeV1,
     ProviderResponseFormatV1,
+    RetryDiagnosticsV1,
     WorkItemV2,
 )
 from .response_schemas import canonical_response_schema_bytes
@@ -64,14 +65,8 @@ _USAGE_FIELDS = frozenset(
     }
 )
 _HEADER_RE = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
-_CREDENTIAL_HEADER_NAMES = frozenset(
-    {"authorization", "api-key", "x-api-key"}
-)
-_RESULT_STDOUT = (
-    b"echelon_result:\n"
-    b"  schema_version: 1\n"
-    b"  outcome: candidate_ready\n"
-)
+_CREDENTIAL_HEADER_NAMES = frozenset({"authorization", "api-key", "x-api-key"})
+_RESULT_STDOUT = b"echelon_result:\n  schema_version: 1\n  outcome: candidate_ready\n"
 
 
 class Protocol22ProviderError(Protocol22SchemaError):
@@ -132,9 +127,7 @@ class NormalizedUsageV1:
             raise Protocol22ProviderError("normalized usage classes must be a mapping")
         copied = dict(self.classes)
         if set(copied) - _USAGE_CLASS_KEYS or any(
-            not isinstance(value, int)
-            or isinstance(value, bool)
-            or value < 0
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
             for value in copied.values()
         ):
             raise Protocol22ProviderError("normalized usage classes are invalid")
@@ -219,6 +212,7 @@ def render_provider_request_envelope(
     context_bytes: bytes,
     executor: ExecutorContractEntryV1,
     schema_hash: str,
+    retry_diagnostics: tuple[str, ...] = (),
 ) -> ProviderRequestEnvelopeV1:
     """Bind the exact agent, context, target, and executor into stored authority."""
     if not isinstance(work_item, WorkItemV2):
@@ -234,8 +228,7 @@ def render_provider_request_envelope(
         )
     if (
         work_item.producer_family != executor.producer_family
-        or work_item.producer_protocol_version
-        != executor.producer_protocol_version
+        or work_item.producer_protocol_version != executor.producer_protocol_version
         or work_item.result_contract_id != executor.result_contract_id
     ):
         raise Protocol22ProviderError(
@@ -296,6 +289,18 @@ def render_provider_request_envelope(
             "context bundle target does not match work item artifact kind and scope"
         )
     try:
+        messages = [
+            ProviderMessageV1("system", agent_text),
+            ProviderMessageV1("user", context_text),
+        ]
+        if retry_diagnostics:
+            diagnostics = RetryDiagnosticsV1(1, retry_diagnostics)
+            messages.append(
+                ProviderMessageV1(
+                    "user",
+                    canonical_json_bytes(diagnostics.to_json_dict()).decode("utf-8"),
+                )
+            )
         return ProviderRequestEnvelopeV1(
             schema_version=1,
             dispatch_id=dispatch_id,
@@ -306,10 +311,7 @@ def render_provider_request_envelope(
             model_id=model.model_id,
             model_revision=model.model_revision,
             reasoning_effort=model.reasoning_effort,
-            messages=(
-                ProviderMessageV1("system", agent_text),
-                ProviderMessageV1("user", context_text),
-            ),
+            messages=tuple(messages),
             response_format=ProviderResponseFormatV1(
                 kind="json_schema",
                 schema_name="echelon_compact_baseline_v1",
@@ -393,7 +395,9 @@ def calculate_bounded_dispatch_reservation(
     if observed[:2] != expected[:2]:
         raise Protocol22ProviderError("request tokenizer ID/version mismatch")
     if observed[2] != expected[2]:
-        raise Protocol22ProviderError("request tokenizer implementation digest mismatch")
+        raise Protocol22ProviderError(
+            "request tokenizer implementation digest mismatch"
+        )
     count = getattr(tokenizer, "count_tokens", None)
     if not callable(count):
         raise Protocol22ProviderError("request tokenizer has no count_tokens method")
@@ -422,8 +426,7 @@ def calculate_bounded_dispatch_reservation(
     billable = (
         initial
         + limits.max_internal_calls * completion
-        + (limits.max_internal_calls - 1)
-        * limits.max_followup_input_tokens_per_call
+        + (limits.max_internal_calls - 1) * limits.max_followup_input_tokens_per_call
     )
     if billable > limits.max_billable_tokens_per_dispatch:
         raise Protocol22ProviderError(
@@ -536,9 +539,7 @@ class BoundedApiBaselineExecutor:
         candidate_root: Path,
         deadline: float,
     ) -> RawExecutionResultV1:
-        schema_bytes = canonical_response_schema_bytes(
-            envelope.target_artifact_kind
-        )
+        schema_bytes = canonical_response_schema_bytes(envelope.target_artifact_kind)
         _validate_envelope_executor(envelope, self.executor)
         _validate_execution_input(execution_input, envelope)
         expected = calculate_bounded_dispatch_reservation(
@@ -557,7 +558,9 @@ class BoundedApiBaselineExecutor:
             or isinstance(deadline, bool)
             or not math.isfinite(deadline)
         ):
-            raise Protocol22ProviderError("executor deadline must be finite monotonic time")
+            raise Protocol22ProviderError(
+                "executor deadline must be finite monotonic time"
+            )
         if deadline <= time.monotonic():
             moment = _utc_now()
             return RawExecutionResultV1(
@@ -573,9 +576,7 @@ class BoundedApiBaselineExecutor:
         if transport is None:  # pragma: no cover - contract validation guards this
             raise Protocol22ProviderError("bounded API executor lacks transport")
         url = _request_target(transport.base_url, transport.request_path)
-        headers = {
-            header.name: header.value for header in transport.non_secret_headers
-        }
+        headers = {header.name: header.value for header in transport.non_secret_headers}
         if any(
             name in headers
             for name in {"content-type", "content-length", "host", credential[0]}
@@ -680,8 +681,7 @@ def _validate_api_executor(executor: object) -> None:
         or executor.request_renderer is None
         or executor.request_tokenizer is None
         or executor.generation is None
-        or executor.reservation_calculator.calculator_id
-        != DISPATCH_CALCULATOR_ID
+        or executor.reservation_calculator.calculator_id != DISPATCH_CALCULATOR_ID
         or executor.reservation_calculator.calculator_version != 1
         or limits.max_internal_calls != 1
         or limits.max_followup_input_tokens_per_call != 0
@@ -731,7 +731,9 @@ def _validate_envelope_executor(
     if envelope.response_format.schema_hash != expected_schema:
         raise Protocol22ProviderError("envelope response schema authority mismatch")
     if envelope.tools or envelope.tool_choice != "none" or envelope.stream:
-        raise Protocol22ProviderError("provider envelope must be tool-free and non-streaming")
+        raise Protocol22ProviderError(
+            "provider envelope must be tool-free and non-streaming"
+        )
 
 
 def _validate_execution_input(
@@ -743,8 +745,7 @@ def _validate_execution_input(
     if (
         execution_input.dispatch_id != envelope.dispatch_id
         or execution_input.work_item_id != envelope.work_item_id
-        or execution_input.executor_contract_hash
-        != envelope.executor_contract_hash
+        or execution_input.executor_contract_hash != envelope.executor_contract_hash
         or execution_input.provider_request_envelope_hash != envelope.identity
         or execution_input.deterministic_invocation is not None
     ):
@@ -972,9 +973,7 @@ def _publish_candidate(root: Path, payload: bytes) -> None:
         os.fsync(directory_fd)
         verify_fd = os.open(
             "baseline.json",
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=directory_fd,
         )
         try:
@@ -989,9 +988,7 @@ def _publish_candidate(root: Path, payload: bytes) -> None:
                 or verified_metadata.st_size != len(payload)
                 or _read_bounded(verify_fd, len(payload)) != payload
             ):
-                raise Protocol22ProviderError(
-                    "published candidate bytes are invalid"
-                )
+                raise Protocol22ProviderError("published candidate bytes are invalid")
         finally:
             os.close(verify_fd)
         if not _same_directory(root, directory_metadata):
@@ -1002,7 +999,9 @@ def _publish_candidate(root: Path, payload: bytes) -> None:
         raise
     except OSError as exc:
         _discard_candidate(directory_fd, candidate_created)
-        raise Protocol22ProviderError("cannot durably publish provider candidate") from exc
+        raise Protocol22ProviderError(
+            "cannot durably publish provider candidate"
+        ) from exc
     finally:
         if directory_fd is not None:
             os.close(directory_fd)

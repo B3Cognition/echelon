@@ -186,9 +186,17 @@ class WorkItemFailureReceiptV1:
             raise Protocol22LedgerReceiptError(
                 "WorkItemFailureReceiptV1 requires the final dispatch ID"
             )
-        if (candidate_id is None) != (assessment_id is None):
+        if assessment_id is not None and candidate_id is None:
             raise Protocol22LedgerReceiptError(
-                "WorkItemFailureReceiptV1 candidate fields must be paired"
+                "WorkItemFailureReceiptV1 assessment requires a candidate ID"
+            )
+        if (
+            candidate_id is not None
+            and assessment_id is None
+            and self.failure_class != "result_contract"
+        ):
+            raise Protocol22LedgerReceiptError(
+                "only result-contract failure may name an unassessed persisted candidate"
             )
         if (capture_hash is None) == (abandonment_hash is None):
             raise Protocol22LedgerReceiptError(
@@ -606,6 +614,11 @@ class _Protocol22LedgerState:
         receipt = WorkItemFailureReceiptV1.from_json_dict(record.payload)
         if receipt.execution_capture_hash is not None:
             object_store.verify(receipt.execution_capture_hash)
+        if (
+            receipt.candidate_id is not None
+            and receipt.candidate_assessment_id is None
+        ):
+            object_store.verify(receipt.candidate_id)
         persisted_candidates = tuple(
             assessment
             for assessment in self.candidate_assessments.values()

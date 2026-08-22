@@ -55,11 +55,7 @@ from tests.unit.test_re_v2_protocol_22_provider import (
 )
 
 
-RESULT_STDOUT = (
-    b"echelon_result:\n"
-    b"  schema_version: 1\n"
-    b"  outcome: candidate_ready\n"
-)
+RESULT_STDOUT = b"echelon_result:\n  schema_version: 1\n  outcome: candidate_ready\n"
 
 
 def _store(
@@ -124,7 +120,8 @@ def _provider_result(
     *,
     stdout: bytes = RESULT_STDOUT,
     stderr: bytes = b"",
-    usage: bytes | None = b'{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}\n',
+    usage: bytes
+    | None = b'{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}\n',
     outcome: str = "candidate_ready",
 ) -> RawExecutionResultV1:
     return RawExecutionResultV1(
@@ -197,9 +194,7 @@ def test_deterministic_input_persists_closed_invocation_and_zero_token_reservati
 
     invocation = prepared.execution_input.deterministic_invocation
     assert invocation is not None
-    assert tuple(value.role for value in invocation.inputs) == (
-        "workspace_partition",
-    )
+    assert tuple(value.role for value in invocation.inputs) == ("workspace_partition",)
     assert prepared.execution_input.agent_contract_hash is None
     assert prepared.execution_input.context_bundle_hash is None
     assert prepared.execution_input.provider_request_envelope_hash is None
@@ -436,7 +431,9 @@ def test_symlink_and_special_candidate_entries_are_recorded_without_following(
     inventory = store.validate_capture_closure(captured.commit).candidate_inventory
 
     assert inventory is not None
-    assert tuple((entry.relative_path, entry.object_kind) for entry in inventory.entries) == (
+    assert tuple(
+        (entry.relative_path, entry.object_kind) for entry in inventory.entries
+    ) == (
         ("linked", "symlink"),
         ("pipe", "special"),
     )
@@ -490,7 +487,14 @@ def test_missing_stdout_or_usage_blob_invalidates_capture_closure(
         store.validate_capture_closure(captured.commit)
 
     captured = store.capture_provider_result(
-        store.prepare_execution(item, "artifact_contract_retry", dependencies),
+        store.prepare_execution(
+            item,
+            "artifact_contract_retry",
+            replace(
+                dependencies,
+                retry_diagnostics=("authorial_schema_invalid",),
+            ),
+        ),
         _candidate_root(tmp_path / "retry"),
         _provider_result(),
     )

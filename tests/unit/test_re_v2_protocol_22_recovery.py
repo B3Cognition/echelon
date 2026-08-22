@@ -709,7 +709,14 @@ def test_valid_provider_candidate_can_reconstruct_a_missing_result(
     )
     candidate_root.joinpath("extra.txt").write_text("extra", encoding="utf-8")
     captured_extra = execution.capture_provider_result(
-        execution.prepare_execution(item, "result_contract_retry", dependencies),
+        execution.prepare_execution(
+            item,
+            "result_contract_retry",
+            replace(
+                dependencies,
+                retry_diagnostics=("result_unrecoverable",),
+            ),
+        ),
         candidate_root,
         RawExecutionResultV1(
             stdout=b"malformed result\n",
