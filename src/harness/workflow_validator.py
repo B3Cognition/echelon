@@ -39,6 +39,10 @@ SUPPORTED_TRANSITION_KEYS = frozenset({
 # escalation routes. It intentionally has no workflow definition node.
 RUNTIME_TERMINAL_TARGETS = frozenset({"terminal-blocked"})
 
+# Increment whenever the Phase A controller relies on deployed workflow
+# semantics that cannot be established from the graph alone.
+CONTROLLER_RUNTIME_COMPATIBILITY_VERSION = 1
+
 
 KNOWN_CONDITION_FIELDS = frozenset({
     # Result payload fields.
@@ -126,6 +130,7 @@ class WorkflowValidationReport:
 def validate_workflow_definition(
     *,
     definition_path: Path,
+    require_phase_a_checkpoint_policies: bool = False,
 ) -> WorkflowValidationReport:
     """Validate the main squad phase graph before runtime dispatch.
 
@@ -231,7 +236,7 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
-    checkpoint_policy_enabled = any(
+    checkpoint_policy_enabled = require_phase_a_checkpoint_policies or any(
         isinstance(phase, dict)
         and ("checkpoint" in phase or "rewind" in phase)
         for phase in phases
@@ -511,6 +516,40 @@ def validate_workflow_definition(
             ))
 
     return WorkflowValidationReport(issues)
+
+
+def validate_deployed_phase_runtime(
+    *, definition_path: Path,
+) -> WorkflowValidationReport:
+    """Validate a workflow that is about to be executed by Phase A.
+
+    Unlike the reusable graph validator, this boundary also requires the
+    deployed-runtime/controller handshake. Unit fixture graphs remain useful
+    without deployment metadata, while `spec run` cannot enter with one.
+    """
+    report = validate_workflow_definition(
+        definition_path=definition_path,
+        require_phase_a_checkpoint_policies=True,
+    )
+    try:
+        raw = yaml.safe_load(definition_path.read_text(encoding="utf-8"))
+    except Exception:
+        return report
+    if not isinstance(raw, dict):
+        return report
+    compatibility_version = raw.get("controller_runtime_compatibility_version")
+    if (
+        not isinstance(compatibility_version, int)
+        or isinstance(compatibility_version, bool)
+        or compatibility_version != CONTROLLER_RUNTIME_COMPATIBILITY_VERSION
+    ):
+        report.issues.append(
+            WorkflowValidationIssue(
+                "unsupported controller runtime compatibility version",
+                path=str(definition_path),
+            )
+        )
+    return report
 
 
 def _validate_required_controller_contracts(

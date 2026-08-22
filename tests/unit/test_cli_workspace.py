@@ -342,9 +342,69 @@ def test_phase_runtime_guard_accepts_complete_prosaic_workspace(tmp_path: Path) 
     workflow.mkdir(parents=True)
     subagents.mkdir(parents=True)
     (tmp_path / ".specify/extensions/echelon").mkdir(parents=True)
-    (workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    source_definition = Path(__file__).resolve().parents[2] / "runtime/workflow/definition.yaml"
+    (workflow / "definition.yaml").write_bytes(source_definition.read_bytes())
+    (workflow / "controller-state-contracts.yaml").write_bytes(
+        source_definition.with_name("controller-state-contracts.yaml").read_bytes()
+    )
 
     assert _installed_phase_runtime_or_exit(tmp_path) == workflow.parent
+
+
+def test_phase_runtime_guard_rejects_workflow_missing_checkpoint_policies(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _installed_phase_runtime_or_exit
+
+    workflow = tmp_path / ".echelon/runtime/workflow"
+    subagents = tmp_path / ".echelon/prosaic/subagents"
+    workflow.mkdir(parents=True)
+    subagents.mkdir(parents=True)
+    source_definition = Path(__file__).resolve().parents[2] / "runtime/workflow/definition.yaml"
+    (workflow / "controller-state-contracts.yaml").write_bytes(
+        source_definition.with_name("controller-state-contracts.yaml").read_bytes()
+    )
+    definition = yaml.safe_load(source_definition.read_text(encoding="utf-8"))
+    for phase in definition["phases"]:
+        phase.pop("checkpoint", None)
+        phase.pop("rewind", None)
+    (workflow / "definition.yaml").write_text(
+        yaml.safe_dump(definition, sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _installed_phase_runtime_or_exit(tmp_path)
+
+    assert exc.value.code == 1
+    assert "echelon workspace migrate-to-prosaic" in capsys.readouterr().err
+
+
+def test_phase_runtime_guard_rejects_workflow_missing_compatibility_version(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _installed_phase_runtime_or_exit
+
+    workflow = tmp_path / ".echelon/runtime/workflow"
+    subagents = tmp_path / ".echelon/prosaic/subagents"
+    workflow.mkdir(parents=True)
+    subagents.mkdir(parents=True)
+    source_definition = Path(__file__).resolve().parents[2] / "runtime/workflow/definition.yaml"
+    (workflow / "controller-state-contracts.yaml").write_bytes(
+        source_definition.with_name("controller-state-contracts.yaml").read_bytes()
+    )
+    definition = yaml.safe_load(source_definition.read_text(encoding="utf-8"))
+    definition.pop("controller_runtime_compatibility_version", None)
+    (workflow / "definition.yaml").write_text(
+        yaml.safe_dump(definition, sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _installed_phase_runtime_or_exit(tmp_path)
+
+    assert exc.value.code == 1
+    assert "compatibility" in capsys.readouterr().err
 
 
 def test_phase_runtime_guard_rejects_legacy_extension_only_workspace(

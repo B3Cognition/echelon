@@ -2412,6 +2412,7 @@ class SquadStateStore:
         ignore_re: bool = False,
         requested_re_sources: list[str] | None = None,
         spec_authoring_mode: str = "proportional",
+        stack_contract: dict[str, object] | None = None,
     ) -> None:
         if autonomy_mode == "semi" and mode in AUTONOMY_MODES and mode not in PROJECT_MODES:
             autonomy_mode = mode
@@ -2436,6 +2437,7 @@ class SquadStateStore:
             "product_inputs": dict(product_inputs or {}),
             "ignore_re": ignore_re,
             "requested_re_sources": list(requested_re_sources or []),
+            "stack_contract": dict(stack_contract or {}),
             "created_at": ts,
             "updated_at": ts,
             "last_dispatch": None,
