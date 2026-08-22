@@ -130,6 +130,7 @@ class WorkflowValidationReport:
 def validate_workflow_definition(
     *,
     definition_path: Path,
+    require_phase_a_checkpoint_policies: bool = False,
 ) -> WorkflowValidationReport:
     """Validate the main squad phase graph before runtime dispatch.
 
@@ -235,26 +236,32 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
-    for phase_id in phase_a_phase_ids(graph):
-        node = graph.get(phase_id)
-        if node.checkpoint not in {"required", "none"}:
-            issues.append(WorkflowValidationIssue(
-                "checkpoint must be required or none",
-                phase_id=phase_id,
-                path=path,
-            ))
-        if node.rewind not in {"supported", "none"}:
-            issues.append(WorkflowValidationIssue(
-                "rewind must be supported or none",
-                phase_id=phase_id,
-                path=path,
-            ))
-        if node.checkpoint == "none" and node.rewind == "supported":
-            issues.append(WorkflowValidationIssue(
-                "rewind supported requires checkpoint required",
-                phase_id=phase_id,
-                path=path,
-            ))
+    checkpoint_policy_enabled = require_phase_a_checkpoint_policies or any(
+        isinstance(phase, dict)
+        and ("checkpoint" in phase or "rewind" in phase)
+        for phase in phases
+    )
+    if checkpoint_policy_enabled:
+        for phase_id in phase_a_phase_ids(graph):
+            node = graph.get(phase_id)
+            if node.checkpoint not in {"required", "none"}:
+                issues.append(WorkflowValidationIssue(
+                    "checkpoint must be required or none",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+            if node.rewind not in {"supported", "none"}:
+                issues.append(WorkflowValidationIssue(
+                    "rewind must be supported or none",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+            if node.checkpoint == "none" and node.rewind == "supported":
+                issues.append(WorkflowValidationIssue(
+                    "rewind supported requires checkpoint required",
+                    phase_id=phase_id,
+                    path=path,
+                ))
     workflow_declares_human_input = any(
         isinstance(phase, dict) and "human_input" in phase
         for phase in phases
@@ -520,7 +527,10 @@ def validate_deployed_phase_runtime(
     deployed-runtime/controller handshake. Unit fixture graphs remain useful
     without deployment metadata, while `spec run` cannot enter with one.
     """
-    report = validate_workflow_definition(definition_path=definition_path)
+    report = validate_workflow_definition(
+        definition_path=definition_path,
+        require_phase_a_checkpoint_policies=True,
+    )
     try:
         raw = yaml.safe_load(definition_path.read_text(encoding="utf-8"))
     except Exception:

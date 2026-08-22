@@ -1467,7 +1467,10 @@ def test_reachable_phase_requires_checkpoint_policy(tmp_path: Path) -> None:
         discover_checkpoint=None,
     )
 
-    report = validate_workflow_definition(definition_path=definition)
+    report = validate_workflow_definition(
+        definition_path=definition,
+        require_phase_a_checkpoint_policies=True,
+    )
 
     assert any(
         issue.phase_id == "phase1-discover"
@@ -1497,7 +1500,10 @@ def test_workflow_with_no_checkpoint_or_rewind_fields_is_invalid(
         ],
     )
 
-    report = validate_workflow_definition(definition_path=definition)
+    report = validate_workflow_definition(
+        definition_path=definition,
+        require_phase_a_checkpoint_policies=True,
+    )
 
     assert any(
         issue.phase_id == "phase1-discover"
