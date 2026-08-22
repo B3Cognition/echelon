@@ -12233,7 +12233,20 @@ def _installed_phase_runtime_or_exit(project_root: Path) -> Path:
     runtime = project_root / ".echelon" / "runtime"
     prose = project_root / ".echelon" / "prosaic" / "subagents"
     if (runtime / "workflow" / "definition.yaml").is_file() and prose.is_dir():
-        return runtime
+        from harness.workflow_validator import validate_deployed_phase_runtime
+
+        report = validate_deployed_phase_runtime(
+            definition_path=runtime / "workflow" / "definition.yaml"
+        )
+        if report.ok:
+            return runtime
+        print(
+            "✗ Echelon Phase A runtime is incompatible with this controller.\n"
+            f"{report.format()}\n"
+            "  Run: echelon workspace migrate-to-prosaic",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(
         "✗ Echelon runtime not installed.\n"
         "  Run: echelon workspace migrate-to-prosaic\n"

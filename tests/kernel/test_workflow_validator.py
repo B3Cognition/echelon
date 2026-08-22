@@ -1476,6 +1476,36 @@ def test_reachable_phase_requires_checkpoint_policy(tmp_path: Path) -> None:
     ), report.format()
 
 
+def test_workflow_with_no_checkpoint_or_rewind_fields_is_invalid(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "init",
+                "type": "commander_internal",
+                "transitions": [{"to": "phase1-discover", "condition": "always"}],
+            },
+            {
+                "id": "phase1-discover",
+                "type": "agent",
+                "agent": "echelon.scout",
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(definition_path=definition)
+
+    assert any(
+        issue.phase_id == "phase1-discover"
+        and "checkpoint must be required or none" in issue.message
+        for issue in report.issues
+    ), report.format()
+
+
 def test_required_checkpoint_requires_explicit_rewind_policy(
     tmp_path: Path,
 ) -> None:

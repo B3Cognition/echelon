@@ -39,6 +39,10 @@ SUPPORTED_TRANSITION_KEYS = frozenset({
 # escalation routes. It intentionally has no workflow definition node.
 RUNTIME_TERMINAL_TARGETS = frozenset({"terminal-blocked"})
 
+# Increment whenever the Phase A controller relies on deployed workflow
+# semantics that cannot be established from the graph alone.
+CONTROLLER_RUNTIME_COMPATIBILITY_VERSION = 1
+
 
 KNOWN_CONDITION_FIELDS = frozenset({
     # Result payload fields.
@@ -231,32 +235,26 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
-    checkpoint_policy_enabled = any(
-        isinstance(phase, dict)
-        and ("checkpoint" in phase or "rewind" in phase)
-        for phase in phases
-    )
-    if checkpoint_policy_enabled:
-        for phase_id in phase_a_phase_ids(graph):
-            node = graph.get(phase_id)
-            if node.checkpoint not in {"required", "none"}:
-                issues.append(WorkflowValidationIssue(
-                    "checkpoint must be required or none",
-                    phase_id=phase_id,
-                    path=path,
-                ))
-            if node.rewind not in {"supported", "none"}:
-                issues.append(WorkflowValidationIssue(
-                    "rewind must be supported or none",
-                    phase_id=phase_id,
-                    path=path,
-                ))
-            if node.checkpoint == "none" and node.rewind == "supported":
-                issues.append(WorkflowValidationIssue(
-                    "rewind supported requires checkpoint required",
-                    phase_id=phase_id,
-                    path=path,
-                ))
+    for phase_id in phase_a_phase_ids(graph):
+        node = graph.get(phase_id)
+        if node.checkpoint not in {"required", "none"}:
+            issues.append(WorkflowValidationIssue(
+                "checkpoint must be required or none",
+                phase_id=phase_id,
+                path=path,
+            ))
+        if node.rewind not in {"supported", "none"}:
+            issues.append(WorkflowValidationIssue(
+                "rewind must be supported or none",
+                phase_id=phase_id,
+                path=path,
+            ))
+        if node.checkpoint == "none" and node.rewind == "supported":
+            issues.append(WorkflowValidationIssue(
+                "rewind supported requires checkpoint required",
+                phase_id=phase_id,
+                path=path,
+            ))
     workflow_declares_human_input = any(
         isinstance(phase, dict) and "human_input" in phase
         for phase in phases
@@ -511,6 +509,37 @@ def validate_workflow_definition(
             ))
 
     return WorkflowValidationReport(issues)
+
+
+def validate_deployed_phase_runtime(
+    *, definition_path: Path,
+) -> WorkflowValidationReport:
+    """Validate a workflow that is about to be executed by Phase A.
+
+    Unlike the reusable graph validator, this boundary also requires the
+    deployed-runtime/controller handshake. Unit fixture graphs remain useful
+    without deployment metadata, while `spec run` cannot enter with one.
+    """
+    report = validate_workflow_definition(definition_path=definition_path)
+    try:
+        raw = yaml.safe_load(definition_path.read_text(encoding="utf-8"))
+    except Exception:
+        return report
+    if not isinstance(raw, dict):
+        return report
+    compatibility_version = raw.get("controller_runtime_compatibility_version")
+    if (
+        not isinstance(compatibility_version, int)
+        or isinstance(compatibility_version, bool)
+        or compatibility_version != CONTROLLER_RUNTIME_COMPATIBILITY_VERSION
+    ):
+        report.issues.append(
+            WorkflowValidationIssue(
+                "unsupported controller runtime compatibility version",
+                path=str(definition_path),
+            )
+        )
+    return report
 
 
 def _validate_required_controller_contracts(
