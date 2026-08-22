@@ -12,7 +12,7 @@ import re
 import stat
 import tempfile
 from types import MappingProxyType
-from typing import Iterable, Mapping, Protocol
+from typing import Generic, Iterable, Mapping, Protocol, TypeVar
 
 from .canonical import canonical_json_bytes, content_digest
 from .model import (
@@ -271,6 +271,34 @@ class LedgerView:
     certification_work_items: Mapping[str, WorkItem]
 
 
+LedgerViewT = TypeVar("LedgerViewT")
+
+
+class LedgerReplayState(Protocol, Generic[LedgerViewT]):
+    """Protocol-selected authority replayed inside the durable ledger envelope."""
+
+    def consume(self, record: LedgerRecord, object_store: ObjectStore) -> None: ...
+
+    def view(self) -> LedgerViewT: ...
+
+    def idempotent_record(
+        self,
+        history: tuple[LedgerRecord, ...],
+        record_type: str,
+        payload: Mapping[str, object],
+    ) -> LedgerRecord | None: ...
+
+
+class LedgerProtocol(Protocol, Generic[LedgerViewT]):
+    """Nested receipt authority selected without changing ledger record bytes."""
+
+    def new_state(self) -> LedgerReplayState[LedgerViewT]: ...
+
+    def canonical_payload(
+        self, record_type: str, value: object
+    ) -> Mapping[str, object]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class _LedgerScope:
     """Immutable run-manifest scope enforced during append and replay."""
@@ -287,17 +315,21 @@ class _LedgerState:
     certifications_by_key: dict[str, tuple[CertificationReceipt, WorkItem]]
     certification_work_items: dict[str, WorkItem]
     accepted_artifacts: dict[str, ArtifactReceipt]
+    supported_verifiers: frozenset[tuple[str, str]]
+    scope: _LedgerScope
 
     @classmethod
-    def empty(cls) -> "_LedgerState":
-        return cls({}, {}, {}, {})
+    def empty(
+        cls,
+        supported_verifiers: frozenset[tuple[str, str]],
+        scope: _LedgerScope,
+    ) -> "_LedgerState":
+        return cls({}, {}, {}, {}, supported_verifiers, scope)
 
     def consume(
         self,
         record: LedgerRecord,
         object_store: ObjectStore,
-        supported_verifiers: frozenset[tuple[str, str]],
-        scope: _LedgerScope,
     ) -> None:
         if record.type == "certification":
             try:
@@ -310,10 +342,8 @@ class _LedgerState:
                 work_item = WorkItem.from_json_dict(payload["work_item"])
             except (ReV2ModelError, TypeError, ValueError) as exc:
                 raise ReV2LedgerError(f"invalid certification receipt: {exc}") from exc
-            _validate_certification_work_item(
-                receipt, work_item, scope
-            )
-            _validate_supported_verifier(receipt, supported_verifiers)
+            _validate_certification_work_item(receipt, work_item, self.scope)
+            _validate_supported_verifier(receipt, self.supported_verifiers)
             object_store.verify(receipt.certification_key.artifact_hash)
             key_id = receipt.certification_key.identity
             existing = self.certifications_by_key.get(key_id)
@@ -336,7 +366,7 @@ class _LedgerState:
                 receipt = ArtifactReceipt.from_json_dict(record.payload)
             except (ReV2ModelError, TypeError, ValueError) as exc:
                 raise ReV2LedgerError(f"invalid artifact receipt: {exc}") from exc
-            if receipt.artifact_key.source_snapshot_id != scope.source_snapshot_id:
+            if receipt.artifact_key.source_snapshot_id != self.scope.source_snapshot_id:
                 raise ReV2LedgerError(
                     "artifact receipt does not match pinned source snapshot"
                 )
@@ -361,13 +391,21 @@ class _LedgerState:
                 receipt,
                 certification,
                 work_item=work_item,
-                pinned_source_snapshot_id=scope.source_snapshot_id,
+                pinned_source_snapshot_id=self.scope.source_snapshot_id,
             )
             object_store.verify(receipt.artifact_hash)
             self.accepted_artifacts[receipt.artifact_key.identity] = receipt
             return
 
         raise ReV2LedgerError(f"unknown ledger record type: {record.type!r}")
+
+    def idempotent_record(
+        self,
+        history: tuple[LedgerRecord, ...],
+        record_type: str,
+        payload: Mapping[str, object],
+    ) -> LedgerRecord | None:
+        return _find_idempotent_record(history, self, record_type, payload)
 
     def view(self) -> LedgerView:
         return LedgerView(
@@ -379,84 +417,58 @@ class _LedgerState:
         )
 
 
-class Ledger:
-    """Append, lock, flush, and strictly replay certification authority."""
+@dataclass(frozen=True, slots=True)
+class _LegacyLedgerProtocol:
+    supported_verifiers: frozenset[tuple[str, str]]
+    scope: _LedgerScope
+
+    def new_state(self) -> _LedgerState:
+        return _LedgerState.empty(self.supported_verifiers, self.scope)
+
+    def canonical_payload(
+        self, record_type: str, value: object
+    ) -> Mapping[str, object]:
+        try:
+            if record_type == "certification":
+                payload = _exact_object(
+                    value,
+                    {"receipt", "work_item"},
+                    "certification record payload",
+                )
+                receipt = CertificationReceipt.from_json_dict(payload["receipt"])
+                work_item = WorkItem.from_json_dict(payload["work_item"])
+                return {
+                    "receipt": receipt.to_json_dict(),
+                    "work_item": work_item.to_json_dict(),
+                }
+            if record_type == "artifact":
+                receipt = ArtifactReceipt.from_json_dict(value)
+                return receipt.to_json_dict()
+        except (ReV2ModelError, TypeError, ValueError) as exc:
+            raise ReV2LedgerError(
+                f"invalid {record_type} ledger payload: {exc}"
+            ) from exc
+        raise ReV2LedgerError(f"unknown ledger record type: {record_type!r}")
+
+
+LEGACY_LEDGER_PROTOCOL = _LegacyLedgerProtocol
+
+
+class DurableLedger(Generic[LedgerViewT]):
+    """Durable schema-1 envelope whose nested authority is protocol-selected."""
 
     def __init__(
         self,
-        path: Path | ReV2Paths,
+        path: Path,
         object_store: ObjectStore,
-        supported_verifiers: Mapping[str, str | Iterable[str]]
-        | Iterable[tuple[str, str]],
-        *,
-        pinned_source_snapshot_id: str | None = None,
-    ):
-        if isinstance(path, ReV2Paths):
-            self.path = path.ledger
-            try:
-                manifest = load_run_manifest(path.root.parent)
-                manifest_source = manifest.source_snapshot_id
-            except ReV2RunStoreError as exc:
-                raise ReV2LedgerError(
-                    f"cannot bind ledger to immutable run manifest: {exc}"
-                ) from exc
-            if (
-                pinned_source_snapshot_id is not None
-                and pinned_source_snapshot_id != manifest_source
-            ):
-                raise ReV2LedgerError(
-                    "explicit pinned source does not match immutable run manifest"
-                )
-            pinned_source_snapshot_id = manifest_source
-            pinned_partition_manifest_id: str | None = manifest.partition_manifest_id
-            pinned_requested_goals: frozenset[str] | None = frozenset(
-                manifest.requested_goals
-            )
-            pinned_artifact_policies: Mapping[str, str] | None = MappingProxyType(
-                dict(manifest.artifact_policy_versions)
-            )
-        else:
-            self.path = Path(path)
-            if pinned_source_snapshot_id is None:
-                raise ReV2LedgerError(
-                    "bare ledger path requires an explicit pinned source snapshot"
-                )
-            pinned_partition_manifest_id = None
-            pinned_requested_goals = None
-            pinned_artifact_policies = None
-        self.pinned_source_snapshot_id = _digest(
-            pinned_source_snapshot_id, "pinned_source_snapshot_id"
-        )
-        self.pinned_partition_manifest_id = pinned_partition_manifest_id
-        self.pinned_requested_goals = pinned_requested_goals
-        self.pinned_artifact_policy_versions = pinned_artifact_policies
-        self.scope = _LedgerScope(
-            source_snapshot_id=self.pinned_source_snapshot_id,
-            partition_manifest_id=pinned_partition_manifest_id,
-            requested_goals=pinned_requested_goals,
-            artifact_policy_versions=pinned_artifact_policies,
-        )
+        protocol: LedgerProtocol[LedgerViewT],
+    ) -> None:
+        self.path = Path(path)
         self.lock_path = self.path.with_name("ledger.lock")
         self.object_store = object_store
-        self.supported_verifiers = _normalize_supported_verifiers(
-            supported_verifiers
-        )
+        self.protocol = protocol
 
-    def record_certification(
-        self, receipt: CertificationReceipt, work_item: WorkItem
-    ) -> LedgerRecord:
-        if not isinstance(receipt, CertificationReceipt):
-            raise ReV2LedgerError("receipt must be a CertificationReceipt")
-        if not isinstance(work_item, WorkItem):
-            raise ReV2LedgerError("work_item must be a WorkItem")
-        return self._append("certification", receipt, work_item)
-
-    def record_artifact(self, receipt: ArtifactReceipt) -> LedgerRecord:
-        if not isinstance(receipt, ArtifactReceipt):
-            raise ReV2LedgerError("receipt must be an ArtifactReceipt")
-        return self._append("artifact", receipt)
-
-    def replay(self) -> LedgerView:
+    def replay(self) -> LedgerViewT:
         self._validate_parent()
         lock_fd = self._open_lock()
         try:
@@ -476,28 +488,20 @@ class Ledger:
     def _append(
         self,
         record_type: str,
-        receipt: CertificationReceipt | ArtifactReceipt,
-        work_item: WorkItem | None = None,
+        value: object,
     ) -> LedgerRecord:
+        payload = self.protocol.canonical_payload(record_type, value)
         self._validate_parent()
         lock_fd = self._open_lock()
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             history, state = self._read_replay()
-            duplicate = _find_idempotent_record(
-                history, state, record_type, receipt, work_item
+            duplicate = state.idempotent_record(
+                history, record_type, payload
             )
             if duplicate is not None:
                 return duplicate
 
-            payload = (
-                {
-                    "receipt": receipt.to_json_dict(),
-                    "work_item": work_item.to_json_dict(),
-                }
-                if record_type == "certification" and work_item is not None
-                else receipt.to_json_dict()
-            )
             previous = history[-1].record_hash if history else None
             identity: dict[str, object] = {
                 "payload": payload,
@@ -514,12 +518,7 @@ class Ledger:
                 seq=len(history) + 1,
                 type=record_type,
             )
-            state.consume(
-                record,
-                self.object_store,
-                self.supported_verifiers,
-                self.scope,
-            )
+            state.consume(record, self.object_store)
 
             existed = self.path.exists()
             fd = self._open_ledger_for_append()
@@ -541,17 +540,19 @@ class Ledger:
             finally:
                 os.close(lock_fd)
 
-    def _read_replay(self) -> tuple[tuple[LedgerRecord, ...], _LedgerState]:
+    def _read_replay(
+        self,
+    ) -> tuple[tuple[LedgerRecord, ...], LedgerReplayState[LedgerViewT]]:
         if not self.path.exists() and not self.path.is_symlink():
-            return (), _LedgerState.empty()
+            return (), self.protocol.new_state()
         payload = _read_regular_file(self.path, "ledger")
         if not payload:
-            return (), _LedgerState.empty()
+            return (), self.protocol.new_state()
         if not payload.endswith(b"\n"):
             raise ReV2LedgerError("partial final ledger record")
 
         records: list[LedgerRecord] = []
-        state = _LedgerState.empty()
+        state = self.protocol.new_state()
         previous: str | None = None
         if b"\r" in payload:
             raise ReV2LedgerError("ledger record framing rejects carriage returns")
@@ -583,12 +584,7 @@ class Ledger:
                     f"ledger record {index} has wrong previous record hash"
                 )
             try:
-                state.consume(
-                    record,
-                    self.object_store,
-                    self.supported_verifiers,
-                    self.scope,
-                )
+                state.consume(record, self.object_store)
             except ReV2LedgerError as exc:
                 raise ReV2LedgerError(
                     f"ledger record {index} is invalid: {exc}"
@@ -621,18 +617,107 @@ class Ledger:
         return os.open(self.path, flags, 0o600)
 
 
+class Ledger(DurableLedger[LedgerView]):
+    """Typed legacy facade preserving protocol-2.0/2.1 ledger authority."""
+
+    def __init__(
+        self,
+        path: Path | ReV2Paths,
+        object_store: ObjectStore,
+        supported_verifiers: Mapping[str, str | Iterable[str]]
+        | Iterable[tuple[str, str]],
+        *,
+        pinned_source_snapshot_id: str | None = None,
+    ):
+        if isinstance(path, ReV2Paths):
+            ledger_path = path.ledger
+            try:
+                manifest = load_run_manifest(path.root.parent)
+                manifest_source = manifest.source_snapshot_id
+            except ReV2RunStoreError as exc:
+                raise ReV2LedgerError(
+                    f"cannot bind ledger to immutable run manifest: {exc}"
+                ) from exc
+            if (
+                pinned_source_snapshot_id is not None
+                and pinned_source_snapshot_id != manifest_source
+            ):
+                raise ReV2LedgerError(
+                    "explicit pinned source does not match immutable run manifest"
+                )
+            pinned_source_snapshot_id = manifest_source
+            pinned_partition_manifest_id: str | None = manifest.partition_manifest_id
+            pinned_requested_goals: frozenset[str] | None = frozenset(
+                manifest.requested_goals
+            )
+            pinned_artifact_policies: Mapping[str, str] | None = MappingProxyType(
+                dict(manifest.artifact_policy_versions)
+            )
+        else:
+            ledger_path = Path(path)
+            if pinned_source_snapshot_id is None:
+                raise ReV2LedgerError(
+                    "bare ledger path requires an explicit pinned source snapshot"
+                )
+            pinned_partition_manifest_id = None
+            pinned_requested_goals = None
+            pinned_artifact_policies = None
+        self.pinned_source_snapshot_id = _digest(
+            pinned_source_snapshot_id, "pinned_source_snapshot_id"
+        )
+        self.pinned_partition_manifest_id = pinned_partition_manifest_id
+        self.pinned_requested_goals = pinned_requested_goals
+        self.pinned_artifact_policy_versions = pinned_artifact_policies
+        self.scope = _LedgerScope(
+            source_snapshot_id=self.pinned_source_snapshot_id,
+            partition_manifest_id=pinned_partition_manifest_id,
+            requested_goals=pinned_requested_goals,
+            artifact_policy_versions=pinned_artifact_policies,
+        )
+        self.supported_verifiers = _normalize_supported_verifiers(
+            supported_verifiers
+        )
+        super().__init__(
+            ledger_path,
+            object_store,
+            LEGACY_LEDGER_PROTOCOL(self.supported_verifiers, self.scope),
+        )
+
+    def record_certification(
+        self, receipt: CertificationReceipt, work_item: WorkItem
+    ) -> LedgerRecord:
+        if not isinstance(receipt, CertificationReceipt):
+            raise ReV2LedgerError("receipt must be a CertificationReceipt")
+        if not isinstance(work_item, WorkItem):
+            raise ReV2LedgerError("work_item must be a WorkItem")
+        return self._append(
+            "certification",
+            {
+                "receipt": receipt.to_json_dict(),
+                "work_item": work_item.to_json_dict(),
+            },
+        )
+
+    def record_artifact(self, receipt: ArtifactReceipt) -> LedgerRecord:
+        if not isinstance(receipt, ArtifactReceipt):
+            raise ReV2LedgerError("receipt must be an ArtifactReceipt")
+        return self._append("artifact", receipt.to_json_dict())
+
+
 def _find_idempotent_record(
     history: tuple[LedgerRecord, ...],
     state: _LedgerState,
     record_type: str,
-    receipt: CertificationReceipt | ArtifactReceipt,
-    work_item: WorkItem | None,
+    payload: Mapping[str, object],
 ) -> LedgerRecord | None:
     if record_type == "certification":
-        if not isinstance(receipt, CertificationReceipt):
-            raise ReV2LedgerError("certification record has wrong receipt type")
-        if not isinstance(work_item, WorkItem):
-            raise ReV2LedgerError("certification record requires a WorkItem")
+        record_payload = _exact_object(
+            payload,
+            {"receipt", "work_item"},
+            "certification record payload",
+        )
+        receipt = CertificationReceipt.from_json_dict(record_payload["receipt"])
+        work_item = WorkItem.from_json_dict(record_payload["work_item"])
         existing = state.certifications_by_key.get(receipt.certification_key.identity)
         if existing is None:
             return None
@@ -641,15 +726,16 @@ def _find_idempotent_record(
                 "conflicting certification work item for certification key"
             )
         identity = existing[0].identity
-    else:
-        if not isinstance(receipt, ArtifactReceipt):
-            raise ReV2LedgerError("artifact record has wrong receipt type")
+    elif record_type == "artifact":
+        receipt = ArtifactReceipt.from_json_dict(payload)
         existing = state.accepted_artifacts.get(receipt.artifact_key.identity)
         if existing is None:
             return None
         if existing != receipt:
             raise ReV2LedgerError("conflicting artifact receipt for artifact key")
         identity = existing.identity
+    else:
+        raise ReV2LedgerError(f"unknown ledger record type: {record_type!r}")
     for record in history:
         if record.type != record_type:
             continue
@@ -700,9 +786,9 @@ def _record_from_raw(raw: object, index: int) -> LedgerRecord:
         or raw["seq"] <= 0
     ):
         raise ReV2LedgerError(f"ledger record {index} has invalid sequence")
-    if raw["type"] not in {"artifact", "certification"}:
+    if not isinstance(raw["type"], str) or not raw["type"]:
         raise ReV2LedgerError(
-            f"ledger record {index} has unknown ledger record type"
+            f"ledger record {index} has invalid ledger record type"
         )
     previous = raw["previous_record_hash"]
     if previous is not None:

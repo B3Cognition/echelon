@@ -426,8 +426,17 @@ def test_ledger_writes_canonical_hash_chained_records(tmp_path: Path) -> None:
 
     assert (first.seq, first.previous_record_hash) == (1, None)
     assert (second.seq, second.previous_record_hash) == (2, first.record_hash)
+    assert first.record_hash == (
+        "sha256:d86954da4a43b995d40aef519ff988a9f5a4e7745918c73bea372dc4dcb3c471"
+    )
+    assert second.record_hash == (
+        "sha256:8602a4d48b19bc8cafdf769a0a74f803fd99926a5a0cc603a24d64789d180a2c"
+    )
     assert records == [first.to_json_dict(), second.to_json_dict()]
     assert all(record["schema_version"] == LEDGER_SCHEMA_VERSION for record in records)
+    assert content_digest(ledger.path.read_bytes()) == (
+        "sha256:9fa329fa18f07b1ab640e9c70fdd14fd719f15fd9dec2ebee953cf30d0d83aa5"
+    )
 
 
 @pytest.mark.parametrize(
