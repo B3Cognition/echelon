@@ -221,6 +221,12 @@ def validate_installed_authorities(
                 accounting.normalization_id,
                 accounting.implementation_digest,
             )
+            verifier = entry.verifier
+            add(
+                "verifier",
+                verifier.verifier_id,
+                verifier.implementation_digest,
+            )
             renderer = entry.request_renderer
             if renderer is not None:
                 add(

@@ -151,7 +151,7 @@ def _input_fixture() -> tuple[Protocol22InputSet, RunManifestV2]:
             "deterministic-zero-usage-v1": digest("zero normalizer"),
             "openai-usage-v1": digest("openai normalizer"),
         },
-        verifier_implementations={},
+        verifier_implementations={"compact-verifier-v1": digest("verifier")},
         partitioner_implementations={},
         ownership_implementations={},
         agent_contracts={"echelon.re-baseliner": content_digest(agent)},

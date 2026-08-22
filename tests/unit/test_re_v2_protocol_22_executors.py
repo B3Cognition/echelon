@@ -44,7 +44,7 @@ def _registry() -> InstalledAuthorityRegistry:
             "deterministic-zero-usage-v1": digest("zero normalizer"),
             "openai-usage-v1": digest("openai normalizer"),
         },
-        verifier_implementations={},
+        verifier_implementations={"compact-verifier-v1": digest("verifier")},
         partitioner_implementations={},
         ownership_implementations={},
         agent_contracts={"echelon.re-baseliner": digest("agent contract")},
@@ -129,6 +129,8 @@ def test_baseline_catalog_pins_one_call_tool_free_api_and_sampling() -> None:
     assert entry.generation.seed is None
     assert entry.model is not None
     assert entry.model.model_revision == "gpt-example-2026-08-01"
+    assert entry.verifier.verifier_id == "compact-verifier-v1"
+    assert entry.verifier.implementation_digest == digest("verifier")
     assert entry.request_renderer is not None
     assert [row.artifact_kind for row in entry.request_renderer.response_schemas] == [
         "domain-baseline",
@@ -304,7 +306,7 @@ def test_executor_catalog_rejects_empty_entries() -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "field",
-    ("model", "request_renderer", "request_tokenizer", "generation"),
+    ("verifier", "model", "request_renderer", "request_tokenizer", "generation"),
 )
 def test_api_entry_rejects_malformed_nested_provider_authority(field: str) -> None:
     entry = _baseline_entry(resolve_executor_catalog(_config(), "baseline", _registry()))

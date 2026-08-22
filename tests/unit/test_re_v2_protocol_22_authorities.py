@@ -119,6 +119,9 @@ def test_installed_authority_validation_reports_all_drift_without_mutation() -> 
             "bounded-api-baseline-v1": digest("changed executor"),
         },
         renderer_implementations={},
+        verifier_implementations={
+            "compact-verifier-v1": digest("changed verifier"),
+        },
         response_schemas={
             **registry.response_schemas,
             "domain-baseline": digest("wrong schema"),
@@ -131,6 +134,7 @@ def test_installed_authority_validation_reports_all_drift_without_mutation() -> 
         ("executor", "bounded-api-baseline-v1"),
         ("renderer", "compact-baseline-renderer-v1"),
         ("response_schema", "domain-baseline"),
+        ("verifier", "compact-verifier-v1"),
     ]
     assert mismatches[1].installed_digest is None
     assert validate_installed_authorities(catalog, registry) == ()

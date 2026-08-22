@@ -61,6 +61,7 @@ DISPATCH_CALCULATOR_ID = "bounded-dispatch-v1"
 ZERO_USAGE_NORMALIZER_ID = "deterministic-zero-usage-v1"
 OPENAI_USAGE_NORMALIZER_ID = "openai-usage-v1"
 BASELINER_AGENT_ID = "echelon.re-baseliner"
+COMPACT_VERIFIER_ID = "compact-verifier-v1"
 
 _DETERMINISTIC_PROTOCOLS = {
     "context-bundle": "context-bundle-v1",
@@ -503,6 +504,35 @@ class TokenAccountingAuthorityV1:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifierAuthorityV1:
+    verifier_id: str
+    verifier_version: str
+    implementation_digest: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "verifier_id",
+        "verifier_version",
+        "implementation_digest",
+    )
+
+    def __post_init__(self) -> None:
+        _safe_id(self.verifier_id, "VerifierAuthorityV1.verifier_id")
+        _safe_id(self.verifier_version, "VerifierAuthorityV1.verifier_version")
+        _digest(
+            self.implementation_digest,
+            "VerifierAuthorityV1.implementation_digest",
+        )
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.FIELDS}
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "VerifierAuthorityV1":
+        raw = _exact(value, cls.FIELDS, cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutorLimitsV1:
     provider_context_tokens: int | None
     max_internal_calls: int
@@ -557,6 +587,7 @@ class ExecutorContractEntryV1:
     executor_implementation_digest: str
     producer_protocol_version: str
     result_contract_id: str
+    verifier: VerifierAuthorityV1
     model: ModelAuthorityV1 | None
     request_renderer: RequestRendererAuthorityV1 | None
     request_tokenizer: RequestTokenizerAuthorityV1 | None
@@ -575,6 +606,9 @@ class ExecutorContractEntryV1:
         "executor_implementation_digest",
         "producer_protocol_version",
         "result_contract_id",
+        # Work templates must copy immutable verifier authority from a catalog;
+        # deriving this digest while rebuilding a graph would make recovery mutable.
+        "verifier",
         "model",
         "request_renderer",
         "request_tokenizer",
@@ -609,6 +643,10 @@ class ExecutorContractEntryV1:
             "ExecutorContractEntryV1.producer_protocol_version",
         )
         _safe_id(self.result_contract_id, "ExecutorContractEntryV1.result_contract_id")
+        if not isinstance(self.verifier, VerifierAuthorityV1):
+            raise Protocol22ExecutorError(
+                "ExecutorContractEntryV1.verifier is invalid"
+            )
         nested_authorities = (
             ("api_transport", self.api_transport, ApiTransportAuthorityV1),
             ("model", self.model, ModelAuthorityV1),
@@ -730,6 +768,7 @@ class ExecutorContractEntryV1:
             "executor_implementation_digest": self.executor_implementation_digest,
             "producer_protocol_version": self.producer_protocol_version,
             "result_contract_id": self.result_contract_id,
+            "verifier": self.verifier.to_json_dict(),
             "model": self.model.to_json_dict() if self.model is not None else None,
             "request_renderer": (
                 self.request_renderer.to_json_dict()
@@ -766,6 +805,7 @@ class ExecutorContractEntryV1:
             executor_implementation_digest=raw["executor_implementation_digest"],
             producer_protocol_version=raw["producer_protocol_version"],
             result_contract_id=raw["result_contract_id"],
+            verifier=VerifierAuthorityV1.from_json_dict(raw["verifier"]),
             model=(
                 ModelAuthorityV1.from_json_dict(raw["model"])
                 if raw["model"] is not None
@@ -902,6 +942,7 @@ def _in_process_entry(
         ),
         producer_protocol_version=_DETERMINISTIC_PROTOCOLS[producer_family],
         result_contract_id="deterministic-artifact-v1",
+        verifier=_verifier_authority(registry),
         model=None,
         request_renderer=None,
         request_tokenizer=None,
@@ -1064,6 +1105,7 @@ def _bounded_api_entry(
         ),
         producer_protocol_version="compact-baseline-v1",
         result_contract_id="candidate-ready-v1",
+        verifier=_verifier_authority(registry),
         model=ModelAuthorityV1(
             model_id=llm.model,
             model_revision=capability.model_revision,
@@ -1126,6 +1168,16 @@ def _header_from_config(value: object) -> NonSecretHeaderV1:
         return NonSecretHeaderV1.from_json_dict(value)
     raise Protocol22ExecutorError(
         "non_secret_headers must contain typed name/value entries"
+    )
+
+
+def _verifier_authority(
+    registry: InstalledAuthorityRegistry,
+) -> VerifierAuthorityV1:
+    return VerifierAuthorityV1(
+        verifier_id=COMPACT_VERIFIER_ID,
+        verifier_version="1",
+        implementation_digest=_require(registry, "verifier", COMPACT_VERIFIER_ID),
     )
 
 
@@ -1273,6 +1325,11 @@ def _validate_shared_authorities(
                 entry.token_accounting.normalization_id,
                 entry.token_accounting.implementation_digest,
             ),
+            (
+                "verifier",
+                entry.verifier.verifier_id,
+                entry.verifier.implementation_digest,
+            ),
         ]
         if entry.request_renderer is not None:
             authorities.append(
@@ -1314,5 +1371,6 @@ __all__ = (
     "ReservationCalculatorAuthorityV1",
     "ResponseSchemaReferenceV1",
     "TokenAccountingAuthorityV1",
+    "VerifierAuthorityV1",
     "resolve_executor_catalog",
 )
