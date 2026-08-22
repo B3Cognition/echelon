@@ -3,6 +3,7 @@
 from .model import (
     RE_V2_ENGINE,
     RE_V2_PROTOCOL,
+    RE_V2_SCHEMA_1_PROTOCOLS,
     RE_V2_SUPPORTED_PROTOCOLS,
     ReV2ModelError,
     SnapshotKind,
@@ -11,6 +12,7 @@ from .model import (
 __all__ = (
     "RE_V2_ENGINE",
     "RE_V2_PROTOCOL",
+    "RE_V2_SCHEMA_1_PROTOCOLS",
     "RE_V2_SUPPORTED_PROTOCOLS",
     "ReV2ModelError",
     "SnapshotKind",

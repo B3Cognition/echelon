@@ -12,8 +12,9 @@ from typing import ClassVar, Literal, Mapping
 from .canonical import canonical_json_bytes, content_digest
 
 RE_V2_ENGINE = "re-v2"
-RE_V2_PROTOCOL = "2.1"
-RE_V2_SUPPORTED_PROTOCOLS = ("2.0", "2.1")
+RE_V2_PROTOCOL = "2.2"
+RE_V2_SCHEMA_1_PROTOCOLS = ("2.0", "2.1")
+RE_V2_SUPPORTED_PROTOCOLS = (*RE_V2_SCHEMA_1_PROTOCOLS, RE_V2_PROTOCOL)
 
 SnapshotKind = Literal[
     "git-worktree",
@@ -467,7 +468,7 @@ class RunManifest:
             _error("unsupported schema version")
         if self.engine != RE_V2_ENGINE:
             _error("unsupported engine")
-        if self.engine_protocol_version not in RE_V2_SUPPORTED_PROTOCOLS:
+        if self.engine_protocol_version not in RE_V2_SCHEMA_1_PROTOCOLS:
             _error("unsupported engine protocol version")
         _safe_id(self.run_id, "run_id")
         _utc_timestamp(self.created_at, "created_at")

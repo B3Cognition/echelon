@@ -41,7 +41,7 @@ def valid_run_manifest_dict() -> dict[str, object]:
     return {
         "schema_version": 1,
         "engine": RE_V2_ENGINE,
-        "engine_protocol_version": RE_V2_PROTOCOL,
+        "engine_protocol_version": "2.1",
         "run_id": "re-demo",
         "created_at": "2026-08-14T12:00:00Z",
         "source_snapshot_id": digest("1"),
@@ -161,6 +161,14 @@ def test_protocol_2_1_accepts_only_workspace_composite_snapshot() -> None:
 
     raw["source_snapshot_kind"] = "git-worktree"
     with pytest.raises(ReV2ModelError, match="protocol 2.1"):
+        RunManifest.from_json_dict(raw)
+
+
+def test_protocol_2_2_is_rejected_by_schema_1_manifest() -> None:
+    raw = valid_run_manifest_dict()
+    raw["engine_protocol_version"] = "2.2"
+
+    with pytest.raises(ReV2ModelError, match="unsupported engine protocol"):
         RunManifest.from_json_dict(raw)
 
 

@@ -12225,7 +12225,7 @@ def _run_re_v2_create(
 ) -> None:
     from harness.re_v2.model import (
         RE_V2_ENGINE,
-        RE_V2_PROTOCOL,
+        RE_V2_SCHEMA_1_PROTOCOLS,
         BudgetPolicy,
         RunManifest,
     )
@@ -12247,7 +12247,9 @@ def _run_re_v2_create(
     manifest = RunManifest(
         schema_version=1,
         engine=RE_V2_ENGINE,
-        engine_protocol_version=RE_V2_PROTOCOL,
+        # Protocol-2.2 creation is wired atomically with its catalogs in the
+        # dedicated CLI path; this legacy constructor remains schema 1.
+        engine_protocol_version=RE_V2_SCHEMA_1_PROTOCOLS[-1],
         run_id=run_id,
         created_at=_re_v2_now(),
         source_snapshot_id=snapshot.snapshot_id,
