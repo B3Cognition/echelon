@@ -50,7 +50,7 @@ from .policies import policy_for
 from .provider import (
     Protocol22ProviderError,
     RawExecutionResultV1,
-    normalize_openai_usage,
+    normalize_captured_provider_usage,
 )
 from .recovery import (
     PinnedAuthorityUnavailable,
@@ -609,10 +609,6 @@ class Protocol22Controller:
         dependencies: ProviderExecutionDependenciesV1,
         candidate_root: Path,
     ) -> None:
-        if prepared.provider_envelope is None:
-            raise Protocol22ControllerError(
-                "provider execution has no request envelope"
-            )
         executor = _runtime_for(
             self.context.executors,
             dependencies.executor.adapter_id,
@@ -624,13 +620,32 @@ class Protocol22Controller:
                 f"provider executor {dependencies.executor.adapter_id} has no execute method"
             )
         deadline = time.monotonic() + prepared.reservation.active_ms / 1000
-        result = execute(
-            prepared.execution_input,
-            prepared.provider_envelope,
-            prepared.reservation,
-            candidate_root,
-            deadline,
-        )
+        if dependencies.executor.execution_mode == "api":
+            if prepared.provider_envelope is None:
+                raise Protocol22ControllerError(
+                    "API provider execution has no request envelope"
+                )
+            result = execute(
+                prepared.execution_input,
+                prepared.provider_envelope,
+                prepared.reservation,
+                candidate_root,
+                deadline,
+            )
+        elif dependencies.executor.execution_mode == "cli":
+            result = execute(
+                prepared.execution_input,
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                dependencies.response_schema_bytes,
+                prepared.reservation,
+                candidate_root,
+                deadline,
+            )
+        else:
+            raise Protocol22ControllerError(
+                "provider dependencies have no provider-backed execution mode"
+            )
         if not isinstance(result, RawExecutionResultV1):
             raise Protocol22ControllerError(
                 "provider executor returned no RawExecutionResultV1"
@@ -714,20 +729,11 @@ class Protocol22Controller:
     ) -> dict[str, object]:
         closure = committed.closure
         capture = closure.capture
-        if closure.provider_usage_bytes is None:
-            normalized = normalize_openai_usage(
-                None,
-                dependencies.executor.token_accounting,
-            )
-        else:
-            raw_usage = load_canonical_object(
-                closure.provider_usage_bytes,
-                lambda value: value,
-            )
-            normalized = normalize_openai_usage(
-                raw_usage,
-                dependencies.executor.token_accounting,
-            )
+        normalized = normalize_captured_provider_usage(
+            capture.execution_mode,
+            closure.provider_usage_bytes,
+            dependencies.executor.token_accounting,
+        )
         payload: dict[str, object] = {
             "active_usage_status": "trusted_exact",
             "dispatch_id": capture.dispatch_id,
@@ -810,10 +816,13 @@ class Protocol22Controller:
             raise Protocol22ControllerError(
                 f"verifier {item.verifier_id} has no certify_candidate method"
             )
+        context_hash = committed.closure.execution_input.context_bundle_hash
+        if context_hash is None:
+            raise Protocol22ControllerError(
+                "provider candidate has no pinned context bundle"
+            )
         context = load_canonical_object(
-            committed.closure.provider_envelope.messages[1].content_utf8.encode(
-                "utf-8"
-            ),
+            self.context.object_store.read_blob(context_hash),
             ContextBundleV1.from_json_dict,
         )
         result = certify(candidate_input, item, context)

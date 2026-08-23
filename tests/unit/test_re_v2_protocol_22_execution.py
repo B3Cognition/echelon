@@ -11,6 +11,8 @@ import harness.re_v2.protocol_22.execution as execution_module
 from harness.re_v2.candidates import ProcessIdentity
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+from harness.re_v2.protocol_22.authorities import InstalledAuthorityRegistry
 from harness.re_v2.protocol_22.baseline import (
     CompactCandidateError,
     parse_authorial_candidate,
@@ -29,6 +31,10 @@ from harness.re_v2.protocol_22.execution import (
     StagingReady,
     preview_dispatch_reservation,
 )
+from harness.re_v2.protocol_22.executors import (
+    SHARED_AI_CLI_ADAPTER_ID,
+    SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+)
 from harness.re_v2.protocol_22.graph import (
     build_protocol_22_graph,
     instantiate_ready_item,
@@ -39,8 +45,11 @@ from harness.re_v2.protocol_22.model import (
 )
 from harness.re_v2.protocol_22.policies import policy_for
 from harness.re_v2.protocol_22.provider import (
+    NormalizedUsageV1,
     RawExecutionResultV1,
     RawExecutionTimingV1,
+    canonical_normalized_usage_bytes,
+    canonical_prosaic_agent_bytes,
 )
 from harness.re_v2.protocol_22.response_schemas import (
     canonical_response_schema_bytes,
@@ -57,6 +66,18 @@ from tests.unit.test_re_v2_protocol_22_provider import (
 
 
 RESULT_STDOUT = b"echelon_result:\n  schema_version: 1\n  outcome: candidate_ready\n"
+CLI_AGENT_BYTES = canonical_prosaic_agent_bytes(
+    ProsaicCommandArtifact(
+        body="Pinned CLI baseliner.\n",
+        frontmatter={
+            "name": "echelon.re-baseliner",
+            "execution": "agent",
+            "tools": "write",
+            "model_tier": "strong",
+            "effort": "high",
+        },
+    )
+)
 
 
 def _store(
@@ -74,17 +95,74 @@ def _store(
     )
 
 
-def _provider_dependencies() -> tuple[object, ProviderExecutionDependenciesV1]:
+def _provider_dependencies(
+    mode: str = "api",
+) -> tuple[object, ProviderExecutionDependenciesV1]:
     item, executor, context = _authority()
+    registry = _registry()
+    tokenizer = _tokenizer(executor, None)
+    agent_bytes = AGENT_BYTES
+    if mode == "cli":
+        executor = replace(
+            executor,
+            execution_mode="cli",
+            provider_id="codex",
+            api_transport=None,
+            adapter_id=SHARED_AI_CLI_ADAPTER_ID,
+            executor_implementation_digest=digest("shared CLI adapter"),
+            model=None,
+            request_renderer=replace(
+                executor.request_renderer,
+                agent_contract_hash=content_digest(CLI_AGENT_BYTES),
+            ),
+            request_tokenizer=None,
+            generation=None,
+            token_accounting=replace(
+                executor.token_accounting,
+                normalization_id=SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+                implementation_digest=digest("shared usage normalizer"),
+            ),
+            limits=replace(
+                executor.limits,
+                provider_context_tokens=None,
+                max_completion_tokens_per_call=0,
+            ),
+        )
+        item = replace(item, executor_contract_hash=executor.executor_contract_hash)
+        registry = InstalledAuthorityRegistry(
+            executor_implementations={
+                **registry.executor_implementations,
+                executor.adapter_id: executor.executor_implementation_digest,
+            },
+            renderer_implementations=registry.renderer_implementations,
+            tokenizer_implementations=registry.tokenizer_implementations,
+            calculator_implementations=registry.calculator_implementations,
+            normalizer_implementations={
+                **registry.normalizer_implementations,
+                executor.token_accounting.normalization_id: (
+                    executor.token_accounting.implementation_digest
+                ),
+            },
+            verifier_implementations=registry.verifier_implementations,
+            partitioner_implementations=registry.partitioner_implementations,
+            ownership_implementations=registry.ownership_implementations,
+            agent_contracts={
+                **registry.agent_contracts,
+                "echelon.re-baseliner": content_digest(CLI_AGENT_BYTES),
+            },
+            response_schemas=registry.response_schemas,
+        )
+        tokenizer = None
+        agent_bytes = CLI_AGENT_BYTES
     return item, ProviderExecutionDependenciesV1(
         executor=executor,
-        registry=_registry(),
-        agent_bytes=AGENT_BYTES,
+        registry=registry,
+        agent_bytes=agent_bytes,
         context_bytes=context,
         response_schema_bytes=canonical_response_schema_bytes(
             item.output_key.artifact_kind
         ),
-        tokenizer=_tokenizer(executor, None),
+        tokenizer=tokenizer,  # type: ignore[arg-type]
     )
 
 
@@ -124,7 +202,21 @@ def _provider_result(
     usage: bytes
     | None = b'{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}\n',
     outcome: str = "candidate_ready",
+    mode: str = "api",
 ) -> RawExecutionResultV1:
+    if mode == "cli" and usage == b'{"completion_tokens":5,"prompt_tokens":10,"total_tokens":15}\n':
+        usage = canonical_normalized_usage_bytes(
+            NormalizedUsageV1(
+                "trusted_exact",
+                15,
+                {
+                    "cached_input_tokens": 2,
+                    "input_tokens": 8,
+                    "reasoning_output_tokens": 1,
+                    "visible_output_tokens": 4,
+                },
+            )
+        )
     return RawExecutionResultV1(
         stdout=stdout,
         stderr=stderr,
@@ -135,6 +227,8 @@ def _provider_result(
             1000,
         ),
         outcome=outcome,  # type: ignore[arg-type]
+        provider_name="codex" if mode == "cli" else None,
+        resolved_model_revision="gpt-5.6-codex" if mode == "cli" else None,
     )
 
 
@@ -147,10 +241,12 @@ def _candidate_root(tmp_path: Path, payload: bytes | None = b'{"ok":true}') -> P
     return root
 
 
+@pytest.mark.parametrize("mode", ("api", "cli"))
 def test_dispatch_preview_matches_provider_preparation_without_filesystem_writes(
     tmp_path: Path,
+    mode: str,
 ) -> None:
-    item, dependencies = _provider_dependencies()
+    item, dependencies = _provider_dependencies(mode)
     before = tuple(tmp_path.iterdir())
 
     preview = preview_dispatch_reservation(
@@ -174,11 +270,13 @@ def _object_path(objects: ObjectStore, object_hash: str) -> Path:
     return objects.root / "sha256" / suffix[:2] / suffix[2:]
 
 
-def test_provider_input_persists_envelope_before_execution_input(
+@pytest.mark.parametrize("mode", ("api", "cli"))
+def test_provider_input_persists_mode_specific_authority_before_execution_input(
     tmp_path: Path,
+    mode: str,
 ) -> None:
     store = _store(tmp_path)
-    item, dependencies = _provider_dependencies()
+    item, dependencies = _provider_dependencies(mode)
     boundaries: list[str] = []
 
     prepared = store.prepare_execution(
@@ -188,17 +286,54 @@ def test_provider_input_persists_envelope_before_execution_input(
         boundaries.append,
     )
 
-    assert boundaries.index("provider_envelope_fsynced") < boundaries.index(
-        "execution_input_fsynced"
+    if mode == "api":
+        assert boundaries.index("provider_envelope_fsynced") < boundaries.index(
+            "execution_input_fsynced"
+        )
+    else:
+        assert "provider_envelope_fsynced" not in boundaries
+    assert prepared.execution_input.agent_contract_hash is not None
+    assert prepared.execution_input.context_bundle_hash is not None
+    assert (prepared.execution_input.provider_request_envelope_hash is None) == (
+        mode == "cli"
     )
-    assert prepared.execution_input.provider_request_envelope_hash is not None
     assert prepared.execution_input.deterministic_invocation is None
-    assert prepared.provider_envelope_hash == (
-        prepared.execution_input.provider_request_envelope_hash
-    )
+    assert prepared.provider_envelope_hash == prepared.execution_input.provider_request_envelope_hash
     assert store.object_store.read_blob(prepared.execution_input_hash) == (
         canonical_json_bytes(prepared.execution_input.to_json_dict())
     )
+
+
+@pytest.mark.parametrize("mutation", ("agent", "context", "schema"))
+def test_cli_preparation_rejects_bytes_outside_pinned_authority(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    item, dependencies = _provider_dependencies("cli")
+    if mutation == "agent":
+        dependencies = replace(
+            dependencies,
+            agent_bytes=canonical_prosaic_agent_bytes(
+                ProsaicCommandArtifact(
+                    body="Mutable agent.\n",
+                    frontmatter={"name": "echelon.re-baseliner"},
+                )
+            ),
+        )
+    elif mutation == "context":
+        dependencies = replace(dependencies, context_bytes=canonical_json_bytes({}))
+    else:
+        dependencies = replace(
+            dependencies,
+            response_schema_bytes=canonical_json_bytes({}),
+        )
+
+    with pytest.raises(Protocol22ExecutionError, match=mutation):
+        _store(tmp_path).prepare_execution(
+            item,
+            "initial_generation",
+            dependencies,
+        )
 
 
 def test_deterministic_input_persists_closed_invocation_and_zero_token_reservation(
@@ -374,24 +509,26 @@ def test_capture_requires_the_durable_prepared_input_closure(tmp_path: Path) -> 
         )
 
 
+@pytest.mark.parametrize("mode", ("api", "cli"))
 def test_provider_capture_persists_regular_candidate_stdout_usage_and_closure(
     tmp_path: Path,
+    mode: str,
 ) -> None:
     store = _store(tmp_path)
-    item, dependencies = _provider_dependencies()
+    item, dependencies = _provider_dependencies(mode)
     prepared = store.prepare_execution(item, "initial_generation", dependencies)
     payload = b'{"schema_version":1,"surfaces":{},"unknowns":[]}'
 
     captured = store.capture_provider_result(
         prepared,
         _candidate_root(tmp_path, payload),
-        _provider_result(),
+        _provider_result(mode=mode),
     )
     closure = store.validate_capture_closure(captured.commit)
 
     assert closure.capture == captured.capture
     assert closure.stdout_bytes == RESULT_STDOUT
-    assert closure.provider_usage_bytes == _provider_result().provider_usage
+    assert closure.provider_usage_bytes == _provider_result(mode=mode).provider_usage
     assert closure.candidate_inventory is not None
     assert closure.candidate_inventory.entries[0].to_json_dict() == {
         "relative_path": "baseline.json",
@@ -401,9 +538,46 @@ def test_provider_capture_persists_regular_candidate_stdout_usage_and_closure(
         "content_hash": content_digest(payload),
     }
     assert store.object_store.read_blob(content_digest(payload)) == payload
-    assert captured.capture.resolved_model_revision == (
-        dependencies.executor.model.model_revision
+    assert captured.capture.execution_mode == mode
+    if mode == "api":
+        assert dependencies.executor.model is not None
+        assert captured.capture.provider_name == dependencies.executor.provider_id
+        assert captured.capture.resolved_model_revision == (
+            dependencies.executor.model.model_revision
+        )
+    else:
+        assert captured.capture.provider_name == "codex"
+        assert captured.capture.resolved_model_revision == "gpt-5.6-codex"
+        assert closure.provider_envelope is None
+
+
+def test_cli_capture_preserves_missing_provider_observation_as_unavailable(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    item, dependencies = _provider_dependencies("cli")
+    prepared = store.prepare_execution(item, "initial_generation", dependencies)
+    result = replace(
+        _provider_result(
+            mode="cli",
+            stdout=b"",
+            stderr=b"deadline_expired\n",
+            usage=None,
+            outcome="timed_out",
+        ),
+        provider_name=None,
+        resolved_model_revision=None,
     )
+
+    captured = store.capture_provider_result(
+        prepared,
+        _candidate_root(tmp_path, None),
+        result,
+    )
+    closure = store.validate_capture_closure(captured.commit)
+
+    assert closure.capture.provider_name == "unavailable"
+    assert closure.capture.resolved_model_revision is None
 
 
 def test_empty_api_candidate_inventory_is_still_durable(tmp_path: Path) -> None:

@@ -55,6 +55,46 @@ def test_staging_recovery_commits_and_replays_without_execution(tmp_path: Path) 
     assert fixture.provider.calls == 0
 
 
+@pytest.mark.integration
+def test_started_cli_dispatch_is_abandoned_once_without_reissue(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_22.controller import Protocol22Controller
+
+    context, provider = _baseline_context(tmp_path, provider_mode="cli")
+
+    def crash_after_cli_start(point: str) -> None:
+        if not point.startswith("dispatch_started:"):
+            return
+        started = context.event_store.replay()[-1]
+        if started.payload["billable_token_reservation"] > 0:
+            raise RuntimeError("crash after CLI dispatch start")
+
+    with pytest.raises(RuntimeError, match="CLI dispatch start"):
+        Protocol22Controller(context, crash_after_cli_start).run_until_stopped()
+    started = next(
+        event
+        for event in context.event_store.replay()
+        if event.type == "dispatch_started"
+        and event.payload["billable_token_reservation"] > 0
+    )
+    dead_context = replace(
+        context,
+        process_inspector=_Inspector(ProcessState.DEAD),
+    )
+
+    first = recover_protocol_22_run(dead_context)
+    second = recover_protocol_22_run(dead_context)
+
+    assert first.dispatch_actions[started.payload["dispatch_id"]] == "abandon"
+    assert first.budget is not None
+    assert first.budget.charged_tokens == started.payload[
+        "billable_token_reservation"
+    ]
+    assert [event.type for event in second.events].count("dispatch_abandoned") == 1
+    assert provider.calls == 0
+
+
 def _tree_bytes(root: Path) -> tuple[tuple[str, bytes], ...]:
     if not root.exists():
         return ()

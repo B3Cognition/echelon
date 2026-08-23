@@ -81,7 +81,10 @@ from .model import (
     RunManifestV2,
     WorkItemV2,
 )
-from .provider import Protocol22ProviderError, normalize_openai_usage
+from .provider import (
+    Protocol22ProviderError,
+    normalize_captured_provider_usage,
+)
 from .policies import Protocol22PolicyError, policy_for
 from .schema import Protocol22SchemaError, load_canonical_object
 
@@ -906,25 +909,16 @@ def _observation_payload(
         token_status = "trusted_exact"
         token_usage: int | None = 0
     else:
-        if capture.execution_mode != "api":
+        if capture.execution_mode not in {"api", "cli"}:
             raise Protocol22RecoveryError(
                 "provider dependencies disagree with capture mode"
             )
         raw_status = "valid" if closure.stdout_bytes == _RESULT_STDOUT else "invalid"
-        if closure.provider_usage_bytes is None:
-            normalized = normalize_openai_usage(
-                None,
-                dependencies.executor.token_accounting,
-            )
-        else:
-            raw_usage = load_canonical_object(
-                closure.provider_usage_bytes,
-                lambda value: value,
-            )
-            normalized = normalize_openai_usage(
-                raw_usage,
-                dependencies.executor.token_accounting,
-            )
+        normalized = normalize_captured_provider_usage(
+            capture.execution_mode,
+            closure.provider_usage_bytes,
+            dependencies.executor.token_accounting,
+        )
         token_status = normalized.status
         token_usage = normalized.billable_tokens
     return {
@@ -1051,7 +1045,7 @@ def candidate_reconstructs_result_contract(
     capture = closure.capture
     inventory = closure.candidate_inventory
     if (
-        capture.execution_mode != "api"
+        capture.execution_mode not in {"api", "cli"}
         or capture.work_item_id != work_item.work_item_id
         or inventory is None
         or len(inventory.entries) != 1

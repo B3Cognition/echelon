@@ -8,7 +8,10 @@ import pytest
 from harness.echelon_result_schema import EchelonResultContract
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 from harness.re_v2.canonical import content_digest
-from harness.re_v2.protocol_22.cli_provider import SquadCliBaselineExecutor
+from harness.re_v2.protocol_22.cli_provider import (
+    SquadCliBaselineExecutor,
+    calculate_shared_cli_dispatch_reservation,
+)
 from harness.re_v2.protocol_22.executors import (
     SHARED_AI_CLI_ADAPTER_ID,
     SHARED_PROVIDER_USAGE_NORMALIZER_ID,
@@ -120,10 +123,11 @@ def _inputs() -> tuple[
         provider_request_envelope_hash=digest("unused API envelope"),
         deterministic_invocation=None,
     )
-    reservation = DispatchReservationV1(
-        initial_input_tokens=1,
-        billable_tokens=executor.limits.max_billable_tokens_per_dispatch,
-        active_ms=executor.limits.max_active_ms_per_dispatch,
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        executor,
     )
     return (
         executor,
@@ -134,6 +138,19 @@ def _inputs() -> tuple[
         schema_bytes,
         reservation,
     )
+
+
+def test_cli_reservation_is_the_exact_rendered_prompt_byte_upper_bound() -> None:
+    executor, _input, agent, _metadata, context, schema, reservation = _inputs()
+
+    assert reservation == calculate_shared_cli_dispatch_reservation(
+        agent,
+        context,
+        schema,
+        executor,
+    )
+    assert reservation.initial_input_tokens > len(context)
+    assert reservation.billable_tokens == executor.limits.max_billable_tokens_per_dispatch
 
 
 def _result(**overrides: object) -> SquadAgentResult:

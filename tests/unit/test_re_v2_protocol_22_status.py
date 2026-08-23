@@ -185,11 +185,17 @@ def test_pristine_status_is_read_only_and_does_not_create_ledger_lock(
     assert after == before
 
 
+@pytest.mark.parametrize("provider_mode", ["api", "cli"])
 @pytest.mark.unit
 def test_provider_budget_pause_status_reconstructs_conservative_reservation(
     tmp_path: Path,
+    provider_mode: str,
 ) -> None:
-    context, provider = _baseline_context(tmp_path, token_limit=1)
+    context, provider = _baseline_context(
+        tmp_path,
+        token_limit=1,
+        provider_mode=provider_mode,
+    )
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "paused"
 

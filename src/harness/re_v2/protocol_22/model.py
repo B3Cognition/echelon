@@ -953,14 +953,8 @@ class ExecutionInputV1(_CanonicalIdentity):
                 "ExecutionInputV1.deterministic_invocation must be an invocation or null"
             )
         provider_branch = (
-            all(
-                value is not None
-                for value in (
-                    self.agent_contract_hash,
-                    self.context_bundle_hash,
-                    self.provider_request_envelope_hash,
-                )
-            )
+            self.agent_contract_hash is not None
+            and self.context_bundle_hash is not None
             and self.deterministic_invocation is None
         )
         deterministic_branch = (
@@ -1019,7 +1013,7 @@ class ExecutionCaptureV1(_CanonicalIdentity):
     work_item_id: str
     execution_input_hash: str
     executor_contract_hash: str
-    execution_mode: Literal["in_process", "api"]
+    execution_mode: Literal["in_process", "api", "cli"]
     result_kind: Literal["provider_candidate", "deterministic_artifact", "none"]
     candidate_inventory_hash: str | None
     deterministic_artifact_hash: str | None
@@ -1079,7 +1073,7 @@ class ExecutionCaptureV1(_CanonicalIdentity):
         )
         one_of(
             self.execution_mode,
-            frozenset({"in_process", "api"}),
+            frozenset({"in_process", "api", "cli"}),
             "ExecutionCaptureV1.execution_mode",
         )
         one_of(
@@ -1139,15 +1133,18 @@ class ExecutionCaptureV1(_CanonicalIdentity):
             self.resolved_model_revision,
             "ExecutionCaptureV1.resolved_model_revision",
         )
-        if self.execution_mode == "api":
+        if self.execution_mode in {"api", "cli"}:
             if (
                 self.result_kind != "provider_candidate"
                 or self.candidate_inventory_hash is None
                 or self.deterministic_artifact_hash is not None
-                or self.resolved_model_revision is None
             ):
                 raise Protocol22SchemaError(
-                    "api execution requires provider candidate_inventory_hash and model revision"
+                    "provider execution requires candidate_inventory_hash"
+                )
+            if self.execution_mode == "api" and self.resolved_model_revision is None:
+                raise Protocol22SchemaError(
+                    "api execution requires a resolved model revision"
                 )
         elif (
             self.candidate_inventory_hash is not None

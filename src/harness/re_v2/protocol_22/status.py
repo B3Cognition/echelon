@@ -18,6 +18,7 @@ from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 from .artifacts import ContextBundleV1
 from .baseline import CompactCertificationAssessmentV2
 from .budget import BudgetDecisionV2, evaluate_budget_v22
+from .cli_provider import calculate_shared_cli_dispatch_reservation
 from .events import PROTOCOL_22_EVENTS
 from .execution import (
     InProcessDispatchReservationV1,
@@ -735,7 +736,7 @@ def _preview_from_pinned_run(
             billable_tokens=0,
             active_ms=executor.limits.max_active_ms_per_dispatch,
         )
-    if executor.execution_mode != "api":
+    if executor.execution_mode not in {"api", "cli"}:
         raise Protocol22StatusError("next work uses an unsupported execution mode")
     if len(item.required_artifact_hashes) != 1:
         raise Protocol22StatusError(
@@ -763,11 +764,21 @@ def _preview_from_pinned_run(
         ledger,
     )
     schema_bytes = objects.read_blob(schema_hash)
+    agent_bytes = objects.read_blob(renderer.agent_contract_hash)
+    context_bytes = objects.read_blob(item.required_artifact_hashes[0])
+    if executor.execution_mode == "cli":
+        reservation = calculate_shared_cli_dispatch_reservation(
+            agent_bytes,
+            context_bytes,
+            schema_bytes,
+            executor,
+        )
+        return dispatch_id, reservation
     envelope = render_provider_request_envelope(
         item,
         dispatch_id,
-        objects.read_blob(renderer.agent_contract_hash),
-        objects.read_blob(item.required_artifact_hashes[0]),
+        agent_bytes,
+        context_bytes,
         executor,
         schema_hash,
         diagnostics,

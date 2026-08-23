@@ -870,8 +870,10 @@ def _resolve_contract(
         raise Protocol22GraphError(
             f"executor result contract does not match {artifact_kind} policy"
         )
-    expected_mode = "api" if family == "compact-baseline" else "in_process"
-    if executor.execution_mode != expected_mode:
+    expected_modes = (
+        {"api", "cli"} if family == "compact-baseline" else {"in_process"}
+    )
+    if executor.execution_mode not in expected_modes:
         raise Protocol22GraphError(
             f"executor mode does not match {artifact_kind} producer family"
         )

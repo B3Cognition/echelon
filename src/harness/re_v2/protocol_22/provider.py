@@ -25,6 +25,7 @@ from .executors import (
     BOUNDED_API_ADAPTER_ID,
     DISPATCH_CALCULATOR_ID,
     OPENAI_USAGE_NORMALIZER_ID,
+    SHARED_PROVIDER_USAGE_NORMALIZER_ID,
     ExecutorContractEntryV1,
     TokenAccountingAuthorityV1,
 )
@@ -333,23 +334,18 @@ class RawExecutionResultV1:
             )
 
 
-def render_provider_request_envelope(
+def validate_provider_content_authority(
     work_item: WorkItemV2,
-    dispatch_id: str,
     agent_bytes: bytes,
     context_bytes: bytes,
     executor: ExecutorContractEntryV1,
     schema_hash: str,
-    retry_diagnostics: tuple[str, ...] = (),
-) -> ProviderRequestEnvelopeV1:
-    """Bind the exact agent, context, target, and executor into stored authority."""
+) -> ContextBundleV1:
+    """Validate shared agent, context, schema, and work-item authority."""
     if not isinstance(work_item, WorkItemV2):
-        raise Protocol22ProviderError("provider envelope requires WorkItemV2")
-    _validate_api_executor(executor)
-    try:
-        safe_id(dispatch_id, "provider dispatch_id")
-    except Protocol22SchemaError as exc:
-        raise Protocol22ProviderError(str(exc)) from exc
+        raise Protocol22ProviderError("provider authority requires WorkItemV2")
+    if not isinstance(executor, ExecutorContractEntryV1):
+        raise Protocol22ProviderError("provider authority requires an executor")
     if work_item.executor_contract_hash != executor.executor_contract_hash:
         raise Protocol22ProviderError(
             "work item executor contract does not match provider authority"
@@ -377,10 +373,8 @@ def render_provider_request_envelope(
             "provider work item has an unsupported target artifact kind"
         )
     renderer = executor.request_renderer
-    model = executor.model
-    generation = executor.generation
-    if renderer is None or model is None or generation is None:  # fail-closed narrow
-        raise Protocol22ProviderError("bounded API executor authority is incomplete")
+    if renderer is None:
+        raise Protocol22ProviderError("provider renderer authority is incomplete")
     expected_schema = next(
         (
             reference.schema_hash
@@ -397,8 +391,8 @@ def render_provider_request_envelope(
         raise Protocol22ProviderError("agent contract must be exact bytes")
     if content_digest(agent_bytes) != renderer.agent_contract_hash:
         raise Protocol22ProviderError("agent contract hash mismatch")
-    agent_text = _decode_utf8(agent_bytes, "agent contract")
-    context_text = _decode_utf8(context_bytes, "context bundle")
+    _decode_utf8(agent_bytes, "agent contract")
+    _decode_utf8(context_bytes, "context bundle")
     try:
         context = load_canonical_object(
             context_bytes,
@@ -416,6 +410,38 @@ def render_provider_request_envelope(
         raise Protocol22ProviderError(
             "context bundle target does not match work item artifact kind and scope"
         )
+    return context
+
+
+def render_provider_request_envelope(
+    work_item: WorkItemV2,
+    dispatch_id: str,
+    agent_bytes: bytes,
+    context_bytes: bytes,
+    executor: ExecutorContractEntryV1,
+    schema_hash: str,
+    retry_diagnostics: tuple[str, ...] = (),
+) -> ProviderRequestEnvelopeV1:
+    """Bind the exact agent, context, target, and executor into stored authority."""
+    _validate_api_executor(executor)
+    try:
+        safe_id(dispatch_id, "provider dispatch_id")
+    except Protocol22SchemaError as exc:
+        raise Protocol22ProviderError(str(exc)) from exc
+    validate_provider_content_authority(
+        work_item,
+        agent_bytes,
+        context_bytes,
+        executor,
+        schema_hash,
+    )
+    target_kind = work_item.output_key.artifact_kind
+    model = executor.model
+    generation = executor.generation
+    if model is None or generation is None:  # fail-closed narrow
+        raise Protocol22ProviderError("bounded API executor authority is incomplete")
+    agent_text = _decode_utf8(agent_bytes, "agent contract")
+    context_text = _decode_utf8(context_bytes, "context bundle")
     try:
         messages = [
             ProviderMessageV1("system", agent_text),
@@ -625,6 +651,36 @@ def normalize_openai_usage(
         total,
         classes,
     )
+
+
+def normalize_captured_provider_usage(
+    execution_mode: object,
+    provider_usage: bytes | None,
+    contract: TokenAccountingAuthorityV1,
+) -> NormalizedUsageV1:
+    """Decode one existing API or shared-CLI usage capture."""
+    if execution_mode == "cli":
+        if (
+            not isinstance(contract, TokenAccountingAuthorityV1)
+            or contract.normalization_id != SHARED_PROVIDER_USAGE_NORMALIZER_ID
+            or contract.normalization_version != "1"
+            or contract.unknown_class_policy != "untrusted"
+        ):
+            raise Protocol22ProviderError(
+                "shared provider token accounting contract mismatch"
+            )
+        if provider_usage is None:
+            return NormalizedUsageV1("unavailable", None, {})
+        return decode_normalized_usage_bytes(provider_usage)
+    if execution_mode == "api":
+        if provider_usage is None:
+            return normalize_openai_usage(None, contract)
+        try:
+            raw = load_canonical_object(provider_usage, lambda value: value)
+        except Protocol22SchemaError as exc:
+            raise Protocol22ProviderError(str(exc)) from exc
+        return normalize_openai_usage(raw, contract)
+    raise Protocol22ProviderError("usage capture requires API or CLI mode")
 
 
 CredentialLoader = Callable[[], tuple[str, str] | None]
@@ -1201,7 +1257,9 @@ __all__ = (
     "decode_normalized_usage_bytes",
     "decode_prosaic_agent_bytes",
     "normalize_openai_usage",
+    "normalize_captured_provider_usage",
     "normalize_shared_provider_usage",
     "render_provider_request_envelope",
     "render_wire_request",
+    "validate_provider_content_authority",
 )

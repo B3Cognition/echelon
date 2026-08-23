@@ -25,6 +25,7 @@ from .authorities import (
     Protocol22AuthorityError,
     validate_installed_authorities,
 )
+from .cli_provider import calculate_shared_cli_dispatch_reservation
 from .executors import (
     IN_PROCESS_CALCULATOR_ID,
     ExecutorContractCatalogV1,
@@ -46,6 +47,7 @@ from .provider import (
     RequestTokenizerV1,
     calculate_bounded_dispatch_reservation,
     render_provider_request_envelope,
+    validate_provider_content_authority,
 )
 from .schema import (
     Protocol22SchemaError,
@@ -236,7 +238,7 @@ class ProviderExecutionDependenciesV1:
     agent_bytes: bytes
     context_bytes: bytes
     response_schema_bytes: bytes
-    tokenizer: RequestTokenizerV1
+    tokenizer: RequestTokenizerV1 | None
     retry_diagnostics: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -265,6 +267,14 @@ class ProviderExecutionDependenciesV1:
                 "provider retry diagnostics must be sorted and unique"
             )
         object.__setattr__(self, "retry_diagnostics", diagnostics)
+        if self.executor.execution_mode == "api" and self.tokenizer is None:
+            raise Protocol22ExecutionError(
+                "API provider dependencies require a request tokenizer"
+            )
+        if self.executor.execution_mode == "cli" and self.tokenizer is not None:
+            raise Protocol22ExecutionError(
+                "CLI provider dependencies delegate tokenization to the shared provider"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,17 +358,32 @@ class PreparedExecutionV1:
             raise Protocol22ExecutionError(
                 "prepared execution identity does not match execution input"
             )
-        provider_branch = self.provider_envelope is not None
+        provider_branch = (
+            self.execution_input.agent_contract_hash is not None
+            and self.execution_input.context_bundle_hash is not None
+            and self.execution_input.deterministic_invocation is None
+        )
         if provider_branch:
-            if (
+            if not isinstance(self.reservation, DispatchReservationV1):
+                raise Protocol22ExecutionError(
+                    "prepared provider reservation authority is invalid"
+                )
+            if self.provider_envelope is None:
+                if (
+                    self.provider_envelope_hash is not None
+                    or self.execution_input.provider_request_envelope_hash is not None
+                ):
+                    raise Protocol22ExecutionError(
+                        "prepared CLI execution cannot contain an API envelope"
+                    )
+            elif (
                 not isinstance(self.provider_envelope, ProviderRequestEnvelopeV1)
                 or self.provider_envelope_hash != self.provider_envelope.identity
                 or self.execution_input.provider_request_envelope_hash
                 != self.provider_envelope_hash
-                or not isinstance(self.reservation, DispatchReservationV1)
             ):
                 raise Protocol22ExecutionError(
-                    "prepared provider envelope/reservation authority is invalid"
+                    "prepared API envelope authority is invalid"
                 )
         elif (
             self.provider_envelope_hash is not None
@@ -573,9 +598,19 @@ def preview_dispatch_reservation(
             raise Protocol22ExecutionError(
                 "provider retry diagnostics must exist exactly for retry attempts"
             )
+        if executor.execution_mode == "cli":
+            return DispatchPreviewV1(
+                dispatch_id,
+                calculate_shared_cli_dispatch_reservation(
+                    dependencies.agent_bytes,
+                    dependencies.context_bytes,
+                    dependencies.response_schema_bytes,
+                    executor,
+                ),
+            )
         if executor.execution_mode != "api":
             raise Protocol22ExecutionError(
-                "provider preview requires API execution mode"
+                "provider preview requires API or CLI execution mode"
             )
         schema_hash = content_digest(dependencies.response_schema_bytes)
         envelope = render_provider_request_envelope(
@@ -722,32 +757,52 @@ class Protocol22ExecutionStore:
             raise Protocol22ExecutionError(
                 "provider retry diagnostics must exist exactly for retry attempts"
             )
-        if executor.execution_mode != "api":
+        if executor.execution_mode not in {"api", "cli"}:
             raise Protocol22ExecutionError(
-                "provider preparation requires API execution mode"
+                "provider preparation requires API or CLI execution mode"
+            )
+        if executor.execution_mode == "cli":
+            validate_provider_content_authority(
+                work_item,
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                executor,
+                content_digest(dependencies.response_schema_bytes),
             )
         agent_hash = self.object_store.put_blob(dependencies.agent_bytes)
         context_hash = self.object_store.put_blob(dependencies.context_bytes)
         schema_hash = self.object_store.put_blob(dependencies.response_schema_bytes)
-        envelope = render_provider_request_envelope(
-            work_item,
-            dispatch_id,
-            dependencies.agent_bytes,
-            dependencies.context_bytes,
-            executor,
-            schema_hash,
-            dependencies.retry_diagnostics,
-        )
-        envelope_hash = self.object_store.put_blob(
-            canonical_json_bytes(envelope.to_json_dict())
-        )
-        _fault(fault_hook, "provider_envelope_fsynced")
-        reservation = calculate_bounded_dispatch_reservation(
-            envelope,
-            dependencies.response_schema_bytes,
-            executor,
-            dependencies.tokenizer,
-        )
+        envelope = None
+        envelope_hash = None
+        if executor.execution_mode == "api":
+            envelope = render_provider_request_envelope(
+                work_item,
+                dispatch_id,
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                executor,
+                schema_hash,
+                dependencies.retry_diagnostics,
+            )
+            envelope_hash = self.object_store.put_blob(
+                canonical_json_bytes(envelope.to_json_dict())
+            )
+            _fault(fault_hook, "provider_envelope_fsynced")
+            if dependencies.tokenizer is None:
+                raise Protocol22ExecutionError("API request tokenizer is missing")
+            reservation = calculate_bounded_dispatch_reservation(
+                envelope,
+                dependencies.response_schema_bytes,
+                executor,
+                dependencies.tokenizer,
+            )
+        else:
+            reservation = calculate_shared_cli_dispatch_reservation(
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                dependencies.response_schema_bytes,
+                executor,
+            )
         execution_input = ExecutionInputV1(
             schema_version=1,
             dispatch_id=dispatch_id,
@@ -898,6 +953,35 @@ class Protocol22ExecutionStore:
         work_item: WorkItemV2,
         dependencies: ProviderExecutionDependenciesV1,
     ) -> PreparedExecutionV1:
+        if dependencies.executor.execution_mode == "cli":
+            if prepared.provider_envelope is not None or (
+                prepared.provider_envelope_hash is not None
+            ):
+                raise Protocol22ExecutionError(
+                    "prepared CLI execution contains an API envelope"
+                )
+            validate_provider_content_authority(
+                work_item,
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                dependencies.executor,
+                content_digest(dependencies.response_schema_bytes),
+            )
+            expected = calculate_shared_cli_dispatch_reservation(
+                self.object_store.read_blob(
+                    prepared.execution_input.agent_contract_hash or ""
+                ),
+                self.object_store.read_blob(
+                    prepared.execution_input.context_bundle_hash or ""
+                ),
+                dependencies.response_schema_bytes,
+                dependencies.executor,
+            )
+            if expected != prepared.reservation:
+                raise Protocol22ExecutionError(
+                    "prepared CLI reservation authority mismatch"
+                )
+            return prepared
         envelope_hash = prepared.provider_envelope_hash
         if envelope_hash is None:
             raise Protocol22ExecutionError("prepared provider envelope is missing")
@@ -929,6 +1013,8 @@ class Protocol22ExecutionStore:
             raise Protocol22ExecutionError("stored response schema bytes mismatch")
         if schema_hash != expected.response_format.schema_hash:
             raise Protocol22ExecutionError("stored response schema authority mismatch")
+        if dependencies.tokenizer is None:
+            raise Protocol22ExecutionError("API request tokenizer is missing")
         reservation = calculate_bounded_dispatch_reservation(
             envelope,
             dependencies.response_schema_bytes,
@@ -1051,7 +1137,8 @@ class Protocol22ExecutionStore:
     ) -> CapturedExecutionV1:
         """Persist provider candidate/output blobs before one capture object."""
         if not isinstance(prepared, PreparedExecutionV1) or (
-            prepared.provider_envelope is None
+            prepared.execution_input.agent_contract_hash is None
+            or prepared.execution_input.context_bundle_hash is None
             or prepared.execution_input.deterministic_invocation is not None
         ):
             raise Protocol22ExecutionError(
@@ -1090,7 +1177,9 @@ class Protocol22ExecutionStore:
                 executor_contract_hash=(
                     prepared.execution_input.executor_contract_hash
                 ),
-                execution_mode="api",
+                execution_mode=(
+                    "api" if prepared.provider_envelope is not None else "cli"
+                ),
                 result_kind="provider_candidate",
                 candidate_inventory_hash=inventory_hash,
                 deterministic_artifact_hash=None,
@@ -1115,8 +1204,16 @@ class Protocol22ExecutionStore:
                 ),
                 timed_out=result.outcome == "timed_out",
                 output_truncated=stdout.capture_kind == "terminal_tail",
-                provider_name=prepared.provider_envelope.provider_id,
-                resolved_model_revision=(prepared.provider_envelope.model_revision),
+                provider_name=(
+                    prepared.provider_envelope.provider_id
+                    if prepared.provider_envelope is not None
+                    else result.provider_name or "unavailable"
+                ),
+                resolved_model_revision=(
+                    prepared.provider_envelope.model_revision
+                    if prepared.provider_envelope is not None
+                    else result.resolved_model_revision
+                ),
             )
             return self._persist_capture(capture, fault_hook)
         except Protocol22ExecutionError:
@@ -1218,6 +1315,11 @@ class Protocol22ExecutionStore:
                 raise Protocol22ExecutionError(
                     "prepared execution input object does not match"
                 )
+            provider_branch = (
+                execution_input.agent_contract_hash is not None
+                and execution_input.context_bundle_hash is not None
+                and execution_input.deterministic_invocation is None
+            )
             if prepared.provider_envelope_hash is not None:
                 envelope = load_canonical_object(
                     self.object_store.read_blob(prepared.provider_envelope_hash),
@@ -1227,7 +1329,7 @@ class Protocol22ExecutionStore:
                     raise Protocol22ExecutionError(
                         "prepared execution envelope object does not match"
                     )
-            else:
+            elif not provider_branch:
                 invocation = execution_input.deterministic_invocation
                 if invocation is None or self.object_store.read_blob(
                     invocation.identity
@@ -1301,17 +1403,32 @@ class Protocol22ExecutionStore:
         candidate_inventory = None
         usage_bytes = None
         deterministic_bytes = None
-        if capture.execution_mode == "api":
+        if capture.execution_mode in {"api", "cli"}:
             envelope_hash = execution_input.provider_request_envelope_hash
-            if envelope_hash is None:
+            if capture.execution_mode == "api" and envelope_hash is None:
                 raise Protocol22ExecutionError(
                     "provider capture has no request envelope"
                 )
-            try:
-                provider_envelope = load_canonical_object(
-                    self.object_store.read_blob(envelope_hash),
-                    ProviderRequestEnvelopeV1.from_json_dict,
+            if capture.execution_mode == "cli" and envelope_hash is not None:
+                raise Protocol22ExecutionError(
+                    "CLI provider capture cannot name an API request envelope"
                 )
+            agent_bytes = _read_named_blob(
+                self.object_store,
+                execution_input.agent_contract_hash or "",
+                "provider agent contract",
+            )
+            context_bytes = _read_named_blob(
+                self.object_store,
+                execution_input.context_bundle_hash or "",
+                "provider context bundle",
+            )
+            try:
+                if envelope_hash is not None:
+                    provider_envelope = load_canonical_object(
+                        self.object_store.read_blob(envelope_hash),
+                        ProviderRequestEnvelopeV1.from_json_dict,
+                    )
                 inventory_hash = capture.candidate_inventory_hash
                 if inventory_hash is None:
                     raise Protocol22ExecutionError(
@@ -1326,15 +1443,24 @@ class Protocol22ExecutionStore:
                     f"provider envelope/candidate inventory closure is invalid: {exc}"
                 ) from exc
             if (
+                candidate_inventory.dispatch_id != capture.dispatch_id
+                or candidate_inventory.work_item_id != capture.work_item_id
+                or candidate_inventory.identity != capture.candidate_inventory_hash
+            ):
+                raise Protocol22ExecutionError(
+                    "provider capture closure identity/revision mismatch"
+                )
+            if provider_envelope is not None and (
                 provider_envelope.dispatch_id != capture.dispatch_id
                 or provider_envelope.work_item_id != capture.work_item_id
                 or provider_envelope.executor_contract_hash
                 != capture.executor_contract_hash
                 or provider_envelope.model_revision != capture.resolved_model_revision
                 or provider_envelope.provider_id != capture.provider_name
-                or candidate_inventory.dispatch_id != capture.dispatch_id
-                or candidate_inventory.work_item_id != capture.work_item_id
-                or candidate_inventory.identity != capture.candidate_inventory_hash
+                or provider_envelope.messages[0].content_utf8.encode("utf-8")
+                != agent_bytes
+                or provider_envelope.messages[1].content_utf8.encode("utf-8")
+                != context_bytes
             ):
                 raise Protocol22ExecutionError(
                     "provider capture closure identity/revision mismatch"
@@ -1579,7 +1705,9 @@ class Protocol22ExecutionStore:
                 "candidate capture commit is no longer authoritative"
             )
         capture = current.closure.capture
-        if capture.execution_mode != "api" or capture.candidate_inventory_hash is None:
+        if capture.execution_mode not in {"api", "cli"} or (
+            capture.candidate_inventory_hash is None
+        ):
             raise Protocol22ExecutionError(
                 "deterministic capture cannot create PersistedCandidateV2"
             )

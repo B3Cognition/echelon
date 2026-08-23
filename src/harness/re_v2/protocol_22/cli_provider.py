@@ -40,6 +40,37 @@ _RESULT_CONTRACT = EchelonResultContract(
 )
 
 
+def calculate_shared_cli_dispatch_reservation(
+    agent_bytes: bytes,
+    context_bytes: bytes,
+    response_schema_bytes: bytes,
+    executor: ExecutorContractEntryV1,
+) -> DispatchReservationV1:
+    """Reserve a byte-token upper bound for one shared-provider invocation."""
+    _validate_cli_executor(executor)
+    artifact = decode_prosaic_agent_bytes(agent_bytes)
+    try:
+        context = context_bytes.decode("utf-8", errors="strict")
+        response_schema = response_schema_bytes.decode("utf-8", errors="strict")
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise Protocol22ProviderError(
+            "shared CLI prompt authority must be UTF-8 bytes"
+        ) from exc
+    initial = len(
+        _render_prompt(artifact.body, context, response_schema).encode("utf-8")
+    )
+    billable = executor.limits.max_billable_tokens_per_dispatch
+    if initial <= 0 or initial > billable:
+        raise Protocol22ProviderError(
+            "shared CLI prompt upper bound exceeds the dispatch reservation"
+        )
+    return DispatchReservationV1(
+        initial_input_tokens=initial,
+        billable_tokens=billable,
+        active_ms=executor.limits.max_active_ms_per_dispatch,
+    )
+
+
 class SquadCliBaselineExecutor:
     """Adapt one shared-provider dispatch to the existing raw capture surface."""
 
@@ -220,11 +251,13 @@ def _validate_dispatch_inputs(
     )
     if expected_schema != content_digest(response_schema_bytes):
         raise Protocol22ProviderError("response schema authority mismatch")
-    if not isinstance(reservation, DispatchReservationV1) or (
-        reservation.billable_tokens
-        != executor.limits.max_billable_tokens_per_dispatch
-        or reservation.active_ms != executor.limits.max_active_ms_per_dispatch
-    ):
+    expected_reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        response_schema_bytes,
+        executor,
+    )
+    if reservation != expected_reservation:
         raise Protocol22ProviderError("shared CLI dispatch reservation mismatch")
     return artifact
 
@@ -246,4 +279,7 @@ def _render_prompt(body: str, context: str, response_schema: str) -> str:
     )
 
 
-__all__ = ("SquadCliBaselineExecutor",)
+__all__ = (
+    "SquadCliBaselineExecutor",
+    "calculate_shared_cli_dispatch_reservation",
+)

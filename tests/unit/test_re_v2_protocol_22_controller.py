@@ -67,10 +67,15 @@ from harness.re_v2.protocol_22.model import (
 )
 from harness.re_v2.protocol_22.policies import policy_for
 from harness.re_v2.protocol_22.provider import (
+    NormalizedUsageV1,
     RawExecutionResultV1,
     RawExecutionTimingV1,
+    canonical_normalized_usage_bytes,
 )
-from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+from harness.re_v2.protocol_22.recovery import (
+    Protocol22RunContext,
+    recover_protocol_22_run,
+)
 from harness.re_v2.protocol_22.response_schemas import (
     canonical_response_schema_bytes,
 )
@@ -83,6 +88,10 @@ from tests.unit.test_re_v2_protocol_22_certification import (
 from tests.unit.test_re_v2_protocol_22_graph import _fixture
 from tests.unit.test_re_v2_protocol_22_inputs import _input_fixture
 from tests.unit.test_re_v2_protocol_22_provider import _tokenizer
+from tests.unit.test_re_v2_protocol_22_execution import (
+    CLI_AGENT_BYTES,
+    _provider_dependencies,
+)
 from tests.unit.test_re_v2_protocol_22_recovery import (
     NOW,
     _Inspector,
@@ -448,20 +457,28 @@ class _ScriptedProvider:
     calls_by_kind: dict[str, int] = field(default_factory=dict)
     envelopes: list[object] = field(default_factory=list)
 
-    def execute(
-        self,
-        _execution_input: object,
-        envelope: object,
-        reservation: object,
-        candidate_root: Path,
-        _deadline: float,
-    ) -> RawExecutionResultV1:
+    def execute(self, _execution_input: object, *args: object) -> RawExecutionResultV1:
         self.calls += 1
-        self.envelopes.append(envelope)
-        kind = envelope.target_artifact_kind
+        if len(args) == 4:
+            envelope, reservation, candidate_root, _deadline = args
+            self.envelopes.append(envelope)
+            kind = envelope.target_artifact_kind
+            context_bytes = envelope.messages[1].content_utf8.encode("utf-8")
+            cli_mode = False
+        elif len(args) == 6:
+            _agent, context_bytes, _schema, reservation, candidate_root, _deadline = args
+            self.envelopes.append(None)
+            context_value = load_canonical_object(
+                context_bytes,
+                ContextBundleV1.from_json_dict,
+            )
+            kind = context_value.target_artifact_kind
+            cli_mode = True
+        else:  # pragma: no cover - controller signature contract
+            raise AssertionError(f"unexpected provider arguments: {len(args)}")
         self.calls_by_kind[kind] = self.calls_by_kind.get(kind, 0) + 1
         context = load_canonical_object(
-            envelope.messages[1].content_utf8.encode("utf-8"),
+            context_bytes,
             ContextBundleV1.from_json_dict,
         )
         configured = None
@@ -500,17 +517,42 @@ class _ScriptedProvider:
             if invalid_result
             else b"echelon_result:\n  schema_version: 1\n  outcome: candidate_ready\n"
         )
-        usage = None
+        usage = (
+            canonical_normalized_usage_bytes(
+                NormalizedUsageV1(
+                    "trusted_exact",
+                    15,
+                    {
+                        "cached_input_tokens": 2,
+                        "input_tokens": 8,
+                        "reasoning_output_tokens": 1,
+                        "visible_output_tokens": 4,
+                    },
+                )
+            )
+            if cli_mode
+            else None
+        )
         if mode == "usage_overflow":
             total = reservation.billable_tokens + 1
-            usage = canonical_json_bytes(
-                {
-                    "completion_tokens": 0,
-                    "completion_tokens_details": {"reasoning_tokens": 0},
-                    "prompt_tokens": total,
-                    "prompt_tokens_details": {"cached_tokens": 0},
-                    "total_tokens": total,
-                }
+            usage = (
+                canonical_json_bytes(
+                    {
+                        "billable_tokens": total,
+                        "classes": {},
+                        "status": "untrusted",
+                    }
+                )
+                if cli_mode
+                else canonical_json_bytes(
+                    {
+                        "completion_tokens": 0,
+                        "completion_tokens_details": {"reasoning_tokens": 0},
+                        "prompt_tokens": total,
+                        "prompt_tokens_details": {"cached_tokens": 0},
+                        "total_tokens": total,
+                    }
+                )
             )
         return RawExecutionResultV1(
             stdout=stdout,
@@ -518,6 +560,8 @@ class _ScriptedProvider:
             provider_usage=usage,
             timing=RawExecutionTimingV1(NOW, NOW, 0),
             outcome=("invalid_response" if invalid_result else "candidate_ready"),
+            provider_name="codex" if cli_mode else None,
+            resolved_model_revision="gpt-5.6-codex" if cli_mode else None,
         )
 
 
@@ -537,6 +581,7 @@ def _baseline_context(
     source_domains: Mapping[str, tuple[str, ...]] | None = None,
     active_ms_limit: int | None = None,
     token_limit: int | None = None,
+    provider_mode: str = "api",
 ) -> tuple[Protocol22RunContext, _ScriptedProvider]:
     if source_domains is None:
         input_set, raw_manifest = _input_fixture()
@@ -554,6 +599,35 @@ def _baseline_context(
                 content_digest(domain_schema): domain_schema,
                 content_digest(source_schema): source_schema,
             },
+        )
+    if provider_mode == "cli":
+        _item, cli_dependencies = _provider_dependencies("cli")
+        cli_entry = cli_dependencies.executor
+        entries = tuple(
+            cli_entry if entry.producer_family == "compact-baseline" else entry
+            for entry in input_set.executor_contract.entries
+        )
+        executor_catalog = replace(input_set.executor_contract, entries=entries)
+        immutable_objects = {
+            reference.schema_hash: canonical_response_schema_bytes(
+                reference.artifact_kind
+            )
+            for reference in cli_entry.request_renderer.response_schemas
+        }
+        immutable_objects[content_digest(CLI_AGENT_BYTES)] = CLI_AGENT_BYTES
+        input_set = replace(
+            input_set,
+            executor_contract=executor_catalog,
+            immutable_objects=immutable_objects,
+        )
+        raw_manifest = replace(
+            raw_manifest,
+            executor_contract_catalog=replace(
+                raw_manifest.executor_contract_catalog,
+                object_hash=content_digest(
+                    canonical_json_bytes(executor_catalog.to_json_dict())
+                ),
+            ),
         )
     budget = raw_manifest.initial_budget_policy
     if active_ms_limit is not None:
@@ -582,7 +656,7 @@ def _baseline_context(
         _attempt_kind: str,
     ) -> DeterministicExecutionDependenciesV1 | ProviderExecutionDependenciesV1:
         executor = inputs.executor_contract.entry_for(item.producer_family)
-        if executor.execution_mode == "api":
+        if executor.execution_mode in {"api", "cli"}:
             accepted = _accepted_for_item(context_ref["context"], item)
             context_bytes = accepted.payload_for_role("context_bundle")
             renderer = executor.request_renderer
@@ -596,7 +670,9 @@ def _baseline_context(
                     item.output_key.artifact_kind
                 ),
                 tokenizer=(
-                    tokenizer_override
+                    None
+                    if executor.execution_mode == "cli"
+                    else tokenizer_override
                     if tokenizer_override is not None
                     else _tokenizer(executor, 100)
                 ),
@@ -684,14 +760,17 @@ def _baseline_context(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("provider_mode", ("api", "cli"))
 @pytest.mark.parametrize("malformed_result", (False, True))
 def test_provider_candidates_are_durable_certified_and_reconstructed_without_retry(
     tmp_path: Path,
     malformed_result: bool,
+    provider_mode: str,
 ) -> None:
     context, provider = _baseline_context(
         tmp_path,
         malformed_result=malformed_result,
+        provider_mode=provider_mode,
     )
 
     result = Protocol22Controller(context).run_until_stopped()
@@ -709,6 +788,39 @@ def test_provider_candidates_are_durable_certified_and_reconstructed_without_ret
     assert [event.type for event in result.events].count("candidate_certified") == len(
         provider_items
     )
+    captures = [
+        context.execution_store.capture_state(event.payload["dispatch_id"])
+        for event in result.events
+        if event.type == "dispatch_started"
+    ]
+    provider_captures = [
+        state.closure.capture
+        for state in captures
+        if hasattr(state, "closure")
+        and state.closure.capture.execution_mode in {"api", "cli"}
+    ]
+    assert provider_captures
+    assert {capture.execution_mode for capture in provider_captures} == {
+        provider_mode
+    }
+    if provider_mode == "cli":
+        provider_dispatches = {
+            event.payload["dispatch_id"]
+            for event in result.events
+            if event.type == "dispatch_started"
+            and event.payload["billable_token_reservation"] > 0
+        }
+        observations = [
+            event
+            for event in result.events
+            if event.type == "dispatch_observed"
+            and event.payload["dispatch_id"] in provider_dispatches
+        ]
+        assert observations
+        assert {
+            (event.payload["token_usage_status"], event.payload["reported_token_usage"])
+            for event in observations
+        } == {("trusted_exact", 15)}
     assert [event.type for event in result.events].count(
         "result_contract_reconstructed"
     ) == (len(provider_items) if malformed_result else 0)
@@ -916,10 +1028,12 @@ def test_shared_executor_breach_blocks_all_matching_provider_work_without_calls(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("provider_mode", ("api", "cli"))
 def test_abandoned_provider_dispatch_gets_one_counted_result_retry(
     tmp_path: Path,
+    provider_mode: str,
 ) -> None:
-    context, provider = _baseline_context(tmp_path)
+    context, provider = _baseline_context(tmp_path, provider_mode=provider_mode)
 
     def crash_after_provider_start(boundary: str) -> None:
         if not boundary.startswith("dispatch_started:"):
@@ -934,6 +1048,21 @@ def test_abandoned_provider_dispatch_gets_one_counted_result_retry(
         context,
         process_inspector=_Inspector(ProcessState.DEAD),
     )
+    started = next(
+        event
+        for event in context.event_store.replay()
+        if event.type == "dispatch_started"
+        and event.payload["billable_token_reservation"] > 0
+    )
+
+    recovered = recover_protocol_22_run(dead_context)
+
+    assert recovered.dispatch_actions[started.payload["dispatch_id"]] == "abandon"
+    assert recovered.budget is not None
+    assert recovered.budget.charged_tokens == started.payload[
+        "billable_token_reservation"
+    ]
+    assert provider.calls == 0
 
     result = Protocol22Controller(dead_context).run_until_stopped()
 
