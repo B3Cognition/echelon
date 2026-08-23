@@ -3453,7 +3453,7 @@ def _recovery_action_from_instruction(
             "safe_rewind",
             reason=reason,
             phase=phase,
-            command=f"echelon spec rewind {phase}",
+            command=_command_display("echelon spec rewind", [phase]),
             note="safe checkpoint cleanup is required before retry",
         )
     if kind == RecoveryKind.INCREASE_BUDGET:
@@ -3468,7 +3468,7 @@ def _recovery_action_from_instruction(
             "manual_recovery",
             reason=reason,
             phase=phase,
-            command=f"echelon phase run {phase}",
+            command=_command_display("echelon phase run", [phase]),
             note="run the recorded deterministic repair before continuing",
         )
     if kind == RecoveryKind.MANUAL_DIAGNOSIS:
@@ -3669,15 +3669,15 @@ def _decision_gate_rewind_action(
     duplicate_phase = sum(
         item.phase == checkpoint.phase for item in ledger.checkpoints
     ) > 1
-    commit = f" --commit {checkpoint.commit}" if duplicate_phase else ""
-    next_phase = f" --next-phase {source_phase}"
+    command_args = [checkpoint.phase]
+    if duplicate_phase:
+        command_args.extend(("--commit", checkpoint.commit))
+    command_args.extend(("--next-phase", source_phase, "--confirm"))
     return _RunRecoveryAction(
         "safe_rewind",
         reason=str(run_state.get("blocked_reason") or "gate_rejected"),
         phase=checkpoint.phase,
-        command=(
-            f"echelon spec rewind {checkpoint.phase}{commit}{next_phase} --confirm"
-        ),
+        command=_command_display("echelon spec rewind", command_args),
         note=(
             "rewind the exact checkpoint ledger predecessor before replaying "
             "the human gate"
@@ -3745,7 +3745,7 @@ def _versioned_decision_recovery_action(
         "manual_recovery",
         reason=reason,
         phase=source_phase,
-        command=f"echelon phase run {source_phase}",
+        command=_command_display("echelon phase run", [source_phase]),
         note="replay the exact failed automatic decision source phase",
     )
 
@@ -3895,6 +3895,111 @@ def _v2_decision_recommendation(decision: dict[str, object]) -> str:
             if isinstance(option, dict) and option.get("recommended") is True:
                 return f"{option['id']}: {option['label']}"
     return str(decision.get("recommended_answer") or "(none)")
+
+
+def _decision_option_display(
+    decision: Mapping[str, object],
+    option_id: object,
+) -> str:
+    identifier = str(option_id or "").strip()
+    if not identifier:
+        return "(none)"
+    options = decision.get("options")
+    if isinstance(options, list):
+        for option in options:
+            if isinstance(option, Mapping) and option.get("id") == identifier:
+                label = str(option.get("label") or "").strip()
+                return f"{identifier}: {label}" if label else identifier
+    return identifier
+
+
+def _decision_audit_fields(
+    decision: Mapping[str, object],
+) -> list[tuple[str, str]]:
+    """Render recommendation and resolution audit from a validated decision."""
+    fields: list[tuple[str, str]] = [
+        ("Decision ID", str(decision["id"])),
+        ("Decision status", str(decision["status"])),
+        ("Decision mode", str(decision["autonomy_mode"])),
+        ("Classification", str(decision["classification"])),
+        ("Question", str(decision["question"])),
+        ("Options", _render_v2_decision_options(dict(decision))),
+    ]
+    if decision.get("schema_version") == 3:
+        recommended_option = decision.get("recommended_option_id")
+        recommended_answer = str(
+            decision.get("recommended_answer") or ""
+        ).strip()
+        recommendation_target = (
+            _decision_option_display(decision, recommended_option)
+            if recommended_option is not None
+            else recommended_answer or "(human action only)"
+        )
+        fields.extend(
+            [
+                ("Recommendation", f"Recommended: {recommendation_target}"),
+                (
+                    "Recommendation rationale",
+                    str(decision["recommendation_rationale"]),
+                ),
+                (
+                    "Recommendation confidence",
+                    str(decision["recommendation_confidence"]),
+                ),
+            ]
+        )
+        recommended_action = str(
+            decision.get("recommended_action") or ""
+        ).strip()
+        if recommended_action:
+            fields.append(("Recommended action", recommended_action))
+    else:
+        fields.append(
+            (
+                "Recommendation",
+                f"Recommended: {_v2_decision_recommendation(dict(decision))}",
+            )
+        )
+    fields.append(("Risk", str(decision.get("risk_level") or "(none)")))
+
+    selected_option = decision.get("selected_option_id")
+    answer_text = str(decision.get("answer_text") or "").strip()
+    if selected_option is not None or answer_text:
+        fields.append(
+            (
+                "Answer",
+                _decision_option_display(decision, selected_option)
+                if selected_option is not None
+                else answer_text,
+            )
+        )
+    resolved_by = str(decision.get("resolved_by") or "").strip()
+    if resolved_by:
+        fields.append(("Resolved by", resolved_by))
+    if decision.get("schema_version") == 3 and decision.get("status") == "resolved":
+        followed = decision.get("recommendation_followed")
+        resolution = (
+            "Followed recommendation"
+            if followed is True
+            else "Overrode recommendation"
+            if followed is False
+            else "Recommendation action required human judgment"
+        )
+        fields.append(("Resolution", resolution))
+        resolution_rationale = str(
+            decision.get("resolution_rationale") or ""
+        ).strip()
+        resolution_confidence = str(
+            decision.get("resolution_confidence") or ""
+        ).strip()
+        override_reason = str(decision.get("override_reason") or "").strip()
+        if resolution_rationale:
+            fields.append(("Resolution rationale", resolution_rationale))
+        if resolution_confidence:
+            fields.append(("Resolution confidence", resolution_confidence))
+        if override_reason:
+            fields.append(("Override reason", override_reason))
+    return fields
 
 
 def _proportional_quality_decision_fields(
@@ -4344,7 +4449,7 @@ def _blocked_non_escalation_recovery_command(
         resolve_checkpoint(load_checkpoint_ledger(spec_dir), phase_id)
     except (KeyError, OSError, ValueError, TypeError):
         return None
-    return f"echelon spec rewind {phase_id}"
+    return _command_display("echelon spec rewind", [phase_id])
 
 
 def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
@@ -5515,10 +5620,11 @@ def _print_squad_summary(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
     try:
-        summary_decision = _active_v2_decision(state)
+        summary_decision = _validated_versioned_decision(state)
     except (RecoveryInstructionError, ValueError):
         summary_decision = None
     if summary_decision is not None:
+        fields.extend(_decision_audit_fields(summary_decision))
         fields.extend(
             _proportional_quality_decision_fields(state, summary_decision)
         )
@@ -8649,39 +8755,30 @@ def _cmd_status(project_root: Path) -> None:
         ).strip()
         if provider_limit_message:
             fields.append(("Provider limit", provider_limit_message))
+        action = _RunRecoveryAction("advance")
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
             action = _classify_run_recovery(state, project_root=project_root)
-            fields.append(("Next", action.command))
             if action.reason == "phase_dispatch_limit":
                 guidance = _issue_resolution_guidance_recap(project_root, run_dir, state)
                 if guidance:
                     fields.append(("Issue guidance", guidance))
 
         try:
-            decision = _active_v2_decision(state)
+            decision = _validated_versioned_decision(state)
         except (RecoveryInstructionError, ValueError) as exc:
             fields.append(("Decision", f"invalid persisted decision: {exc}"))
+            if run_status == "blocked" and action.command:
+                fields.append(("Next", action.command))
         else:
             if decision is not None:
-                action = _classify_run_recovery(state, project_root=project_root)
-                fields.extend(
-                    [
-                        ("Decision ID", str(decision["id"])),
-                        ("Decision status", str(decision["status"])),
-                        ("Decision mode", str(decision["autonomy_mode"])),
-                        ("Classification", str(decision["classification"])),
-                        ("Question", str(decision["question"])),
-                        ("Options", _render_v2_decision_options(decision)),
-                        ("Recommendation", _v2_decision_recommendation(decision)),
-                        ("Risk", str(decision.get("risk_level") or "(none)")),
-                        ("Decision action", action.command),
-                    ]
-                )
+                fields.extend(_decision_audit_fields(decision))
                 fields.extend(
                     _proportional_quality_decision_fields(state, decision)
                 )
+            elif run_status == "blocked" and action.command:
+                fields.append(("Next", action.command))
 
         _banner("RUN STATE", fields)
 

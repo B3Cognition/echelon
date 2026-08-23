@@ -46,7 +46,28 @@ def _initialize_active_run(project_root: Path) -> Path:
         "/runs/\n/.echelon/prosaic/\n/.echelon/runtime/\n",
         encoding="utf-8",
     )
-    subprocess.run(["git", "add", ".gitignore"], cwd=project_root, check=True)
+    source_root = project_root / "sources" / "app"
+    source_root.mkdir(parents=True)
+    (source_root / "package.json").write_text("{}\n", encoding="utf-8")
+    (project_root / ".echelon" / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        "  - id: app\n"
+        "    path: sources/app\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            "git",
+            "add",
+            ".gitignore",
+            ".echelon/config.yml",
+            "sources/app/package.json",
+        ],
+        cwd=project_root,
+        check=True,
+    )
     subprocess.run(
         ["git", "commit", "-m", "base"], cwd=project_root, check=True, capture_output=True
     )

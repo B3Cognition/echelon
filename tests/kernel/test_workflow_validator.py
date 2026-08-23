@@ -7,6 +7,7 @@ import yaml
 
 from harness.workflow_validator import (
     validate_condition_expression,
+    validate_deployed_phase_runtime,
     validate_workflow_definition,
 )
 
@@ -66,6 +67,29 @@ def test_real_workflow_definition_is_valid() -> None:
     )
 
     assert report.ok, report.format()
+
+
+def test_deployed_runtime_rejects_previous_controller_compatibility_version(
+    tmp_path: Path,
+) -> None:
+    definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    definition["controller_runtime_compatibility_version"] = 1
+    deployed = tmp_path / "definition.yaml"
+    deployed.write_text(
+        yaml.safe_dump(definition, sort_keys=False),
+        encoding="utf-8",
+    )
+    deployed.with_name("controller-state-contracts.yaml").write_bytes(
+        DEFINITION.with_name("controller-state-contracts.yaml").read_bytes()
+    )
+
+    report = validate_deployed_phase_runtime(definition_path=deployed)
+
+    assert not report.ok
+    assert any(
+        "unsupported controller runtime compatibility version" in issue.message
+        for issue in report.issues
+    ), report.format()
 
 
 def test_real_workflow_gate_edges_match_declared_outcomes() -> None:

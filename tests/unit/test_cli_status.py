@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from echelon.cli import (
     _cmd_status,
     _find_converged_harness_build,
     _print_next_steps,
+    _print_squad_summary,
 )
 from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import (
@@ -344,6 +346,131 @@ def _failed_v3_human_gate_decision() -> dict[str, object]:
             "override_reason": None,
         }
     )
+
+
+def _resolved_v3_human_gate_override(
+    *,
+    source_phase: str = "checkpoint-assess",
+) -> dict[str, object]:
+    legacy = build_blocked_decision_v2(
+        decision_id="dec-human-gate-audit",
+        status="resolved",
+        source_kind="human_gate",
+        producer_id=source_phase,
+        source_phase=source_phase,
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue to feasibility assessment.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for specification revision.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=4,
+        selected_option_id="reject",
+        resolved_by="COMMANDER",
+        attempts=1,
+        now="2026-08-23T11:00:00+00:00",
+        resolved_at="2026-08-23T11:01:00+00:00",
+    )
+    return validate_blocked_decision_v3(
+        {
+            **legacy,
+            "schema_version": 3,
+            "recommended_option_id": "approve",
+            "recommended_action": None,
+            "automatic_eligible": True,
+            "recommendation_rationale": (
+                "The complete Phase 1 evidence supports approval."
+            ),
+            "recommendation_confidence": "low",
+            "recommendation_authority": "controller_evidence",
+            "recommendation_evidence": [
+                {
+                    "id": "checkpoint-assess:quality",
+                    "kind": "phase1_quality_certificate",
+                    "reference": "state:spec_quality_certificate",
+                    "digest": "d" * 64,
+                }
+            ],
+            "resolution_rationale": (
+                "A newly discovered scope conflict requires revision."
+            ),
+            "resolution_confidence": "high",
+            "recommendation_followed": False,
+            "override_reason": (
+                "A newly discovered scope conflict requires revision."
+            ),
+        }
+    )
+
+
+def _write_resolved_gate_run(
+    tmp_path: Path,
+    *,
+    checkpoint_phase: str = "phase1-lexicon",
+    source_phase: str = "checkpoint-assess",
+) -> tuple[Path, dict[str, object]]:
+    run_dir = tmp_path / "runs" / "spec-human-gate-audit"
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id=checkpoint_phase,
+            spec_id=spec_dir.name,
+            phase=checkpoint_phase,
+            next_phase=source_phase,
+            commit="a" * 40,
+            metadata_commit="",
+            source="auto",
+            run_id=run_dir.name,
+            created_at="2026-08-23T11:00:00+00:00",
+        ),
+    )
+    decision = _resolved_v3_human_gate_override(
+        source_phase=source_phase,
+    )
+    state: dict[str, object] = {
+        "run_id": run_dir.name,
+        "state_revision": 5,
+        "status": "blocked",
+        "phase": source_phase,
+        "blocked_reason": "gate_rejected",
+        "autonomy_mode": "banzai",
+        "spec_id": spec_dir.name,
+        "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+        "blocked_decision": decision,
+        "completed_phases": [checkpoint_phase],
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps(state),
+        encoding="utf-8",
+    )
+    return run_dir, decision
 
 
 def test_status_shows_current_authorized_quality_debt_without_calling_it_passed(
@@ -719,6 +846,120 @@ def test_failed_human_gate_status_renders_ledger_rewind_without_mutation(
     assert "diagnose" not in output.lower()
     assert "echelon spec continue" not in output
     assert state_path.read_bytes() == before
+
+
+def test_status_renders_complete_v3_resolution_audit_and_one_exact_recovery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_resolved_gate_run(tmp_path)
+    expected_recovery = (
+        "echelon spec rewind phase1-lexicon "
+        "--next-phase checkpoint-assess --confirm"
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "Recommended" in output and "approve: Approve" in output
+    assert "Recommendation rationale" in output
+    assert "The complete Phase 1 evidence supports approval." in output
+    assert "Recommendation confidence" in output and "low" in output
+    assert "Answer" in output and "reject: Reject" in output
+    assert "Resolved by" in output and "COMMANDER" in output
+    assert "Resolution" in output and "Overrode recommendation" in output
+    assert "Resolution rationale" in output
+    assert "Resolution confidence" in output and "high" in output
+    assert "Override reason" in output
+    assert "A newly discovered scope conflict requires revision." in output
+    assert output.count(expected_recovery) == 1
+
+
+def test_squad_summary_renders_complete_v3_resolution_audit_and_recovery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir, _decision = _write_resolved_gate_run(tmp_path)
+    expected_recovery = (
+        "echelon spec rewind phase1-lexicon "
+        "--next-phase checkpoint-assess --confirm"
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        run_dir,
+        SimpleNamespace(status="blocked", phase="checkpoint-assess"),
+        mode="banzai",
+        message="Write Hello World.",
+    )
+
+    output = capsys.readouterr().out
+    assert "Recommended" in output and "approve: Approve" in output
+    assert "Recommendation rationale" in output
+    assert "Recommendation confidence" in output and "low" in output
+    assert "Answer" in output and "reject: Reject" in output
+    assert "Resolved by" in output and "COMMANDER" in output
+    assert "Resolution" in output and "Overrode recommendation" in output
+    assert "Resolution rationale" in output
+    assert "Resolution confidence" in output and "high" in output
+    assert "Override reason" in output
+    assert output.count(expected_recovery) == 1
+
+
+def test_status_recovery_command_shell_round_trips_unusual_valid_phase_ids(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    checkpoint_phase = "phase1 lexicon's checkpoint"
+    source_phase = "checkpoint assess+review"
+    _write_resolved_gate_run(
+        tmp_path,
+        checkpoint_phase=checkpoint_phase,
+        source_phase=source_phase,
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    command = next(
+        line.strip()
+        for line in output.splitlines()
+        if line.strip().startswith("echelon spec rewind ")
+    )
+    capture = tmp_path / "captured-argv.txt"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "echelon"
+    executable.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ECHELON_CAPTURE\"\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "ECHELON_CAPTURE": str(capture),
+    }
+
+    completed = subprocess.run(
+        command,
+        shell=True,
+        executable="/bin/sh",
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        "spec",
+        "rewind",
+        checkpoint_phase,
+        "--next-phase",
+        source_phase,
+        "--confirm",
+    ]
 
 
 @pytest.mark.parametrize("schema_version", [2, 3])

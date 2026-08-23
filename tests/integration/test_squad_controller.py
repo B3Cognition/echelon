@@ -10,6 +10,8 @@ import json
 import hashlib
 import re
 import copy
+import shlex
+import shutil
 import subprocess
 import uuid
 from copy import deepcopy
@@ -2681,7 +2683,7 @@ class TestAgentResultIntegrity:
         )
         assert "phase1-what" not in state.get("completed_phases", [])
 
-    def test_banzai_routes_valid_agent_block_to_commander_and_retries_phase(
+    def test_banzai_agent_block_without_recommendation_awaits_human(
         self, tmp_path
     ) -> None:
         provider = _mock_provider()
@@ -2724,17 +2726,19 @@ class TestAgentResultIntegrity:
         )
         snapshot = store.capture_routing_snapshot(expected_phase="phase3-how")
 
-        assert ctrl._route_agent_block_to_commander(
+        assert not ctrl._route_agent_block_to_commander(
             ctrl._graph.get("phase3-how"), "agent_blocked", result, snapshot
         )
 
         state = store.load()
-        assert state["status"] == "running"
+        assert state["status"] == "blocked"
         assert state["phase"] == "phase3-how"
-        assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
-        assert "Use direct Python execution" in (
-            Path(state["staging_dir"]) / "user-clarifications.md"
-        ).read_text(encoding="utf-8")
+        assert state["blocked_reason"] == "agent_blocked"
+        assert state["blocked_decision"]["schema_version"] == 3
+        assert state["blocked_decision"]["status"] == "awaiting_human"
+        assert state["blocked_decision"]["automatic_eligible"] is False
+        assert state["recovery_instruction"]["kind"] == "await_human_answer"
+        provider.exec_agent.assert_not_called()
 
     @pytest.mark.parametrize("manual_phase_run", [False, True])
     def test_executor_missing_output_uses_recovery_block(
@@ -6613,172 +6617,48 @@ class TestSquadControllerBasics:
         assert resumed["blocked_decision"]["answer_text"] == answer
         assert "recovery_instruction" not in resumed
 
-    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
-        """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
+    def test_banzai_free_text_escalation_awaits_human(self, tmp_path, monkeypatch):
+        """Banzai free text without a recommendation remains human-only."""
         from harness.squad_provider import SquadAgentResult
         _disable_lexicon_gate(tmp_path)
-        call_count = {"n": 0}
-
-        def side_effect(*args, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                # First call: WHY1 returns one valid v2 clarification request.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "STOP_AND_ASK",
-                        "state_updates": {
-                            "quality_scores": [],
-                            "status": "blocked",
-                            "escalation_question": "Q1: Do you own the IP?",
-                            "blocked_reason": "human_clarification_required",
-                        },
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 2:
-                # Second call: COMMANDER resolves only the sealed decision.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DECISION_RESOLVED",
-                        "state_updates": {},
-                        "journal_entries": [],
-                        "decision": {
-                            "selected_option_id": None,
-                            "answer_text": "Use the repository's existing IP policy.",
-                            "rationale": "The registered project policy is authoritative.",
-                            "confidence": "high",
-                        },
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 3:
-                # Third call: WHY1 re-dispatch passes (quality_scores present)
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DONE",
-                        "state_updates": {"quality_scores": [{"pass": True}]},
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 4:
-                # CHIEF/constitution uses a different phase contract.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DONE",
-                        "state_updates": {"constitution_status": "exists"},
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 5:
-                # CARTOGRAPHER/WHAT writes spec metadata, not quality scores.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DONE",
-                        "state_updates": {
-                            "spec_status": "planned",
-                            "evidence_resolution_status": "not_required",
-                        },
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 6:
-                # WHY2 accepts the controller-certified score produced by the
-                # deterministic understanding phase.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "PASS",
-                        "state_updates": {
-                            "evidence_resolution_status": "not_required",
-                            "finding_routes": {"findings": []},
-                        },
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            if call_count["n"] == 7:
-                # Banzai resolves the compiled checkpoint-assess decision.
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DECISION_RESOLVED",
-                        "state_updates": {},
-                        "journal_entries": [],
-                        "decision": {
-                            "selected_option_id": "approve",
-                            "answer_text": None,
-                            "rationale": "The quality evidence supports approval.",
-                            "confidence": "high",
-                        },
-                    },
-                    raw_output="", duration_ms=0, timed_out=False,
-                )
-            # End the flow at phase2-decide so this test remains focused on
-            # banzai escalation recovery rather than full Phase A artifact output.
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "KILL",
-                    "state_updates": {},
-                },
-                raw_output="", duration_ms=0, timed_out=False,
-            )
-
         provider = _mock_provider()
-        provider.exec_agent.side_effect = side_effect
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "STOP_AND_ASK",
+                "state_updates": {
+                    "quality_scores": [],
+                    "status": "blocked",
+                    "escalation_question": "Q1: Do you own the IP?",
+                    "blocked_reason": "human_clarification_required",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
         ctrl, store = _controller(tmp_path, provider=provider)
         monkeypatch.setattr(
             ctrl,
             "_lexicon_gate_config",
             lambda: {"lexicon_gate": {"enabled": False, "spec_enabled": False}},
         )
-        # This fixture deliberately stops before producing Phase A build inputs.
-        # Keep its assertion scoped to banzai escalation recovery rather than
-        # finalization readiness, which is covered by dedicated readiness tests.
-        from harness.phase_a_readiness import PhaseAReadinessResult
-        monkeypatch.setattr(
-            ctrl,
-            "_publish_terminal_phase_a_artifacts_if_available",
-            lambda: PhaseAReadinessResult(
-                ready=True,
-                blockers=[],
-                missing={},
-                ready_spec_dir=None,
-            ),
-        )
         store.initialize(
             "r", "banzai", "msg", 0, "phase1-why1", max_iterations=5,
             spec_authoring_mode="perfectionist",
         )
         _mark_constitution_complete(tmp_path, store)
-        (ctrl._squad_dir / "constitution.draft.md").write_text(
-            "# Constitution\n\nReal project rules.\n", encoding="utf-8"
-        )
-        state = store.load()
-        state["spec_id"] = "001-test"
-        # This routing-focused test intentionally produces no Phase A artifact
-        # tree; use the declared future location instead of the existing
-        # staging directory so terminal publication is not falsely activated.
-        state["spec_dir"] = "specs/001-test"
-        store.save(state)
-        spec_dir = tmp_path / "specs" / "001-test"
-        spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
-        (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
-        _install_passing_understanding(monkeypatch)
         result = ctrl.run("msg", "banzai")
-        # Provider called at least twice: once for WHY1, once for COMMANDER escalation
-        assert provider.exec_agent.call_count >= 2
-        # Run did not end blocked
-        assert result.status != "blocked"
+
+        assert provider.exec_agent.call_count == 1
+        assert result.status == "blocked"
         final_state = store.load()
-        assert final_state["blocked_decision"]["status"] == "resolved"
-        assert final_state["blocked_decision"]["resolved_by"] == "COMMANDER"
-        assert "escalation_question" not in final_state
+        assert final_state["blocked_decision"]["schema_version"] == 3
+        assert final_state["blocked_decision"]["status"] == "awaiting_human"
+        assert final_state["blocked_decision"]["automatic_eligible"] is False
+        assert final_state["recovery_instruction"]["kind"] == (
+            "await_human_answer"
+        )
 
     def test_semi_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
         """Semi: WHY1 returns escalation_question in state_updates → run stops blocked."""
@@ -6886,25 +6766,9 @@ class TestSquadControllerBasics:
         assert state["escalation_resolved"] is False
         assert state.get("blocked_reason") != "phase_dispatch_limit"
 
-    def test_banzai_escalation_dispatches_commander_not_stops(self, tmp_path):
-        """Banzai resolves a sealed v2 decision through the shared apply path."""
-        from harness.squad_provider import SquadAgentResult
+    def test_banzai_human_only_decision_does_not_dispatch_commander(self, tmp_path):
+        """A sealed human-only Banzai decision remains awaiting the user."""
         provider = _mock_provider()
-        provider.exec_agent.return_value = SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DECISION_RESOLVED",
-                "state_updates": {},
-                "journal_entries": [],
-                "decision": {
-                    "selected_option_id": None,
-                    "answer_text": "Use the repository's existing IP policy.",
-                    "rationale": "The registered policy answers the question.",
-                    "confidence": "high",
-                },
-            },
-            raw_output="", duration_ms=0, timed_out=False,
-        )
         ctrl, store = _controller(tmp_path, provider=provider)
         policy = _install_test_clarification_policy(
             ctrl,
@@ -6929,15 +6793,19 @@ class TestSquadControllerBasics:
             question="Q1: Do you have author rights?",
             source_state_revision=store.load()["state_revision"],
         )
-        store.set_human_input_decision(request, initial_status="pending")
+        store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
 
-        assert ctrl.resume_pending_human_input()
+        assert ctrl.resume_pending_human_input() is False
         state = store.load()
-        assert state["status"] == "running"
+        assert state["status"] == "blocked"
         assert state["phase"] == "phase1-investigate"
-        assert state["blocked_decision"]["status"] == "resolved"
-        assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
-        assert provider.exec_agent.called
+        assert state["blocked_decision"]["status"] == "awaiting_human"
+        assert state["blocked_decision"]["automatic_eligible"] is False
+        assert state["blocked_decision"]["resolved_by"] is None
+        provider.exec_agent.assert_not_called()
 
     def test_semi_escalation_stops_run(self, tmp_path):
         """Semi mode: blocked+escalation_question → run stops with status=blocked."""
@@ -7225,10 +7093,15 @@ def _run_proportional_quality_loop(
     autonomy_mode: str = "semi",
     commander_results: tuple[SquadAgentResult, ...] = (),
     qualitative_only: bool = False,
+    squad_dir: Path | None = None,
 ) -> tuple[SquadController, SquadStateStore, dict[str, int]]:
     """Run the production dispatch loop with only the external agents faked."""
     provider = _mock_provider()
-    ctrl, store = _controller(tmp_path, provider=provider)
+    ctrl, store = _controller(
+        tmp_path,
+        provider=provider,
+        squad_dir=squad_dir,
+    )
     store.initialize(
         "r",
         "greenfield",
@@ -9390,7 +9263,7 @@ class TestProportionalQualityController:
         prompt = commander_prompts[0]
         request_payload = json.loads(
             prompt.split("## Prepared Request\n", 1)[1].split(
-                "\n\n## Registered Context", 1
+                "\n\n## Authoritative Recommendation", 1
             )[0]
         )
         context_payload = json.loads(
@@ -9469,7 +9342,7 @@ class TestProportionalQualityController:
         state = store.load()
         decision = state["blocked_decision"]
         assert result.status == "blocked"
-        assert state["phase"] == "terminal-blocked"
+        assert state["phase"] == decision["source_phase"] == "phase1-why2"
         assert decision["status"] == "failed"
         assert decision["attempts"] == 2
         assert decision["failure_code"] == "invalid_resolution_result"
@@ -9495,7 +9368,11 @@ class TestProportionalQualityController:
     def test_manual_replay_replaces_failed_banzai_safeguard_decision(
         self,
         tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from echelon.cli import _cmd_phase, _cmd_status
+
         invalid = SquadAgentResult(
             exit_code=0,
             echelon_result={
@@ -9530,11 +9407,40 @@ class TestProportionalQualityController:
             duration_ms=0,
             timed_out=False,
         )
+        run_dir = tmp_path / "runs/run-test"
         ctrl, store, calls = _run_proportional_quality_loop(
             tmp_path,
             automatic_consumed=3,
             autonomy_mode="banzai",
             commander_results=(invalid, invalid),
+            squad_dir=run_dir,
+        )
+        (tmp_path / "runs/.current").write_text("run-test\n", encoding="utf-8")
+        (tmp_path / ".gitignore").write_text(
+            ".echelon/\nruns/\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", ".gitignore"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "ignore runtime state"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        shutil.copytree(
+            EXT_ROOT / "runtime",
+            tmp_path / ".echelon/runtime",
+            dirs_exist_ok=True,
+        )
+        shutil.copytree(
+            EXT_ROOT / "prosaic",
+            tmp_path / ".echelon/prosaic",
+            dirs_exist_ok=True,
         )
 
         blocked = ctrl.run_single_phase(
@@ -9543,9 +9449,36 @@ class TestProportionalQualityController:
             mode="banzai",
         )
         assert blocked.status == "blocked"
-        failed = store.load()["blocked_decision"]
+        failed_state = store.load()
+        failed = failed_state["blocked_decision"]
         assert failed["status"] == "failed"
         assert failed["failure_code"] == "invalid_resolution_result"
+        assert failed_state["phase"] == failed["source_phase"]
+
+        dispatches_before_unarmed_replay = dict(calls)
+        provider_calls_before_unarmed_replay = (
+            ctrl._provider.exec_agent.call_count
+        )
+        unarmed = ctrl.run_single_phase(
+            "phase1-why2",
+            user_message="unarmed replay cannot retire authority",
+            mode="banzai",
+        )
+        assert unarmed.status == "blocked"
+        assert calls == dispatches_before_unarmed_replay
+        assert ctrl._provider.exec_agent.call_count == (
+            provider_calls_before_unarmed_replay
+        )
+        assert store.load() == failed_state
+
+        _cmd_status(tmp_path)
+        status_output = capsys.readouterr().out
+        displayed_commands = re.findall(
+            r"echelon phase run (?:'[^']*'|\"[^\"]*\"|[A-Za-z0-9_.:-]+)",
+            status_output,
+        )
+        assert displayed_commands == ["echelon phase run phase1-why2"]
+        displayed_argv = shlex.split(displayed_commands[0])
 
         original_exec_agent = ctrl._provider.exec_agent.side_effect
 
@@ -9559,14 +9492,18 @@ class TestProportionalQualityController:
             return original_exec_agent(root, prompt, **kwargs)
 
         ctrl._provider.exec_agent.side_effect = replay_exec_agent
-        replayed = ctrl.run_single_phase(
-            "phase1-why2",
-            user_message="replay the failed automatic decision",
-            mode="banzai",
+        monkeypatch.setattr(
+            "harness.squad_provider.SquadCliProvider",
+            lambda _config: ctrl._provider,
+        )
+        _cmd_phase(
+            displayed_argv[2:],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
         )
 
         state = store.load()
-        assert replayed.status == "running"
+        assert state["status"] == "running"
         assert state["phase"] == "phase1-lexicon-derive"
         assert state["blocked_decision"]["status"] == "resolved"
         assert state["blocked_decision"]["selected_option_id"] == (
@@ -10792,7 +10729,7 @@ class TestHumanGateControllerInterception:
     [
         ("guided", "awaiting_human", None, 1),
         ("semi", "awaiting_human", None, 1),
-        ("banzai", "resolved", "COMMANDER", 2),
+        ("banzai", "awaiting_human", None, 1),
     ],
 )
 def test_run_single_phase_routes_new_provider_question_through_shared_boundary(
@@ -10915,7 +10852,7 @@ def test_invalid_provider_answer_shape_uses_redacted_controller_failure_path(
         "controller_state_contract_validation_failed"
     )
     assert state["controller_contract_error"]["validator"] == (
-        "human_input_policy"
+        "human_input_policy_invalid"
     )
     assert secret not in json.dumps(state)
     assert "blocked_decision" not in state

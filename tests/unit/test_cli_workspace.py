@@ -407,6 +407,57 @@ def test_phase_runtime_guard_rejects_workflow_missing_compatibility_version(
     assert "compatibility" in capsys.readouterr().err
 
 
+def test_spec_run_rejects_v1_runtime_before_provider_or_run_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_spec_run
+
+    workflow = tmp_path / ".echelon/runtime/workflow"
+    subagents = tmp_path / ".echelon/prosaic/subagents"
+    workflow.mkdir(parents=True)
+    subagents.mkdir(parents=True)
+    source_definition = (
+        Path(__file__).resolve().parents[2]
+        / "runtime/workflow/definition.yaml"
+    )
+    definition = yaml.safe_load(source_definition.read_text(encoding="utf-8"))
+    definition["controller_runtime_compatibility_version"] = 1
+    (workflow / "definition.yaml").write_text(
+        yaml.safe_dump(definition, sort_keys=False),
+        encoding="utf-8",
+    )
+    (workflow / "controller-state-contracts.yaml").write_bytes(
+        source_definition.with_name("controller-state-contracts.yaml").read_bytes()
+    )
+    (tmp_path / ".echelon/config.yml").write_text(
+        "harness:\n  llm:\n    cli: codex\n",
+        encoding="utf-8",
+    )
+    initialized_target = tmp_path / "generated-target"
+    provider_calls: list[str] = []
+    run_calls: list[str] = []
+
+    def fake_provider(*_args, **_kwargs) -> None:
+        provider_calls.append("provider")
+
+    def fake_run(*_args, **_kwargs) -> None:
+        run_calls.append("run")
+        initialized_target.mkdir()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._require_provider_capability", fake_provider)
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_run)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_spec_run(["Write Hello World"])
+
+    assert exc.value.code == 1
+    assert provider_calls == []
+    assert run_calls == []
+    assert not initialized_target.exists()
+
+
 def test_phase_runtime_guard_rejects_legacy_extension_only_workspace(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
