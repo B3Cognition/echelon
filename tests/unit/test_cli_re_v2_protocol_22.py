@@ -167,6 +167,141 @@ def test_inventory_goal_needs_no_bounded_provider_and_pins_protocol_22(
 
 
 @pytest.mark.unit
+def test_protocol_23_inventory_preparation_constructs_no_prosaic_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    probe = create_cli_workspace(tmp_path, llm_cli="codex")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.setattr(
+        legacy_cli,
+        "ProsaicPromptLoader",
+        lambda *_args, **_kwargs: pytest.fail("inventory constructed Prosaic loader"),
+    )
+
+    prepared = legacy_cli._prepare_re_v22_creation(
+        probe.root,
+        goal="inventory",
+        token_limit=None,
+        time_limit_minutes=None,
+        engine_protocol_version="2.3",
+    )
+
+    assert prepared.manifest.engine_protocol_version == "2.3"
+    assert all(
+        entry.request_renderer is None
+        for entry in prepared.inputs.executor_contract.entries
+    )
+
+
+@pytest.mark.unit
+def test_schema_2_preparation_rejects_an_empty_protocol_selector(
+    tmp_path: Path,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    probe = create_cli_workspace(tmp_path, llm_cli="codex")
+
+    with pytest.raises(ValueError, match="unsupported schema-2 RE protocol"):
+        legacy_cli._prepare_re_v22_creation(
+            probe.root,
+            goal="inventory",
+            token_limit=None,
+            time_limit_minutes=None,
+            engine_protocol_version="",
+        )
+
+
+@pytest.mark.unit
+def test_protocol_23_baseline_preparation_pins_inspected_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+    from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+
+    artifact = ProsaicCommandArtifact(
+        body="Pinned baseliner body.\n",
+        frontmatter={
+            "name": "echelon.re-baseliner",
+            "execution": "agent",
+            "tools": "write",
+            "model_tier": "strong",
+            "effort": "high",
+        },
+    )
+    expected = canonical_json_bytes(
+        {"body": artifact.body, "frontmatter": artifact.frontmatter}
+    )
+    calls: list[str] = []
+
+    class Loader:
+        def __init__(self, project_root: Path) -> None:
+            assert project_root == probe.root
+
+        def load_subagent(self, agent_id: str) -> ProsaicCommandArtifact:
+            calls.append(agent_id)
+            return artifact
+
+    probe = create_cli_workspace(tmp_path, llm_cli="openai-compatible")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.setattr(legacy_cli, "ProsaicPromptLoader", Loader)
+
+    prepared = legacy_cli._prepare_re_v22_creation(
+        probe.root,
+        goal="baseline",
+        token_limit=None,
+        time_limit_minutes=None,
+        engine_protocol_version="2.3",
+    )
+
+    renderer = prepared.inputs.executor_contract.entry_for(
+        "compact-baseline"
+    ).request_renderer
+    assert renderer is not None
+    assert calls == ["echelon.re-baseliner"]
+    assert renderer.agent_contract_hash == content_digest(expected)
+    assert prepared.inputs.immutable_objects[renderer.agent_contract_hash] == expected
+
+
+@pytest.mark.unit
+def test_protocol_23_missing_inspected_agent_fails_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    calls: list[str] = []
+
+    class MissingLoader:
+        def __init__(self, _project_root: Path) -> None:
+            pass
+
+        def load_subagent(self, agent_id: str) -> None:
+            calls.append(agent_id)
+            return None
+
+    probe = create_cli_workspace(tmp_path, llm_cli="openai-compatible")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.setattr(legacy_cli, "ProsaicPromptLoader", MissingLoader)
+
+    with pytest.raises(ValueError, match="workspace migrate-to-prosaic"):
+        legacy_cli._prepare_re_v22_creation(
+            probe.root,
+            goal="baseline",
+            token_limit=None,
+            time_limit_minutes=None,
+            engine_protocol_version="2.3",
+        )
+
+    assert calls == ["echelon.re-baseliner"]
+    assert probe.run_directories() == ()
+
+
+@pytest.mark.unit
 def test_missing_agent_authority_fails_before_run_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

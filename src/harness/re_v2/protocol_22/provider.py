@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import Callable, Literal, Mapping, Protocol
 from urllib.parse import urlsplit
 
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 
 from .artifacts import ContextBundleV1
@@ -38,6 +39,7 @@ from .model import (
 from .response_schemas import canonical_response_schema_bytes
 from .schema import (
     Protocol22SchemaError,
+    exact_object,
     load_canonical_object,
     nonnegative_int,
     positive_int,
@@ -71,6 +73,35 @@ _RESULT_STDOUT = b"echelon_result:\n  schema_version: 1\n  outcome: candidate_re
 
 class Protocol22ProviderError(Protocol22SchemaError):
     """Raised when immutable provider or dispatch authority cannot be enforced."""
+
+
+def canonical_prosaic_agent_bytes(artifact: ProsaicCommandArtifact) -> bytes:
+    """Serialize one already-inspected Prosaic artifact as pinned authority."""
+    if not isinstance(artifact, ProsaicCommandArtifact):
+        raise Protocol22ProviderError(
+            "agent contract requires inspected Prosaic artifact"
+        )
+    return canonical_json_bytes(
+        {"body": artifact.body, "frontmatter": artifact.frontmatter}
+    )
+
+
+def decode_prosaic_agent_bytes(payload: bytes) -> ProsaicCommandArtifact:
+    """Restore one pinned inspected artifact without re-running Prosaic."""
+    try:
+        raw = load_canonical_object(payload, lambda value: value)
+        exact = exact_object(
+            raw,
+            frozenset({"body", "frontmatter"}),
+            "Prosaic agent contract",
+        )
+    except Protocol22SchemaError as exc:
+        raise Protocol22ProviderError(str(exc)) from exc
+    body = exact["body"]
+    frontmatter = exact["frontmatter"]
+    if not isinstance(body, str) or not body or not isinstance(frontmatter, dict):
+        raise Protocol22ProviderError("Prosaic agent contract is incomplete")
+    return ProsaicCommandArtifact(frontmatter=dict(frontmatter), body=body)
 
 
 class RequestTokenizerV1(Protocol):

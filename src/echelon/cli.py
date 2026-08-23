@@ -12106,8 +12106,8 @@ def _re_v22_partition_authorities() -> object:
     )
 
 
-def _re_v22_installed_registry(
-    project_root: Path,
+def _re_schema2_installed_registry(
+    agent: bytes | None,
 ) -> tuple[object, bytes | None, dict[str, bytes]]:
     import harness.re_domain_manifest as domain_manifest_module
     import harness.re_v2.protocol_22.baseline as baseline_module
@@ -12137,7 +12137,6 @@ def _re_v22_installed_registry(
         canonical_response_schema_bytes,
     )
 
-    agent = _re_v22_agent_bytes(project_root)
     schemas = {
         kind: canonical_response_schema_bytes(kind)
         for kind in ("domain-baseline", "source-overview")
@@ -12203,6 +12202,13 @@ def _re_v22_installed_registry(
     return registry, agent, schemas
 
 
+def _re_v22_installed_registry(
+    project_root: Path,
+) -> tuple[object, bytes | None, dict[str, bytes]]:
+    """Build legacy protocol-2.2 authority from its raw Markdown contract."""
+    return _re_schema2_installed_registry(_re_v22_agent_bytes(project_root))
+
+
 @dataclass(frozen=True, slots=True)
 class _Protocol22Creation:
     snapshot: object
@@ -12216,9 +12222,12 @@ def _prepare_re_v22_creation(
     goal: str,
     token_limit: int | None,
     time_limit_minutes: int | None,
+    engine_protocol_version: str | None = None,
 ) -> _Protocol22Creation:
     from harness.config import load_config
+    from harness.re_v2 import RE_V2_PROTOCOL
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.model import RE_V2_SCHEMA_2_PROTOCOLS
     from harness.re_v2.protocol_22.authorities import validate_installed_authorities
     from harness.re_v2.protocol_22.executors import resolve_executor_catalog
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
@@ -12230,7 +12239,18 @@ def _prepare_re_v22_creation(
     )
     from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
     from harness.re_v2.protocol_22.policies import build_compact_v1_policy_catalog
+    from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    selected_protocol = (
+        RE_V2_PROTOCOL
+        if engine_protocol_version is None
+        else engine_protocol_version
+    )
+    if selected_protocol not in RE_V2_SCHEMA_2_PROTOCOLS:
+        raise ValueError(
+            f"unsupported schema-2 RE protocol: {selected_protocol!r}"
+        )
 
     workspace_manifest = discover_workspace(workspace_root)
     snapshot = capture_workspace_snapshot(
@@ -12245,7 +12265,24 @@ def _prepare_re_v22_creation(
         partition_authorities,
     )
     artifact_policy = build_compact_v1_policy_catalog()
-    registry, agent, schemas = _re_v22_installed_registry(workspace_root)
+    if selected_protocol == "2.2":
+        registry, agent, schemas = _re_v22_installed_registry(workspace_root)
+    else:
+        agent = None
+        if goal == "baseline":
+            try:
+                artifact = ProsaicPromptLoader(workspace_root).load_subagent(
+                    "echelon.re-baseliner"
+                )
+            except ProsaicPromptLoadError as exc:
+                raise ValueError(str(exc)) from exc
+            if artifact is None:
+                raise ValueError(
+                    "installed Prosaic agent echelon.re-baseliner is missing; run "
+                    "`echelon workspace migrate-to-prosaic` before starting RE"
+                )
+            agent = canonical_prosaic_agent_bytes(artifact)
+        registry, agent, schemas = _re_schema2_installed_registry(agent)
     if (
         registry.require("partitioner", partition_authorities.partitioner.id)
         != partition_authorities.partitioner.implementation_digest
@@ -12289,7 +12326,7 @@ def _prepare_re_v22_creation(
     manifest = RunManifestV2(
         schema_version=2,
         engine="re-v2",
-        engine_protocol_version="2.2",
+        engine_protocol_version=selected_protocol,
         run_id=run_id,
         created_at=_re_v2_now(),
         source_snapshot_id=snapshot.snapshot_id,

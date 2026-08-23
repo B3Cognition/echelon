@@ -148,6 +148,8 @@ git commit -m "feat(re-v2): admit protocol 2.3 in schema 2"
 - Produces: `canonical_prosaic_agent_bytes(artifact: ProsaicCommandArtifact) -> bytes`.
 - Produces: `decode_prosaic_agent_bytes(payload: bytes) -> ProsaicCommandArtifact`.
 - Reuses: existing registry `agent_contracts` mapping and existing object-store publication.
+- Keeps public creation on protocol 2.2 until Task 5; an internal schema-2
+  preparation argument lets this task exercise the future 2.3 authority branch.
 
 - [ ] **Step 1: Write failing canonical-contract tests**
 
@@ -174,7 +176,11 @@ def test_prosaic_agent_contract_round_trips_body_and_frontmatter_separately() ->
 
 Add CLI creation tests that monkeypatch
 `ProsaicPromptLoader.load_subagent`: inventory makes zero calls; baseline makes
-one call and fails before run publication when it returns `None`.
+one call and fails before run publication when it returns `None`. A successful
+baseline preparation must place the canonical inspected artifact bytes under
+the exact existing renderer agent-contract hash. Exercise these through an
+explicit internal `engine_protocol_version="2.3"`; do not activate public 2.3
+creation in this task.
 
 - [ ] **Step 2: Verify RED**
 
@@ -210,10 +216,13 @@ def decode_prosaic_agent_bytes(payload: bytes) -> ProsaicCommandArtifact:
     return ProsaicCommandArtifact(frontmatter=dict(frontmatter), body=body)
 ```
 
-For protocol-2.3 baseline creation, call the existing loader and give these
-canonical bytes to the existing registry builder. For inventory, pass no agent
-bytes and do not construct a loader. Keep `_re_v22_agent_bytes` exclusively for
-legacy 2.2 reading.
+Give `_prepare_re_v22_creation` an internal protocol-version argument whose
+default remains the active `RE_V2_PROTOCOL` (still 2.2). For protocol-2.3
+baseline preparation, call the existing loader and give these canonical bytes
+to the existing registry builder. For inventory, pass no agent bytes and do not
+construct a loader. Factor the current registry construction so both the legacy
+raw bytes and inspected bytes enter the same builder; do not create a second
+registry model. Keep `_re_v22_agent_bytes` exclusively for legacy 2.2 reading.
 
 - [ ] **Step 4: Verify the L0/L1 authority boundary**
 

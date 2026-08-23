@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.executors import ExecutorContractEntryV1
 from harness.re_v2.protocol_22.model import (
@@ -15,6 +16,8 @@ from harness.re_v2.protocol_22.provider import (
     DispatchReservationV1,
     Protocol22ProviderError,
     calculate_bounded_dispatch_reservation,
+    canonical_prosaic_agent_bytes,
+    decode_prosaic_agent_bytes,
     normalize_openai_usage,
     render_provider_request_envelope,
     render_wire_request,
@@ -32,6 +35,33 @@ from tests.unit.test_re_v2_protocol_22_context import (
 
 
 AGENT_BYTES = b"agent contract"
+
+
+def test_prosaic_agent_contract_round_trips_body_and_frontmatter_separately() -> None:
+    artifact = ProsaicCommandArtifact(
+        body="Baseliner body.\n",
+        frontmatter={
+            "name": "echelon.re-baseliner",
+            "execution": "agent",
+            "tools": "write",
+            "model_tier": "strong",
+            "effort": "high",
+        },
+    )
+
+    payload = canonical_prosaic_agent_bytes(artifact)
+
+    assert decode_prosaic_agent_bytes(payload) == artifact
+    assert not payload.startswith(b"---")
+
+
+def test_prosaic_agent_contract_rejects_unknown_fields() -> None:
+    payload = canonical_json_bytes(
+        {"body": "Baseliner body.\n", "frontmatter": {}, "unexpected": True}
+    )
+
+    with pytest.raises(Protocol22ProviderError, match="unknown fields"):
+        decode_prosaic_agent_bytes(payload)
 
 
 def _authority() -> tuple[object, ExecutorContractEntryV1, bytes]:
