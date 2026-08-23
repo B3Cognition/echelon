@@ -109,30 +109,7 @@ def test_typer_routes_goal_without_changing_v1_default(
 
 
 @pytest.mark.unit
-def test_ineligible_provider_changes_neither_run_nor_active_pointer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from echelon.cli_app import app
-
-    probe = create_cli_workspace(tmp_path, llm_cli="codex")
-    (probe.root / "runs").mkdir()
-    pointer = probe.root / "runs" / ".current-re"
-    pointer.write_text("re-existing\n", encoding="utf-8")
-    before = probe.active_pointer_bytes()
-    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
-    monkeypatch.chdir(probe.root)
-
-    result = CliRunner().invoke(app, ["re", "run", "--engine", "v2"])
-
-    assert result.exit_code == 2
-    assert "bounded-api-baseline-v1" in result.output
-    assert probe.active_pointer_bytes() == before
-    assert probe.run_directories() == ()
-
-
-@pytest.mark.unit
-def test_inventory_goal_needs_no_bounded_provider_and_pins_protocol_22(
+def test_shared_cli_baseline_pins_protocol_23_without_shadow_provider_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,6 +119,39 @@ def test_inventory_goal_needs_no_bounded_provider_and_pins_protocol_22(
     probe = create_cli_workspace(tmp_path, llm_cli="codex")
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
     monkeypatch.chdir(probe.root)
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda *_args, **_kwargs: pytest.fail("shadow constructed a provider"),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "run", "--engine", "v2", "--shadow"],
+    )
+
+    assert result.exit_code == 0, result.output
+    run_dir = probe.run_directories()[0]
+    manifest = load_run_manifest(run_dir)
+    assert manifest.schema_version == 2
+    assert manifest.engine_protocol_version == "2.3"
+    assert probe.active_pointer_bytes() == (run_dir.name + "\n").encode()
+
+
+@pytest.mark.unit
+def test_inventory_goal_pins_protocol_23_and_constructs_no_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+    from harness.re_v2.run_store import load_run_manifest
+
+    probe = create_cli_workspace(tmp_path, llm_cli="codex")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.chdir(probe.root)
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda *_args, **_kwargs: pytest.fail("inventory constructed a provider"),
+    )
 
     result = CliRunner().invoke(
         app,
@@ -160,7 +170,7 @@ def test_inventory_goal_needs_no_bounded_provider_and_pins_protocol_22(
     run_dir = probe.run_directories()[0]
     manifest = load_run_manifest(run_dir)
     assert manifest.schema_version == 2
-    assert manifest.engine_protocol_version == "2.2"
+    assert manifest.engine_protocol_version == "2.3"
     assert manifest.requested_goals == ("inventory",)
     assert probe.active_pointer_bytes() == (run_dir.name + "\n").encode()
     assert "provider initial dispatches: 0" in result.output
@@ -258,13 +268,20 @@ def test_protocol_23_baseline_preparation_pins_inspected_agent(
         engine_protocol_version="2.3",
     )
 
-    renderer = prepared.inputs.executor_contract.entry_for(
+    executor = prepared.inputs.executor_contract.entry_for(
         "compact-baseline"
-    ).request_renderer
-    assert renderer is not None
+    )
+    assert executor.execution_mode == "cli"
+    assert executor.model is None
+    assert executor.request_tokenizer is None
+    assert executor.generation is None
+    request_renderer = executor.request_renderer
+    assert request_renderer is not None
     assert calls == ["echelon.re-baseliner"]
-    assert renderer.agent_contract_hash == content_digest(expected)
-    assert prepared.inputs.immutable_objects[renderer.agent_contract_hash] == expected
+    assert request_renderer.agent_contract_hash == content_digest(expected)
+    assert prepared.inputs.immutable_objects[request_renderer.agent_contract_hash] == (
+        expected
+    )
 
 
 @pytest.mark.unit
@@ -438,13 +455,21 @@ def test_missing_response_schema_authority_fails_before_publication(
     probe = create_cli_workspace(tmp_path, llm_cli="openai-compatible")
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
     monkeypatch.chdir(probe.root)
-    original = legacy_cli._re_v22_installed_registry
+    original = legacy_cli._re_schema2_installed_registry
 
-    def without_schemas(root: Path) -> tuple[object, bytes | None, dict[str, bytes]]:
-        registry, agent, schemas = original(root)
+    def without_schemas(
+        agent: bytes | None,
+        *,
+        provider_mode: str = "api",
+    ) -> tuple[object, bytes | None, dict[str, bytes]]:
+        registry, agent, schemas = original(agent, provider_mode=provider_mode)
         return replace(registry, response_schemas={}), agent, schemas
 
-    monkeypatch.setattr(legacy_cli, "_re_v22_installed_registry", without_schemas)
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_schema2_installed_registry",
+        without_schemas,
+    )
 
     result = CliRunner().invoke(app, ["re", "run", "--engine", "v2", "--shadow"])
 
@@ -514,6 +539,47 @@ def test_installed_in_process_authority_closes_over_runtime_wrapper(
     assert any(
         "harness.re_v2.protocol_22.runtime" in closure for closure in observed
     )
+
+
+@pytest.mark.unit
+def test_unresolved_protocol_22_continuation_stops_before_provider_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+    from harness.re_v2.protocol_22.inputs import create_protocol_22_run_store
+
+    probe = create_cli_workspace(tmp_path, llm_cli="openai-compatible")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    prepared = legacy_cli._prepare_re_v22_creation(
+        probe.root,
+        goal="baseline",
+        token_limit=None,
+        time_limit_minutes=None,
+        engine_protocol_version="2.2",
+    )
+    run_dir = probe.root / "runs" / prepared.manifest.run_id
+    create_protocol_22_run_store(run_dir, prepared.manifest, prepared.inputs)
+    provider_calls = 0
+
+    def reject_provider_call(*_args: object, **_kwargs: object) -> None:
+        nonlocal provider_calls
+        provider_calls += 1
+        pytest.fail("legacy protocol 2.2 issued a provider request")
+
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_22.provider.BoundedApiBaselineExecutor.execute",
+        reject_provider_call,
+    )
+
+    with pytest.raises(ValueError, match="protocol 2.2.*start a new protocol 2.3"):
+        legacy_cli._run_re_v2_continue(
+            run_dir,
+            token_limit=None,
+            time_limit_minutes=None,
+        )
+
+    assert provider_calls == 0
 
 
 @pytest.mark.unit

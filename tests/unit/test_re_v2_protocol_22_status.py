@@ -15,12 +15,44 @@ from harness.re_v2.protocol_22.status import (
 from tests.unit.test_re_v2_protocol_22_controller import _baseline_context
 
 
-def _completed(tmp_path: Path):
-    context, provider = _baseline_context(tmp_path, malformed_result=True)
+def _completed(tmp_path: Path, *, provider_mode: str = "api"):
+    context, provider = _baseline_context(
+        tmp_path,
+        malformed_result=True,
+        provider_mode=provider_mode,
+    )
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "completed"
     materialize_accepted_l1(context)
     return context, provider
+
+
+@pytest.mark.unit
+def test_cli_status_reports_observed_provider_and_model_from_captures(
+    tmp_path: Path,
+) -> None:
+    context, provider = _completed(tmp_path, provider_mode="cli")
+
+    document = protocol_22_status_document(
+        context.paths.root.parent,
+        context=context,
+    )
+    human = render_protocol_22_status(
+        context.paths.root.parent,
+        context=context,
+    )
+
+    assert document["telemetry"]["provider_observations"] == [
+        {
+            "dispatches": provider.calls,
+            "model": "gpt-5.6-codex",
+            "provider": "codex",
+        }
+    ]
+    assert (
+        "provider observation: provider=codex model=gpt-5.6-codex "
+        f"dispatches={provider.calls}"
+    ) in human
 
 
 @pytest.mark.unit

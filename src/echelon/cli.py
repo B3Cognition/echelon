@@ -12108,9 +12108,12 @@ def _re_v22_partition_authorities() -> object:
 
 def _re_schema2_installed_registry(
     agent: bytes | None,
+    *,
+    provider_mode: str = "api",
 ) -> tuple[object, bytes | None, dict[str, bytes]]:
     import harness.re_domain_manifest as domain_manifest_module
     import harness.re_v2.protocol_22.baseline as baseline_module
+    import harness.re_v2.protocol_22.cli_provider as cli_provider_module
     import harness.re_v2.protocol_22.context as context_module
     import harness.re_v2.protocol_22.controller as controller_module
     import harness.re_v2.protocol_22.evidence as evidence_module
@@ -12131,6 +12134,8 @@ def _re_schema2_installed_registry(
         IN_PROCESS_ADAPTER_ID,
         IN_PROCESS_CALCULATOR_ID,
         OPENAI_USAGE_NORMALIZER_ID,
+        SHARED_AI_CLI_ADAPTER_ID,
+        SHARED_PROVIDER_USAGE_NORMALIZER_ID,
         ZERO_USAGE_NORMALIZER_ID,
     )
     from harness.re_v2.protocol_22.response_schemas import (
@@ -12144,6 +12149,9 @@ def _re_schema2_installed_registry(
     registry = InstalledAuthorityRegistry(
         executor_implementations={
             BOUNDED_API_ADAPTER_ID: _re_v22_implementation_digest(provider_module),
+            SHARED_AI_CLI_ADAPTER_ID: _re_v22_implementation_digest(
+                cli_provider_module
+            ),
             IN_PROCESS_ADAPTER_ID: _re_v22_implementation_digest(
                 controller_module,
                 execution_module,
@@ -12165,7 +12173,14 @@ def _re_schema2_installed_registry(
             ),
         },
         calculator_implementations={
-            DISPATCH_CALCULATOR_ID: _re_v22_implementation_digest(provider_module),
+            DISPATCH_CALCULATOR_ID: (
+                _re_v22_implementation_digest(
+                    provider_module,
+                    cli_provider_module,
+                )
+                if provider_mode == "cli"
+                else _re_v22_implementation_digest(provider_module)
+            ),
             IN_PROCESS_CALCULATOR_ID: _re_v22_implementation_digest(
                 execution_module
             ),
@@ -12173,6 +12188,9 @@ def _re_schema2_installed_registry(
         normalizer_implementations={
             ZERO_USAGE_NORMALIZER_ID: _re_v22_implementation_digest(execution_module),
             OPENAI_USAGE_NORMALIZER_ID: _re_v22_implementation_digest(
+                provider_module
+            ),
+            SHARED_PROVIDER_USAGE_NORMALIZER_ID: _re_v22_implementation_digest(
                 provider_module
             ),
         },
@@ -12282,7 +12300,10 @@ def _prepare_re_v22_creation(
                     "`echelon workspace migrate-to-prosaic` before starting RE"
                 )
             agent = canonical_prosaic_agent_bytes(artifact)
-        registry, agent, schemas = _re_schema2_installed_registry(agent)
+        registry, agent, schemas = _re_schema2_installed_registry(
+            agent,
+            provider_mode="cli",
+        )
     if (
         registry.require("partitioner", partition_authorities.partitioner.id)
         != partition_authorities.partitioner.implementation_digest
@@ -12298,7 +12319,12 @@ def _prepare_re_v22_creation(
         if exc.__class__.__module__ != "harness.config":
             raise
         raise ValueError(str(exc)) from exc
-    executor_contract = resolve_executor_catalog(config, goal, registry)
+    executor_contract = resolve_executor_catalog(
+        config,
+        goal,
+        registry,
+        provider_mode="api" if selected_protocol == "2.2" else "cli",
+    )
     mismatches = validate_installed_authorities(executor_contract, registry)
     if mismatches:
         details = ", ".join(
@@ -12500,43 +12526,21 @@ def _load_re_v2_snapshot(project_root: Path, manifest: object) -> object:
     return snapshot
 
 
-def _re_v22_credential_loader(project_root: Path) -> object:
-    from harness.config import load_config
-
-    def load() -> tuple[str, str] | None:
-        try:
-            config = load_config(project_root, squad_only=True)
-        except Exception as exc:
-            if exc.__class__.__module__ != "harness.config":
-                raise
-            raise ValueError(str(exc)) from exc
-        environment_name = config.llm.api_key_env
-        configured_file = config.llm.api_key_file
-        value: str | None = None
-        if configured_file:
-            path = Path(configured_file).expanduser()
-            if not path.is_absolute():
-                path = project_root / path
-            try:
-                value = path.read_text(encoding="utf-8").strip()
-            except OSError as exc:
-                raise ValueError(f"cannot read configured API key file: {exc}") from exc
-        else:
-            value = os.environ.get(environment_name or "OPENAI_API_KEY")
-        if not value:
-            return None
-        return "authorization", f"Bearer {value}"
-
-    return load
+def _reject_re_v22_provider_dispatch(*_args: object, **_kwargs: object) -> None:
+    raise ValueError(
+        "protocol 2.2 has unresolved provider work; direct provider dispatch "
+        "is disabled—start a new protocol 2.3 run"
+    )
 
 
 def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> object:
-    from types import MappingProxyType
+    from types import MappingProxyType, SimpleNamespace
 
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+    from harness.re_v2.protocol_22.cli_provider import SquadCliBaselineExecutor
     from harness.re_v2.protocol_22.evidence import PinnedSnapshotReaderV1
     from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
     from harness.re_v2.protocol_22.execution import (
@@ -12552,7 +12556,6 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         DeterministicInvocationV1,
         RunManifestV2,
     )
-    from harness.re_v2.protocol_22.provider import BoundedApiBaselineExecutor
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
     from harness.re_v2.protocol_22.runtime import (
         ConservativeTokenizerV1,
@@ -12566,10 +12569,30 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     paths = ReV2Paths.for_run(run_dir)
     inputs = load_protocol_22_inputs(paths, manifest)
     graph = build_protocol_22_graph(manifest, inputs)
-    registry, _agent, _schemas = _re_v22_installed_registry(project_root)
+    objects = ObjectStore(paths.objects)
+    if manifest.engine_protocol_version == "2.3":
+        compact = next(
+            (
+                entry
+                for entry in inputs.executor_contract.entries
+                if entry.producer_family == "compact-baseline"
+            ),
+            None,
+        )
+        renderer = None if compact is None else compact.request_renderer
+        pinned_agent = (
+            None
+            if renderer is None
+            else objects.read_blob(renderer.agent_contract_hash)
+        )
+        registry, _agent, _schemas = _re_schema2_installed_registry(
+            pinned_agent,
+            provider_mode="cli",
+        )
+    else:
+        registry, _agent, _schemas = _re_v22_installed_registry(project_root)
     snapshot = _load_re_v2_snapshot(project_root, manifest)
     snapshot_reader = PinnedSnapshotReaderV1(snapshot, inputs.workspace_partition)
-    objects = ObjectStore(paths.objects)
     ledger = Protocol22Ledger(paths, objects)
     runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
     context_ref: dict[str, object] = {}
@@ -12582,7 +12605,7 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         )
         context = context_ref["context"]
         accepted = accepted_dependencies_for(context, item)
-        if executor.execution_mode == "api":
+        if executor.execution_mode in {"api", "cli"}:
             renderer = executor.request_renderer
             if renderer is None:
                 raise ValueError("protocol-2.2 provider executor has no renderer")
@@ -12603,7 +12626,11 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
                 agent_bytes=objects.read_blob(renderer.agent_contract_hash),
                 context_bytes=accepted.payload_for_role("context_bundle"),
                 response_schema_bytes=objects.read_blob(schema_hash),
-                tokenizer=ConservativeTokenizerV1.for_executor(executor),
+                tokenizer=(
+                    ConservativeTokenizerV1.for_executor(executor)
+                    if executor.execution_mode == "api"
+                    else None
+                ),
             )
         invocation_inputs = tuple(
             DeterministicInvocationInputV1(
@@ -12640,15 +12667,23 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         for entry in inputs.executor_contract.entries
         if entry.execution_mode == "in_process"
     }
-    provider_registrations = {
-        entry.adapter_id: BoundedApiBaselineExecutor(
-            entry,
-            credential_loader=_re_v22_credential_loader(project_root),
-            tokenizer=ConservativeTokenizerV1.for_executor(entry),
-        )
-        for entry in inputs.executor_contract.entries
-        if entry.execution_mode == "api"
-    }
+    provider_registrations: dict[str, object] = {}
+    for entry in inputs.executor_contract.entries:
+        if entry.execution_mode == "api":
+            provider_registrations[entry.adapter_id] = SimpleNamespace(
+                execute=_reject_re_v22_provider_dispatch
+            )
+        elif entry.execution_mode == "cli":
+            from harness.squad_provider import SquadCliProvider
+
+            provider_registrations[entry.adapter_id] = (
+                SquadCliBaselineExecutor(
+                    entry,
+                    provider_factory=lambda: SquadCliProvider(
+                        _load_cli_config(project_root)
+                    ),
+                )
+            )
     verifier_registrations = {
         entry.verifier.verifier_id: runtime
         for entry in inputs.executor_contract.entries
@@ -12765,15 +12800,15 @@ def _run_re_v22_shadow(context: object) -> None:
         entry.producer_family: entry
         for entry in context.inputs.executor_contract.entries
     }
-    api_families = {
+    provider_families = {
         entry.producer_family
         for entry in entries.values()
-        if entry.execution_mode == "api"
+        if entry.execution_mode in {"api", "cli"}
     }
     provider_templates = tuple(
         template
         for template in context.graph.templates
-        if template.producer_family in api_families
+        if template.producer_family in provider_families
     )
     deterministic_count = len(context.graph.templates) - len(provider_templates)
     maximum_shared_retries = sum(
@@ -12809,7 +12844,7 @@ def _run_re_v22_shadow(context: object) -> None:
             }
             accepted = AcceptedDependencySetV2(by_role, payloads)
             entry = entries[item.producer_family]
-            if entry.execution_mode == "api":
+            if entry.execution_mode in {"api", "cli"}:
                 renderer = entry.request_renderer
                 if renderer is None:
                     raise ValueError("shadow provider executor has no renderer")
@@ -12826,7 +12861,11 @@ def _run_re_v22_shadow(context: object) -> None:
                     ),
                     context_bytes=accepted.payload_for_role("context_bundle"),
                     response_schema_bytes=context.object_store.read_blob(schema_hash),
-                    tokenizer=ConservativeTokenizerV1.for_executor(entry),
+                    tokenizer=(
+                        ConservativeTokenizerV1.for_executor(entry)
+                        if entry.execution_mode == "api"
+                        else None
+                    ),
                 )
                 exact_provider_reservations[template.template_id] = (
                     preview_dispatch_reservation(
@@ -12890,15 +12929,12 @@ def _run_re_v22_shadow(context: object) -> None:
     for template in context.graph.templates:
         entry = entries[template.producer_family]
         initial_active_ms += entry.limits.max_active_ms_per_dispatch
-        if entry.execution_mode != "api":
+        if entry.execution_mode not in {"api", "cli"}:
             continue
         context_limit = entry.limits.provider_context_tokens
-        if context_limit is None:
-            raise ValueError("shadow provider executor has no context limit")
-        hard_tokens = min(
-            entry.limits.max_billable_tokens_per_dispatch,
-            context_limit,
-        )
+        hard_tokens = entry.limits.max_billable_tokens_per_dispatch
+        if context_limit is not None:
+            hard_tokens = min(hard_tokens, context_limit)
         exact = exact_provider_reservations.get(template.template_id)
         initial_tokens += (
             exact.billable_tokens if exact is not None else hard_tokens
@@ -12909,7 +12945,10 @@ def _run_re_v22_shadow(context: object) -> None:
             * entry.limits.max_active_ms_per_dispatch
         )
 
-    print("RE V2 — PROTOCOL 2.2 SHADOW PLAN")
+    manifest = load_run_manifest(context.paths.root.parent)
+    print(
+        f"RE V2 — PROTOCOL {manifest.engine_protocol_version} SHADOW PLAN"
+    )
     print(f"deterministic initial dispatches: {deterministic_count}")
     print(f"provider initial dispatches: {len(provider_templates)}")
     print(f"maximum shared-retry dispatches: {maximum_shared_retries}")
@@ -12934,7 +12973,11 @@ def _run_re_v22_shadow(context: object) -> None:
             f"conservative_input_tokens<={token_bound}"
         )
     for entry in sorted(
-        (value for value in entries.values() if value.execution_mode == "api"),
+        (
+            value
+            for value in entries.values()
+            if value.execution_mode in {"api", "cli"}
+        ),
         key=lambda value: value.producer_family,
     ):
         print(
@@ -12953,7 +12996,6 @@ def _run_re_v22_shadow(context: object) -> None:
         "whole-run shared-retry reservation: "
         f"tokens={retry_tokens} active_ms={retry_active_ms}"
     )
-    manifest = load_run_manifest(context.paths.root.parent)
     token_limit = manifest.initial_budget_policy.token_limit
     active_limit = manifest.initial_budget_policy.active_ms_limit
     print(

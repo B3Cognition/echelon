@@ -27,7 +27,7 @@ def _output_contract(body: str) -> dict[str, object]:
     return loaded
 
 
-def test_baseliner_has_neutral_tool_free_execution_metadata() -> None:
+def test_baseliner_has_neutral_write_scoped_execution_metadata() -> None:
     prompt = read_prompt_markdown(BASELINER)
 
     assert prompt.had_frontmatter is True
@@ -69,12 +69,12 @@ def test_baseliner_rules_close_the_authority_escape_routes() -> None:
         "evidence",
         "not_established",
         "authorial payload",
-        "candidate_ready",
+        "done",
     ):
         assert required in always_rules
     for forbidden in (
         "filesystem discovery",
-        "tool",
+        "live source workspace",
         "controller state",
         "identity",
         "coverage",
@@ -85,9 +85,22 @@ def test_baseliner_rules_close_the_authority_escape_routes() -> None:
         assert forbidden in never_rules
 
 
+def test_baseliner_limits_write_authority_to_the_candidate_payload() -> None:
+    body = read_prompt_markdown(BASELINER).body
+
+    assert (
+        "ALWAYS use write authority only to write exactly `baseline.json` in the "
+        "supplied candidate root."
+    ) in body
+    assert (
+        "NEVER perform filesystem discovery, read the live source workspace, or "
+        "write any other path."
+    ) in body
+
+
 def test_baseliner_result_block_is_the_exact_minimal_transport_contract() -> None:
     body = read_prompt_markdown(BASELINER).body
 
     assert _output_contract(body) == {
-        "echelon_result": {"schema_version": 1, "outcome": "candidate_ready"}
+        "echelon_result": {"verdict": "DONE", "state_updates": {}}
     }

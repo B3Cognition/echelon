@@ -174,8 +174,8 @@ def test_load_rejects_manifest_with_unsupported_pinned_protocol(tmp_path: Path) 
 
 
 @pytest.mark.unit
-def test_supported_protocols_include_readable_23_before_activation() -> None:
-    assert RE_V2_PROTOCOL == "2.2"
+def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
+    assert RE_V2_PROTOCOL == "2.3"
     assert RE_V2_SUPPORTED_PROTOCOLS == ("2.0", "2.1", "2.2", "2.3")
 
 

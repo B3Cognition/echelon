@@ -940,6 +940,8 @@ def resolve_executor_catalog(
     config: HarnessConfig,
     goal: Literal["baseline", "inventory"] | str,
     registry: InstalledAuthorityRegistry,
+    *,
+    provider_mode: Literal["api", "cli"] | str = "api",
 ) -> ExecutorContractCatalogV1:
     """Resolve one immutable executor catalog from effective harness config."""
     if not isinstance(config, HarnessConfig):
@@ -950,11 +952,17 @@ def resolve_executor_catalog(
         raise Protocol22ExecutorError(
             "executor resolution requires InstalledAuthorityRegistry"
         )
+    if provider_mode not in {"api", "cli"}:
+        raise Protocol22ExecutorError("provider mode must be api or cli")
     entries = [
         _in_process_entry(family, registry) for family in _GOAL_FAMILIES[goal]
     ]
     if goal == "baseline":
-        entries.append(_bounded_api_entry(config, registry))
+        entries.append(
+            _bounded_api_entry(config, registry)
+            if provider_mode == "api"
+            else _shared_cli_entry(config, registry)
+        )
     return ExecutorContractCatalogV1(
         schema_version=1,
         entries=tuple(sorted(entries, key=lambda entry: entry.producer_family)),
@@ -1188,6 +1196,89 @@ def _bounded_api_entry(
             max_internal_calls=1,
             max_followup_input_tokens_per_call=0,
             max_completion_tokens_per_call=completion_tokens,
+            max_tool_rounds=0,
+            max_tool_result_bytes_per_round=0,
+            max_billable_tokens_per_dispatch=_MAX_BILLABLE_TOKENS_PER_DISPATCH,
+            max_active_ms_per_dispatch=llm.timeout_ms,
+        ),
+    )
+
+
+def _shared_cli_entry(
+    config: HarnessConfig,
+    registry: InstalledAuthorityRegistry,
+) -> ExecutorContractEntryV1:
+    llm = config.llm
+    if not isinstance(llm.timeout_ms, int) or isinstance(llm.timeout_ms, bool) or (
+        llm.timeout_ms <= 0
+    ):
+        raise Protocol22ExecutorError(
+            "shared-ai-cli-baseline-v1 requires a positive controller deadline"
+        )
+    schemas = tuple(
+        ResponseSchemaReferenceV1(
+            artifact_kind=kind,
+            schema_hash=_expected_schema_hash(registry, kind),
+        )
+        for kind in ("domain-baseline", "source-overview")
+    )
+    return ExecutorContractEntryV1(
+        producer_family="compact-baseline",
+        execution_mode="cli",
+        provider_id=llm.cli,
+        api_transport=None,
+        adapter_id=SHARED_AI_CLI_ADAPTER_ID,
+        adapter_contract_version="1",
+        executor_implementation_digest=_require(
+            registry,
+            "executor",
+            SHARED_AI_CLI_ADAPTER_ID,
+        ),
+        producer_protocol_version="compact-baseline-v1",
+        result_contract_id="candidate-ready-v1",
+        verifier=_verifier_authority(registry),
+        model=None,
+        request_renderer=RequestRendererAuthorityV1(
+            renderer_id=COMPACT_RENDERER_ID,
+            renderer_version="1",
+            implementation_digest=_require(
+                registry,
+                "renderer",
+                COMPACT_RENDERER_ID,
+            ),
+            agent_contract_hash=_require(
+                registry,
+                "agent_contract",
+                BASELINER_AGENT_ID,
+            ),
+            response_schemas=schemas,
+        ),
+        request_tokenizer=None,
+        generation=None,
+        reservation_calculator=ReservationCalculatorAuthorityV1(
+            calculator_id=DISPATCH_CALCULATOR_ID,
+            calculator_version=1,
+            implementation_digest=_require(
+                registry,
+                "calculator",
+                DISPATCH_CALCULATOR_ID,
+            ),
+        ),
+        token_accounting=TokenAccountingAuthorityV1(
+            normalization_id=SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+            normalization_version="1",
+            implementation_digest=_require(
+                registry,
+                "normalizer",
+                SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+            ),
+            unknown_class_policy="untrusted",
+        ),
+        limits=ExecutorLimitsV1(
+            provider_context_tokens=None,
+            max_internal_calls=1,
+            max_followup_input_tokens_per_call=0,
+            max_completion_tokens_per_call=0,
             max_tool_rounds=0,
             max_tool_result_bytes_per_round=0,
             max_billable_tokens_per_dispatch=_MAX_BILLABLE_TOKENS_PER_DISPATCH,

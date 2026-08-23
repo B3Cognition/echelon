@@ -31,6 +31,7 @@ def _registry() -> InstalledAuthorityRegistry:
         executor_implementations={
             "bounded-api-baseline-v1": digest("api executor"),
             "re-v2-in-process-v1": digest("in-process executor"),
+            "shared-ai-cli-baseline-v1": digest("shared CLI adapter"),
         },
         renderer_implementations={
             "compact-baseline-renderer-v1": digest("renderer"),
@@ -45,6 +46,7 @@ def _registry() -> InstalledAuthorityRegistry:
         normalizer_implementations={
             "deterministic-zero-usage-v1": digest("zero normalizer"),
             "openai-usage-v1": digest("openai normalizer"),
+            "shared-provider-usage-v1": digest("shared usage normalizer"),
         },
         verifier_implementations={"compact-verifier-v1": digest("verifier")},
         partitioner_implementations={},
@@ -130,6 +132,32 @@ def test_shared_cli_contract_delegates_model_generation_and_tokenizer() -> None:
     assert entry.request_renderer is not None
     assert entry.limits.max_billable_tokens_per_dispatch == 262_144
     assert ExecutorContractEntryV1.from_json_dict(entry.to_json_dict()) == entry
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("cli", ("claude", "codex", "copilot", "opencode"))
+def test_baseline_catalog_resolves_shared_cli_without_model_authority(
+    cli: str,
+) -> None:
+    entry = _baseline_entry(
+        resolve_executor_catalog(
+            _config(cli=cli),
+            "baseline",
+            _registry(),
+            provider_mode="cli",
+        )
+    )
+
+    assert entry.execution_mode == "cli"
+    assert entry.provider_id == cli
+    assert entry.adapter_id == SHARED_AI_CLI_ADAPTER_ID
+    assert entry.api_transport is None
+    assert entry.model is None
+    assert entry.request_tokenizer is None
+    assert entry.generation is None
+    assert entry.token_accounting.normalization_id == (
+        SHARED_PROVIDER_USAGE_NORMALIZER_ID
+    )
 
 
 @pytest.mark.unit

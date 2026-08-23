@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import time
+from typing import Callable
 
 from harness.echelon_result_schema import EchelonResultContract
 from harness.re_v2.canonical import content_digest
@@ -78,11 +79,17 @@ class SquadCliBaselineExecutor:
         self,
         executor: ExecutorContractEntryV1,
         *,
-        provider: SquadCliProvider,
+        provider: SquadCliProvider | None = None,
+        provider_factory: Callable[[], SquadCliProvider] | None = None,
     ) -> None:
         _validate_cli_executor(executor)
+        if (provider is None) == (provider_factory is None):
+            raise Protocol22ProviderError(
+                "shared CLI adapter requires exactly one provider or provider factory"
+            )
         self.executor = executor
         self._provider = provider
+        self._provider_factory = provider_factory
 
     def execute(
         self,
@@ -133,7 +140,14 @@ class SquadCliBaselineExecutor:
             response_schema_bytes.decode("utf-8"),
         )
         started_at = _utc_now()
-        result = self._provider.exec_agent(
+        provider = self._provider
+        if provider is None:
+            factory = self._provider_factory
+            if factory is None:  # Closed by construction; retained fail-closed.
+                raise Protocol22ProviderError("shared CLI provider factory is missing")
+            provider = factory()
+            self._provider = provider
+        result = provider.exec_agent(
             str(root),
             prompt,
             timeout_ms=max(1, int(remaining_seconds * 1000)),

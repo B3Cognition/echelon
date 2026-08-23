@@ -97,9 +97,11 @@ def protocol_22_status_document(
     try:
         manifest = load_run_manifest(run_path)
         if not isinstance(manifest, RunManifestV2) or (
-            manifest.engine_protocol_version != "2.2"
+            manifest.engine_protocol_version not in {"2.2", "2.3"}
         ):
-            raise Protocol22StatusError(f"RE run is not protocol 2.2: {run_path.name}")
+            raise Protocol22StatusError(
+                f"RE run is not schema-2 protocol 2.2/2.3: {run_path.name}"
+            )
         paths = ReV2Paths.for_run(run_path)
         inputs = load_protocol_22_inputs(paths, manifest)
         graph = build_protocol_22_graph(manifest, inputs)
@@ -852,6 +854,7 @@ def _telemetry_document(
     complete = 0
     terminal_tail = 0
     captures: set[str] = set()
+    provider_observations: dict[tuple[str, str | None], int] = {}
     for event in events:
         if event.type != "dispatch_observed":
             continue
@@ -867,6 +870,14 @@ def _telemetry_document(
             complete += 1
         else:
             terminal_tail += 1
+        if capture.execution_mode in {"api", "cli"}:
+            observation = (
+                capture.provider_name,
+                capture.resolved_model_revision,
+            )
+            provider_observations[observation] = (
+                provider_observations.get(observation, 0) + 1
+            )
     return {
         "abandoned_dispatches": sum(
             event.type == "dispatch_abandoned" for event in events
@@ -880,6 +891,17 @@ def _telemetry_document(
             paths.root / "captures" / "committed"
         ),
         "incomplete_staging": _safe_entry_count(paths.root / "captures" / ".staging"),
+        "provider_observations": [
+            {
+                "dispatches": dispatches,
+                "model": model,
+                "provider": provider,
+            }
+            for (provider, model), dispatches in sorted(
+                provider_observations.items(),
+                key=lambda item: (item[0][0], item[0][1] or ""),
+            )
+        ],
         "result_contract_reconstructed": sum(
             event.type == "result_contract_reconstructed" for event in events
         ),
@@ -1098,6 +1120,15 @@ def _render_human(document: Mapping[str, object]) -> str:
                 "next reservation: "
                 f"tokens={reservation['billable_tokens']} "
                 f"active_ms={reservation['active_ms']}"
+            )
+    telemetry = document.get("telemetry")
+    if isinstance(telemetry, Mapping):
+        for observation in telemetry.get("provider_observations", []):
+            lines.append(
+                "provider observation: "
+                f"provider={observation['provider']} "
+                f"model={observation['model'] or 'unavailable'} "
+                f"dispatches={observation['dispatches']}"
             )
     failures = document.get("failures")
     if isinstance(failures, Mapping):
