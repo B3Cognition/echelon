@@ -206,6 +206,20 @@ def test_schema_v3_accepts_migrated_awaiting_human_first_attempt() -> None:
     assert validate_blocked_decision(decision)["attempts"] == 1
 
 
+@pytest.mark.parametrize("autonomy_mode", ["guided", "semi"])
+def test_schema_v3_rejects_non_banzai_migrated_awaiting_human_attempt(
+    autonomy_mode: str,
+) -> None:
+    decision = _v3_decision(
+        status="awaiting_human",
+        attempts=1,
+        autonomy_mode=autonomy_mode,
+    )
+
+    with pytest.raises(BlockedDecisionError, match="Banzai"):
+        validate_blocked_decision(decision)
+
+
 def test_schema_v3_rejects_aggregate_recommendation_evidence_over_budget() -> None:
     decision = _v3_decision(
         recommendation_evidence=[
@@ -257,6 +271,24 @@ def test_schema_v3_builder_persists_the_prepared_recommendation_snapshot() -> No
             "digest": "a" * 64,
         }
     ]
+
+
+def test_schema_v3_builder_rejects_prepared_snapshot_override() -> None:
+    with pytest.raises(BlockedDecisionError, match="resolution field"):
+        build_blocked_decision_v3(
+            prepared=_v3_prepared_choice(),
+            decision_id="dec-checkpoint",
+            status="pending",
+            autonomy_mode="banzai",
+            recommendation_evidence=[
+                {
+                    "id": "attacker:evidence",
+                    "kind": "provider_claim",
+                    "reference": "unsealed:claim",
+                    "digest": "b" * 64,
+                }
+            ],
+        )
 
 
 def test_recovery_pair_accepts_v2_and_v3_decisions() -> None:

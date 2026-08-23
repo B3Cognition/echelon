@@ -90,6 +90,19 @@ _RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
 _RECOMMENDATION_AUTHORITIES = frozenset(
     {"workflow_policy", "controller_evidence", "provider_evidence"}
 )
+_V3_BUILD_RESOLUTION_FIELDS = frozenset(
+    {
+        "selected_option_id",
+        "answer_text",
+        "resolved_by",
+        "failure_code",
+        "resolved_at",
+        "resolution_rationale",
+        "resolution_confidence",
+        "recommendation_followed",
+        "override_reason",
+    }
+)
 _DECISION_ID_RE = re.compile(r"dec-[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
@@ -492,8 +505,15 @@ def validate_blocked_decision_v3(value: object) -> dict[str, object]:
         raise BlockedDecisionError("attempts must be a non-negative integer")
     legacy_shape = {field: value[field] for field in _V2_FIELDS}
     legacy_shape["schema_version"] = SCHEMA_V2
-    migrated_awaiting_attempt = (
+    awaiting_after_attempt = (
         value["status"] == "awaiting_human" and value["attempts"] == 1
+    )
+    if awaiting_after_attempt and value["autonomy_mode"] != "banzai":
+        raise BlockedDecisionError(
+            "awaiting_human attempt 1 is only valid for a migrated Banzai decision"
+        )
+    migrated_awaiting_attempt = (
+        awaiting_after_attempt and value["autonomy_mode"] == "banzai"
     )
     if migrated_awaiting_attempt:
         legacy_shape["attempts"] = 0
@@ -789,6 +809,12 @@ def build_blocked_decision_v3(
     """Build the canonical fresh schema-v3 decision postimage."""
     if type(prepared) is not PreparedHumanInput or prepared.schema_version != 2:
         raise BlockedDecisionError("schema-v3 decisions require prepared human input")
+    unsupported = set(resolution_fields) - _V3_BUILD_RESOLUTION_FIELDS
+    if unsupported:
+        raise BlockedDecisionError(
+            "unsupported blocked decision resolution field: "
+            f"{sorted(unsupported)[0]}"
+        )
     decision: dict[str, object] = {
         "schema_version": SCHEMA_V3,
         "id": decision_id,

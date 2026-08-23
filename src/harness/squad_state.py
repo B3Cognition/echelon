@@ -930,15 +930,8 @@ def _validate_human_input_authority_write(
             json_path="$.blocked_decision",
             validator="human_input_authority",
         )
-    canonical_terminal_recovery_removal = (
-        isinstance(candidate_decision, Mapping)
-        and candidate_decision.get("status") == "resolved"
-        and candidate.get("recovery_instruction") is None
-    )
-    if (
-        not canonical_terminal_recovery_removal
-        and current.get("recovery_instruction")
-        != candidate.get("recovery_instruction")
+    if current.get("recovery_instruction") != candidate.get(
+        "recovery_instruction"
     ):
         raise StateAdvanceError(
             "generic state writes cannot mutate versioned recovery authority",
@@ -2331,11 +2324,17 @@ class SquadStateStore:
                 expected_state_revision=expected_state_revision,
                 allowed_statuses=_ACTIVE_HUMAN_INPUT_DECISION_STATUSES,
             )
+            selected_option_id = resolution.selected_option_id
+            if isinstance(selected_option_id, str):
+                selected_option_id = selected_option_id.strip()
+            answer_text = resolution.answer_text
+            if isinstance(answer_text, str):
+                answer_text = answer_text.strip()
             resolution_postimage = {
                 **decision,
                 "status": "resolved",
-                "selected_option_id": resolution.selected_option_id,
-                "answer_text": resolution.answer_text,
+                "selected_option_id": selected_option_id,
+                "answer_text": answer_text,
                 "resolved_by": resolution.resolved_by,
                 "failure_code": None,
                 "resolved_at": (
@@ -2359,7 +2358,7 @@ class SquadStateStore:
                     or decision.get("recommended_answer")
                 )
                 selected_target = (
-                    resolution.selected_option_id or resolution.answer_text
+                    selected_option_id or answer_text
                 )
                 followed = (
                     None

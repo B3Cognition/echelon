@@ -4809,6 +4809,36 @@ class TestHumanInputDecisionStateCAS:
         assert "escalation_question" not in resolved
         assert "escalation_options" not in resolved
 
+    def test_human_input_resolution_canonicalizes_answer_before_follow_audit(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id=" approve ",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={"status": "running", "phase": "next"},
+            state_removals=(),
+        )
+
+        assert resolved["blocked_decision"]["selected_option_id"] == "approve"
+        assert resolved["blocked_decision"]["recommendation_followed"] is True
+
     def test_human_input_resolved_audit_allows_later_unrelated_block(
         self,
         tmp_path,
@@ -5229,6 +5259,61 @@ class TestHumanInputDecisionStateCAS:
             store.save(candidate)
 
         assert store.load() == legacy
+
+    @pytest.mark.parametrize("schema_version", [2, 3])
+    def test_generic_save_cannot_remove_resolved_recovery_authority(
+        self,
+        tmp_path,
+        schema_version,
+    ):
+        store = SquadStateStore(tmp_path / f"schema-{schema_version}")
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        stale_recovery = deepcopy(awaiting["recovery_instruction"])
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={"status": "running", "phase": "next"},
+            state_removals=(),
+        )
+        persisted = deepcopy(resolved)
+        persisted["recovery_instruction"] = stale_recovery
+        if schema_version == 2:
+            persisted["blocked_decision"]["schema_version"] = 2
+            for field in (
+                "recommended_option_id",
+                "recommended_action",
+                "automatic_eligible",
+                "recommendation_rationale",
+                "recommendation_confidence",
+                "recommendation_authority",
+                "recommendation_evidence",
+                "resolution_rationale",
+                "resolution_confidence",
+                "recommendation_followed",
+                "override_reason",
+            ):
+                persisted["blocked_decision"].pop(field)
+        store._path.write_text(json.dumps(persisted), encoding="utf-8")
+        candidate = deepcopy(persisted)
+        candidate.pop("recovery_instruction")
+
+        with pytest.raises(StateAdvanceError, match="recovery authority"):
+            store.save(candidate)
+
+        assert store.load() == persisted
 
     @pytest.mark.parametrize("terminal_status", ["resolved", "failed"])
     def test_generic_save_cannot_replace_terminal_decision_v3_but_seal_can(
