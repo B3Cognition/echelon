@@ -191,3 +191,84 @@ Both exited 0 with no output.
   dispatch-cap, and proportional-quality preparers. They are not regressions in
   Task 3 and were deliberately left out of this implementation.
 - No unresolved Task 3 defect was found in self-review.
+
+## Fix round 1/5: canonical v2 provider-choice migration
+
+### Finding addressed
+
+Canonical v2 provider choices always contain an `outcome` key, including when
+its value is null, while the provider preparation boundary rejects provider
+ownership of that field. Migration had passed the canonical option wholesale,
+so even a reconstructable low-risk provider recommendation was incorrectly
+retired as `decision_recommendation_unavailable`.
+
+### RED
+
+Command:
+
+```bash
+uv run --frozen --extra dev pytest -q tests/integration/test_human_input_routing.py -k 'provider_choice_migration_preserves_outcome_ownership' --tb=short
+```
+
+Output:
+
+```text
+F.                                                                       [100%]
+1 failed, 1 passed, 188 deselected in 0.73s
+```
+
+The canonical null-outcome case returned `False` instead of migrating and
+dispatching. The non-null-outcome case already passed, proving that the existing
+failure path did not silently erase provider-owned outcome semantics.
+
+### GREEN
+
+The migration adapter now requires every validated legacy provider option to
+have `outcome is None`, removes only that canonical null key, and passes the
+remaining provider-owned fields through the strict provider normalizer.
+
+Command:
+
+```bash
+uv run --frozen --extra dev pytest -q tests/integration/test_human_input_routing.py -k 'provider_choice_migration_preserves_outcome_ownership' --tb=short
+```
+
+Output:
+
+```text
+..                                                                       [100%]
+2 passed, 188 deselected in 0.62s
+```
+
+### Regression verification
+
+Commands and outputs:
+
+```text
+uv run --frozen --extra dev pytest -q tests/integration/test_human_input_routing.py -k 'unreconstructable_pending_v2 or provider_choice_migration_preserves_outcome_ownership or pending_v2_banzai_human_only or pending_or_resolving_v2_banzai'
+6 passed, 184 deselected in 1.10s
+
+uv run --frozen --extra dev pytest -q tests/unit/test_human_input_resolution_contract.py tests/unit/test_cli_continue.py tests/kernel/test_squad_state.py
+324 passed in 2.46s
+
+uv run --frozen --extra dev pytest -q tests/integration/test_human_input_routing.py --tb=no
+19 failed, 171 passed in 29.05s
+```
+
+The same 19 Task 4 producer-preparation failures remain; the provider-choice
+migration cases add two passing cases without introducing another failure.
+
+### Fix-round self-review
+
+- Confirmed the source decision is version-neutrally validated before the
+  migration adapter reads `option["outcome"]`, so canonical key presence and
+  option shape are already guaranteed.
+- Confirmed only a null canonical `outcome` is removed. A non-null value enters
+  the canonical v2 failure transaction unchanged, preserving the ownership
+  boundary and issuing no provider call.
+- Confirmed the remaining option fields still pass through
+  `HumanInputPolicyRegistry.prepare()` and its strict provider normalization;
+  the adapter does not bypass recommendation, route, or option validation.
+- Confirmed the successful case migrates to schema v3, retains the same
+  decision ID, dispatches once, resolves the sealed recommended option, and
+  persists the COMMANDER audit.

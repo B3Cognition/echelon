@@ -961,6 +961,109 @@ def test_unreconstructable_pending_v2_banzai_fails_without_provider_dispatch(
     provider.exec_agent.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("legacy_outcome", "migrates"),
+    [(None, True), ("approved", False)],
+    ids=("canonical-null-outcome", "owned-non-null-outcome"),
+)
+def test_pending_v2_banzai_provider_choice_migration_preserves_outcome_ownership(
+    tmp_path: Path,
+    legacy_outcome: str | None,
+    migrates: bool,
+) -> None:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="operational",
+        semi_policy="auto_if_recommended_low_risk",
+        resolution_handler="clarification_resume",
+        allow_free_text=False,
+        allowed_phase_ids=frozenset({"phase1-investigate"}),
+        allowed_target_phases=frozenset({"phase1-what"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    rationale = "The sealed provider choice remains the bounded recommendation."
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id="approve",
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-provider-choice-{legacy_outcome or 'null'}",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained provider choice should be applied?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue with the retained provider choice.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase1-what",
+                "outcome": legacy_outcome,
+            }
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now="2026-08-20T10:45:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is migrates
+
+    persisted = store.load()["blocked_decision"]
+    assert persisted["id"] == decision["id"]
+    if migrates:
+        assert persisted["schema_version"] == 3
+        assert persisted["status"] == "resolved"
+        assert persisted["selected_option_id"] == "approve"
+        assert persisted["recommendation_followed"] is True
+        assert persisted["resolution_rationale"] == rationale
+        assert persisted["options"][0]["outcome"] is None
+        provider.exec_agent.assert_called_once()
+    else:
+        assert persisted["schema_version"] == 2
+        assert persisted["status"] == "failed"
+        assert persisted["failure_code"] == (
+            "decision_recommendation_unavailable"
+        )
+        assert persisted["options"][0]["outcome"] == legacy_outcome
+        provider.exec_agent.assert_not_called()
+
+
 def test_pending_v2_banzai_human_only_migrates_to_v3_human_resume(
     tmp_path: Path,
 ) -> None:

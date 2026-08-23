@@ -4909,11 +4909,24 @@ class SquadController:
                 "source_state_revision": state["state_revision"],
             }
             if decision.get("source_kind") == "provider_escalation":
-                prepare_args["options"] = [
-                    dict(option)
-                    for option in decision.get("options", [])
-                    if isinstance(option, Mapping)
-                ]
+                provider_options: list[dict[str, object]] = []
+                for option in decision.get("options", []):
+                    if not isinstance(option, Mapping):
+                        raise HumanInputPolicyError(
+                            "legacy provider option is invalid"
+                        )
+                    if option["outcome"] is not None:
+                        raise HumanInputPolicyError(
+                            "legacy provider option owns an outcome"
+                        )
+                    provider_options.append(
+                        {
+                            key: value
+                            for key, value in option.items()
+                            if key != "outcome"
+                        }
+                    )
+                prepare_args["options"] = provider_options
             prepared = registry.prepare(**prepare_args)
             if not self._v2_migration_preserves_decision_contract(
                 decision,
