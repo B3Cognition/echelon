@@ -804,6 +804,78 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
     assert (spec_dir / "user-intent.md").is_file()
 
 
+def test_failed_provider_replay_preserves_absolute_active_spec_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, spec_dir, state_path, _ = _write_failed_provider_project(tmp_path)
+    initial_state = json.loads(state_path.read_text(encoding="utf-8"))
+    initial_state["spec_dir"] = str(spec_dir)
+    state_path.write_text(json.dumps(initial_state), encoding="utf-8")
+
+    provider_state_snapshots: list[dict[str, object]] = []
+    dispatched_nodes: list[str] = []
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(
+            self,
+            _project_root: str,
+            _prompt: str,
+            **_kwargs: object,
+        ) -> SquadAgentResult:
+            provider_state_snapshots.append(
+                json.loads(state_path.read_text(encoding="utf-8"))
+            )
+            (spec_dir / "user-intent.md").write_text(
+                "# User intent\n\nReplay the exact registered source phase.\n",
+                encoding="utf-8",
+            )
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "ALIGNED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    from harness.squad_executors import AgentExecutor
+
+    original_execute = AgentExecutor.execute
+
+    def record_execute(self, node, store):
+        dispatched_nodes.append(node.id)
+        return original_execute(self, node, store)
+
+    monkeypatch.setattr(AgentExecutor, "execute", record_execute)
+
+    _cmd_phase(
+        ["run", "phase1-tracker", "--spec", str(spec_dir)],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    replayed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert dispatched_nodes == ["phase1-tracker"]
+    assert len(provider_state_snapshots) == 1
+    assert provider_state_snapshots[0]["spec_id"] == spec_dir.name
+    assert provider_state_snapshots[0]["spec_dir"] == str(spec_dir)
+    assert "blocked_decision" not in provider_state_snapshots[0]
+    assert replayed["spec_id"] == spec_dir.name
+    assert replayed["spec_dir"] == str(spec_dir)
+    assert replayed["phase_run_source_spec_dir"] == str(spec_dir)
+    assert "blocked_decision" not in replayed
+    assert "recovery_instruction" not in replayed
+    assert (spec_dir / "user-intent.md").is_file()
+
+
 def test_failed_provider_wrong_phase_cannot_retire_or_execute_authority(
     tmp_path: Path,
     capsys,

@@ -19,7 +19,6 @@ from harness.phase_checkpoints import (
     load_checkpoint_ledger,
     record_checkpoint_metadata,
 )
-from echelon.rewind import RewindResult
 
 
 class _CoverageGraph:
@@ -459,11 +458,25 @@ def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
 
 def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-collision")
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
-    shared_commit = "a" * 40
+    (spec_dir / "spec.md").write_text("# Intended checkpoint\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(
+        "/.echelon/\n"
+        "/runs/.current\n"
+        "/runs/*/state.json*\n"
+        "/runs/*/state.lock\n"
+        "/runs/*/.echelon/\n"
+        "/runs/*/specs/*/.echelon/\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "init", "-b", spec_dir.name)
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "add", ".gitignore", spec_dir.relative_to(tmp_path).as_posix())
+    _git(tmp_path, "commit", "-m", "intended checkpoint")
+    shared_commit = _git(tmp_path, "rev-parse", "HEAD")
     intended = PhaseCheckpoint(
         id="phase1-lexicon",
         spec_id=spec_dir.name,
@@ -492,6 +505,10 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     )
     for checkpoint in (intended, collision):
         record_checkpoint_metadata(spec_dir, checkpoint)
+    (spec_dir / "spec.md").write_text("# Later work\n", encoding="utf-8")
+    _git(tmp_path, "add", spec_dir.relative_to(tmp_path).as_posix())
+    _git(tmp_path, "commit", "-m", "later work")
+    later_commit = _git(tmp_path, "rev-parse", "HEAD")
     decision = build_blocked_decision_v2(
         decision_id="dec-colliding-gate",
         status="resolved",
@@ -544,22 +561,13 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
         f"echelon spec rewind phase1-lexicon --commit {shared_commit} "
         "--next-phase checkpoint-assess --confirm"
     )
-    monkeypatch.setattr(
-        "echelon.rewind.prepare_rewind",
-        lambda **_kwargs: RewindResult(
-            applied=True,
-            spec_id=spec_dir.name,
-            checkpoint_id=intended.id,
-            from_commit="b" * 40,
-            to_commit=shared_commit,
-            backup_ref="echelon/backup/collision",
-            message="Rewind complete.",
-        ),
-    )
     command_args = shlex.split(action.command)[3:]
 
     _cmd_rewind(command_args, project_root=tmp_path)
 
+    assert later_commit != shared_commit
+    assert _git(tmp_path, "rev-parse", "HEAD") == shared_commit
+    assert (spec_dir / "spec.md").read_text(encoding="utf-8") == "# Intended checkpoint\n"
     assert load_checkpoint_ledger(spec_dir).checkpoints == [intended]
 
 

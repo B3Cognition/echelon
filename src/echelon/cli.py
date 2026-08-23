@@ -117,7 +117,8 @@ Commands:
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
-  spec rewind <phase-id> [--commit <sha>]   Rewind the active squad run to a safe checkpoint.
+  spec rewind <phase-id> [--commit <sha>] [--next-phase <phase-id>]
+                                            Rewind the active squad run to a safe checkpoint.
   spec switch <spec-or-run-id> [--stash | --discard --confirm] [--restore-stash]
                                             Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
@@ -9145,25 +9146,14 @@ def _resolve_rewind_checkpoint(
     next_phase: str,
 ) -> object:
     """Resolve the same recovery-specific ledger candidate rendered by status."""
-    from harness.phase_checkpoints import resolve_checkpoint
+    from harness.phase_checkpoints import resolve_rewind_checkpoint
 
-    selected_ledger = ledger
-    if next_phase:
-        candidates = [
-            checkpoint
-            for checkpoint in ledger.checkpoints
-            if checkpoint.next_phase == next_phase
-            and checkpoint.rewind == "supported"
-        ]
-        if not candidates:
-            raise KeyError(
-                f"no supported checkpoint precedes requested phase {next_phase}"
-            )
-        selected_ledger = type(ledger)(
-            spec_id=ledger.spec_id,
-            checkpoints=candidates,
-        )
-    return resolve_checkpoint(selected_ledger, target, commit=commit)
+    return resolve_rewind_checkpoint(
+        ledger,
+        target,
+        commit=commit,
+        next_phase=next_phase,
+    )
 
 
 def _failed_gate_rewind_authority(
@@ -9514,6 +9504,7 @@ def _cmd_rewind(
                         target=target,
                         confirm=confirm,
                         checkpoint_commit=checkpoint_commit,
+                        checkpoint_next_phase=checkpoint_next_phase,
                         discard_active_spec_dirty_paths=recovery_dirty_paths,
                     )
                     if not result.applied:
@@ -10441,6 +10432,12 @@ def _cmd_phase(
         target_spec_dir,
         materialize=failed_replay is None,
     )
+    if failed_replay is not None:
+        # Authorize and persist the exact identity representation sealed in the
+        # failed state after selector/path equivalence has been proven above.
+        initial_updates["spec_id"] = failed_replay.spec_id
+        initial_updates["spec_dir"] = failed_replay.spec_dir_ref
+        initial_updates["phase_run_source_spec_dir"] = failed_replay.spec_dir_ref
     if initial_updates:
         initial_updates["manual_phase_run"] = True
 
@@ -12851,7 +12848,8 @@ def _cmd_spec(args: list[str]) -> None:
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  add-input --input <role:path>...     Add evidence to a parked investigation run\n"
             "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
-            "  rewind <phase-id> [--commit <sha>]  Rewind the active squad run to a checkpoint\n"
+            "  rewind <phase-id> [--commit <sha>] [--next-phase <phase-id>]\n"
+            "                                      Rewind the active squad run to a checkpoint\n"
             "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
             "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
