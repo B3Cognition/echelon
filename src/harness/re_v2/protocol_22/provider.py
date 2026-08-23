@@ -184,6 +184,91 @@ class NormalizedUsageV1:
         )
 
 
+def canonical_normalized_usage_bytes(usage: NormalizedUsageV1) -> bytes:
+    """Encode the existing normalized usage value for durable capture."""
+    if not isinstance(usage, NormalizedUsageV1):
+        raise Protocol22ProviderError(
+            "normalized usage encoding requires NormalizedUsageV1"
+        )
+    return canonical_json_bytes(
+        {
+            "status": usage.status,
+            "billable_tokens": usage.billable_tokens,
+            "classes": dict(usage.classes),
+        }
+    )
+
+
+def decode_normalized_usage_bytes(payload: bytes) -> NormalizedUsageV1:
+    """Decode one canonical normalized usage capture fail-closed."""
+    try:
+        raw = load_canonical_object(payload, lambda value: value)
+        exact = exact_object(
+            raw,
+            frozenset({"status", "billable_tokens", "classes"}),
+            "NormalizedUsageV1",
+        )
+    except Protocol22SchemaError as exc:
+        raise Protocol22ProviderError(str(exc)) from exc
+    return NormalizedUsageV1(
+        status=exact["status"],  # type: ignore[arg-type]
+        billable_tokens=exact["billable_tokens"],  # type: ignore[arg-type]
+        classes=exact["classes"],  # type: ignore[arg-type]
+    )
+
+
+def normalize_shared_provider_usage(
+    total_tokens: object,
+    details: object,
+) -> NormalizedUsageV1:
+    """Normalize provider-adapter observations without assuming a wire shape."""
+    total = _usage_count(total_tokens)
+    if total is None:
+        return NormalizedUsageV1("unavailable", None, {})
+    if total == 0 and (not isinstance(details, Mapping) or not details):
+        return NormalizedUsageV1("unavailable", None, {})
+    if not isinstance(details, Mapping):
+        return NormalizedUsageV1("untrusted", total, {})
+    raw = dict(details)
+    expected = {
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    }
+    counts = {key: _usage_count(raw.get(key)) for key in expected}
+    if set(raw) != expected or any(value is None for value in counts.values()):
+        return NormalizedUsageV1("untrusted", total, {})
+    input_tokens = counts["input_tokens"]
+    cached = counts["cached_input_tokens"]
+    output_tokens = counts["output_tokens"]
+    reasoning = counts["reasoning_output_tokens"]
+    reported_total = counts["total_tokens"]
+    assert input_tokens is not None
+    assert cached is not None
+    assert output_tokens is not None
+    assert reasoning is not None
+    assert reported_total is not None
+    if (
+        reported_total != total
+        or input_tokens + output_tokens != total
+        or cached > input_tokens
+        or reasoning > output_tokens
+    ):
+        return NormalizedUsageV1("untrusted", total, {})
+    return NormalizedUsageV1(
+        "trusted_exact",
+        total,
+        {
+            "cached_input_tokens": cached,
+            "input_tokens": input_tokens - cached,
+            "reasoning_output_tokens": reasoning,
+            "visible_output_tokens": output_tokens - reasoning,
+        },
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RawExecutionTimingV1:
     started_at: str
@@ -212,6 +297,8 @@ class RawExecutionResultV1:
         "transport_error",
         "timed_out",
     ]
+    provider_name: str | None = None
+    resolved_model_revision: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.stdout, bytes) or not isinstance(self.stderr, bytes):
@@ -230,6 +317,16 @@ class RawExecutionResultV1:
             "timed_out",
         }:
             raise Protocol22ProviderError("raw execution outcome is unsupported")
+        for field, value in (
+            ("provider_name", self.provider_name),
+            ("resolved_model_revision", self.resolved_model_revision),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value or value.strip() != value
+            ):
+                raise Protocol22ProviderError(
+                    f"raw execution {field} must be nonempty canonical text or null"
+                )
         if (self.outcome == "candidate_ready") != (self.stdout == _RESULT_STDOUT):
             raise Protocol22ProviderError(
                 "candidate-ready outcome requires the exact minimal result block"
@@ -1099,7 +1196,12 @@ __all__ = (
     "RawExecutionTimingV1",
     "RequestTokenizerV1",
     "calculate_bounded_dispatch_reservation",
+    "canonical_normalized_usage_bytes",
+    "canonical_prosaic_agent_bytes",
+    "decode_normalized_usage_bytes",
+    "decode_prosaic_agent_bytes",
     "normalize_openai_usage",
+    "normalize_shared_provider_usage",
     "render_provider_request_envelope",
     "render_wire_request",
 )

@@ -54,12 +54,14 @@ _IN_PROCESS_ACTIVE_MS = 300_000
 
 IN_PROCESS_ADAPTER_ID = "re-v2-in-process-v1"
 BOUNDED_API_ADAPTER_ID = "bounded-api-baseline-v1"
+SHARED_AI_CLI_ADAPTER_ID = "shared-ai-cli-baseline-v1"
 COMPACT_RENDERER_ID = "compact-baseline-renderer-v1"
 CONSERVATIVE_TOKENIZER_ID = "utf8-byte-upper-bound-v1"
 IN_PROCESS_CALCULATOR_ID = "bounded-in-process-v1"
 DISPATCH_CALCULATOR_ID = "bounded-dispatch-v1"
 ZERO_USAGE_NORMALIZER_ID = "deterministic-zero-usage-v1"
 OPENAI_USAGE_NORMALIZER_ID = "openai-usage-v1"
+SHARED_PROVIDER_USAGE_NORMALIZER_ID = "shared-provider-usage-v1"
 BASELINER_AGENT_ID = "echelon.re-baseliner"
 COMPACT_VERIFIER_ID = "compact-verifier-v1"
 
@@ -702,42 +704,67 @@ class ExecutorContractEntryV1:
             raise Protocol22ExecutorError(
                 f"{mode} executor requires a provider_id"
             )
-        for field in ("model", "request_renderer", "request_tokenizer", "generation"):
-            if getattr(self, field) is None:
-                raise Protocol22ExecutorError(f"{mode} executor requires {field}")
         if self.reservation_calculator.calculator_id != DISPATCH_CALCULATOR_ID:
             raise Protocol22ExecutorError(
                 f"{mode} executor requires bounded-dispatch-v1"
             )
-        if self.limits.provider_context_tokens is None:
-            raise Protocol22ExecutorError(f"{mode} executor requires a context window")
-        if (
-            self.limits.max_internal_calls <= 0
-            or self.limits.max_completion_tokens_per_call <= 0
-            or self.limits.max_billable_tokens_per_dispatch <= 0
+        if self.request_renderer is None:
+            raise Protocol22ExecutorError(f"{mode} executor requires request_renderer")
+        if self.limits.max_internal_calls <= 0 or (
+            self.limits.max_billable_tokens_per_dispatch <= 0
         ):
             raise Protocol22ExecutorError(
-                f"{mode} executor requires positive bounded call, completion, and billable limits"
+                f"{mode} executor requires positive dispatch and billable limits"
             )
         if self.limits.max_billable_tokens_per_dispatch > _MAX_BILLABLE_TOKENS_PER_DISPATCH:
             raise Protocol22ExecutorError(
                 "executor billable ceiling exceeds the 262144-token safety limit"
             )
-        generation = self.generation
-        if generation is None:  # Kept explicit for fail-closed optimized execution.
-            raise Protocol22ExecutorError(f"{mode} executor requires generation")
-        if (
-            generation.max_completion_tokens
-            != self.limits.max_completion_tokens_per_call
-        ):
-            raise Protocol22ExecutorError(
-                "generation completion cap must equal executor completion limit"
-            )
         if mode == "api":
             if not isinstance(self.api_transport, ApiTransportAuthorityV1):
                 raise Protocol22ExecutorError("api executor requires api_transport")
-        elif self.api_transport is not None:
-            raise Protocol22ExecutorError("cli executor requires null api_transport")
+            for field in ("model", "request_tokenizer", "generation"):
+                if getattr(self, field) is None:
+                    raise Protocol22ExecutorError(f"api executor requires {field}")
+            if self.limits.provider_context_tokens is None:
+                raise Protocol22ExecutorError("api executor requires a context window")
+            if self.limits.max_completion_tokens_per_call <= 0:
+                raise Protocol22ExecutorError(
+                    "api executor requires a positive completion limit"
+                )
+            generation = self.generation
+            if generation is None:  # Kept explicit for fail-closed optimized execution.
+                raise Protocol22ExecutorError("api executor requires generation")
+            if (
+                generation.max_completion_tokens
+                != self.limits.max_completion_tokens_per_call
+            ):
+                raise Protocol22ExecutorError(
+                    "generation completion cap must equal executor completion limit"
+                )
+        else:
+            if self.adapter_id != SHARED_AI_CLI_ADAPTER_ID:
+                raise Protocol22ExecutorError(
+                    "cli executor requires the registered shared adapter"
+                )
+            forbidden_cli = (
+                self.api_transport,
+                self.model,
+                self.request_tokenizer,
+                self.generation,
+            )
+            if any(value is not None for value in forbidden_cli):
+                raise Protocol22ExecutorError(
+                    f"{SHARED_AI_CLI_ADAPTER_ID} delegates transport, model, "
+                    "generation, and tokenization to the shared provider"
+                )
+            if self.limits.provider_context_tokens is not None or (
+                self.limits.max_completion_tokens_per_call != 0
+            ):
+                raise Protocol22ExecutorError(
+                    f"{SHARED_AI_CLI_ADAPTER_ID} cannot claim provider context or "
+                    "completion limits"
+                )
         if self.adapter_id == BOUNDED_API_ADAPTER_ID and (
             mode != "api"
             or self.limits.max_internal_calls != 1
@@ -747,6 +774,14 @@ class ExecutorContractEntryV1:
         ):
             raise Protocol22ExecutorError(
                 "bounded-api-baseline-v1 requires one call, no follow-up, and no tools"
+            )
+        if self.adapter_id == SHARED_AI_CLI_ADAPTER_ID and (
+            mode != "cli"
+            or self.token_accounting.normalization_id
+            != SHARED_PROVIDER_USAGE_NORMALIZER_ID
+        ):
+            raise Protocol22ExecutorError(
+                "shared-ai-cli-baseline-v1 requires cli mode and shared provider usage accounting"
             )
 
     @property
@@ -1370,6 +1405,8 @@ __all__ = (
     "RequestTokenizerAuthorityV1",
     "ReservationCalculatorAuthorityV1",
     "ResponseSchemaReferenceV1",
+    "SHARED_AI_CLI_ADAPTER_ID",
+    "SHARED_PROVIDER_USAGE_NORMALIZER_ID",
     "TokenAccountingAuthorityV1",
     "VerifierAuthorityV1",
     "resolve_executor_catalog",

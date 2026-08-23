@@ -291,9 +291,11 @@ assert result.provider_name == "codex"
 assert result.resolved_model_revision == "gpt-5.6-codex"
 ```
 
-Also test timeout, nonzero exit, malformed shared result, missing/extra candidate
-file, unavailable usage, and provider-reported model telemetry. Do not test model
-tier translation here; existing adapter tests own that behavior.
+Also test timeout, nonzero exit, malformed shared result, unavailable usage, and
+provider-reported model telemetry. Candidate-file presence and exclusivity remain
+owned by the existing execution capture/certification path; the adapter must not
+duplicate that scanner. Do not test model tier translation here; existing adapter
+tests own that behavior.
 
 - [ ] **Step 2: Verify RED**
 

@@ -14,11 +14,15 @@ from harness.re_v2.protocol_22.model import (
 )
 from harness.re_v2.protocol_22.provider import (
     DispatchReservationV1,
+    NormalizedUsageV1,
     Protocol22ProviderError,
     calculate_bounded_dispatch_reservation,
+    canonical_normalized_usage_bytes,
     canonical_prosaic_agent_bytes,
+    decode_normalized_usage_bytes,
     decode_prosaic_agent_bytes,
     normalize_openai_usage,
+    normalize_shared_provider_usage,
     render_provider_request_envelope,
     render_wire_request,
 )
@@ -62,6 +66,111 @@ def test_prosaic_agent_contract_rejects_unknown_fields() -> None:
 
     with pytest.raises(Protocol22ProviderError, match="unknown fields"):
         decode_prosaic_agent_bytes(payload)
+
+
+def test_normalized_usage_round_trips_as_canonical_existing_value() -> None:
+    usage = NormalizedUsageV1(
+        "trusted_exact",
+        18,
+        {
+            "cached_input_tokens": 4,
+            "input_tokens": 6,
+            "reasoning_output_tokens": 3,
+            "visible_output_tokens": 5,
+        },
+    )
+
+    payload = canonical_normalized_usage_bytes(usage)
+
+    assert decode_normalized_usage_bytes(payload) == usage
+    assert payload == canonical_json_bytes(
+        {
+            "billable_tokens": 18,
+            "classes": {
+                "cached_input_tokens": 4,
+                "input_tokens": 6,
+                "reasoning_output_tokens": 3,
+                "visible_output_tokens": 5,
+            },
+            "status": "trusted_exact",
+        }
+    )
+
+
+def test_normalized_usage_bytes_reject_unknown_fields() -> None:
+    payload = canonical_json_bytes(
+        {
+            "status": "unavailable",
+            "billable_tokens": None,
+            "classes": {},
+            "provider": "codex",
+        }
+    )
+
+    with pytest.raises(Protocol22ProviderError, match="unknown fields"):
+        decode_normalized_usage_bytes(payload)
+
+
+def test_shared_codex_usage_normalizes_complete_disjoint_observations() -> None:
+    normalized = normalize_shared_provider_usage(
+        18,
+        {
+            "input_tokens": 10,
+            "cached_input_tokens": 4,
+            "output_tokens": 8,
+            "reasoning_output_tokens": 3,
+            "total_tokens": 18,
+        },
+    )
+
+    assert normalized == NormalizedUsageV1(
+        "trusted_exact",
+        18,
+        {
+            "cached_input_tokens": 4,
+            "input_tokens": 6,
+            "reasoning_output_tokens": 3,
+            "visible_output_tokens": 5,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("total", "details", "status", "billable"),
+    (
+        (0, {}, "unavailable", None),
+        (18, {}, "untrusted", 18),
+        (
+            18,
+            {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+            "untrusted",
+            18,
+        ),
+        (
+            18,
+            {
+                "input_tokens": 10,
+                "cached_input_tokens": 4,
+                "output_tokens": 8,
+                "reasoning_output_tokens": 3,
+                "total_tokens": 17,
+            },
+            "untrusted",
+            18,
+        ),
+    ),
+)
+def test_shared_incomplete_or_incoherent_usage_is_not_trusted(
+    total: int,
+    details: dict[str, int],
+    status: str,
+    billable: int | None,
+) -> None:
+    normalized = normalize_shared_provider_usage(total, details)
+
+    assert normalized.status == status
+    assert normalized.billable_tokens == billable
+    assert normalized.status != "trusted_exact"
 
 
 def _authority() -> tuple[object, ExecutorContractEntryV1, bytes]:

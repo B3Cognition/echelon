@@ -17,6 +17,8 @@ from harness.re_v2.protocol_22.executors import (
     ExecutorContractCatalogV1,
     ExecutorContractEntryV1,
     Protocol22ExecutorError,
+    SHARED_AI_CLI_ADAPTER_ID,
+    SHARED_PROVIDER_USAGE_NORMALIZER_ID,
     resolve_executor_catalog,
 )
 from harness.re_v2.protocol_22.response_schemas import response_schema_hash
@@ -88,6 +90,77 @@ def _baseline_entry(catalog: ExecutorContractCatalogV1) -> ExecutorContractEntry
     return next(
         entry for entry in catalog.entries if entry.producer_family == "compact-baseline"
     )
+
+
+def _shared_cli_entry() -> ExecutorContractEntryV1:
+    api = _baseline_entry(resolve_executor_catalog(_config(), "baseline", _registry()))
+    return replace(
+        api,
+        execution_mode="cli",
+        provider_id="codex",
+        api_transport=None,
+        adapter_id=SHARED_AI_CLI_ADAPTER_ID,
+        executor_implementation_digest=digest("shared CLI adapter"),
+        model=None,
+        request_tokenizer=None,
+        generation=None,
+        token_accounting=replace(
+            api.token_accounting,
+            normalization_id=SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+            implementation_digest=digest("shared usage normalizer"),
+        ),
+        limits=replace(
+            api.limits,
+            provider_context_tokens=None,
+            max_completion_tokens_per_call=0,
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_shared_cli_contract_delegates_model_generation_and_tokenizer() -> None:
+    entry = _shared_cli_entry()
+
+    assert entry.execution_mode == "cli"
+    assert entry.provider_id == "codex"
+    assert entry.api_transport is None
+    assert entry.model is None
+    assert entry.request_tokenizer is None
+    assert entry.generation is None
+    assert entry.request_renderer is not None
+    assert entry.limits.max_billable_tokens_per_dispatch == 262_144
+    assert ExecutorContractEntryV1.from_json_dict(entry.to_json_dict()) == entry
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutation",
+    ("api_transport", "model", "request_tokenizer", "generation"),
+)
+def test_shared_cli_contract_rejects_reinvented_provider_authority(
+    mutation: str,
+) -> None:
+    entry = _shared_cli_entry()
+    api = _baseline_entry(resolve_executor_catalog(_config(), "baseline", _registry()))
+
+    with pytest.raises(Protocol22ExecutorError, match="shared-ai-cli-baseline-v1"):
+        replace(entry, **{mutation: getattr(api, mutation)})
+
+
+@pytest.mark.unit
+def test_shared_cli_adapter_id_cannot_be_attached_to_api_mode() -> None:
+    api = _baseline_entry(resolve_executor_catalog(_config(), "baseline", _registry()))
+
+    with pytest.raises(Protocol22ExecutorError, match="shared-ai-cli-baseline-v1"):
+        replace(api, adapter_id=SHARED_AI_CLI_ADAPTER_ID)
+
+
+@pytest.mark.unit
+def test_cli_mode_rejects_an_unregistered_adapter_id() -> None:
+    entry = _shared_cli_entry()
+
+    with pytest.raises(Protocol22ExecutorError, match="registered shared adapter"):
+        replace(entry, adapter_id="unknown-cli-adapter-v1")
 
 
 @pytest.mark.unit
