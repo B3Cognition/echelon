@@ -52,16 +52,16 @@ from harness.echelon_result_schema import (
 )
 from harness.blocked_decision import (
     BlockedDecisionError,
-    validate_blocked_decision_v2,
+    validate_blocked_decision,
 )
 from harness.human_input import (
+    AppliedHumanInputResolution,
     HUMAN_INPUT_MAX_OPTIONS,
     HUMAN_INPUT_OPTION_LABEL_MAX_BYTES,
     HumanInputOption,
     HumanInputPolicy,
     HumanInputPolicyError,
     HumanInputPolicyRegistry,
-    HumanInputResolution,
     PreparedHumanInput,
     ProportionalQualityRecommendationEvidence,
     gate_outcome_route_error,
@@ -3340,7 +3340,21 @@ class SquadController:
                 )
                 == policy.options
             )
-            if options != policy.options and not proportional_options:
+            legacy_options = (
+                decision.get("schema_version") == 2
+                and tuple(
+                    replace(option, recommended=False) for option in options
+                )
+                == tuple(
+                    replace(option, recommended=False)
+                    for option in policy.options
+                )
+            )
+            if (
+                options != policy.options
+                and not proportional_options
+                and not legacy_options
+            ):
                 raise HumanInputPolicyError(
                     "sealed decision options do not match their registered policy"
                 )
@@ -3362,7 +3376,7 @@ class SquadController:
         self,
         request: PreparedHumanInput,
     ) -> HumanInputPolicy:
-        if type(request) is not PreparedHumanInput or request.schema_version != 1:
+        if type(request) is not PreparedHumanInput or request.schema_version != 2:
             raise HumanInputPolicyError(
                 "controller requires a prepared human-input request"
             )
@@ -3532,7 +3546,7 @@ class SquadController:
         self,
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
-    ) -> HumanInputResolution | None:
+    ) -> AppliedHumanInputResolution | None:
         if (
             policy.classification != "operational"
             or policy.semi_policy != "auto_if_recommended_low_risk"
@@ -3544,10 +3558,20 @@ class SquadController:
             option = recommended[0]
             effective_risk = option.risk_level or decision.get("risk_level")
             if effective_risk == "low":
-                return HumanInputResolution(
+                return AppliedHumanInputResolution(
                     selected_option_id=option.id,
                     answer_text=None,
                     resolved_by="semi",
+                    rationale=(
+                        str(decision["recommendation_rationale"])
+                        if decision.get("schema_version") == 3
+                        else None
+                    ),
+                    confidence=(
+                        str(decision["recommendation_confidence"])
+                        if decision.get("schema_version") == 3
+                        else None
+                    ),
                 )
             return None
         recommended_answer = decision.get("recommended_answer")
@@ -3557,17 +3581,27 @@ class SquadController:
             and recommended_answer.strip()
             and decision.get("risk_level") == "low"
         ):
-            return HumanInputResolution(
+            return AppliedHumanInputResolution(
                 selected_option_id=None,
                 answer_text=recommended_answer,
                 resolved_by="semi",
+                rationale=(
+                    str(decision["recommendation_rationale"])
+                    if decision.get("schema_version") == 3
+                    else None
+                ),
+                confidence=(
+                    str(decision["recommendation_confidence"])
+                    if decision.get("schema_version") == 3
+                    else None
+                ),
             )
         return None
 
     @staticmethod
     def _validate_human_input_resolver(
         decision: Mapping[str, object],
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
     ) -> None:
         resolver_contract = {
             "user": ("awaiting_human", None),
@@ -3595,7 +3629,7 @@ class SquadController:
     def _validate_human_input_resolution_answer(
         self,
         decision: Mapping[str, object],
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
     ) -> HumanInputOption | None:
         options = self._human_input_options_from_decision(decision)
         if options:
@@ -3777,7 +3811,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         selected: HumanInputOption | None,
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         source_phase = str(decision["source_phase"])
         route = self._validate_human_input_route(
@@ -3868,7 +3902,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         selected: HumanInputOption | None,
-        _resolution: HumanInputResolution,
+        _resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         if selected is None or selected.outcome not in {"approved", "rejected"}:
             raise HumanInputPolicyError(
@@ -3903,7 +3937,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         selected: HumanInputOption | None,
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         if selected is None:
             raise HumanInputPolicyError(
@@ -3982,7 +4016,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         selected: HumanInputOption | None,
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         """Apply one sealed bounded-quality choice from controller evidence."""
         if selected is None:
@@ -4203,7 +4237,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         _selected: HumanInputOption | None,
-        _resolution: HumanInputResolution,
+        _resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         route = self._validate_human_input_route(
             decision["source_phase"],
@@ -4225,7 +4259,7 @@ class SquadController:
         decision: Mapping[str, object],
         policy: HumanInputPolicy,
         _selected: HumanInputOption | None,
-        _resolution: HumanInputResolution,
+        _resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         route = self._validate_human_input_route(
             decision["source_phase"],
@@ -4247,11 +4281,11 @@ class SquadController:
         decision_id: str,
         *,
         expected_state_revision: int,
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
         token_usage_delta: int = 0,
     ) -> bool:
         """Validate and apply one decision through its closed controller handler."""
-        if type(resolution) is not HumanInputResolution:
+        if type(resolution) is not AppliedHumanInputResolution:
             raise HumanInputPolicyError(
                 "human-input resolution is invalid"
             )
@@ -4278,7 +4312,7 @@ class SquadController:
             raise HumanInputPolicyError(
                 "human-input decision is missing"
             )
-        decision = validate_blocked_decision_v2(raw_decision)
+        decision = validate_blocked_decision(raw_decision)
         if decision["id"] != decision_id:
             raise HumanInputPolicyError(
                 "human-input decision id or revision is stale"
@@ -4621,7 +4655,7 @@ class SquadController:
         state: Mapping[str, object],
     ) -> str:
         """Render only registered context under the complete UTF-8 byte cap."""
-        validated = validate_blocked_decision_v2(decision)
+        validated = validate_blocked_decision(decision)
         registered = self._policy_for_human_input_decision(validated)
         if registered != policy:
             raise HumanInputPolicyError(
@@ -4728,7 +4762,7 @@ class SquadController:
                 str(current_decision["id"]),
                 expected_state_revision=int(current_state["state_revision"]),
             )
-            claimed_decision = validate_blocked_decision_v2(
+            claimed_decision = validate_blocked_decision(
                 claimed["blocked_decision"]
             )
             attempt = int(claimed_decision["attempts"])
@@ -4780,7 +4814,7 @@ class SquadController:
                     token_usage_delta=usage["tokens"],
                 )
                 current_state = failed
-                current_decision = validate_blocked_decision_v2(
+                current_decision = validate_blocked_decision(
                     failed["blocked_decision"]
                 )
                 continue
@@ -4789,10 +4823,12 @@ class SquadController:
                 return self.apply_human_input_resolution(
                     str(claimed_decision["id"]),
                     expected_state_revision=int(claimed["state_revision"]),
-                    resolution=HumanInputResolution(
+                    resolution=AppliedHumanInputResolution(
                         selected_option_id=resolved.selected_option_id,
                         answer_text=resolved.answer_text,
                         resolved_by="COMMANDER",
+                        rationale=resolved.rationale,
+                        confidence=resolved.confidence,
                     ),
                     token_usage_delta=usage["tokens"],
                 )
@@ -4804,10 +4840,105 @@ class SquadController:
                     token_usage_delta=usage["tokens"],
                 )
                 current_state = failed
-                current_decision = validate_blocked_decision_v2(
+                current_decision = validate_blocked_decision(
                     failed["blocked_decision"]
                 )
         return False
+
+    @staticmethod
+    def _v2_migration_preserves_decision_contract(
+        decision: Mapping[str, object],
+        prepared: PreparedHumanInput,
+    ) -> bool:
+        identity = {
+            "source_kind": prepared.source_kind,
+            "producer_id": prepared.producer_id,
+            "source_phase": prepared.phase_id,
+            "reason_code": prepared.reason_code,
+            "classification": prepared.classification,
+            "question": prepared.question,
+            "recommended_answer": prepared.recommended_answer,
+            "risk_level": prepared.risk_level,
+            "resolution_handler": prepared.resolution_handler,
+        }
+        if any(decision.get(field) != value for field, value in identity.items()):
+            return False
+        legacy_options = [
+            {**dict(option), "recommended": False}
+            for option in decision.get("options", [])
+            if isinstance(option, Mapping)
+        ]
+        prepared_options = [
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in prepared.options
+        ]
+        return (
+            len(legacy_options) == len(decision.get("options", []))
+            and prepared_options == legacy_options
+        )
+
+    def _migrate_pending_v2_banzai_decision(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Re-prepare one legacy Banzai decision or seal migration failure."""
+        try:
+            policy = self._policy_for_human_input_decision(decision)
+            registry = (
+                HumanInputPolicyRegistry((policy,))
+                if decision.get("source_kind") == "legacy_recovery"
+                else self._human_input_registry
+            )
+            prepare_args: dict[str, object] = {
+                "source_kind": decision["source_kind"],
+                "producer_id": decision["producer_id"],
+                "phase_id": decision["source_phase"],
+                "reason_code": decision["reason_code"],
+                "question": decision["question"],
+                "recommended_answer": decision["recommended_answer"],
+                "risk_level": decision["risk_level"],
+                "source_state_revision": state["state_revision"],
+            }
+            if decision.get("source_kind") == "provider_escalation":
+                prepare_args["options"] = [
+                    dict(option)
+                    for option in decision.get("options", [])
+                    if isinstance(option, Mapping)
+                ]
+            prepared = registry.prepare(**prepare_args)
+            if not self._v2_migration_preserves_decision_contract(
+                decision,
+                prepared,
+            ):
+                raise HumanInputPolicyError(
+                    "legacy decision cannot be reconstructed without contract drift"
+                )
+        except (
+            BlockedDecisionError,
+            HumanInputPolicyError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            self._state_store.fail_pending_v2_banzai_human_input_migration(
+                str(decision["id"]),
+                expected_state_revision=int(state["state_revision"]),
+            )
+            return None
+        return self._state_store.migrate_pending_v2_banzai_human_input_decision(
+            str(decision["id"]),
+            expected_state_revision=int(state["state_revision"]),
+            prepared=prepared,
+        )
 
     def resume_pending_human_input(self) -> bool:
         """Recover an interrupted claim, then route one pending decision."""
@@ -4819,17 +4950,17 @@ class SquadController:
         raw_decision = state.get("blocked_decision")
         if (
             not isinstance(raw_decision, Mapping)
-            or raw_decision.get("schema_version") != 2
+            or raw_decision.get("schema_version") not in {2, 3}
         ):
             return False
-        decision = validate_blocked_decision_v2(raw_decision)
+        decision = validate_blocked_decision(raw_decision)
         if decision["status"] != "pending":
             return False
-        policy = self._policy_for_human_input_decision(decision)
         autonomy_mode = decision["autonomy_mode"]
         if autonomy_mode == "guided":
             return False
         if autonomy_mode == "semi":
+            policy = self._policy_for_human_input_decision(decision)
             resolution = self._semi_human_input_resolution(
                 decision,
                 policy,
@@ -4841,10 +4972,23 @@ class SquadController:
                 expected_state_revision=int(state["state_revision"]),
                 resolution=resolution,
             )
-        if (
-            autonomy_mode == "banzai"
-            and decision["classification"] != "external_prerequisite"
-        ):
+        if autonomy_mode == "banzai":
+            if decision["schema_version"] == 2:
+                migrated = self._migrate_pending_v2_banzai_decision(
+                    state,
+                    decision,
+                )
+                if migrated is None:
+                    return False
+                state = migrated
+                decision = validate_blocked_decision(
+                    migrated["blocked_decision"]
+                )
+                if decision["status"] != "pending":
+                    return False
+            if decision.get("automatic_eligible") is not True:
+                return False
+            policy = self._policy_for_human_input_decision(decision)
             return self._dispatch_commander_human_input(
                 state,
                 decision,
@@ -4864,7 +5008,7 @@ class SquadController:
         raw_decision = state.get("blocked_decision")
         if not isinstance(raw_decision, Mapping):
             raise HumanInputPolicyError("human-input decision is missing")
-        decision = validate_blocked_decision_v2(raw_decision)
+        decision = validate_blocked_decision(raw_decision)
         from harness.recovery_instruction import validate_decision_recovery_pair
 
         validate_decision_recovery_pair(
@@ -4876,8 +5020,9 @@ class SquadController:
                 "human-input decision is not awaiting a human answer"
             )
         if (
-            decision["autonomy_mode"] == "banzai"
-            and decision["classification"] != "external_prerequisite"
+            decision["schema_version"] == 3
+            and decision["autonomy_mode"] == "banzai"
+            and decision["automatic_eligible"] is True
         ):
             raise HumanInputPolicyError(
                 "Banzai project decisions cannot be submitted as human input"
@@ -4891,13 +5036,13 @@ class SquadController:
                 raise HumanInputPolicyError(
                     "human-input answer must match A/B/C, one offered option id, or one option label"
                 )
-            resolution = HumanInputResolution(
+            resolution = AppliedHumanInputResolution(
                 selected_option_id=selected.id,
                 answer_text=None,
                 resolved_by="user",
             )
         else:
-            resolution = HumanInputResolution(
+            resolution = AppliedHumanInputResolution(
                 selected_option_id=None,
                 answer_text=answer,
                 resolved_by="user",
@@ -4913,9 +5058,12 @@ class SquadController:
         state: Mapping[str, object],
     ) -> dict[str, object] | None:
         raw_decision = state.get("blocked_decision")
-        if not isinstance(raw_decision, Mapping) or raw_decision.get("schema_version") != 2:
+        if (
+            not isinstance(raw_decision, Mapping)
+            or raw_decision.get("schema_version") not in {2, 3}
+        ):
             return None
-        decision = validate_blocked_decision_v2(raw_decision)
+        decision = validate_blocked_decision(raw_decision)
         from harness.recovery_instruction import validate_decision_recovery_pair
 
         validate_decision_recovery_pair(

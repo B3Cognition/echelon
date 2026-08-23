@@ -4483,9 +4483,9 @@ class TestHumanInputDecisionStateCAS:
                 selected_option_id=None,
                 answer_text="Use the safer bounded alternative.",
                 resolved_by="COMMANDER",
+                rationale="The alternative avoids an unsafe assumption.",
+                confidence="high",
             ),
-            resolution_rationale="The alternative avoids an unsafe assumption.",
-            resolution_confidence="high",
             state_updates={"status": "running", "phase": "next"},
             state_removals=(),
             resolved_at="2026-07-28T10:01:00+00:00",
@@ -4646,12 +4646,12 @@ class TestHumanInputDecisionStateCAS:
                         selected_option_id=None,
                         answer_text="Use the durable answer.",
                         resolved_by="COMMANDER",
+                        rationale="The bounded answer is safer.",
+                        confidence="medium",
                     ),
                     state_updates={"status": "running", "phase": "next"},
                     state_removals=(),
                     token_usage_delta=17,
-                    resolution_rationale="The bounded answer is safer.",
-                    resolution_confidence="medium",
                 )
             else:
                 operation = lambda: store.record_human_input_resolution_failure(

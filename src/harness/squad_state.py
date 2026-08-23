@@ -36,7 +36,7 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
-from harness.human_input import HumanInputResolution, PreparedHumanInput
+from harness.human_input import AppliedHumanInputResolution, PreparedHumanInput
 from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
@@ -1984,6 +1984,137 @@ class SquadStateStore:
             )
             return self._commit_human_input_state_unlocked(before, desired)
 
+    def migrate_pending_v2_banzai_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        prepared: PreparedHumanInput,
+    ) -> dict[str, Any]:
+        """Replace one exact pending v2 Banzai authority with canonical v3."""
+        if (
+            type(prepared) is not PreparedHumanInput
+            or prepared.schema_version != 2
+        ):
+            raise StateAdvanceError(
+                "human-input migration requires a prepared request",
+                json_path="$.human_input",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"pending"}),
+            )
+            if (
+                decision["schema_version"] != 2
+                or decision["autonomy_mode"] != "banzai"
+            ):
+                raise StateAdvanceError(
+                    "only pending schema-v2 Banzai decisions may migrate",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            if prepared.source_state_revision != expected_state_revision:
+                raise StateAdvanceError(
+                    "human-input migration preparation is stale",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+
+            status = (
+                "pending" if prepared.automatic_eligible else "awaiting_human"
+            )
+            migrated = build_blocked_decision_v3(
+                prepared=prepared,
+                decision_id=str(decision["id"]),
+                status=status,
+                autonomy_mode="banzai",
+                attempts=int(decision["attempts"]),
+                created_at=str(decision["created_at"]),
+            )
+            identity_fields = (
+                "source_kind",
+                "producer_id",
+                "source_phase",
+                "reason_code",
+                "classification",
+                "question",
+                "recommended_answer",
+                "risk_level",
+                "resolution_handler",
+                "autonomy_mode",
+            )
+            if any(migrated[field] != decision[field] for field in identity_fields):
+                raise StateAdvanceError(
+                    "human-input migration changed the sealed decision contract",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            legacy_options = [
+                {**dict(option), "recommended": False}
+                for option in decision["options"]
+            ]
+            migrated_options = [
+                {**dict(option), "recommended": False}
+                for option in migrated["options"]
+            ]
+            if migrated_options != legacy_options:
+                raise StateAdvanceError(
+                    "human-input migration changed the sealed option contract",
+                    json_path="$.blocked_decision.options",
+                    validator="human_input_authority",
+                )
+
+            desired = deepcopy(before)
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = decision["reason_code"]
+            desired["escalation_question"] = decision["question"]
+            desired["escalation_options"] = normalize_escalation_options(
+                migrated["options"]
+            )
+            self._replace_human_input_decision_unlocked(desired, migrated)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def fail_pending_v2_banzai_human_input_migration(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Seal the one canonical terminal failure for unsafe v2 migration."""
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"pending"}),
+            )
+            if (
+                decision["schema_version"] != 2
+                or decision["autonomy_mode"] != "banzai"
+            ):
+                raise StateAdvanceError(
+                    "only pending schema-v2 Banzai decisions may fail migration",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            failed = {
+                **decision,
+                "status": "failed",
+                "failure_code": "decision_recommendation_unavailable",
+            }
+            desired = deepcopy(before)
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = "decision_recommendation_unavailable"
+            desired.pop("escalation_question", None)
+            self._replace_human_input_decision_unlocked(desired, failed)
+            return self._commit_human_input_state_unlocked(before, desired)
+
     def fail_pending_human_input_decision(
         self,
         decision_id: str,
@@ -2211,16 +2342,14 @@ class SquadStateStore:
         decision_id: str,
         *,
         expected_state_revision: int,
-        resolution: HumanInputResolution,
+        resolution: AppliedHumanInputResolution,
         state_updates: Mapping[str, Any],
         state_removals: Iterable[str],
         token_usage_delta: int = 0,
         prepared_completion: PreparedControllerCompletion | None = None,
         resolved_at: str | None = None,
-        resolution_rationale: str | None = None,
-        resolution_confidence: str | None = None,
     ) -> dict[str, Any]:
-        if type(resolution) is not HumanInputResolution:
+        if type(resolution) is not AppliedHumanInputResolution:
             raise StateAdvanceError(
                 "human-input resolution is invalid",
                 json_path="$.resolution",
@@ -2344,15 +2473,6 @@ class SquadStateStore:
                 ),
             }
             if decision["schema_version"] == 3:
-                if resolution.resolved_by == "semi":
-                    resolution_rationale = (
-                        resolution_rationale
-                        or str(decision["recommendation_rationale"])
-                    )
-                    resolution_confidence = (
-                        resolution_confidence
-                        or str(decision["recommendation_confidence"])
-                    )
                 recommended_target = (
                     decision.get("recommended_option_id")
                     or decision.get("recommended_answer")
@@ -2367,11 +2487,11 @@ class SquadStateStore:
                 )
                 resolution_postimage.update(
                     {
-                        "resolution_rationale": resolution_rationale,
-                        "resolution_confidence": resolution_confidence,
+                        "resolution_rationale": resolution.rationale,
+                        "resolution_confidence": resolution.confidence,
                         "recommendation_followed": followed,
                         "override_reason": (
-                            resolution_rationale
+                            resolution.rationale
                             if resolution.resolved_by in {"semi", "COMMANDER"}
                             and followed is False
                             else None

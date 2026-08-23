@@ -368,6 +368,7 @@ def test_continue_routes_eligible_semi_and_recovering_decisions_without_cli_muta
     [
         ("awaiting_human", "guided", "operational"),
         ("awaiting_human", "semi", "material"),
+        ("awaiting_human", "banzai", "operational"),
         ("awaiting_human", "banzai", "external_prerequisite"),
         ("failed", "banzai", "operational"),
     ],

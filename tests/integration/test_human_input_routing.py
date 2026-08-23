@@ -16,6 +16,7 @@ import yaml
 
 import harness.squad as squad_module
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.config import HarnessConfig, LlmConfig
 from harness.human_input import (
     HumanInputOption,
@@ -114,6 +115,8 @@ def _decision_result(
     *,
     selected_option_id: str | None = "approve",
     answer_text: str | None = None,
+    rationale: str = "This is the best allowed resolution.",
+    confidence: str = "high",
 ) -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
@@ -124,8 +127,8 @@ def _decision_result(
             "decision": {
                 "selected_option_id": selected_option_id,
                 "answer_text": answer_text,
-                "rationale": "This is the best allowed resolution.",
-                "confidence": "high",
+                "rationale": rationale,
+                "confidence": confidence,
             },
         },
         raw_output="",
@@ -230,6 +233,22 @@ def _request(
         recommended_answer=recommended_answer,
         risk_level=risk_level,
         source_state_revision=store.load()["state_revision"],
+    )
+
+
+def _automatic_free_text_request(
+    controller: SquadController,
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+    *,
+    recommended_answer: str = "Use the sealed evidence.",
+):
+    return _request(
+        controller,
+        store,
+        policy,
+        recommended_answer=recommended_answer,
+        risk_level="low",
     )
 
 
@@ -405,6 +424,8 @@ def _legacy_workflow_controller(
     decision_status: str = "pending",
     recovery_kind: RecoveryKind = RecoveryKind.AWAIT_HUMAN_ANSWER,
     provider_result: SquadAgentResult | None = None,
+    recommended_answer: str | None = None,
+    risk_level: str | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     setup_policy = graph.human_input_policy_registry().lookup(
@@ -428,6 +449,8 @@ def _legacy_workflow_controller(
             "blocked_reason": reason_code,
             "escalation_question": "Which exact legacy decision should be applied?",
             "escalation_options": [] if options is None else options,
+            "escalation_recommended_answer": recommended_answer,
+            "escalation_risk_level": risk_level,
             "recovery_instruction": RecoveryInstruction(
                 kind=recovery_kind,
                 reason_code=reason_code,
@@ -503,7 +526,12 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
         ),
     )
     routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+    )
     sealed_ids: list[str] = []
 
     def advance(_node, decision, **kwargs):
@@ -540,7 +568,544 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     provider.exec_agent.assert_called_once()
 
 
-def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
+def test_commander_resolution_persists_low_confidence_follow_audit(
+    tmp_path: Path,
+) -> None:
+    rationale = "Debt is authorized by the sealed evidence."
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    decision = store.load()["blocked_decision"]
+    assert decision["schema_version"] == 3
+    assert decision["resolution_rationale"] == rationale
+    assert decision["resolution_confidence"] == "low"
+    assert decision["recommendation_followed"] is True
+    assert decision["override_reason"] is None
+    provider.exec_agent.assert_called_once()
+
+
+def test_commander_override_uses_its_rationale_as_the_durable_reason(
+    tmp_path: Path,
+) -> None:
+    rationale = "The sealed evidence exposes a blocking contradiction."
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(
+            selected_option_id="reject",
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert (
+        controller.handle_human_input(_request(controller, store, policy))
+        is False
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["selected_option_id"] == "reject"
+    assert decision["resolution_rationale"] == rationale
+    assert decision["resolution_confidence"] == "low"
+    assert decision["recommendation_followed"] is False
+    assert decision["override_reason"] == rationale
+    provider.exec_agent.assert_called_once()
+
+
+def test_semi_resolution_copies_the_sealed_recommendation_audit(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="semi",
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    decision = store.load()["blocked_decision"]
+    assert decision["resolved_by"] == "semi"
+    assert decision["resolution_rationale"] == decision[
+        "recommendation_rationale"
+    ]
+    assert decision["resolution_confidence"] == decision[
+        "recommendation_confidence"
+    ]
+    assert decision["recommendation_followed"] is True
+    assert decision["override_reason"] is None
+    provider.exec_agent.assert_not_called()
+
+
+def test_banzai_human_only_free_text_waits_and_accepts_user_answer(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _request(controller, store, policy)
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs["human_input_initial_status"],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    ) is False
+
+    waiting = store.load()["blocked_decision"]
+    assert waiting["schema_version"] == 3
+    assert waiting["status"] == "awaiting_human"
+    assert waiting["automatic_eligible"] is False
+    provider.exec_agent.assert_not_called()
+
+    assert controller.resume_with_human_input("Use the public boundary.")
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["status"] == "resolved"
+    assert resolved["answer_text"] == "Use the public boundary."
+    assert resolved["resolved_by"] == "user"
+    assert resolved["resolution_rationale"] is None
+    assert resolved["resolution_confidence"] is None
+    assert resolved["recommendation_followed"] is None
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_v2_awaiting_human_choice_without_recommendation_remains_v2(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    created_at = "2026-08-20T09:30:00+00:00"
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-awaiting-choice",
+        status="awaiting_human",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=True,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=controller._graph,
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    restarted._human_input_registry = HumanInputPolicyRegistry((policy,))
+
+    assert restarted.resume_with_human_input("approve")
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 2
+    assert resolved["id"] == "dec-legacy-awaiting-choice"
+    assert resolved["created_at"] == created_at
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["resolved_by"] == "user"
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_status", ("pending", "resolving"))
+def test_legacy_v2_semi_resolution_remains_v2_without_invented_audit(
+    tmp_path: Path,
+    initial_status: str,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="semi",
+        policy=policy,
+    )
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-legacy-semi-{initial_status}",
+        status=initial_status,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="semi",
+        source_state_revision=1,
+        attempts=1 if initial_status == "resolving" else 0,
+        now="2026-08-20T09:45:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input()
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 2
+    assert resolved["id"] == decision["id"]
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["resolved_by"] == "semi"
+    assert "resolution_rationale" not in resolved
+    assert "resolution_confidence" not in resolved
+    provider.exec_agent.assert_not_called()
+
+
+def test_unreconstructable_pending_v2_banzai_fails_without_provider_dispatch(
+    tmp_path: Path,
+) -> None:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="operational",
+        semi_policy="auto_if_recommended_low_risk",
+        resolution_handler="clarification_resume",
+        allow_free_text=False,
+        allowed_phase_ids=frozenset({"phase1-investigate"}),
+        allowed_target_phases=frozenset({"phase1-what"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    created_at = "2026-08-20T10:15:00+00:00"
+    options = [
+        {
+            "id": "approve",
+            "label": "Approve",
+            "description": "Continue with the retained provider choice.",
+            "recommended": False,
+            "risk_level": "low",
+            "next_phase": "phase1-what",
+            "outcome": None,
+        }
+    ]
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-migration-failure",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained provider option should be applied?",
+        options=options,
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        attempts=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is False
+
+    failed_state = store.load()
+    failed = failed_state["blocked_decision"]
+    assert failed["schema_version"] == 2
+    assert failed["id"] == decision["id"]
+    assert failed["status"] == "failed"
+    assert failed["failure_code"] == "decision_recommendation_unavailable"
+    for field in (
+        "id",
+        "schema_version",
+        "source_kind",
+        "producer_id",
+        "source_phase",
+        "reason_code",
+        "classification",
+        "question",
+        "options",
+        "recommended_answer",
+        "risk_level",
+        "resolution_handler",
+        "autonomy_mode",
+        "source_state_revision",
+        "attempts",
+        "created_at",
+        "resolved_at",
+    ):
+        assert failed[field] == decision[field]
+    assert failed_state["blocked_reason"] == (
+        "decision_recommendation_unavailable"
+    )
+    assert failed_state["recovery_instruction"] == RecoveryInstruction(
+        kind=RecoveryKind.MANUAL_DIAGNOSIS,
+        reason_code=str(decision["reason_code"]),
+        phase="",
+        requires_human_input=False,
+        schema_version=2,
+        decision_id=str(decision["id"]),
+    ).to_dict()
+    provider.exec_agent.assert_not_called()
+
+
+def test_pending_v2_banzai_human_only_migrates_to_v3_human_resume(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-banzai-human-only",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained product boundary should be applied?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now="2026-08-20T11:00:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is False
+
+    waiting = store.load()["blocked_decision"]
+    assert waiting["schema_version"] == 3
+    assert waiting["id"] == decision["id"]
+    assert waiting["status"] == "awaiting_human"
+    assert waiting["automatic_eligible"] is False
+    provider.exec_agent.assert_not_called()
+
+    assert controller.resume_with_human_input("Use the retained public boundary.")
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["id"] == decision["id"]
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by"] == "user"
+    assert resolved["recommendation_followed"] is None
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_status", ("pending", "resolving"))
+def test_pending_or_resolving_v2_banzai_recovers_then_migrates_before_dispatch(
+    tmp_path: Path,
+    initial_status: str,
+) -> None:
+    policy = _choice_policy()
+    rationale = "The current workflow recommendation remains authoritative."
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            rationale=rationale,
+            confidence="medium",
+        ),
+    )
+    created_at = "2026-08-20T11:45:00+00:00"
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-banzai-migration",
+        status=initial_status,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        attempts=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input()
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["id"] == decision["id"]
+    assert resolved["created_at"] == created_at
+    assert resolved["attempts"] == 2
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["recommendation_followed"] is True
+    assert resolved["resolution_rationale"] == rationale
+    assert resolved["resolution_confidence"] == "medium"
+    provider.exec_agent.assert_called_once()
+
+
+def test_provider_v3_seal_survives_process_restart_with_same_decision_id(
     tmp_path: Path,
 ) -> None:
     answer = "Use the attested public contract."
@@ -556,7 +1121,12 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
         policy=policy,
     )
     routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+    )
     store.advance(
         policy.producer_id,
         policy.producer_id,
@@ -607,15 +1177,41 @@ def _cli_awaiting_human_controller(
         autonomy_mode="banzai",
         policy=policy,
     )
-    routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
-    store.advance(
-        policy.producer_id,
-        policy.producer_id,
-        routing,
-        human_input=request,
-        human_input_initial_status="awaiting_human",
+    state = store.load()
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-legacy-awaiting-human",
+        status="awaiting_human",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase=next(iter(policy.allowed_phase_ids)),
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which valid resolution should be applied?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=int(state["state_revision"]),
     )
+    state.update(
+        {
+            "status": "blocked",
+            "blocked_reason": policy.reason_code,
+            "escalation_question": decision["question"],
+            "escalation_options": [],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code=policy.reason_code,
+                phase=str(decision["source_phase"]),
+                requires_human_input=True,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
     (tmp_path / ".git").mkdir(exist_ok=True)
     (tmp_path / "runs" / ".current").write_text(
         store.squad_dir.name,
@@ -855,7 +1451,7 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     state = store.load()
     decision = state["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == producer_id
     assert decision["source_phase"] == phase_id
@@ -873,7 +1469,7 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     [
         ("guided", "awaiting_human", None, 0),
         ("semi", "awaiting_human", None, 0),
-        ("banzai", "resolved", "COMMANDER", 1),
+        ("banzai", "awaiting_human", None, 0),
     ],
 )
 def test_run_single_phase_adapts_active_exact_legacy_question_before_manual_mutation(
@@ -904,7 +1500,7 @@ def test_run_single_phase_adapts_active_exact_legacy_question_before_manual_muta
 
     state = store.load()
     decision = state["blocked_decision"]
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["status"] == expected_status
     assert decision["resolved_by"] == expected_resolver
@@ -960,7 +1556,7 @@ def test_legacy_terminal_safeguard_adapts_from_exact_resume_phase(
 
     decision = store.load()["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == "why2_metric_stagnation"
     assert decision["source_phase"] == "phase1-why2"
@@ -999,7 +1595,7 @@ def test_legacy_terminal_dispatch_cap_requires_exact_sealed_option(
 
     decision = store.load()["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == "phase_dispatch_limit"
     assert decision["source_phase"] == "phase1-what"
@@ -1256,7 +1852,7 @@ def test_legacy_adapter_leaves_re_schema_v1_state_untouched(
     provider.exec_agent.assert_not_called()
 
 
-def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
+def test_legacy_provider_restart_reuses_decision_id_after_v3_seal(
     tmp_path: Path,
 ) -> None:
     answer = "Use the public contract boundary."
@@ -1269,12 +1865,14 @@ def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
             selected_option_id=None,
             answer_text=answer,
         ),
+        recommended_answer=answer,
+        risk_level="low",
     )
     original_seal = store.set_human_input_decision
 
     def seal_then_crash(*args, **kwargs):
         original_seal(*args, **kwargs)
-        raise RuntimeError("simulated restart after v2 seal")
+        raise RuntimeError("simulated restart after v3 seal")
 
     store.set_human_input_decision = MagicMock(side_effect=seal_then_crash)
     with pytest.raises(RuntimeError, match="simulated restart"):
@@ -1599,12 +2197,13 @@ def test_task6_fix_round1_clarification_option_without_route_resumes_source(
     policy = replace(
         _free_text_policy(source_kind="legacy_recovery"),
         allow_free_text=False,
+        recommendation_mode="static",
         options=(
             HumanInputOption(
                 id="use-answer",
                 label="Use the supplied answer",
                 description="Resume from the sealed source phase.",
-                recommended=False,
+                recommended=True,
                 risk_level="low",
                 next_phase=None,
                 outcome=None,
@@ -2299,12 +2898,13 @@ def test_human_input_handler_invalid_resolution_writes_nothing(
                     id="missing",
                     label="Missing",
                     description="Route outside the graph.",
-                    recommended=False,
+                    recommended=True,
                     risk_level="low",
                     next_phase="missing-phase",
                     outcome=None,
                 ),
             ),
+            recommendation_mode="static",
         )
     elif fault == "outcome":
         base = _choice_policy()
@@ -3011,7 +3611,6 @@ def test_mode_matrix_routes_from_the_sealed_autonomy_mode(
         ("medium", "low", True, "auto_if_recommended_low_risk", "operational", False),
         ("low", "high", True, "auto_if_recommended_low_risk", "operational", True),
         (None, None, True, "auto_if_recommended_low_risk", "operational", False),
-        ("low", None, False, "auto_if_recommended_low_risk", "operational", False),
         ("low", "low", True, "require_human", "operational", False),
         ("low", "low", True, "auto_if_recommended_low_risk", "material", False),
     ],
@@ -3145,12 +3744,11 @@ def test_commander_context_contains_only_policy_declared_state_and_files(
     state = store.load()
     state["secret_state"] = "UNREGISTERED STATE"
     store.save(state)
-    request = _request(
+    request = _automatic_free_text_request(
         controller,
         store,
         policy,
         recommended_answer="Use the registered evidence.",
-        risk_level="medium",
     )
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
@@ -3183,7 +3781,7 @@ def test_commander_context_rejects_symlink_escape_from_declared_root(
     outside.write_text("OUTSIDE SECRET", encoding="utf-8")
     staging = Path(store.load()["staging_dir"])
     (staging / "escape.md").symlink_to(outside)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
 
@@ -3215,7 +3813,7 @@ def test_commander_context_rejects_parent_symlink_swap_during_open(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "evidence.md").write_text("OUTSIDE", encoding="utf-8")
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     original_open = squad_module.os.open
@@ -3274,7 +3872,7 @@ def test_commander_context_rejects_tampered_persisted_roots_before_claim(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
 
     failed = store.load()
@@ -3309,7 +3907,7 @@ def test_commander_context_rejects_mismatched_spec_identity_before_claim(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
 
     failed = store.load()
@@ -3341,7 +3939,7 @@ def test_commander_context_setup_failure_is_stable_across_restart(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
     before_restart = store.load()
     restarted_provider = MagicMock()
@@ -3377,7 +3975,7 @@ def test_commander_context_reads_only_the_remaining_aggregate_file_budget(
     )
     staging = Path(store.load()["staging_dir"])
     (staging / "oversized.md").write_bytes(b"x" * 1_000_000)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     original_read = squad_module.os.read
@@ -3413,7 +4011,7 @@ def test_commander_context_bounds_state_before_full_json_materialization(
         autonomy_mode="banzai",
         policy=policy,
     )
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     huge_state_value = "s" * 1_000_000
@@ -3454,7 +4052,7 @@ def test_commander_context_bounds_the_complete_utf8_prompt(
     )
     staging = Path(store.load()["staging_dir"])
     (staging / "large.md").write_text("ž" * 40_000, encoding="utf-8")
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
 
@@ -3620,17 +4218,18 @@ def test_task6_fix_round1_commander_semantic_apply_error_consumes_attempts(
         context_state_keys=("phase",),
         context_paths=(),
         options=(
-            HumanInputOption(
-                id="missing",
-                label="Missing route",
-                description="A strictly shaped but semantically invalid route.",
-                recommended=False,
-                risk_level="medium",
-                next_phase="missing-phase",
-                outcome=None,
+                HumanInputOption(
+                    id="missing",
+                    label="Missing route",
+                    description="A strictly shaped but semantically invalid route.",
+                    recommended=True,
+                    risk_level="low",
+                    next_phase="missing-phase",
+                    outcome=None,
+                ),
             ),
-        ),
-    )
+            recommendation_mode="static",
+        )
     first = _decision_result(selected_option_id="missing")
     first.token_usage = 3
     second = _decision_result(selected_option_id="missing")

@@ -709,10 +709,18 @@ class DecisionResolution:
 
 
 @dataclass(frozen=True)
-class HumanInputResolution:
+class AppliedHumanInputResolution:
     selected_option_id: str | None
     answer_text: str | None
     resolved_by: Literal["user", "semi", "COMMANDER"]
+    rationale: str | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
+
+
+# Historical callers construct this internal value directly.  Keep the old
+# import name as an alias while making the complete applied result the one
+# concrete runtime type accepted by handlers and state transactions.
+HumanInputResolution = AppliedHumanInputResolution
 
 
 @dataclass(frozen=True)
