@@ -102,6 +102,7 @@ def _human_input_provider_policy(*, reason_code: str = "human_clarification_requ
     return {
         "reason_code": reason_code,
         "classification": "material",
+        "recommendation_mode": "controller",
         "semi_policy": "auto_if_recommended_low_risk",
         "resolution_handler": "clarification_resume",
         "allow_free_text": True,
@@ -116,6 +117,7 @@ def _human_input_gate_policy() -> dict:
     return {
         "reason_code": "checkpoint_plan_decision_required",
         "classification": "operational",
+        "recommendation_mode": "static",
         "semi_policy": "auto_if_recommended_low_risk",
         "resolution_handler": "gate_outcome",
         "allow_free_text": False,
@@ -188,6 +190,47 @@ def test_workflow_validator_allows_provider_policy_without_static_options(tmp_pa
     )
 
     assert report.ok, report.format()
+
+
+def test_static_policy_without_unique_recommendation_is_rejected(
+    tmp_path: Path,
+) -> None:
+    policy = _human_input_gate_policy()
+    policy["recommendation_mode"] = "static"
+    for option in policy["options"]:
+        option["recommended"] = False
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "checkpoint",
+                "type": "human_gate",
+                "human_input": [policy],
+                "transitions": [
+                    {
+                        "to": "done",
+                        "condition": "human_input_outcome = approved",
+                        "outcome": "approved",
+                    },
+                    {
+                        "to": "terminal-blocked",
+                        "condition": "human_input_outcome = rejected",
+                        "outcome": "rejected",
+                    },
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+            {"id": "terminal-blocked", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(definition_path=definition)
+
+    assert not report.ok
+    assert any(
+        "exactly one recommended option" in issue.message
+        for issue in report.issues
+    )
 
 
 def test_workflow_validator_requires_complete_provider_coverage_after_opt_in(tmp_path: Path) -> None:

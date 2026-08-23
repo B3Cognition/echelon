@@ -1,5 +1,7 @@
 """Tests for the closed human-input policy registry."""
 
+from dataclasses import replace
+
 import pytest
 
 from harness.human_input import (
@@ -17,6 +19,7 @@ def _provider_policy(*, reason_code: str = "human_clarification_required") -> Hu
         producer_id="phase1-investigate",
         reason_code=reason_code,
         classification="material",
+        recommendation_mode="controller",
         semi_policy="auto_if_recommended_low_risk",
         resolution_handler="clarification_resume",
         allow_free_text=True,
@@ -34,6 +37,7 @@ def _gate_policy(*, options: tuple[HumanInputOption, ...] | None = None) -> Huma
         producer_id="checkpoint-plan",
         reason_code="checkpoint_plan_decision_required",
         classification="operational",
+        recommendation_mode="static",
         semi_policy="auto_if_recommended_low_risk",
         resolution_handler="gate_outcome",
         allow_free_text=False,
@@ -288,6 +292,50 @@ def test_registry_prepares_gate_options_from_the_exact_policy() -> None:
     assert request.options[0].next_phase == "phase4-document"
     policy = registry.lookup("human_gate", "checkpoint-plan", "checkpoint_plan_decision_required")
     assert select_initial_decision_status("guided", policy, request) == "awaiting_human"
+
+
+def test_prepared_choice_requires_one_recommendation_and_evidence() -> None:
+    registry = HumanInputPolicyRegistry((_gate_policy(),))
+    prepared_choice = registry.prepare(
+        source_kind="human_gate",
+        producer_id="checkpoint-plan",
+        phase_id="checkpoint-plan",
+        reason_code="checkpoint_plan_decision_required",
+        question="Approve this plan?",
+        source_state_revision=4,
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="exactly one option"):
+        replace(
+            prepared_choice,
+            options=tuple(
+                replace(option, recommended=False)
+                for option in prepared_choice.options
+            ),
+        )
+
+
+def test_human_only_free_text_requires_action_and_is_not_automatic() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+    prepared_free_text = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the existing product boundary.",
+        risk_level="low",
+        source_state_revision=7,
+    )
+
+    request = replace(
+        prepared_free_text,
+        recommended_answer=None,
+        recommended_action='Run echelon spec resume "<answer>" with the requested value.',
+        automatic_eligible=False,
+    )
+
+    assert request.recommended_action.startswith("Run echelon spec resume")
 
 
 def test_registry_rejects_duplicate_and_unknown_exact_keys() -> None:

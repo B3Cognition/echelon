@@ -208,6 +208,14 @@ def test_workflow_gates_have_only_compiled_outcome_policy() -> None:
         } == {"approved", "rejected"}
 
 
+def test_every_static_choice_policy_has_one_recommended_option() -> None:
+    for phase in _workflow_phases().values():
+        for policy in phase.get("human_input", []):
+            if policy.get("recommendation_mode") != "static":
+                continue
+            assert sum(option["recommended"] for option in policy["options"]) == 1
+
+
 def test_question_capable_provider_edges_do_not_accept_escalate() -> None:
     phases = _workflow_phases()
 

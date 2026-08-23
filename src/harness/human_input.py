@@ -32,6 +32,11 @@ HumanInputClassification = Literal[
 ]
 HumanInputRisk = Literal["low", "medium", "high", "critical"]
 SemiPolicy = Literal["require_human", "auto_if_recommended_low_risk"]
+RecommendationAuthority = Literal[
+    "workflow_policy", "controller_evidence", "provider_evidence",
+]
+RecommendationConfidence = Literal["high", "medium", "low"]
+RecommendationMode = Literal["static", "controller"]
 
 
 def gate_outcome_route_error(outcome: str, route: str) -> str | None:
@@ -53,6 +58,11 @@ _SOURCE_KINDS = frozenset({
 _CLASSIFICATIONS = frozenset({"operational", "material", "external_prerequisite"})
 _RISKS = frozenset({"low", "medium", "high", "critical"})
 _SEMI_POLICIES = frozenset({"require_human", "auto_if_recommended_low_risk"})
+_RECOMMENDATION_AUTHORITIES = frozenset({
+    "workflow_policy", "controller_evidence", "provider_evidence",
+})
+_RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
+_RECOMMENDATION_MODES = frozenset({"static", "controller"})
 _RESOLUTION_HANDLERS = frozenset({
     "clarification_resume",
     "gate_outcome",
@@ -87,6 +97,7 @@ _POLICY_FIELDS = frozenset({
     "context_state_keys",
     "context_paths",
     "options",
+    "recommendation_mode",
 })
 _REQUIRED_POLICY_FIELDS = _POLICY_FIELDS - {"options"}
 _OPTION_FIELDS = frozenset({
@@ -211,6 +222,37 @@ class HumanInputOption:
         )
 
 
+@dataclass(frozen=True)
+class RecommendationEvidence:
+    """An immutable reference supporting one prepared recommendation."""
+
+    id: str
+    kind: str
+    reference: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "id",
+            _clean_bounded_string(
+                self.id,
+                "recommendation_evidence.id",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        for field in ("kind", "reference", "digest"):
+            object.__setattr__(
+                self,
+                field,
+                _clean_bounded_string(
+                    getattr(self, field),
+                    f"recommendation_evidence.{field}",
+                    max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+                ),
+            )
+
+
 def _validate_options(
     options: tuple[HumanInputOption, ...],
     *,
@@ -302,6 +344,7 @@ class HumanInputPolicy:
     context_state_keys: tuple[str, ...]
     context_paths: tuple[str, ...]
     options: tuple[HumanInputOption, ...]
+    recommendation_mode: RecommendationMode = "controller"
 
     def __post_init__(self) -> None:
         if self.source_kind not in _SOURCE_KINDS:
@@ -328,6 +371,8 @@ class HumanInputPolicy:
             raise HumanInputPolicyError("classification is not supported")
         if self.semi_policy not in _SEMI_POLICIES:
             raise HumanInputPolicyError("semi_policy is not supported")
+        if self.recommendation_mode not in _RECOMMENDATION_MODES:
+            raise HumanInputPolicyError("recommendation_mode must be static or controller")
         if self.resolution_handler not in _RESOLUTION_HANDLERS:
             raise HumanInputPolicyError("resolution_handler is not supported")
         if type(self.allow_free_text) is not bool:
@@ -348,6 +393,26 @@ class HumanInputPolicy:
         if not isinstance(self.options, tuple) or not all(isinstance(item, HumanInputOption) for item in self.options):
             raise HumanInputPolicyError("options must be a tuple of HumanInputOption values")
         _validate_options(self.options, allowed_target_phases=targets)
+        if self.recommendation_mode == "static" and (
+            sum(option.recommended for option in self.options) != 1
+        ):
+            raise HumanInputPolicyError(
+                "static policies require exactly one recommended option"
+            )
+        if (
+            self.recommendation_mode == "controller"
+            and self.options
+            and not any(option.recommended for option in self.options)
+            and self.source_kind != "provider_escalation"
+            and (
+                self.source_kind,
+                self.producer_id,
+                self.reason_code,
+            ) not in _CONTROLLER_RECOMMENDATION_PREPARERS
+        ):
+            raise HumanInputPolicyError(
+                "controller recommendation mode requires a registered preparer"
+            )
         if self.source_kind == "human_gate":
             if self.allow_free_text:
                 raise HumanInputPolicyError("human_gate policies cannot allow free text")
@@ -368,7 +433,7 @@ class HumanInputPolicy:
 
 @dataclass(frozen=True)
 class PreparedHumanInput:
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     source_kind: HumanInputSourceKind
     producer_id: str
     phase_id: str
@@ -377,13 +442,20 @@ class PreparedHumanInput:
     question: str
     options: tuple[HumanInputOption, ...]
     recommended_answer: str | None
+    recommended_option_id: str | None
+    recommended_action: str | None
+    automatic_eligible: bool
+    recommendation_rationale: str
+    recommendation_confidence: RecommendationConfidence
+    recommendation_authority: RecommendationAuthority
+    recommendation_evidence: tuple[RecommendationEvidence, ...]
     risk_level: HumanInputRisk | None
     resolution_handler: str
     source_state_revision: int
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 1:
-            raise HumanInputPolicyError("prepared human input schema_version must be 1")
+        if type(self.schema_version) is not int or self.schema_version != 2:
+            raise HumanInputPolicyError("prepared human input schema_version must be 2")
         if self.source_kind not in _SOURCE_KINDS:
             raise HumanInputPolicyError("source_kind is not supported")
         object.__setattr__(
@@ -438,10 +510,71 @@ class PreparedHumanInput:
             max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
         )
         object.__setattr__(self, "recommended_answer", recommendation)
-        validate_human_input_answer_shape(
-            options=self.options,
-            recommended_answer=recommendation,
+        recommended_option_id = _clean_optional_bounded_string(
+            self.recommended_option_id,
+            "recommended_option_id",
+            max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
         )
+        recommended_action = _clean_optional_bounded_string(
+            self.recommended_action,
+            "recommended_action",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
+        if type(self.automatic_eligible) is not bool:
+            raise HumanInputPolicyError("automatic_eligible must be a boolean")
+        object.__setattr__(self, "recommended_option_id", recommended_option_id)
+        object.__setattr__(self, "recommended_action", recommended_action)
+        rationale = _clean_bounded_string(
+            self.recommendation_rationale,
+            "recommendation_rationale",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
+        object.__setattr__(self, "recommendation_rationale", rationale)
+        if self.recommendation_confidence not in _RECOMMENDATION_CONFIDENCES:
+            raise HumanInputPolicyError(
+                "recommendation_confidence must be high, medium, or low"
+            )
+        if self.recommendation_authority not in _RECOMMENDATION_AUTHORITIES:
+            raise HumanInputPolicyError("recommendation_authority is not supported")
+        if not isinstance(self.recommendation_evidence, tuple) or not all(
+            isinstance(item, RecommendationEvidence)
+            for item in self.recommendation_evidence
+        ):
+            raise HumanInputPolicyError(
+                "recommendation_evidence must be a tuple of RecommendationEvidence values"
+            )
+        recommendation_ids = [option.id for option in self.options if option.recommended]
+        if self.options:
+            if len(recommendation_ids) != 1:
+                raise HumanInputPolicyError(
+                    "choices require exactly one option recommendation"
+                )
+            if recommended_option_id != recommendation_ids[0]:
+                raise HumanInputPolicyError(
+                    "recommended_option_id must identify the recommended option"
+                )
+            if recommendation is not None or recommended_action is not None:
+                raise HumanInputPolicyError(
+                    "choice recommendations cannot include free-text metadata"
+                )
+        elif recommendation is not None:
+            if recommended_option_id is not None or recommended_action is not None:
+                raise HumanInputPolicyError(
+                    "automatic free text cannot include a choice target or action"
+                )
+        else:
+            if (
+                recommended_option_id is not None
+                or recommended_action is None
+                or self.automatic_eligible
+            ):
+                raise HumanInputPolicyError(
+                    "human-only free text requires a recommended action"
+                )
+        if (self.options or recommendation is not None) and not self.recommendation_evidence:
+            raise HumanInputPolicyError(
+                "prepared recommendations require recommendation evidence"
+            )
         if self.risk_level is not None and self.risk_level not in _RISKS:
             raise HumanInputPolicyError(
                 "risk_level must be low, medium, high, or critical"
@@ -483,6 +616,21 @@ class PreparedHumanInput:
                     for option in self.options
                 ],
                 "recommended_answer": self.recommended_answer,
+                "recommended_option_id": self.recommended_option_id,
+                "recommended_action": self.recommended_action,
+                "automatic_eligible": self.automatic_eligible,
+                "recommendation_rationale": self.recommendation_rationale,
+                "recommendation_confidence": self.recommendation_confidence,
+                "recommendation_authority": self.recommendation_authority,
+                "recommendation_evidence": [
+                    {
+                        "id": evidence.id,
+                        "kind": evidence.kind,
+                        "reference": evidence.reference,
+                        "digest": evidence.digest,
+                    }
+                    for evidence in self.recommendation_evidence
+                ],
                 "risk_level": self.risk_level,
             }
         )
@@ -659,6 +807,7 @@ class HumanInputPolicyRegistry:
         recommended_answer: str | None = None,
         risk_level: HumanInputRisk | None = None,
         options: list[Mapping[str, object]] | None = None,
+        controller_options: tuple[HumanInputOption, ...] | None = None,
         source_state_revision: int,
         **provider_fields: object,
     ) -> PreparedHumanInput:
@@ -666,6 +815,26 @@ class HumanInputPolicyRegistry:
             fields = ", ".join(sorted(provider_fields))
             raise HumanInputPolicyError(f"provider cannot set policy-owned fields: {fields}")
         policy = self.lookup(source_kind, producer_id, reason_code)
+        if controller_options is not None:
+            if (
+                policy.source_kind != "controller_safeguard"
+                or (
+                    policy.source_kind,
+                    policy.producer_id,
+                    policy.reason_code,
+                ) not in _CONTROLLER_RECOMMENDATION_PREPARERS
+            ):
+                raise HumanInputPolicyError(
+                    "controller options require a registered controller preparer"
+                )
+            if options is not None or type(controller_options) is not tuple:
+                raise HumanInputPolicyError(
+                    "controller options must be one sealed option tuple"
+                )
+            _validate_options(
+                controller_options,
+                allowed_target_phases=policy.allowed_target_phases,
+            )
         if options is not None and policy.source_kind != "provider_escalation":
             raise HumanInputPolicyError("provider options are only valid for provider_escalation policies")
         normalized_phase = _clean_string(phase_id, "phase_id")
@@ -674,7 +843,11 @@ class HumanInputPolicyRegistry:
         normalized_question = _clean_string(question, "question")
         if len(normalized_question) > 4_000:
             raise HumanInputPolicyError("question must not exceed 4,000 characters")
-        normalized_recommendation = _clean_optional_string(recommended_answer, "recommended_answer")
+        normalized_recommendation = _clean_optional_bounded_string(
+            recommended_answer,
+            "recommended_answer",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
         if risk_level is not None and risk_level not in _RISKS:
             raise HumanInputPolicyError("risk_level must be low, medium, high, or critical")
         normalized_options = (
@@ -683,7 +856,13 @@ class HumanInputPolicyRegistry:
                 allowed_target_phases=policy.allowed_target_phases,
             )
             if options is not None
+            else controller_options
+            if controller_options is not None
             else policy.options
+        )
+        validate_human_input_answer_shape(
+            options=normalized_options,
+            recommended_answer=normalized_recommendation,
         )
         if (
             normalized_recommendation is None
@@ -693,8 +872,44 @@ class HumanInputPolicyRegistry:
             raise HumanInputPolicyError("risk_level requires a recommendation")
         if type(source_state_revision) is not int or source_state_revision < 0:
             raise HumanInputPolicyError("source_state_revision must be a non-negative integer")
+        recommended_options = [
+            option for option in normalized_options if option.recommended
+        ]
+        if len(recommended_options) > 1:
+            raise HumanInputPolicyError("choices require exactly one option recommendation")
+        has_recommendation = bool(recommended_options) or normalized_recommendation is not None
+        recommended_option_id = (
+            recommended_options[0].id if recommended_options else None
+        )
+        automatic_eligible = _derive_automatic_eligibility(
+            policy=policy,
+            options=normalized_options,
+            recommended_answer=normalized_recommendation,
+            risk_level=risk_level,
+        )
+        if policy.recommendation_mode == "static":
+            authority: RecommendationAuthority = "workflow_policy"
+        elif has_recommendation:
+            authority = "provider_evidence"
+        else:
+            authority = "workflow_policy"
+        evidence = (
+            (
+                RecommendationEvidence(
+                    id=f"{policy.producer_id}:{policy.reason_code}",
+                    kind=authority,
+                    reference=f"{policy.producer_id}:{policy.reason_code}",
+                    digest=(
+                        normalized_recommendation
+                        or recommended_options[0].description
+                    ),
+                ),
+            )
+            if has_recommendation
+            else ()
+        )
         return PreparedHumanInput(
-            schema_version=1,
+            schema_version=2,
             source_kind=policy.source_kind,
             producer_id=policy.producer_id,
             phase_id=normalized_phase,
@@ -703,10 +918,58 @@ class HumanInputPolicyRegistry:
             question=normalized_question,
             options=normalized_options,
             recommended_answer=normalized_recommendation,
+            recommended_option_id=recommended_option_id,
+            recommended_action=(
+                None
+                if has_recommendation
+                else 'Run echelon spec resume "<answer>" with the requested value.'
+            ),
+            automatic_eligible=automatic_eligible,
+            recommendation_rationale=(
+                "A controller-prepared recommendation is available."
+                if has_recommendation
+                else "Human input is required because no automatic recommendation is available."
+            ),
+            recommendation_confidence="medium" if has_recommendation else "low",
+            recommendation_authority=authority,
+            recommendation_evidence=evidence,
             risk_level=risk_level,
             resolution_handler=policy.resolution_handler,
             source_state_revision=source_state_revision,
         )
+
+
+_CONTROLLER_RECOMMENDATION_PREPARERS = frozenset({
+    (
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    ),
+    (
+        "controller_safeguard",
+        "proportional_quality_extension_exhausted",
+        "proportional_quality_extension_exhausted",
+    ),
+})
+
+
+def _derive_automatic_eligibility(
+    *,
+    policy: HumanInputPolicy,
+    options: tuple[HumanInputOption, ...],
+    recommended_answer: str | None,
+    risk_level: HumanInputRisk | None,
+) -> bool:
+    """Derive automatic eligibility from sealed policy and normalized input."""
+    if (
+        policy.classification != "operational"
+        or policy.semi_policy != "auto_if_recommended_low_risk"
+    ):
+        return False
+    recommended_options = [option for option in options if option.recommended]
+    if len(recommended_options) == 1:
+        return (recommended_options[0].risk_level or risk_level) == "low"
+    return not options and recommended_answer is not None and risk_level == "low"
 
 
 def _within_inclusive_decimal_margin(
@@ -839,19 +1102,42 @@ def prepare_controller_proportional_quality_decision(
             "registered policy does not contain the controller recommendation"
         )
 
+    prepared_options = tuple(
+        replace(option, recommended=option.id == recommended_id)
+        for option in option_contract
+    )
     request = registry.prepare(
         source_kind="controller_safeguard",
         producer_id=reason_code,
         phase_id=phase_id,
         reason_code=reason_code,
         question=question,
+        controller_options=prepared_options,
         source_state_revision=source_state_revision,
     )
-    prepared_options = tuple(
-        replace(option, recommended=option.id == recommended_id)
-        for option in option_contract
+    return replace(
+        request,
+        options=prepared_options,
+        recommended_option_id=recommended_id,
+        recommended_action=None,
+        automatic_eligible=False,
+        recommendation_rationale=(
+            "Controller quality evidence selected the bounded decision option."
+        ),
+        recommendation_confidence="medium",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"{reason_code}:{recommended_id}",
+                kind="proportional_quality",
+                reference=reason_code,
+                digest=(
+                    f"{len(recommendation_evidence.current_gates)} quality gate "
+                    "measurements informed this recommendation."
+                ),
+            ),
+        ),
     )
-    return replace(request, options=prepared_options)
 
 
 def legacy_recovery_policy_alias(
@@ -893,15 +1179,7 @@ def select_initial_decision_status(
     if policy.classification != "operational":
         return "awaiting_human"
     if mode == "semi":
-        if policy.semi_policy != "auto_if_recommended_low_risk":
-            return "awaiting_human"
-        recommended_options = [option for option in request.options if option.recommended]
-        if len(recommended_options) == 1:
-            effective_risk = recommended_options[0].risk_level or request.risk_level
-            return "pending" if effective_risk == "low" else "awaiting_human"
-        if not request.options and request.recommended_answer and request.risk_level == "low":
-            return "pending"
-        return "awaiting_human"
+        return "pending" if request.automatic_eligible else "awaiting_human"
     return "pending"
 
 
@@ -968,6 +1246,7 @@ def compile_workflow_human_input_policies(
             context_state_keys=tuple(raw_policy["context_state_keys"]),
             context_paths=tuple(raw_policy["context_paths"]),
             options=tuple(options),
+            recommendation_mode=raw_policy["recommendation_mode"],
         ))
     return tuple(compiled)
 
