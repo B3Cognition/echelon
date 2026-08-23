@@ -4,15 +4,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
+from echelon.cli import (
+    _cmd_phase,
+    _cmd_status,
+    _find_converged_harness_build,
+    _print_next_steps,
+)
 from echelon.spec_switch import SpecSwitchError
-from harness.blocked_decision import build_blocked_decision_v2
+from harness.blocked_decision import (
+    build_blocked_decision_v2,
+    validate_blocked_decision_v3,
+)
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from harness.squad_provider import SquadAgentResult
 
 
 def _write_build_state(
@@ -147,6 +159,122 @@ def _proportional_quality_decision() -> dict[str, object]:
         autonomy_mode="guided",
         source_state_revision=0,
         now="2026-08-14T10:00:00+00:00",
+    )
+
+
+def _failed_provider_decision(
+    *,
+    schema_version: int = 3,
+) -> dict[str, object]:
+    legacy = build_blocked_decision_v2(
+        decision_id="dec-provider-replay",
+        status="failed",
+        source_kind="provider_escalation",
+        producer_id="phase1-tracker",
+        source_phase="phase1-tracker",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which target repository should Echelon inspect?",
+        options=[],
+        recommended_answer="Inspect the registered application source.",
+        risk_level="low",
+        resolution_handler="clarification_resume",
+        autonomy_mode="banzai",
+        source_state_revision=2,
+        attempts=2,
+        failure_code="resolution_attempts_exhausted",
+        now="2026-08-23T11:00:00+00:00",
+    )
+    if schema_version == 2:
+        return legacy
+    return validate_blocked_decision_v3(
+        {
+            **legacy,
+            "schema_version": 3,
+            "recommended_option_id": None,
+            "recommended_action": None,
+            "automatic_eligible": True,
+            "recommendation_rationale": "The provider supplied a bounded source recommendation.",
+            "recommendation_confidence": "medium",
+            "recommendation_authority": "provider_evidence",
+            "recommendation_evidence": [
+                {
+                    "id": "phase1-tracker:clarification",
+                    "kind": "provider_evidence",
+                    "reference": "phase1-tracker:human_clarification_required",
+                    "digest": "b" * 64,
+                }
+            ],
+            "resolution_rationale": None,
+            "resolution_confidence": None,
+            "recommendation_followed": None,
+            "override_reason": None,
+        }
+    )
+
+
+def _failed_v3_human_gate_decision() -> dict[str, object]:
+    legacy = build_blocked_decision_v2(
+        decision_id="dec-human-gate-rewind",
+        status="failed",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue to feasibility assessment.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for specification revision.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=4,
+        attempts=2,
+        failure_code="resolution_attempts_exhausted",
+        now="2026-08-23T11:00:00+00:00",
+    )
+    return validate_blocked_decision_v3(
+        {
+            **legacy,
+            "schema_version": 3,
+            "recommended_option_id": "approve",
+            "recommended_action": None,
+            "automatic_eligible": True,
+            "recommendation_rationale": "The current Phase 1 evidence supports approval.",
+            "recommendation_confidence": "high",
+            "recommendation_authority": "controller_evidence",
+            "recommendation_evidence": [
+                {
+                    "id": "checkpoint-assess:quality",
+                    "kind": "phase1_quality_certificate",
+                    "reference": "state:spec_quality_certificate",
+                    "digest": "c" * 64,
+                }
+            ],
+            "resolution_rationale": None,
+            "resolution_confidence": None,
+            "recommendation_followed": None,
+            "override_reason": None,
+        }
     )
 
 
@@ -455,6 +583,237 @@ def test_status_renders_v2_action_without_changing_state(
     _cmd_status(tmp_path)
 
     assert action in capsys.readouterr().out
+    assert state_path.read_bytes() == before
+
+
+def test_failed_human_gate_status_renders_ledger_rewind_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-human-gate-rewind"
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id="phase1-lexicon",
+            spec_id=spec_dir.name,
+            phase="phase1-lexicon",
+            next_phase="checkpoint-assess",
+            commit="a" * 40,
+            metadata_commit="",
+            source="auto",
+            run_id=run_dir.name,
+            created_at="2026-08-23T11:00:00+00:00",
+        ),
+    )
+    decision = _failed_v3_human_gate_decision()
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "state_revision": 5,
+                "status": "blocked",
+                "phase": "checkpoint-assess",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "spec_id": spec_dir.name,
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                    reason_code=str(decision["reason_code"]),
+                    phase="",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+                "escalation_question": decision["question"],
+                "escalation_options": decision["options"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "echelon spec rewind phase1-lexicon --confirm" in output
+    assert "diagnose" not in output.lower()
+    assert "echelon spec continue" not in output
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("schema_version", [2, 3])
+def test_failed_provider_status_command_retires_authority_and_executes_source_phase(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_version: int,
+) -> None:
+    root = Path(__file__).resolve().parent.parent.parent
+    shutil.copytree(root / "runtime", tmp_path / ".echelon/runtime")
+    shutil.copytree(root / "prosaic", tmp_path / ".echelon/prosaic")
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    run_dir = tmp_path / "runs" / "spec-provider-replay"
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    decision = _failed_provider_decision(schema_version=schema_version)
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "state_revision": 3,
+                "status": "blocked",
+                "phase": "phase1-tracker",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "mode": "greenfield",
+                "user_message": "capture the application intent",
+                "spec_id": "001-demo",
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+                "completed_phases": ["phase1-discover"],
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                    reason_code=str(decision["reason_code"]),
+                    phase="",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+                "escalation_question": decision["question"],
+                "escalation_options": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    assert "echelon phase run phase1-tracker" in capsys.readouterr().out
+
+    provider_calls: list[str] = []
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(
+            self,
+            _project_root: str,
+            prompt: str,
+            **_kwargs: object,
+        ) -> SquadAgentResult:
+            provider_calls.append(prompt)
+            (spec_dir / "user-intent.md").write_text(
+                "# User intent\n\nCapture the registered application intent.\n",
+                encoding="utf-8",
+            )
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "ALIGNED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        PhysicalProvider,
+    )
+
+    _cmd_phase(
+        ["run", "phase1-tracker"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    replayed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(provider_calls) == 1
+    assert "blocked_decision" not in replayed
+    assert "recovery_instruction" not in replayed
+    assert (spec_dir / "user-intent.md").is_file()
+
+
+def test_failed_provider_wrong_phase_cannot_retire_or_execute_authority(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root = Path(__file__).resolve().parent.parent.parent
+    shutil.copytree(root / "runtime", tmp_path / ".echelon/runtime")
+    shutil.copytree(root / "prosaic", tmp_path / ".echelon/prosaic")
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    run_dir = tmp_path / "runs" / "spec-provider-wrong-phase"
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    decision = _failed_provider_decision()
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "state_revision": 3,
+                "status": "blocked",
+                "phase": "phase1-tracker",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "mode": "greenfield",
+                "spec_id": spec_dir.name,
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                    reason_code=str(decision["reason_code"]),
+                    phase="",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    with pytest.raises(SystemExit) as raised:
+        _cmd_phase(
+            ["run", "phase1-discover"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
+        )
+
+    assert raised.value.code == 1
+    assert "echelon phase run phase1-tracker" in capsys.readouterr().err
     assert state_path.read_bytes() == before
 
 

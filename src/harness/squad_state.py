@@ -1540,6 +1540,7 @@ class SquadStateStore:
         self._path = squad_dir / "state.json"
         self._lock_path = squad_dir / "state.lock"
         self._staging_dir = squad_dir / "staging"
+        self._manual_phase_replay_authority: tuple[str, str, int, bool] | None = None
         _ensure_directory_durable(self._squad_dir)
         _ensure_directory_durable(self._staging_dir)
 
@@ -2543,18 +2544,95 @@ class SquadStateStore:
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
 
+    def _failed_automatic_replay_decision_unlocked(
+        self,
+        before: dict[str, Any],
+        phase_id: str,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        v2_automatic_eligible: bool,
+    ) -> dict[str, object] | None:
+        decision = self._human_input_decision_for_cas_unlocked(
+            before,
+            decision_id,
+            expected_state_revision=expected_state_revision,
+            allowed_statuses=frozenset({"failed"}),
+        )
+        if (
+            decision["source_kind"]
+            not in {"provider_escalation", "controller_safeguard"}
+            or decision["autonomy_mode"] != "banzai"
+            or decision["source_phase"] != phase_id
+            or before.get("autonomy_mode") != "banzai"
+            or before.get("status") != "blocked"
+            or (
+                decision["schema_version"] == 3
+                and decision.get("automatic_eligible") is not True
+            )
+            or (
+                decision["schema_version"] == 2
+                and v2_automatic_eligible is not True
+            )
+        ):
+            return None
+        return decision
+
+    def authorize_failed_automatic_decision_for_manual_phase_replay(
+        self,
+        phase_id: str,
+        *,
+        decision_id: str,
+        expected_state_revision: int,
+        v2_automatic_eligible: bool = False,
+    ) -> bool:
+        """Arm a one-shot exact CAS for the controller's execution lease."""
+        if not isinstance(phase_id, str) or not phase_id.strip():
+            raise StateAdvanceError(
+                "manual replay phase identity is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        if not isinstance(decision_id, str) or not decision_id.strip():
+            return False
+        if type(expected_state_revision) is not int:
+            return False
+        normalized_phase = phase_id.strip()
+        normalized_id = decision_id.strip()
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._failed_automatic_replay_decision_unlocked(
+                before,
+                normalized_phase,
+                normalized_id,
+                expected_state_revision=expected_state_revision,
+                v2_automatic_eligible=v2_automatic_eligible,
+            )
+            if decision is None:
+                return False
+            self._manual_phase_replay_authority = (
+                normalized_phase,
+                normalized_id,
+                expected_state_revision,
+                v2_automatic_eligible,
+            )
+            return True
+
     def discard_failed_automatic_decision_for_manual_phase_replay(
         self,
         phase_id: str,
+        *,
+        decision_id: str | None = None,
+        expected_state_revision: int | None = None,
+        v2_automatic_eligible: bool = False,
     ) -> bool:
-        """Clear one failed automatic safeguard before replaying its phase.
+        """Clear one exact failed automatic decision before replaying its phase.
 
-        A Banzai controller-safeguard decision has no operator answer to
-        preserve.  If its automatic resolution failed, an explicit replay of
-        the same source phase is the durable recovery action: it re-runs the
-        phase and creates a fresh, sealed decision if one is still needed.
-        This deliberately cannot clear human gates, non-Banzai decisions, or
-        decisions from another phase.
+        The CLI authenticates v2 eligibility against the active workflow graph
+        and passes that result into this CAS.  V3 eligibility remains sealed in
+        the decision itself.  Omitting the exact revision and decision ID is a
+        no-op unless the CLI armed the one-shot authority for the controller's
+        execution lease, so other internal callers cannot retire it.
         """
         if not isinstance(phase_id, str) or not phase_id.strip():
             raise StateAdvanceError(
@@ -2564,21 +2642,27 @@ class SquadStateStore:
             )
         normalized_phase = phase_id.strip()
         with self._lock(exclusive=True):
-            before = self._load_unlocked()
-            raw_decision = before.get("blocked_decision")
-            if not _is_human_input_decision(raw_decision):
+            if decision_id is None and expected_state_revision is None:
+                authority = self._manual_phase_replay_authority
+                self._manual_phase_replay_authority = None
+                if authority is None or authority[0] != normalized_phase:
+                    return False
+                _, decision_id, expected_state_revision, v2_automatic_eligible = (
+                    authority
+                )
+            if not isinstance(decision_id, str) or not decision_id.strip():
                 return False
-            decision = validate_blocked_decision(raw_decision)
-            validate_decision_recovery_pair(
-                decision,
-                before.get("recovery_instruction"),
+            if type(expected_state_revision) is not int:
+                return False
+            before = self._load_unlocked()
+            decision = self._failed_automatic_replay_decision_unlocked(
+                before,
+                normalized_phase,
+                decision_id.strip(),
+                expected_state_revision=expected_state_revision,
+                v2_automatic_eligible=v2_automatic_eligible,
             )
-            if (
-                decision["status"] != "failed"
-                or decision["source_kind"] != "controller_safeguard"
-                or decision["autonomy_mode"] != "banzai"
-                or decision["source_phase"] != normalized_phase
-            ):
+            if decision is None:
                 return False
 
             desired = deepcopy(before)
@@ -2592,6 +2676,95 @@ class SquadStateStore:
             return bool(
                 self._commit_human_input_state_unlocked(before, desired)
             )
+
+    def rewind_failed_banzai_human_gate(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        source_phase: str,
+        predecessor_phase: str,
+        rewound_state: Mapping[str, Any],
+        v2_automatic_eligible: bool = False,
+    ) -> dict[str, Any]:
+        """Atomically reset one exact failed Banzai gate and retire authority."""
+        if not isinstance(source_phase, str) or not source_phase.strip():
+            raise StateAdvanceError(
+                "failed gate source phase is invalid",
+                json_path="$.blocked_decision.source_phase",
+                validator="type",
+            )
+        if not isinstance(predecessor_phase, str) or not predecessor_phase.strip():
+            raise StateAdvanceError(
+                "failed gate predecessor phase is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        if not isinstance(rewound_state, Mapping):
+            raise StateAdvanceError(
+                "failed gate rewind postimage is invalid",
+                json_path="$",
+                validator="type",
+            )
+        normalized_source = source_phase.strip()
+        normalized_predecessor = predecessor_phase.strip()
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"failed"}),
+            )
+            if (
+                decision["source_kind"] != "human_gate"
+                or decision["source_phase"] != normalized_source
+                or decision["autonomy_mode"] != "banzai"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("status") != "blocked"
+                or before.get("phase") != normalized_source
+                or (
+                    decision["schema_version"] == 3
+                    and decision.get("automatic_eligible") is not True
+                )
+                or (
+                    decision["schema_version"] == 2
+                    and v2_automatic_eligible is not True
+                )
+            ):
+                raise StateAdvanceError(
+                    "failed gate authority does not permit rewind",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+
+            desired = deepcopy(dict(rewound_state))
+            if (
+                desired.get("state_revision") != expected_state_revision
+                or desired.get("status") != "running"
+                or desired.get("phase") != normalized_predecessor
+                or desired.get("blocked_reason") is not None
+                or desired.get("iteration") != 0
+                or desired.get("blocked_decision")
+                != before.get("blocked_decision")
+                or desired.get("recovery_instruction")
+                != before.get("recovery_instruction")
+                or any(
+                    desired.get(key) != before.get(key)
+                    for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS
+                )
+            ):
+                raise StateAdvanceError(
+                    "failed gate rewind postimage does not match checked authority",
+                    json_path="$",
+                    validator="human_input_authority",
+                )
+
+            desired.pop("blocked_decision", None)
+            desired.pop("recovery_instruction", None)
+            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                desired.pop(key, None)
+            return self._commit_human_input_state_unlocked(before, desired)
 
     def apply_human_input_state_resolution(
         self,

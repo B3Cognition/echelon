@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -161,6 +162,28 @@ def _v2_continue_instruction(status: str) -> dict[str, object]:
         schema_version=2,
         decision_id="dec-cli-continue-side-effect",
     ).to_dict()
+
+
+def _failed_v2_migration_provider_decision() -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-v2-migration-replay",
+        status="failed",
+        source_kind="provider_escalation",
+        producer_id="phase1-tracker",
+        source_phase="phase1-tracker",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which target repository should Echelon inspect?",
+        options=[],
+        recommended_answer="Inspect the registered application source.",
+        risk_level="low",
+        resolution_handler="clarification_resume",
+        autonomy_mode="banzai",
+        source_state_revision=3,
+        attempts=1,
+        failure_code="decision_recommendation_unavailable",
+        now="2026-08-23T12:00:00+00:00",
+    )
 
 
 def test_declined_quality_debt_cannot_be_reopened_by_ordinary_continue(
@@ -413,6 +436,48 @@ def test_continue_nonautomatic_v2_decisions_are_filesystem_read_only(
 
     assert state_path.read_bytes() == before
     assert not (run_dir / "specs").exists()
+
+
+def test_v2_migration_failure_recovery_has_priority_and_is_restart_stable(
+    tmp_path: Path,
+) -> None:
+    root = Path(__file__).resolve().parent.parent.parent
+    shutil.copytree(root / "runtime", tmp_path / ".echelon/runtime")
+    shutil.copytree(root / "prosaic", tmp_path / ".echelon/prosaic")
+    decision = _failed_v2_migration_provider_decision()
+    state = {
+        "run_id": "spec-test",
+        "state_revision": 4,
+        "status": "blocked",
+        "phase": "phase1-tracker",
+        "blocked_reason": "decision_recommendation_unavailable",
+        "autonomy_mode": "banzai",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-test/specs/001-demo",
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.MANUAL_DIAGNOSIS,
+            reason_code=str(decision["reason_code"]),
+            phase="",
+            requires_human_input=False,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+    }
+    run_dir = _write_run_state(tmp_path, state)
+    state_path = run_dir / "state.json"
+
+    first = _classify_run_recovery(state, project_root=tmp_path)
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    second = _classify_run_recovery(reloaded, project_root=tmp_path)
+
+    assert first == second
+    assert first.kind == "manual_recovery"
+    assert first.reason == "decision_recommendation_unavailable"
+    assert first.phase == "phase1-tracker"
+    assert first.command == "echelon phase run phase1-tracker"
+    assert "diagnose" not in first.command
+    assert state_path.read_bytes() == json.dumps(state).encode("utf-8")
 
 
 def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(

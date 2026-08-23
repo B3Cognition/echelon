@@ -6,10 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from echelon.checkpoint_cli import run_checkpoint_command
+from echelon.cli import _classify_run_recovery
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,
 )
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpoint,
@@ -360,6 +362,95 @@ def test_checkpoint_list_explains_ledger_order_and_marks_latest_phase_occurrence
     assert " yes " not in first_what
     assert " yes " in lexicon
     assert " yes " in last_what
+
+
+def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
+    tmp_path: Path,
+) -> None:
+    run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-1")
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    for index, commit in enumerate(("1" * 40, "2" * 40), start=1):
+        record_checkpoint_metadata(
+            spec_dir,
+            PhaseCheckpoint(
+                id="phase1-lexicon",
+                spec_id="001-demo",
+                phase="phase1-lexicon",
+                next_phase="checkpoint-assess",
+                commit=commit,
+                metadata_commit="",
+                source="auto",
+                run_id=run_dir.name,
+                created_at=f"2026-08-23T12:0{index}:00+00:00",
+                completion_id=str(index) * 32,
+            ),
+        )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-terminal-gate",
+        status="resolved",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue to feasibility assessment.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for specification revision.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=3,
+        selected_option_id="reject",
+        resolved_by="user",
+        now="2026-08-23T12:00:00+00:00",
+        resolved_at="2026-08-23T12:05:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "gate_rejected",
+            "blocked_decision": decision,
+            "escalation_question": decision["question"],
+            "escalation_options": decision["options"],
+            "escalation_resolved": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "safe_rewind"
+    assert action.phase == "phase1-lexicon"
+    assert action.command == (
+        "echelon spec rewind phase1-lexicon --commit "
+        + "2" * 40
+        + " --confirm"
+    )
 
 
 def _git(repo: Path, *args: str) -> str:

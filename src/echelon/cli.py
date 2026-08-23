@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -3498,6 +3498,256 @@ def _active_v2_decision(state: dict) -> dict[str, object] | None:
     return decision if decision["status"] != "resolved" else None
 
 
+def _validated_versioned_decision(
+    state: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Validate a persisted v2/v3 decision and its exact recovery pair."""
+    from harness.blocked_decision import validate_blocked_decision
+    from harness.recovery_instruction import validate_decision_recovery_pair
+
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    decision = validate_blocked_decision(raw_decision)
+    validate_decision_recovery_pair(
+        decision,
+        state.get("recovery_instruction"),
+    )
+    return decision
+
+
+def _versioned_decision_options(
+    decision: Mapping[str, object],
+) -> tuple[object, ...]:
+    from harness.human_input import HumanInputOption, HumanInputPolicyError
+
+    raw_options = decision.get("options")
+    if not isinstance(raw_options, list):
+        raise HumanInputPolicyError("sealed decision options are invalid")
+    options: list[HumanInputOption] = []
+    for raw_option in raw_options:
+        if not isinstance(raw_option, Mapping):
+            raise HumanInputPolicyError("sealed decision options are invalid")
+        options.append(
+            HumanInputOption(
+                id=raw_option.get("id"),
+                label=raw_option.get("label"),
+                description=raw_option.get("description"),
+                recommended=raw_option.get("recommended"),
+                risk_level=raw_option.get("risk_level"),
+                next_phase=raw_option.get("next_phase"),
+                outcome=raw_option.get("outcome"),
+            )
+        )
+    return tuple(options)
+
+
+def _v2_automatic_decision_is_registered(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    """Reconstruct intrinsic v2 automatic eligibility from registered policy."""
+    if decision.get("schema_version") != 2 or project_root is None:
+        return False
+    try:
+        if graph is None:
+            from harness.phase_graph import load_workspace_phase_graph
+
+            graph, _ = load_workspace_phase_graph(project_root)
+        registry = graph.human_input_policy_registry()
+        policy = registry.lookup(
+            str(decision.get("source_kind") or ""),
+            str(decision.get("producer_id") or ""),
+            str(decision.get("reason_code") or ""),
+        )
+        if (
+            decision.get("classification") != policy.classification
+            or decision.get("resolution_handler") != policy.resolution_handler
+            or decision.get("source_phase") not in policy.allowed_phase_ids
+        ):
+            return False
+        options = _versioned_decision_options(decision)
+        dynamic_dispatch_cap = (
+            policy.source_kind == "controller_safeguard"
+            and policy.producer_id == "phase_dispatch_limit"
+            and policy.reason_code == "phase_dispatch_limit"
+            and policy.resolution_handler == "phase_dispatch_limit"
+        )
+        if dynamic_dispatch_cap:
+            if not options:
+                return False
+        elif policy.source_kind != "provider_escalation":
+            legacy_options = tuple(
+                replace(option, recommended=False) for option in options
+            ) == tuple(
+                replace(option, recommended=False) for option in policy.options
+            )
+            if not legacy_options:
+                return False
+        if any(
+            option.next_phase is not None
+            and option.next_phase not in policy.allowed_target_phases
+            for option in options
+        ):
+            return False
+        if any(
+            option.outcome is not None
+            for option in options
+            if policy.source_kind != "human_gate"
+        ):
+            return False
+        if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
+            return False
+        if policy.classification == "external_prerequisite":
+            return False
+        recommended_options = [
+            option for option in options if option.recommended
+        ]
+        if len(recommended_options) == 1:
+            return (
+                recommended_options[0].risk_level
+                or decision.get("risk_level")
+            ) == "low"
+        return (
+            not options
+            and isinstance(decision.get("recommended_answer"), str)
+            and bool(str(decision["recommended_answer"]).strip())
+            and decision.get("risk_level") == "low"
+        )
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _automatic_decision_is_eligible(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    if decision.get("schema_version") == 3:
+        return decision.get("automatic_eligible") is True
+    return _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+        graph=graph,
+    )
+
+
+def _decision_gate_rewind_action(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    if project_root is None:
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    spec_dir, _ = _normalize_rewind_spec_dir(project_root, dict(run_state))
+    if spec_dir is None or not source_phase:
+        return None
+    from harness.phase_checkpoints import load_checkpoint_ledger
+
+    try:
+        ledger = load_checkpoint_ledger(spec_dir)
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    candidates = [
+        checkpoint
+        for checkpoint in ledger.checkpoints
+        if checkpoint.rewind == "supported"
+        and checkpoint.next_phase == source_phase
+    ]
+    if not candidates:
+        return None
+    checkpoint = candidates[-1]
+    duplicate_phase = sum(
+        item.phase == checkpoint.phase for item in ledger.checkpoints
+    ) > 1
+    commit = f" --commit {checkpoint.commit}" if duplicate_phase else ""
+    return _RunRecoveryAction(
+        "safe_rewind",
+        reason=str(run_state.get("blocked_reason") or "gate_rejected"),
+        phase=checkpoint.phase,
+        command=(
+            f"echelon spec rewind {checkpoint.phase}{commit} --confirm"
+        ),
+        note=(
+            "rewind the exact checkpoint ledger predecessor before replaying "
+            "the human gate"
+        ),
+    )
+
+
+def _versioned_decision_recovery_action(
+    run_state: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    try:
+        decision = _validated_versioned_decision(run_state)
+    except (RecoveryInstructionError, ValueError):
+        return None
+    if decision is None:
+        return None
+    status = decision["status"]
+    source_kind = decision["source_kind"]
+    if (
+        status == "resolved"
+        and source_kind == "human_gate"
+        and str(run_state.get("blocked_reason") or "").strip()
+        == "gate_rejected"
+    ):
+        return _decision_gate_rewind_action(
+            run_state,
+            decision,
+            project_root=project_root,
+        )
+    if (
+        status != "failed"
+        or decision.get("autonomy_mode") != "banzai"
+        or run_state.get("autonomy_mode") != "banzai"
+        or not _automatic_decision_is_eligible(
+            decision,
+            project_root=project_root,
+        )
+    ):
+        return None
+    if source_kind == "human_gate":
+        return _decision_gate_rewind_action(
+            run_state,
+            decision,
+            project_root=project_root,
+        )
+    if source_kind not in {"provider_escalation", "controller_safeguard"}:
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    if not source_phase or project_root is None:
+        return None
+    try:
+        from harness.phase_graph import load_workspace_phase_graph
+
+        graph, _ = load_workspace_phase_graph(project_root)
+        if source_phase not in graph.all_phase_ids():
+            return None
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    reason = str(decision.get("failure_code") or "").strip() or str(
+        run_state.get("blocked_reason") or decision.get("reason_code") or ""
+    ).strip()
+    return _RunRecoveryAction(
+        "manual_recovery",
+        reason=reason,
+        phase=source_phase,
+        command=f"echelon phase run {source_phase}",
+        note="replay the exact failed automatic decision source phase",
+    )
+
+
 def _retryable_failed_agent_block_phase(run_state: dict) -> str | None:
     """Return the retry phase for a legacy bare-agent-block decision.
 
@@ -4215,6 +4465,13 @@ def _classify_run_recovery(
 
     if status != "blocked":
         return _RunRecoveryAction("advance")
+
+    decision_recovery = _versioned_decision_recovery_action(
+        run_state,
+        project_root=project_root,
+    )
+    if decision_recovery is not None:
+        return decision_recovery
 
     if reason == "proportional_quality_debt_declined":
         return _RunRecoveryAction(
@@ -5395,9 +5652,19 @@ def _reset_rewind_state(
     rewound["iteration"] = 0
     rewound["spec_dir"] = spec_dir_ref
     rewound["blocked_reason"] = None
-    rewound["escalation_question"] = None
-    rewound["escalation_resolved"] = False
-    rewound["escalation_resolver"] = None
+    terminal_decision = False
+    try:
+        decision = _validated_versioned_decision(state)
+        terminal_decision = (
+            decision is not None
+            and decision["status"] in {"resolved", "failed"}
+        )
+    except (RecoveryInstructionError, ValueError):
+        terminal_decision = False
+    if not terminal_decision:
+        rewound["escalation_question"] = None
+        rewound["escalation_resolved"] = False
+        rewound["escalation_resolver"] = None
     rewound.pop("phase_a_readiness_blockers", None)
     # A rewind reopens the target phase's owned repair loop.  Retaining an
     # exhausted Lexicon certificate makes CARTOGRAPHER/ORCHESTRATOR conclude
@@ -6075,7 +6342,6 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("reason", action.reason),
                 ("phase", action.phase or "?"),
                 ("next", action.command),
-                ("then", "echelon spec continue"),
             ]
             _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
             return
@@ -8727,6 +8993,77 @@ def _cmd_continue_impl(
     start_phase(next_phase, verb="Continuing from")
 
 
+@dataclass(frozen=True)
+class _FailedGateRewindAuthority:
+    decision_id: str
+    state_revision: int
+    source_phase: str
+    v2_automatic_eligible: bool
+
+
+def _failed_gate_rewind_authority(
+    state: Mapping[str, object],
+    checkpoint: object,
+    *,
+    project_root: Path,
+) -> _FailedGateRewindAuthority | None:
+    """Authorize a failed gate rewind before any Git or ledger mutation."""
+    from echelon.rewind import RewindError
+
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    try:
+        decision = _validated_versioned_decision(state)
+    except (RecoveryInstructionError, ValueError) as exc:
+        raise RewindError(f"versioned decision authority is invalid: {exc}") from exc
+    assert decision is not None
+    if decision["status"] == "resolved":
+        return None
+    if decision["status"] != "failed":
+        raise RewindError("unresolved decision authority does not permit rewind")
+    source_phase = str(decision.get("source_phase") or "").strip()
+    predecessor = str(getattr(checkpoint, "phase", "") or "").strip()
+    checkpoint_next = str(
+        getattr(checkpoint, "next_phase", "") or ""
+    ).strip()
+    revision = state.get("state_revision")
+    v2_eligible = _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+    )
+    eligible = (
+        decision.get("automatic_eligible") is True
+        if decision["schema_version"] == 3
+        else v2_eligible
+    )
+    if (
+        decision["source_kind"] != "human_gate"
+        or decision["autonomy_mode"] != "banzai"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("status") != "blocked"
+        or state.get("phase") != source_phase
+        or not eligible
+        or checkpoint_next != source_phase
+        or not predecessor
+        or type(revision) is not int
+        or revision < 0
+    ):
+        raise RewindError(
+            "failed decision does not match the exact Banzai human-gate "
+            "rewind authority and checkpoint predecessor"
+        )
+    return _FailedGateRewindAuthority(
+        decision_id=str(decision["id"]),
+        state_revision=revision,
+        source_phase=source_phase,
+        v2_automatic_eligible=v2_eligible,
+    )
+
+
 def _cmd_rewind(
     args: list[str],
     project_root: Path,
@@ -8834,6 +9171,15 @@ def _cmd_rewind(
             file=sys.stderr,
         )
         sys.exit(1)
+    try:
+        _failed_gate_rewind_authority(
+            state,
+            checkpoint,
+            project_root=project_root,
+        )
+    except RewindError as exc:
+        print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
+        sys.exit(1)
 
     from echelon.spec_lifecycle import (
         PhaseAExecutionLock,
@@ -8909,6 +9255,11 @@ def _cmd_rewind(
                             "checkpoint does not support rewind: "
                             f"{checkpoint.rewind_reason}"
                         )
+                    failed_gate_authority = _failed_gate_rewind_authority(
+                        state,
+                        checkpoint,
+                        project_root=project_root,
+                    )
                     replacement_state = deepcopy(state)
 
                     recovery_dirty_paths = frozenset()
@@ -9016,7 +9367,28 @@ def _cmd_rewind(
                                 checkpoint.boundary_completion_id
                             ),
                         )
-                        store.save(rewound)
+                        if failed_gate_authority is None:
+                            store.save(rewound)
+                        else:
+                            from harness.squad_state import StateAdvanceError
+
+                            try:
+                                store.rewind_failed_banzai_human_gate(
+                                    failed_gate_authority.decision_id,
+                                    expected_state_revision=(
+                                        failed_gate_authority.state_revision
+                                    ),
+                                    source_phase=(
+                                        failed_gate_authority.source_phase
+                                    ),
+                                    predecessor_phase=checkpoint.phase,
+                                    rewound_state=rewound,
+                                    v2_automatic_eligible=(
+                                        failed_gate_authority.v2_automatic_eligible
+                                    ),
+                                )
+                            except StateAdvanceError as exc:
+                                raise RewindError(str(exc)) from exc
     except SpecLifecycleLocked as exc:
         print(
             "✗ Cannot rewind while the active spec run is still running.\n"
@@ -9714,7 +10086,7 @@ def _cmd_phase(
     from harness.phase_graph import load_workspace_phase_graph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
-    from harness.squad_state import SquadStateStore
+    from harness.squad_state import SquadStateStore, StateAdvanceError
 
     graph, ext_dir = load_workspace_phase_graph(project_root)
 
@@ -9859,6 +10231,69 @@ def _cmd_phase(
         max_iterations=max_iterations,
         squad_dir=run_dir,
     )
+
+    raw_decision = current_state.get("blocked_decision")
+    if (
+        isinstance(raw_decision, Mapping)
+        and raw_decision.get("schema_version") in {2, 3}
+    ):
+        try:
+            replay_decision = _validated_versioned_decision(current_state)
+        except (RecoveryInstructionError, ValueError) as exc:
+            print(f"✗ Invalid persisted decision authority: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        if replay_decision is not None and replay_decision["status"] == "failed":
+            source_phase = str(
+                replay_decision.get("source_phase") or ""
+            ).strip()
+            if replay_decision["source_kind"] not in {
+                "provider_escalation",
+                "controller_safeguard",
+            }:
+                print(
+                    "✗ Failed human-gate authority requires its ledger-derived "
+                    "confirmed rewind command.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            revision = current_state.get("state_revision")
+            v2_eligible = _v2_automatic_decision_is_registered(
+                replay_decision,
+                project_root=project_root,
+                graph=graph,
+            )
+            try:
+                authorize_replay = (
+                    state_store.authorize_failed_automatic_decision_for_manual_phase_replay
+                )
+                authorized = (
+                    authorize_replay(
+                        phase_id,
+                        decision_id=str(replay_decision["id"]),
+                        expected_state_revision=revision,
+                        v2_automatic_eligible=v2_eligible,
+                    )
+                    if type(revision) is int
+                    else False
+                )
+            except (StateAdvanceError, ValueError, TypeError) as exc:
+                print(
+                    f"✗ Failed decision replay authority changed: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+            if not authorized:
+                print(
+                    "✗ Failed automatic decision can only be retired by its exact "
+                    f"source replay: echelon phase run {source_phase}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            print(
+                "[squad] authorized failed automatic Banzai decision replay: "
+                f"{phase_id}",
+                flush=True,
+            )
 
     user_message = " ".join(message_parts) or current_state.get("user_message", "")
     result = controller.run_single_phase(
