@@ -7038,8 +7038,9 @@ def _start_proportional_quality_loop(
     tmp_path: Path,
     *,
     automatic_consumed: int = 0,
+    squad_dir: Path | None = None,
 ) -> tuple[SquadController, SquadStateStore]:
-    ctrl, store = _controller(tmp_path)
+    ctrl, store = _controller(tmp_path, squad_dir=squad_dir)
     store.initialize(
         "r",
         "greenfield",

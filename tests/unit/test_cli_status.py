@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -27,6 +28,7 @@ from harness.blocked_decision import (
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 from harness.squad_provider import SquadAgentResult
+from harness.squad_state import SquadStateStore
 
 
 def _tree_snapshot(root: Path) -> tuple[tuple[str, str, bytes], ...]:
@@ -781,6 +783,125 @@ def test_status_renders_v2_action_without_changing_state(
     assert state_path.read_bytes() == before
 
 
+def test_blocked_status_without_decision_renders_one_recovery_surface(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-no-decision"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "blocked_reason": "provider_failed",
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RETRY_PHASE,
+                    reason_code="provider_failed",
+                    phase="phase1-what",
+                    requires_human_input=False,
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert output.count("echelon spec continue") == 1
+    assert output.count("NEXT STEP") == 1
+
+
+@pytest.mark.parametrize("schema_version", [2, 3])
+def test_status_invalid_decision_pair_fails_closed_before_unpaired_recovery(
+    tmp_path: Path,
+    capsys,
+    schema_version: int,
+) -> None:
+    run_dir = tmp_path / "runs" / f"spec-invalid-v{schema_version}"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    decision = _failed_provider_decision(schema_version=schema_version)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-tracker",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RETRY_PHASE,
+                    reason_code=str(decision["reason_code"]),
+                    phase="phase1-tracker",
+                    requires_human_input=False,
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert output.lower().count("invalid persisted decision") == 1
+    assert "echelon spec continue" not in output
+    assert "echelon phase run phase1-tracker" not in output
+
+
+@pytest.mark.parametrize("schema_version", [2, 3])
+def test_squad_summary_invalid_decision_pair_has_no_executable_recovery(
+    tmp_path: Path,
+    capsys,
+    schema_version: int,
+) -> None:
+    run_dir = tmp_path / "runs" / f"spec-summary-invalid-v{schema_version}"
+    run_dir.mkdir(parents=True)
+    decision = _failed_provider_decision(schema_version=schema_version)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-tracker",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RETRY_PHASE,
+                    reason_code=str(decision["reason_code"]),
+                    phase="phase1-tracker",
+                    requires_human_input=False,
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        run_dir,
+        SimpleNamespace(status="blocked", phase="phase1-tracker"),
+        mode="banzai",
+        message="Write Hello World.",
+    )
+
+    output = capsys.readouterr().out
+    assert output.lower().count("invalid persisted decision") == 1
+    assert "echelon spec continue" not in output
+    assert "echelon phase run phase1-tracker" not in output
+
+
 def test_failed_human_gate_status_renders_ledger_rewind_without_mutation(
     tmp_path: Path,
     capsys,
@@ -962,21 +1083,83 @@ def test_status_recovery_command_shell_round_trips_unusual_valid_phase_ids(
     ]
 
 
-@pytest.mark.parametrize("schema_version", [2, 3])
+@pytest.mark.parametrize(
+    ("schema_version", "failure_transition"),
+    [
+        (2, "prebuilt"),
+        (3, "prebuilt"),
+        (3, "setup_failure"),
+        (3, "interrupted_second_claim"),
+        (2, "migration_failure"),
+    ],
+)
 def test_failed_provider_status_command_retires_authority_and_executes_source_phase(
     tmp_path: Path,
     capsys,
     monkeypatch: pytest.MonkeyPatch,
     schema_version: int,
+    failure_transition: str,
 ) -> None:
     run_dir, spec_dir, state_path, _ = _write_failed_provider_project(
         tmp_path,
         schema_version=schema_version,
     )
+    if failure_transition != "prebuilt":
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        decision = state["blocked_decision"]
+        decision.update(
+            {
+                "status": (
+                    "resolving"
+                    if failure_transition == "interrupted_second_claim"
+                    else "pending"
+                ),
+                "attempts": (
+                    2 if failure_transition == "interrupted_second_claim" else 0
+                ),
+                "failure_code": None,
+            }
+        )
+        state.update(
+            {
+                "phase": "terminal-blocked",
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RESOLVE_DECISION,
+                    reason_code=str(decision["reason_code"]),
+                    phase=str(decision["source_phase"]),
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+            }
+        )
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        store = SquadStateStore(run_dir)
+        if failure_transition == "setup_failure":
+            store.fail_pending_human_input_decision(
+                str(decision["id"]),
+                expected_state_revision=int(state["state_revision"]),
+                failure_code="decision_context_setup_failed",
+            )
+        elif failure_transition == "interrupted_second_claim":
+            store.recover_interrupted_human_input_decision()
+        else:
+            store.fail_pending_v2_banzai_human_input_migration(
+                str(decision["id"]),
+                expected_state_revision=int(state["state_revision"]),
+                v2_automatic_eligible=True,
+            )
 
     _cmd_status(tmp_path)
 
-    assert "echelon phase run phase1-tracker" in capsys.readouterr().out
+    status_output = capsys.readouterr().out
+    command = next(
+        line.strip()
+        for line in status_output.splitlines()
+        if line.strip().startswith("echelon phase run ")
+    )
+    assert command == "echelon phase run phase1-tracker"
 
     provider_calls: list[str] = []
     dispatched_nodes: list[str] = []
@@ -1027,7 +1210,7 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
     monkeypatch.setattr(AgentExecutor, "execute", record_execute)
 
     _cmd_phase(
-        ["run", "phase1-tracker"],
+        shlex.split(command)[2:],
         project_root=tmp_path,
         ext_dir=tmp_path / ".echelon/runtime",
     )
@@ -1043,6 +1226,56 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
     assert "blocked_decision" not in replayed
     assert "recovery_instruction" not in replayed
     assert (spec_dir / "user-intent.md").is_file()
+
+
+@pytest.mark.parametrize("schema_version", [2, 3])
+def test_ineligible_failed_provider_has_no_replay_command_or_dispatch(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    schema_version: int,
+) -> None:
+    _run_dir, _spec_dir, state_path, _decision = (
+        _write_failed_provider_project(
+            tmp_path,
+            schema_version=schema_version,
+        )
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if schema_version == 2:
+        state["blocked_decision"]["risk_level"] = "high"
+    else:
+        state["blocked_decision"]["automatic_eligible"] = False
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "echelon phase run phase1-tracker" not in output
+    provider_calls: list[str] = []
+
+    class ForbiddenProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            provider_calls.append("called")
+            raise AssertionError("ineligible decision must not dispatch")
+
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        ForbiddenProvider,
+    )
+
+    with pytest.raises(SystemExit):
+        _cmd_phase(
+            ["run", "phase1-tracker"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
+        )
+
+    assert provider_calls == []
+    assert "Invalid failed decision replay authority" in capsys.readouterr().err
 
 
 def test_failed_provider_replay_preserves_absolute_active_spec_identity(

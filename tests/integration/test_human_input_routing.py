@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -334,6 +336,11 @@ def _prepare_real_v3_quality_debt(
     controller, store = _start_proportional_quality_loop(
         tmp_path,
         automatic_consumed=3,
+        squad_dir=tmp_path / "runs" / "run-test",
+    )
+    (tmp_path / "runs" / ".current").write_text(
+        f"{store.squad_dir.name}\n",
+        encoding="utf-8",
     )
     _mark_constitution_complete(tmp_path, store)
     updates, result = _proportional_assessment_fixture(
@@ -367,15 +374,43 @@ def _accept_real_v3_quality_debt(
 def _advance_real_debt_fixture_to_checkpoint(
     store: SquadStateStore,
 ) -> None:
-    state = store.load()
-    state["status"] = "running"
-    state["phase"] = "checkpoint-assess"
-    state["completed_phases"] = [
-        *state.get("completed_phases", []),
-        "phase1-lexicon-derive",
-        "phase1-lexicon",
-    ]
-    store.save(state)
+    for index, to_phase in enumerate(
+        ("phase1-lexicon", "checkpoint-assess"),
+        start=1,
+    ):
+        state = store.load()
+        from_phase = str(state["phase"])
+        if from_phase == "checkpoint-assess":
+            return
+        if from_phase == "phase1-lexicon" and to_phase == "phase1-lexicon":
+            continue
+        prepared = prepare_phase_result(
+            PhaseNode(
+                id=from_phase,
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            ),
+            controller_updates={},
+        )
+        snapshot = store.capture_routing_snapshot(expected_phase=from_phase)
+        routing = store.prepare_routing_decision(
+            prepared,
+            snapshot=snapshot,
+            from_phase=from_phase,
+            to_phase=to_phase,
+            dispatch_id=f"{index:032x}",
+        )
+        store.advance(from_phase, to_phase, routing)
 
 
 def _request(
@@ -1123,6 +1158,67 @@ def test_unreconstructable_pending_v2_banzai_fails_without_provider_dispatch(
         schema_version=2,
         decision_id=str(decision["id"]),
     ).to_dict()
+    provider.exec_agent.assert_not_called()
+
+
+def test_eligible_v2_migration_failure_reconstructs_replay_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    state = store.load()
+    decision = build_blocked_decision_v2(
+        decision_id="dec-eligible-v2-migration-failure",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained product boundary should be applied?",
+        options=[],
+        recommended_answer="Use the sealed evidence.",
+        risk_level="low",
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=state["state_revision"],
+        now="2026-08-23T12:00:00+00:00",
+    )
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        controller,
+        "_v2_migration_preserves_decision_contract",
+        lambda *_args: False,
+    )
+
+    assert controller.resume_pending_human_input() is False
+
+    failed = store.load()
+    assert failed["blocked_decision"]["status"] == "failed"
+    assert failed["phase"] == "phase1-investigate"
+    assert controller._v2_decision_automatic_eligible(decision) is True
     provider.exec_agent.assert_not_called()
 
 
@@ -2949,7 +3045,13 @@ def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(
 
 def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from echelon.cli import _cmd_rewind, _cmd_status
+    from harness.phase_checkpoints import (
+        create_phase_checkpoint,
+        load_checkpoint_ledger,
+    )
     from harness.phase1_quality_debt import (
         has_current_quality_debt_authorization,
     )
@@ -2960,6 +3062,41 @@ def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
         project_root=tmp_path,
     )
     _advance_real_debt_fixture_to_checkpoint(store)
+    checkpoint_state = store.load()
+    subprocess.run(
+        ["git", "branch", "-m", checkpoint_state["spec_id"]],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    active_spec_dir = Path(str(checkpoint_state["spec_dir"]))
+    if not active_spec_dir.is_absolute():
+        active_spec_dir = tmp_path / active_spec_dir
+    checkpoint = create_phase_checkpoint(
+        project_root=tmp_path,
+        spec_dir=active_spec_dir,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-assess",
+        run_id=str(checkpoint_state["run_id"]),
+        spec_id=str(checkpoint_state["spec_id"]),
+        force_commit=True,
+    )
+    assert load_checkpoint_ledger(active_spec_dir).checkpoints[-1] == checkpoint
+
+    after_checkpoint = tmp_path / "after-checkpoint.txt"
+    after_checkpoint.write_text("must be removed by rewind\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", after_checkpoint.name],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "post-checkpoint evidence"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
 
     controller._intercept_human_gate(
         controller._graph.get("checkpoint-assess")
@@ -2973,16 +3110,35 @@ def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
         project_root=tmp_path,
     )
 
-    reset = store.load()
-    reset["status"] = "running"
-    reset["phase"] = "checkpoint-assess"
-    reset["blocked_reason"] = None
-    store.save(reset)
+    _cmd_status(tmp_path)
+    status_output = capsys.readouterr().out
+    command = next(
+        line.strip()
+        for line in status_output.splitlines()
+        if line.strip().startswith("echelon spec rewind ")
+    )
+    assert command == (
+        "echelon spec rewind phase1-lexicon "
+        "--next-phase checkpoint-assess --confirm"
+    )
+    _cmd_rewind(shlex.split(command)[3:], project_root=tmp_path)
+    rewind_output = capsys.readouterr().out
+    assert "REWIND COMPLETE" in rewind_output
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD^{commit}"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() == checkpoint.commit
+    assert not after_checkpoint.exists()
+    assert store.load()["phase"] == "phase1-lexicon"
     assert has_current_quality_debt_authorization(
         store.load(),
         project_root=tmp_path,
     )
 
+    _advance_real_debt_fixture_to_checkpoint(store)
     controller._intercept_human_gate(
         controller._graph.get("checkpoint-assess")
     )
@@ -5305,9 +5461,9 @@ def test_commander_resume_recovers_interrupted_resolution_before_claim(
     original_recover = store.recover_interrupted_human_input_decision
     original_claim = store.claim_human_input_decision
 
-    def recover():
+    def recover(**kwargs):
         events.append("recover")
-        return original_recover()
+        return original_recover(**kwargs)
 
     def claim(*args, **kwargs):
         events.append("claim")

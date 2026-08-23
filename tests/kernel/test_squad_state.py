@@ -21,6 +21,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.controller_state_contracts import (
     ControllerStateContractViolation,
 )
@@ -33,7 +34,11 @@ from harness.human_input import (
     controller_safeguard_policies,
 )
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
-from harness.recovery_instruction import controller_contract_recovery
+from harness.recovery_instruction import (
+    RecoveryInstruction,
+    RecoveryKind,
+    controller_contract_recovery,
+)
 from harness.squad_completion import (
     PreparedControllerCompletion,
     load_prepared_controller_completion,
@@ -4522,6 +4527,178 @@ class TestHumanInputDecisionStateCAS:
         )
         assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
         assert "escalation_question" not in failed
+
+    @pytest.mark.parametrize(
+        "transition",
+        ("setup_failure", "interrupted_second_claim", "resolution_failure"),
+    )
+    def test_all_v3_automatic_failure_transitions_retain_source_phase(
+        self,
+        tmp_path,
+        transition,
+    ):
+        store = SquadStateStore(tmp_path / transition)
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            autonomy_mode="banzai",
+        )
+        pending = _seal_provider_human_input_via_advance(
+            store,
+            from_phase="init",
+            to_phase="terminal-blocked",
+        )
+        decision_id = pending["blocked_decision"]["id"]
+
+        if transition == "setup_failure":
+            failed = store.fail_pending_human_input_decision(
+                decision_id,
+                expected_state_revision=pending["state_revision"],
+                failure_code="decision_context_setup_failed",
+            )
+        else:
+            claimed = store.claim_human_input_decision(
+                decision_id,
+                expected_state_revision=pending["state_revision"],
+            )
+            retry = store.record_human_input_resolution_failure(
+                decision_id,
+                expected_state_revision=claimed["state_revision"],
+                failure_code="provider_failed",
+            )
+            claimed = store.claim_human_input_decision(
+                decision_id,
+                expected_state_revision=retry["state_revision"],
+            )
+            failed = (
+                store.recover_interrupted_human_input_decision()
+                if transition == "interrupted_second_claim"
+                else store.record_human_input_resolution_failure(
+                    decision_id,
+                    expected_state_revision=claimed["state_revision"],
+                    failure_code="provider_failed",
+                )
+            )
+
+        assert failed["blocked_decision"]["status"] == "failed"
+        assert failed["phase"] == "init"
+
+    def test_eligible_v2_migration_failure_retains_source_phase(
+        self,
+        tmp_path,
+    ):
+        store = SquadStateStore(tmp_path / "eligible-v2")
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "terminal-blocked",
+            autonomy_mode="banzai",
+        )
+        state = store.load()
+        decision = build_blocked_decision_v2(
+            decision_id="dec-eligible-v2-migration",
+            status="pending",
+            source_kind="provider_escalation",
+            producer_id="init",
+            source_phase="init",
+            reason_code="approval_required",
+            classification="operational",
+            question="May the squad continue?",
+            options=[],
+            recommended_answer="Continue with the attested provider result.",
+            risk_level="low",
+            resolution_handler="clarification_resume",
+            autonomy_mode="banzai",
+            source_state_revision=state["state_revision"],
+            now="2026-08-23T12:00:00+00:00",
+        )
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": decision["reason_code"],
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RESOLVE_DECISION,
+                    reason_code=str(decision["reason_code"]),
+                    phase="init",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+            }
+        )
+        store._path.write_text(json.dumps(state), encoding="utf-8")
+
+        failed = store.fail_pending_v2_banzai_human_input_migration(
+            str(decision["id"]),
+            expected_state_revision=state["state_revision"],
+            v2_automatic_eligible=True,
+        )
+
+        assert failed["blocked_decision"]["status"] == "failed"
+        assert failed["phase"] == "init"
+
+    def test_ineligible_v2_failed_decision_does_not_retain_source_phase(
+        self,
+        tmp_path,
+    ):
+        store = SquadStateStore(tmp_path / "ineligible-v2")
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "terminal-blocked",
+            autonomy_mode="banzai",
+        )
+        state = store.load()
+        decision = build_blocked_decision_v2(
+            decision_id="dec-ineligible-v2",
+            status="pending",
+            source_kind="provider_escalation",
+            producer_id="init",
+            source_phase="init",
+            reason_code="approval_required",
+            classification="material",
+            question="May the squad continue?",
+            options=[],
+            recommended_answer=None,
+            risk_level=None,
+            resolution_handler="clarification_resume",
+            autonomy_mode="banzai",
+            source_state_revision=state["state_revision"],
+            now="2026-08-23T12:00:00+00:00",
+        )
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": decision["reason_code"],
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RESOLVE_DECISION,
+                    reason_code=str(decision["reason_code"]),
+                    phase="init",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+            }
+        )
+        store._path.write_text(json.dumps(state), encoding="utf-8")
+
+        failed = store.fail_pending_v2_banzai_human_input_migration(
+            str(decision["id"]),
+            expected_state_revision=state["state_revision"],
+            v2_automatic_eligible=False,
+        )
+
+        assert failed["blocked_decision"]["status"] == "failed"
+        assert failed["phase"] == "terminal-blocked"
 
     def test_claim_rejects_attempt_limit_independently_of_schema_validation(
         self,

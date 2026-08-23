@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -3520,32 +3520,6 @@ def _validated_versioned_decision(
     return decision
 
 
-def _versioned_decision_options(
-    decision: Mapping[str, object],
-) -> tuple[object, ...]:
-    from harness.human_input import HumanInputOption, HumanInputPolicyError
-
-    raw_options = decision.get("options")
-    if not isinstance(raw_options, list):
-        raise HumanInputPolicyError("sealed decision options are invalid")
-    options: list[HumanInputOption] = []
-    for raw_option in raw_options:
-        if not isinstance(raw_option, Mapping):
-            raise HumanInputPolicyError("sealed decision options are invalid")
-        options.append(
-            HumanInputOption(
-                id=raw_option.get("id"),
-                label=raw_option.get("label"),
-                description=raw_option.get("description"),
-                recommended=raw_option.get("recommended"),
-                risk_level=raw_option.get("risk_level"),
-                next_phase=raw_option.get("next_phase"),
-                outcome=raw_option.get("outcome"),
-            )
-        )
-    return tuple(options)
-
-
 def _v2_automatic_decision_is_registered(
     decision: Mapping[str, object],
     *,
@@ -3556,6 +3530,8 @@ def _v2_automatic_decision_is_registered(
     if decision.get("schema_version") != 2 or project_root is None:
         return False
     try:
+        from harness.human_input import v2_automatic_decision_is_registered
+
         if graph is None:
             from harness.phase_graph import load_workspace_phase_graph
 
@@ -3566,60 +3542,7 @@ def _v2_automatic_decision_is_registered(
             str(decision.get("producer_id") or ""),
             str(decision.get("reason_code") or ""),
         )
-        if (
-            decision.get("classification") != policy.classification
-            or decision.get("resolution_handler") != policy.resolution_handler
-            or decision.get("source_phase") not in policy.allowed_phase_ids
-        ):
-            return False
-        options = _versioned_decision_options(decision)
-        dynamic_dispatch_cap = (
-            policy.source_kind == "controller_safeguard"
-            and policy.producer_id == "phase_dispatch_limit"
-            and policy.reason_code == "phase_dispatch_limit"
-            and policy.resolution_handler == "phase_dispatch_limit"
-        )
-        if dynamic_dispatch_cap:
-            if not options:
-                return False
-        elif policy.source_kind != "provider_escalation":
-            legacy_options = tuple(
-                replace(option, recommended=False) for option in options
-            ) == tuple(
-                replace(option, recommended=False) for option in policy.options
-            )
-            if not legacy_options:
-                return False
-        if any(
-            option.next_phase is not None
-            and option.next_phase not in policy.allowed_target_phases
-            for option in options
-        ):
-            return False
-        if any(
-            option.outcome is not None
-            for option in options
-            if policy.source_kind != "human_gate"
-        ):
-            return False
-        if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
-            return False
-        if policy.classification == "external_prerequisite":
-            return False
-        recommended_options = [
-            option for option in options if option.recommended
-        ]
-        if len(recommended_options) == 1:
-            return (
-                recommended_options[0].risk_level
-                or decision.get("risk_level")
-            ) == "low"
-        return (
-            not options
-            and isinstance(decision.get("recommended_answer"), str)
-            and bool(str(decision["recommended_answer"]).strip())
-            and decision.get("risk_level") == "low"
-        )
+        return v2_automatic_decision_is_registered(decision, policy)
     except (AttributeError, KeyError, OSError, TypeError, ValueError):
         return False
 
@@ -3690,10 +3613,7 @@ def _versioned_decision_recovery_action(
     *,
     project_root: Path | None,
 ) -> _RunRecoveryAction | None:
-    try:
-        decision = _validated_versioned_decision(run_state)
-    except (RecoveryInstructionError, ValueError):
-        return None
+    decision = _validated_versioned_decision(run_state)
     if decision is None:
         return None
     status = decision["status"]
@@ -4573,10 +4493,20 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
-    decision_recovery = _versioned_decision_recovery_action(
-        run_state,
-        project_root=project_root,
-    )
+    try:
+        decision_recovery = _versioned_decision_recovery_action(
+            run_state,
+            project_root=project_root,
+        )
+    except (RecoveryInstructionError, ValueError) as exc:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="invalid_decision_authority",
+            note=(
+                f"invalid persisted decision authority: {exc}; restore or repair "
+                "the exact decision and recovery pair before retrying"
+            ),
+        )
     if decision_recovery is not None:
         return decision_recovery
 
@@ -5634,7 +5564,7 @@ def _print_squad_summary(
     if status == "done" and spec_id:
         next_step = f"echelon delivery run {spec_id}"
     elif status in {"blocked", "interrupted", "budget_exhausted"}:
-        next_step = action.command or "echelon spec continue"
+        next_step = action.command
 
     from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
@@ -6490,9 +6420,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if action.kind == "manual_recovery":
             fields = [
                 ("reason", action.reason),
-                ("next", action.command),
                 ("note", action.note),
             ]
+            if action.command:
+                fields.insert(1, ("next", action.command))
             if run_dir is not None:
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, run_dir, current_state)
@@ -8767,18 +8698,14 @@ def _cmd_status(project_root: Path) -> None:
 
         try:
             decision = _validated_versioned_decision(state)
-        except (RecoveryInstructionError, ValueError) as exc:
-            fields.append(("Decision", f"invalid persisted decision: {exc}"))
-            if run_status == "blocked" and action.command:
-                fields.append(("Next", action.command))
+        except (RecoveryInstructionError, ValueError):
+            pass
         else:
             if decision is not None:
                 fields.extend(_decision_audit_fields(decision))
                 fields.extend(
                     _proportional_quality_decision_fields(state, decision)
                 )
-            elif run_status == "blocked" and action.command:
-                fields.append(("Next", action.command))
 
         _banner("RUN STATE", fields)
 

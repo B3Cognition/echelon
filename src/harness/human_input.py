@@ -1012,6 +1012,88 @@ def _derive_automatic_eligibility(
     return not options and recommended_answer is not None and risk_level == "low"
 
 
+def v2_automatic_decision_is_registered(
+    decision: Mapping[str, object],
+    policy: HumanInputPolicy,
+) -> bool:
+    """Reconstruct intrinsic v2 eligibility without requiring v3 preparation."""
+    if decision.get("schema_version") != 2:
+        return False
+    if (
+        decision.get("source_kind") != policy.source_kind
+        or decision.get("producer_id") != policy.producer_id
+        or decision.get("reason_code") != policy.reason_code
+        or decision.get("classification") != policy.classification
+        or decision.get("resolution_handler") != policy.resolution_handler
+        or decision.get("source_phase") not in policy.allowed_phase_ids
+    ):
+        return False
+    raw_options = decision.get("options")
+    if not isinstance(raw_options, list):
+        return False
+    try:
+        options = tuple(
+            HumanInputOption(
+                id=raw_option.get("id"),
+                label=raw_option.get("label"),
+                description=raw_option.get("description"),
+                recommended=raw_option.get("recommended"),
+                risk_level=raw_option.get("risk_level"),
+                next_phase=raw_option.get("next_phase"),
+                outcome=raw_option.get("outcome"),
+            )
+            for raw_option in raw_options
+            if isinstance(raw_option, Mapping)
+        )
+    except HumanInputPolicyError:
+        return False
+    if len(options) != len(raw_options):
+        return False
+
+    dynamic_dispatch_cap = (
+        policy.source_kind == "controller_safeguard"
+        and policy.producer_id == "phase_dispatch_limit"
+        and policy.reason_code == "phase_dispatch_limit"
+        and policy.resolution_handler == "phase_dispatch_limit"
+    )
+    if dynamic_dispatch_cap:
+        if not options:
+            return False
+    elif policy.source_kind != "provider_escalation":
+        if tuple(
+            replace(option, recommended=False) for option in options
+        ) != tuple(
+            replace(option, recommended=False) for option in policy.options
+        ):
+            return False
+    if any(
+        option.next_phase is not None
+        and option.next_phase not in policy.allowed_target_phases
+        for option in options
+    ):
+        return False
+    if policy.source_kind != "human_gate" and any(
+        option.outcome is not None for option in options
+    ):
+        return False
+    if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
+        return False
+    if policy.classification == "external_prerequisite":
+        return False
+    recommended_options = [option for option in options if option.recommended]
+    if len(recommended_options) == 1:
+        return (
+            recommended_options[0].risk_level
+            or decision.get("risk_level")
+        ) == "low"
+    return (
+        not options
+        and isinstance(decision.get("recommended_answer"), str)
+        and bool(str(decision["recommended_answer"]).strip())
+        and decision.get("risk_level") == "low"
+    )
+
+
 def _within_inclusive_decimal_margin(
     score: float,
     threshold: float,

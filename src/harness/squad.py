@@ -68,6 +68,7 @@ from harness.human_input import (
     gate_outcome_route_error,
     legacy_recovery_policy_alias,
     select_initial_decision_status,
+    v2_automatic_decision_is_registered,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.checkpoint_policy import (
@@ -5171,12 +5172,26 @@ class SquadController:
             and prepared_options == legacy_options
         )
 
+    def _v2_decision_automatic_eligible(
+        self,
+        decision: Mapping[str, object],
+    ) -> bool:
+        """Check legacy replay eligibility against one registered policy."""
+        if decision.get("schema_version") != 2:
+            return False
+        try:
+            policy = self._policy_for_human_input_decision(decision)
+        except (HumanInputPolicyError, KeyError, TypeError, ValueError):
+            return False
+        return v2_automatic_decision_is_registered(decision, policy)
+
     def _migrate_pending_v2_banzai_decision(
         self,
         state: Mapping[str, object],
         decision: Mapping[str, object],
     ) -> dict[str, object] | None:
         """Re-prepare one legacy Banzai decision or seal migration failure."""
+        v2_automatic_eligible = self._v2_decision_automatic_eligible(decision)
         try:
             policy = self._policy_for_human_input_decision(decision)
             registry = (
@@ -5231,6 +5246,7 @@ class SquadController:
             self._state_store.fail_pending_v2_banzai_human_input_migration(
                 str(decision["id"]),
                 expected_state_revision=int(state["state_revision"]),
+                v2_automatic_eligible=v2_automatic_eligible,
             )
             return None
         return self._state_store.migrate_pending_v2_banzai_human_input_decision(
@@ -5245,7 +5261,15 @@ class SquadController:
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
                 return False
-        state = self._state_store.recover_interrupted_human_input_decision()
+        raw_pending_decision = pending.get("blocked_decision")
+        v2_automatic_eligible = (
+            self._v2_decision_automatic_eligible(raw_pending_decision)
+            if isinstance(raw_pending_decision, Mapping)
+            else False
+        )
+        state = self._state_store.recover_interrupted_human_input_decision(
+            v2_automatic_eligible=v2_automatic_eligible,
+        )
         raw_decision = state.get("blocked_decision")
         if (
             not isinstance(raw_decision, Mapping)

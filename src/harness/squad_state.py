@@ -2344,8 +2344,10 @@ class SquadStateStore:
         decision_id: str,
         *,
         expected_state_revision: int,
+        v2_automatic_eligible: bool = False,
     ) -> dict[str, Any]:
         """Seal the one canonical terminal failure for unsafe v2 migration."""
+        self._validate_v2_automatic_eligibility(v2_automatic_eligible)
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -2372,6 +2374,12 @@ class SquadStateStore:
             desired["status"] = "blocked"
             desired["blocked_reason"] = "decision_recommendation_unavailable"
             desired.pop("escalation_question", None)
+            self._retain_failed_automatic_source_phase_unlocked(
+                before,
+                desired,
+                failed,
+                v2_automatic_eligible=v2_automatic_eligible,
+            )
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
 
@@ -2381,6 +2389,7 @@ class SquadStateStore:
         *,
         expected_state_revision: int,
         failure_code: str,
+        v2_automatic_eligible: bool = False,
     ) -> dict[str, Any]:
         """Fail deterministic pre-claim setup without consuming an attempt."""
         if not isinstance(failure_code, str) or not failure_code.strip():
@@ -2389,6 +2398,7 @@ class SquadStateStore:
                 json_path="$.blocked_decision.failure_code",
                 validator="type",
             )
+        self._validate_v2_automatic_eligibility(v2_automatic_eligible)
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -2404,6 +2414,12 @@ class SquadStateStore:
                 "failure_code": failure_code.strip(),
             }
             desired.pop("escalation_question", None)
+            self._retain_failed_automatic_source_phase_unlocked(
+                before,
+                desired,
+                failed,
+                v2_automatic_eligible=v2_automatic_eligible,
+            )
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
 
@@ -2548,7 +2564,12 @@ class SquadStateStore:
             )
             return True
 
-    def recover_interrupted_human_input_decision(self) -> dict[str, Any]:
+    def recover_interrupted_human_input_decision(
+        self,
+        *,
+        v2_automatic_eligible: bool = False,
+    ) -> dict[str, Any]:
+        self._validate_v2_automatic_eligibility(v2_automatic_eligible)
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             raw_decision = before.get("blocked_decision")
@@ -2575,6 +2596,12 @@ class SquadStateStore:
                     "failure_code": "resolution_attempts_exhausted",
                 }
                 desired.pop("escalation_question", None)
+                self._retain_failed_automatic_source_phase_unlocked(
+                    before,
+                    desired,
+                    recovered,
+                    v2_automatic_eligible=v2_automatic_eligible,
+                )
             self._replace_human_input_decision_unlocked(
                 desired,
                 recovered,
@@ -2588,6 +2615,7 @@ class SquadStateStore:
         expected_state_revision: int,
         failure_code: str,
         token_usage_delta: int = 0,
+        v2_automatic_eligible: bool = False,
     ) -> dict[str, Any]:
         if type(token_usage_delta) is not int or token_usage_delta < 0:
             raise StateAdvanceError(
@@ -2595,6 +2623,7 @@ class SquadStateStore:
                 json_path="$.token_usage_delta",
                 validator="type",
             )
+        self._validate_v2_automatic_eligibility(v2_automatic_eligible)
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -2612,21 +2641,51 @@ class SquadStateStore:
             }
             if exhausted:
                 desired.pop("escalation_question", None)
-                if (
-                    failed.get("autonomy_mode") == "banzai"
-                    and failed.get("source_kind")
-                    in {"provider_escalation", "controller_safeguard"}
-                    and (
-                        failed.get("schema_version") == 2
-                        or failed.get("automatic_eligible") is True
-                    )
-                ):
-                    desired["phase"] = failed["source_phase"]
+                self._retain_failed_automatic_source_phase_unlocked(
+                    before,
+                    desired,
+                    failed,
+                    v2_automatic_eligible=v2_automatic_eligible,
+                )
             desired["token_usage"] = (
                 int(desired.get("token_usage") or 0) + token_usage_delta
             )
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
+
+    @staticmethod
+    def _validate_v2_automatic_eligibility(value: bool) -> None:
+        if type(value) is not bool:
+            raise StateAdvanceError(
+                "v2 automatic eligibility must be checked boolean data",
+                json_path="$.blocked_decision",
+                validator="human_input_authority",
+            )
+
+    @staticmethod
+    def _retain_failed_automatic_source_phase_unlocked(
+        before: Mapping[str, object],
+        desired: dict[str, Any],
+        failed: Mapping[str, object],
+        *,
+        v2_automatic_eligible: bool,
+    ) -> None:
+        """Retain replay authority using sealed or prechecked decision data only."""
+        schema_version = failed.get("schema_version")
+        eligible = (
+            failed.get("automatic_eligible") is True
+            if schema_version == 3
+            else schema_version == 2 and v2_automatic_eligible is True
+        )
+        if (
+            failed.get("status") == "failed"
+            and before.get("autonomy_mode") == "banzai"
+            and failed.get("autonomy_mode") == "banzai"
+            and failed.get("source_kind")
+            in {"provider_escalation", "controller_safeguard"}
+            and eligible
+        ):
+            desired["phase"] = failed["source_phase"]
 
     def _failed_automatic_replay_decision_unlocked(
         self,
