@@ -4,12 +4,14 @@
 **Finding:** EGR-165  
 **Status:** Revised after protocol-boundary architecture review; implementation pending
 
-> **Protocol note (2026-08-23):** This document remains the immutable design
-> authority for protocol 2.2 and its API-only compact-baseline executor. The
-> provider-eligibility and universal no-tools rules are superseded for newly
-> created RE v2 runs by protocol 2.3 in
-> `2026-08-23-re-v2-provider-neutral-execution-design.md`. Existing protocol-2.2
-> runs retain the rules below unchanged.
+> **Protocol note (2026-08-23):** This document is historical design authority
+> for protocol 2.2 and its API-only compact-baseline executor. Its direct
+> transport, concrete model/revision, provider-eligibility, and universal
+> no-tools rules are superseded for protocol 2.3 by the Prosaic-first authority
+> in `2026-08-23-re-v2-provider-neutral-execution-design.md`. Existing 2.2 runs
+> remain readable and may adopt an already completed valid capture, but
+> unresolved work may not issue a new direct provider request after protocol 2.3
+> is active.
 
 ## Purpose
 
