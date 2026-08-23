@@ -19,7 +19,6 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     is_valid_decision_id,
     validate_blocked_decision,
-    validate_blocked_decision_v2,
 )
 from echelon.strict_json import loads_strict_json
 from harness.proportional_quality import (
@@ -1443,6 +1442,7 @@ def _current_quality_debt_authorization(
     )
     if (
         not isinstance(resolved_snapshot, Mapping)
+        or decision != dict(resolved_snapshot)
         or _canonical_sha256(dict(resolved_snapshot))
         != authorization["resolved_decision_sha256"]
     ):

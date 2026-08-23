@@ -843,6 +843,73 @@ def _validate_prepared_controller_completion(
     return marker, intent, receipts, receipts_sha256, prefix_kind
 
 
+_QUALITY_DEBT_EFFECT_POSTIMAGE_KEYS = frozenset(
+    {
+        "operation",
+        "debt_path",
+        "debt",
+        "authorization",
+        "previous_debt_artifact_sha256",
+    }
+)
+_QUALITY_DEBT_AUTHORIZATION_POSTIMAGE_KEYS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "source_path",
+        "source_sha256",
+        "understanding_evidence",
+        "understanding_evidence_sha256",
+        "candidate_manifest",
+        "candidate_manifest_sha256",
+        "debt_artifact",
+        "debt_artifact_sha256",
+        "selected_candidate_id",
+        "failed_gates",
+        "qualitative_debt",
+        "decision_id",
+        "resolved_by",
+        "accepted_at",
+        "resolved_decision",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
+        "resolution_completion",
+        "previous_debt_artifact_sha256",
+    }
+)
+_QUALITY_DEBT_ARTIFACT_POSTIMAGE_KEYS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "source_path",
+        "source_sha256",
+        "understanding_evidence",
+        "understanding_evidence_sha256",
+        "candidate_manifest",
+        "candidate_manifest_sha256",
+        "selected_candidate_id",
+        "failed_gates",
+        "qualitative_debt",
+        "repair_accounting",
+        "selection_rationale",
+        "decision_id",
+        "resolved_by",
+        "accepted_at",
+        "resolved_decision",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
+        "resolution_completion",
+        "previous_debt_artifact_sha256",
+    }
+)
+_QUALITY_DEBT_SHARED_POSTIMAGE_KEYS = (
+    _QUALITY_DEBT_AUTHORIZATION_POSTIMAGE_KEYS
+    - {"debt_artifact", "debt_artifact_sha256"}
+)
+
+
 def _validate_quality_debt_resolution_postimage(
     resolved: Mapping[str, object],
     updates: Mapping[str, Any],
@@ -873,9 +940,23 @@ def _validate_quality_debt_resolution_postimage(
         or not isinstance(debt, Mapping)
         or not isinstance(effect_authorization, Mapping)
         or not isinstance(quality_effect, Mapping)
+        or set(quality_effect) != {"kind", "operation", "payload"}
+        or not isinstance(payload, Mapping)
+        or set(payload) != _QUALITY_DEBT_EFFECT_POSTIMAGE_KEYS
+        or set(authorization)
+        != _QUALITY_DEBT_AUTHORIZATION_POSTIMAGE_KEYS
+        or set(effect_authorization)
+        != _QUALITY_DEBT_AUTHORIZATION_POSTIMAGE_KEYS
+        or set(debt) != _QUALITY_DEBT_ARTIFACT_POSTIMAGE_KEYS
+        or authorization.get("schema_version") != 1
+        or debt.get("schema_version") != 1
         or quality_effect.get("kind") != "proportional_quality"
         or quality_effect.get("operation") != "debt_write"
         or payload.get("operation") != "debt_write"
+        or payload.get("debt_path")
+        != authorization.get("debt_artifact")
+        or payload.get("previous_debt_artifact_sha256")
+        != authorization.get("previous_debt_artifact_sha256")
         or dict(effect_authorization) != dict(authorization)
         or authorization.get("resolved_decision") != dict(resolved)
         or debt.get("resolved_decision") != dict(resolved)
@@ -889,13 +970,9 @@ def _validate_quality_debt_resolution_postimage(
             json_path="$.spec_quality_debt_authorization.resolved_decision",
             validator="resolution_postimage",
         )
-    shared_keys = set(authorization) - {
-        "debt_artifact",
-        "debt_artifact_sha256",
-    }
-    if (
-        set(debt) != shared_keys | {"repair_accounting", "selection_rationale"}
-        or any(debt.get(key) != authorization.get(key) for key in shared_keys)
+    if any(
+        debt.get(key) != authorization.get(key)
+        for key in _QUALITY_DEBT_SHARED_POSTIMAGE_KEYS
     ):
         raise StateAdvanceError(
             "quality-debt authorization and artifact postimages diverged",

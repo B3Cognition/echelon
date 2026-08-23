@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -2854,6 +2855,65 @@ def test_debt_acceptance_aborts_on_completion_receipt_divergence(
     assert state == before
     assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
     assert not list((store.squad_dir / ".completion-outbox").iterdir())
+
+
+@pytest.mark.parametrize(
+    "divergence",
+    ["alternate_debt_path", "alternate_preimage", "extra_shared_field"],
+)
+def test_debt_acceptance_rejects_unbound_effect_postimage_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    divergence: str,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    state_path = store.squad_dir / "state.json"
+    before = state_path.read_bytes()
+    original_builder = squad_module.build_quality_debt_authorization
+    alternate_path = "specs/alternate/quality-debt.json"
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        payload = json.loads(json.dumps(prepared.effect_payload()))
+        payload["authorization"] = authorization
+        payload["debt"] = debt
+        if divergence == "alternate_debt_path":
+            payload["debt_path"] = alternate_path
+        elif divergence == "alternate_preimage":
+            payload["previous_debt_artifact_sha256"] = "f" * 64
+        else:
+            authorization["injected_shared_field"] = "attacker-controlled"
+            debt["injected_shared_field"] = "attacker-controlled"
+            debt_bytes = (
+                json.dumps(debt, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            authorization["debt_artifact_sha256"] = hashlib.sha256(
+                debt_bytes
+            ).hexdigest()
+        return SimpleNamespace(
+            authorization=authorization,
+            debt=debt,
+            debt_path=prepared.debt_path,
+            effect_payload=lambda: payload,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    assert state_path.read_bytes() == before
+    state = store.load()
+    assert "pending_controller_completion" not in state
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not (tmp_path / alternate_path).exists()
+    assert not list((store.squad_dir / ".completion-outbox").glob("*"))
 
 
 def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(

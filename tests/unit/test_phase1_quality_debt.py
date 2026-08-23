@@ -47,6 +47,19 @@ def _write_json(path: Path, payload: object) -> None:
     )
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
 def _candidate_payload(candidate: QualityCandidateManifest) -> dict[str, object]:
     return {
         "schema_version": candidate.schema_version,
@@ -471,6 +484,81 @@ def _builder_authority_kwargs(
     }
 
 
+def _reseal_debt_completion(
+    state: dict[str, object],
+    *,
+    authorization: dict[str, object],
+    debt: dict[str, object],
+) -> None:
+    binding = authorization["resolution_completion"]
+    assert isinstance(binding, dict)
+    completion_id = str(binding["completion_id"])
+    effect_payload = {
+        "operation": "debt_write",
+        "debt_path": authorization["debt_artifact"],
+        "debt": debt,
+        "authorization": authorization,
+        "previous_debt_artifact_sha256": authorization[
+            "previous_debt_artifact_sha256"
+        ],
+    }
+    intent = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "origin": "resolution",
+        "publication": {"kind": "none"},
+        "route": {
+            "kind": "resolution",
+            "decision_id": authorization["decision_id"],
+            "from_phase": binding["from_phase"],
+            "to_phase": binding["to_phase"],
+        },
+        "effect_plan": ["quality"],
+        "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {
+            "kind": "proportional_quality",
+            "operation": "debt_write",
+            "payload": effect_payload,
+        },
+        "context_reason": "human-input proportional quality resolution",
+        "mine_phase_a": False,
+        "judgment_payload_sha256": [],
+        "judgments": [],
+    }
+    receipts = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "effects": {
+            "quality": {
+                "schema_version": 1,
+                "operation": "debt_write",
+                "debt": {
+                    "schema_version": 1,
+                    "operation": "debt_write",
+                    "debt_path": authorization["debt_artifact"],
+                    "debt_artifact_sha256": authorization[
+                        "debt_artifact_sha256"
+                    ],
+                    "previous_debt_artifact_sha256": authorization[
+                        "previous_debt_artifact_sha256"
+                    ],
+                },
+            }
+        },
+    }
+    state["last_human_input_completion"] = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "intent_sha256": hashlib.sha256(
+            _canonical_json_bytes(intent)
+        ).hexdigest(),
+        "receipts_sha256": hashlib.sha256(
+            _canonical_json_bytes(receipts)
+        ).hexdigest(),
+        "decision_id": authorization["decision_id"],
+    }
+
+
 def test_builder_prepares_complete_content_bound_schema_v1_debt(
     tmp_path: Path,
 ) -> None:
@@ -618,6 +706,69 @@ def test_currentness_survives_reuse_of_the_active_decision_slot(
         state,
         project_root=tmp_path,
     )
+
+
+def test_currentness_rejects_coherently_resealed_noncanonical_decision(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, _prepared, paths = _debt_fixture(tmp_path)
+    authorization = json.loads(
+        json.dumps(state["spec_quality_debt_authorization"])
+    )
+    debt = json.loads(paths["debt"].read_text(encoding="utf-8"))
+    resolved = dict(authorization["resolved_decision"])
+    resolved["question"] = f"  {resolved['question']}  "
+    decision_sha256 = hashlib.sha256(
+        _canonical_json_bytes(resolved)
+    ).hexdigest()
+    for record in (authorization, debt):
+        record["resolved_decision"] = resolved
+        record["resolved_decision_sha256"] = decision_sha256
+    _write_json(paths["debt"], debt)
+    authorization["debt_artifact_sha256"] = _sha256(paths["debt"])
+    state["spec_quality_debt_authorization"] = authorization
+    _reseal_debt_completion(
+        state,
+        authorization=authorization,
+        debt=debt,
+    )
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_currentness_rejects_coherent_canonical_decision_digest_tamper(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, _prepared, paths = _debt_fixture(tmp_path)
+    authorization = json.loads(
+        json.dumps(state["spec_quality_debt_authorization"])
+    )
+    debt = json.loads(paths["debt"].read_text(encoding="utf-8"))
+    resolved = dict(authorization["resolved_decision"])
+    resolved["question"] = "Accept a canonically altered debt decision?"
+    assert validate_blocked_decision_v2(resolved) == resolved
+    for record in (authorization, debt):
+        record["resolved_decision"] = resolved
+    _write_json(paths["debt"], debt)
+    authorization["debt_artifact_sha256"] = _sha256(paths["debt"])
+    state["spec_quality_debt_authorization"] = authorization
+    _reseal_debt_completion(
+        state,
+        authorization=authorization,
+        debt=debt,
+    )
+
+    with pytest.raises(
+        QualityCandidateIntegrityError,
+        match="resolved decision changed",
+    ):
+        debt_module._current_quality_debt_authorization(
+            state,
+            project_root=tmp_path,
+        )
 
 
 def test_qualitative_only_debt_keeps_empty_failed_gates_and_current_sage_issues(
