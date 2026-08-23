@@ -1081,7 +1081,7 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     ).replay()
     assert manifest.engine == "re-v2"
     assert manifest.schema_version == 2
-    assert manifest.engine_protocol_version == "2.2"
+    assert manifest.engine_protocol_version == "2.3"
     assert manifest.source_snapshot_kind == "workspace-git-composite"
     from harness.re_v2.snapshot import load_snapshot_manifest
 
