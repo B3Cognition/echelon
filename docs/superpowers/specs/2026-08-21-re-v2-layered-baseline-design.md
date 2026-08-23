@@ -4,6 +4,13 @@
 **Finding:** EGR-165  
 **Status:** Revised after protocol-boundary architecture review; implementation pending
 
+> **Protocol note (2026-08-23):** This document remains the immutable design
+> authority for protocol 2.2 and its API-only compact-baseline executor. The
+> provider-eligibility and universal no-tools rules are superseded for newly
+> created RE v2 runs by protocol 2.3 in
+> `2026-08-23-re-v2-provider-neutral-execution-design.md`. Existing protocol-2.2
+> runs retain the rules below unchanged.
+
 ## Purpose
 
 EGR-165 turns the pinned RE v2 execution kernel into a useful layered system.
