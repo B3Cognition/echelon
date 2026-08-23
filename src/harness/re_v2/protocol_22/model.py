@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Literal, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.model import RE_V2_SCHEMA_2_PROTOCOLS
 
 from .schema import (
     Protocol22SchemaError,
@@ -1259,7 +1260,7 @@ class PersistedCandidateV2(_CanonicalIdentity):
 class RunManifestV2(_CanonicalIdentity):
     schema_version: int
     engine: Literal["re-v2"]
-    engine_protocol_version: Literal["2.2"]
+    engine_protocol_version: Literal["2.2", "2.3"]
     run_id: str
     created_at: str
     source_snapshot_id: str
@@ -1292,9 +1293,9 @@ class RunManifestV2(_CanonicalIdentity):
     def __post_init__(self) -> None:
         literal(self.schema_version, 2, "RunManifestV2.schema_version")
         literal(self.engine, "re-v2", "RunManifestV2.engine")
-        literal(
+        one_of(
             self.engine_protocol_version,
-            "2.2",
+            frozenset(RE_V2_SCHEMA_2_PROTOCOLS),
             "RunManifestV2.engine_protocol_version",
         )
         safe_id(self.run_id, "RunManifestV2.run_id")

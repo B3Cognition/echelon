@@ -174,9 +174,9 @@ def test_load_rejects_manifest_with_unsupported_pinned_protocol(tmp_path: Path) 
 
 
 @pytest.mark.unit
-def test_supported_protocols_include_only_the_three_explicit_versions() -> None:
+def test_supported_protocols_include_readable_23_before_activation() -> None:
     assert RE_V2_PROTOCOL == "2.2"
-    assert RE_V2_SUPPORTED_PROTOCOLS == ("2.0", "2.1", "2.2")
+    assert RE_V2_SUPPORTED_PROTOCOLS == ("2.0", "2.1", "2.2", "2.3")
 
 
 @pytest.mark.unit
@@ -191,6 +191,21 @@ def test_run_store_loads_canonical_schema_2_manifest(tmp_path: Path) -> None:
 
     assert isinstance(loaded, RunManifestV2)
     assert loaded == expected
+
+
+@pytest.mark.unit
+def test_run_store_loads_protocol_23_with_schema_2(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v23"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    raw = manifest_v2_dict(run_id=run_dir.name)
+    raw["engine_protocol_version"] = "2.3"
+    paths.manifest.write_bytes(canonical_json_bytes(raw))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV2)
+    assert loaded.to_json_dict() == raw
 
 
 @pytest.mark.unit

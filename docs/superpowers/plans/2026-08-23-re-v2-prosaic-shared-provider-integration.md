@@ -48,9 +48,11 @@ The only new production class authorized by this plan is the thin
 **Files:**
 
 - Modify: `src/harness/re_v2/protocol_22/model.py`
+- Modify: `src/harness/re_v2/model.py`
 - Modify: `src/harness/re_v2/run_store.py`
 - Modify: `tests/unit/test_re_v2_protocol_22_model.py`
 - Modify: `tests/unit/test_re_v2_run_store.py`
+- Test: `tests/unit/test_re_v2_model.py`
 - Test: `tests/unit/test_re_v2_protocol_compatibility.py`
 
 **Interfaces:**
@@ -76,14 +78,17 @@ def test_schema_2_manifest_accepts_protocol_23_without_new_fields() -> None:
 ```
 
 Add a run-store round-trip test for the `(2, "2.3")` pair and retain the exact
-existing 2.2 digest assertions.
+existing 2.2 digest assertions. Update the supported-protocol assertion so 2.3
+is readable while `RE_V2_PROTOCOL` remains 2.2 until Task 5 activates new-run
+creation.
 
 - [ ] **Step 2: Verify RED**
 
 Run:
 
 ```bash
-pytest tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_run_store.py -q
+pytest tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_model.py \
+  tests/unit/test_re_v2_run_store.py -q
 ```
 
 Expected: FAIL because `RunManifestV2` and `_decode_manifest` accept only 2.2.
@@ -104,14 +109,17 @@ one_of(
 
 In `run_store._decode_manifest`, route both `(2, "2.2")` and `(2, "2.3")` to
 `RunManifestV2.from_json_dict`. Extend `_validate_supported_manifest` with the
-same closed set. Add no manifest class or field.
+same closed set. Add 2.3 to `RE_V2_SUPPORTED_PROTOCOLS` without changing the
+active `RE_V2_PROTOCOL` constant. Add no manifest class or field.
 
 - [ ] **Step 4: Verify schema compatibility**
 
 Run:
 
 ```bash
-pytest tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py -q
+pytest tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_model.py \
+  tests/unit/test_re_v2_run_store.py \
+  tests/unit/test_re_v2_protocol_compatibility.py -q
 ```
 
 Expected: PASS, including all unchanged protocol-2.2 digest tests.
@@ -119,8 +127,10 @@ Expected: PASS, including all unchanged protocol-2.2 digest tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/harness/re_v2/protocol_22/model.py src/harness/re_v2/run_store.py \
-  tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_run_store.py
+git add src/harness/re_v2/protocol_22/model.py src/harness/re_v2/model.py \
+  src/harness/re_v2/run_store.py tests/unit/test_re_v2_protocol_22_model.py \
+  tests/unit/test_re_v2_model.py tests/unit/test_re_v2_run_store.py \
+  docs/superpowers/plans/2026-08-23-re-v2-prosaic-shared-provider-integration.md
 git commit -m "feat(re-v2): admit protocol 2.3 in schema 2"
 ```
 

@@ -144,6 +144,17 @@ def test_manifest_v2_rejects_schema_1_provider_maps() -> None:
         RunManifestV2.from_json_dict(raw)
 
 
+def test_schema_2_manifest_accepts_protocol_23_without_new_fields() -> None:
+    raw = manifest_v2_dict()
+    raw["engine_protocol_version"] = "2.3"
+
+    manifest = RunManifestV2.from_json_dict(raw)
+
+    assert manifest.schema_version == 2
+    assert manifest.engine_protocol_version == "2.3"
+    assert set(manifest.to_json_dict()) == set(manifest_v2_dict())
+
+
 @pytest.mark.parametrize(
     "relative_path",
     (

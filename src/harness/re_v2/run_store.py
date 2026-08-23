@@ -10,7 +10,7 @@ from typing import Literal
 
 from . import RE_V2_ENGINE, RE_V2_SCHEMA_1_PROTOCOLS, ReV2ModelError
 from .canonical import canonical_json_bytes
-from .model import RunManifest
+from .model import RE_V2_SCHEMA_2_PROTOCOLS, RunManifest
 from .protocol_22.model import RunManifestV2
 from .protocol_22.schema import Protocol22SchemaError, load_canonical_object
 
@@ -177,7 +177,7 @@ def _decode_manifest(raw: object) -> Manifest:
     pair = (raw.get("schema_version"), raw.get("engine_protocol_version"))
     if pair in {(1, "2.0"), (1, "2.1")}:
         return RunManifest.from_json_dict(raw)
-    if pair == (2, "2.2"):
+    if pair[0] == 2 and pair[1] in RE_V2_SCHEMA_2_PROTOCOLS:
         return RunManifestV2.from_json_dict(raw)
     raise ReV2RunStoreError(
         f"unsupported pinned manifest schema/protocol {pair!r}"
@@ -192,7 +192,7 @@ def _validate_supported_manifest(manifest: Manifest) -> None:
     ) or (
         isinstance(manifest, RunManifestV2)
         and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version == "2.2"
+        and manifest.engine_protocol_version in RE_V2_SCHEMA_2_PROTOCOLS
     )
     if not valid:
         raise ReV2RunStoreError(

@@ -14,7 +14,11 @@ from .canonical import canonical_json_bytes, content_digest
 RE_V2_ENGINE = "re-v2"
 RE_V2_PROTOCOL = "2.2"
 RE_V2_SCHEMA_1_PROTOCOLS = ("2.0", "2.1")
-RE_V2_SUPPORTED_PROTOCOLS = (*RE_V2_SCHEMA_1_PROTOCOLS, RE_V2_PROTOCOL)
+RE_V2_SCHEMA_2_PROTOCOLS = ("2.2", "2.3")
+RE_V2_SUPPORTED_PROTOCOLS = (
+    *RE_V2_SCHEMA_1_PROTOCOLS,
+    *RE_V2_SCHEMA_2_PROTOCOLS,
+)
 
 SnapshotKind = Literal[
     "git-worktree",
