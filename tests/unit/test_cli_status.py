@@ -27,6 +27,74 @@ from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadat
 from harness.squad_provider import SquadAgentResult
 
 
+def _tree_snapshot(root: Path) -> tuple[tuple[str, str, bytes], ...]:
+    rows: list[tuple[str, str, bytes]] = []
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            rows.append((relative, "symlink", path.readlink().as_posix().encode()))
+        elif path.is_dir():
+            rows.append((relative, "directory", b""))
+        else:
+            rows.append((relative, "file", path.read_bytes()))
+    return tuple(rows)
+
+
+def _write_failed_provider_project(
+    tmp_path: Path,
+    *,
+    schema_version: int = 3,
+) -> tuple[Path, Path, Path, dict[str, object]]:
+    root = Path(__file__).resolve().parent.parent.parent
+    shutil.copytree(root / "runtime", tmp_path / ".echelon/runtime")
+    shutil.copytree(root / "prosaic", tmp_path / ".echelon/prosaic")
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    run_dir = tmp_path / "runs" / "spec-provider-replay"
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    decision = _failed_provider_decision(schema_version=schema_version)
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "state_revision": 3,
+                "status": "blocked",
+                "phase": "phase1-tracker",
+                "blocked_reason": decision["reason_code"],
+                "autonomy_mode": "banzai",
+                "mode": "greenfield",
+                "user_message": "capture the application intent",
+                "spec_id": spec_dir.name,
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
+                "completed_phases": ["phase1-discover"],
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                    reason_code=str(decision["reason_code"]),
+                    phase="",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+                "escalation_question": decision["question"],
+                "escalation_options": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_dir, spec_dir, state_path, decision
+
+
 def _write_build_state(
     project: Path,
     build_id: str,
@@ -644,7 +712,10 @@ def test_failed_human_gate_status_renders_ledger_rewind_without_mutation(
     _cmd_status(tmp_path)
 
     output = capsys.readouterr().out
-    assert "echelon spec rewind phase1-lexicon --confirm" in output
+    assert (
+        "echelon spec rewind phase1-lexicon "
+        "--next-phase checkpoint-assess --confirm"
+    ) in output
     assert "diagnose" not in output.lower()
     assert "echelon spec continue" not in output
     assert state_path.read_bytes() == before
@@ -657,52 +728,9 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
     monkeypatch: pytest.MonkeyPatch,
     schema_version: int,
 ) -> None:
-    root = Path(__file__).resolve().parent.parent.parent
-    shutil.copytree(root / "runtime", tmp_path / ".echelon/runtime")
-    shutil.copytree(root / "prosaic", tmp_path / ".echelon/prosaic")
-    subprocess.run(
-        ["git", "init", "-b", "main"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-    run_dir = tmp_path / "runs" / "spec-provider-replay"
-    spec_dir = run_dir / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    (tmp_path / "runs" / ".current").write_text(
-        run_dir.name,
-        encoding="utf-8",
-    )
-    decision = _failed_provider_decision(schema_version=schema_version)
-    state_path = run_dir / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "run_id": run_dir.name,
-                "state_revision": 3,
-                "status": "blocked",
-                "phase": "phase1-tracker",
-                "blocked_reason": decision["reason_code"],
-                "autonomy_mode": "banzai",
-                "mode": "greenfield",
-                "user_message": "capture the application intent",
-                "spec_id": "001-demo",
-                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
-                "completed_phases": ["phase1-discover"],
-                "blocked_decision": decision,
-                "recovery_instruction": RecoveryInstruction(
-                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
-                    reason_code=str(decision["reason_code"]),
-                    phase="",
-                    requires_human_input=False,
-                    schema_version=2,
-                    decision_id=str(decision["id"]),
-                ).to_dict(),
-                "escalation_question": decision["question"],
-                "escalation_options": [],
-            }
-        ),
-        encoding="utf-8",
+    run_dir, spec_dir, state_path, _ = _write_failed_provider_project(
+        tmp_path,
+        schema_version=schema_version,
     )
 
     _cmd_status(tmp_path)
@@ -710,6 +738,8 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
     assert "echelon phase run phase1-tracker" in capsys.readouterr().out
 
     provider_calls: list[str] = []
+    dispatched_nodes: list[str] = []
+    provider_state_snapshots: list[dict[str, object]] = []
 
     class PhysicalProvider:
         def __init__(self, _config: object) -> None:
@@ -722,6 +752,9 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
             **_kwargs: object,
         ) -> SquadAgentResult:
             provider_calls.append(prompt)
+            provider_state_snapshots.append(
+                json.loads(state_path.read_text(encoding="utf-8"))
+            )
             (spec_dir / "user-intent.md").write_text(
                 "# User intent\n\nCapture the registered application intent.\n",
                 encoding="utf-8",
@@ -742,6 +775,15 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
         "harness.squad_provider.SquadCliProvider",
         PhysicalProvider,
     )
+    from harness.squad_executors import AgentExecutor
+
+    original_execute = AgentExecutor.execute
+
+    def record_execute(self, node, store):
+        dispatched_nodes.append(node.id)
+        return original_execute(self, node, store)
+
+    monkeypatch.setattr(AgentExecutor, "execute", record_execute)
 
     _cmd_phase(
         ["run", "phase1-tracker"],
@@ -751,6 +793,12 @@ def test_failed_provider_status_command_retires_authority_and_executes_source_ph
 
     replayed = json.loads(state_path.read_text(encoding="utf-8"))
     assert len(provider_calls) == 1
+    assert dispatched_nodes == ["phase1-tracker"]
+    assert provider_state_snapshots[0]["spec_id"] == spec_dir.name
+    assert provider_state_snapshots[0]["spec_dir"] == (
+        spec_dir.relative_to(tmp_path).as_posix()
+    )
+    assert "blocked_decision" not in provider_state_snapshots[0]
     assert "blocked_decision" not in replayed
     assert "recovery_instruction" not in replayed
     assert (spec_dir / "user-intent.md").is_file()
@@ -815,6 +863,140 @@ def test_failed_provider_wrong_phase_cannot_retire_or_execute_authority(
     assert raised.value.code == 1
     assert "echelon phase run phase1-tracker" in capsys.readouterr().err
     assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("spec_selector", ["002-other", "{absolute}"])
+def test_failed_provider_replay_rejects_mismatched_spec_before_side_effects(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    spec_selector: str,
+) -> None:
+    _, _, state_path, _ = _write_failed_provider_project(tmp_path)
+    other_spec = tmp_path / "runs" / "spec-provider-replay" / "specs" / "002-other"
+    other_spec.mkdir(parents=True)
+    (other_spec / "spec.md").write_text("# Other spec\n", encoding="utf-8")
+    before_state = state_path.read_bytes()
+    before_tree = _tree_snapshot(tmp_path)
+    provider_calls: list[str] = []
+
+    class ForbiddenProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            provider_calls.append("called")
+            raise AssertionError("mismatched spec must not dispatch a provider")
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", ForbiddenProvider)
+    selector = str(other_spec) if spec_selector == "{absolute}" else spec_selector
+
+    with pytest.raises(SystemExit) as raised:
+        _cmd_phase(
+            ["run", "phase1-tracker", "--spec", selector],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
+        )
+
+    assert raised.value.code == 1
+    assert "active spec" in capsys.readouterr().err.lower()
+    assert provider_calls == []
+    assert state_path.read_bytes() == before_state
+    assert _tree_snapshot(tmp_path) == before_tree
+
+
+@pytest.mark.parametrize("failure_point", ["redirect", "skip", "setup"])
+def test_failed_provider_replay_preserves_authority_until_exact_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    _, _, state_path, decision = _write_failed_provider_project(tmp_path)
+    before_state = state_path.read_bytes()
+    provider_calls: list[str] = []
+
+    class ForbiddenProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            provider_calls.append("called")
+            raise AssertionError("pre-dispatch failure must not call the provider")
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", ForbiddenProvider)
+    if failure_point == "redirect":
+        monkeypatch.setattr(
+            "harness.squad.SquadController._guard_constitution_provenance",
+            lambda _self, _phase, **_kwargs: "phase1-discover",
+        )
+    elif failure_point == "skip":
+        monkeypatch.setattr(
+            "harness.squad.SquadController._manual_replay_condition_allows_dispatch",
+            lambda _self, _node: False,
+        )
+    else:
+        from harness.controller_state_contracts import ControllerStateContractViolation
+
+        def fail_setup(_self, _node):
+            raise ControllerStateContractViolation(
+                "setup failed",
+                contract="test_setup",
+            )
+
+        monkeypatch.setattr(
+            "harness.squad.SquadController._materialize_controller_phase_inputs",
+            fail_setup,
+        )
+
+    _cmd_phase(
+        ["run", "phase1-tracker"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    replayed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert replayed["blocked_decision"] == decision
+    assert replayed["status"] == "blocked"
+    assert state_path.read_bytes() == before_state
+    assert provider_calls == []
+
+
+def test_failed_provider_replay_stale_revision_fails_closed_without_traceback(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir, _, state_path, decision = _write_failed_provider_project(tmp_path)
+    from harness.squad_state import SquadStateStore
+
+    replay_stores: list[SquadStateStore] = []
+
+    def race_after_claim(self, _node):
+        replay_stores.append(self._state_store)
+        concurrent_store = SquadStateStore(run_dir)
+        winner = concurrent_store.load()
+        winner["concurrent_winner"] = "preserved"
+        concurrent_store.save(winner)
+        return True
+
+    monkeypatch.setattr(
+        "harness.squad.SquadController._manual_replay_condition_allows_dispatch",
+        race_after_claim,
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        _cmd_phase(
+            ["run", "phase1-tracker"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
+        )
+
+    assert raised.value.code == 1
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["concurrent_winner"] == "preserved"
+    assert persisted["blocked_decision"] == decision
+    assert replay_stores[0]._manual_phase_replay_authority is None
+    assert "traceback" not in capsys.readouterr().err.lower()
 
 
 def test_newer_blocked_harness_build_masks_older_converged_build(

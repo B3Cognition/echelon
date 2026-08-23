@@ -1,12 +1,13 @@
 from pathlib import Path
 import json
+import shlex
 import subprocess
 from types import SimpleNamespace
 
 import pytest
 
 from echelon.checkpoint_cli import run_checkpoint_command
-from echelon.cli import _classify_run_recovery
+from echelon.cli import _classify_run_recovery, _cmd_rewind
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,
@@ -15,8 +16,10 @@ from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpoint,
+    load_checkpoint_ledger,
     record_checkpoint_metadata,
 )
+from echelon.rewind import RewindResult
 
 
 class _CoverageGraph:
@@ -449,8 +452,115 @@ def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
     assert action.command == (
         "echelon spec rewind phase1-lexicon --commit "
         + "2" * 40
+        + " --next-phase checkpoint-assess"
         + " --confirm"
     )
+
+
+def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-collision")
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    shared_commit = "a" * 40
+    intended = PhaseCheckpoint(
+        id="phase1-lexicon",
+        spec_id=spec_dir.name,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-assess",
+        commit=shared_commit,
+        metadata_commit="",
+        source="auto",
+        run_id=run_dir.name,
+        created_at="2026-08-23T12:00:00+00:00",
+        completion_id="1" * 32,
+    )
+    collision = PhaseCheckpoint(
+        id="phase1-lexicon",
+        spec_id=spec_dir.name,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-plan",
+        commit=shared_commit,
+        metadata_commit="",
+        source="legacy-migration",
+        run_id=run_dir.name,
+        created_at="2026-08-23T12:01:00+00:00",
+        completion_id="2" * 32,
+        rewind="none",
+        rewind_reason="legacy-migration-boundary",
+    )
+    for checkpoint in (intended, collision):
+        record_checkpoint_metadata(spec_dir, checkpoint)
+    decision = build_blocked_decision_v2(
+        decision_id="dec-colliding-gate",
+        status="resolved",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Return to specification authoring.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        selected_option_id="reject",
+        resolved_by="user",
+        now="2026-08-23T12:00:00+00:00",
+        resolved_at="2026-08-23T12:00:01+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "state_revision": 2,
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "gate_rejected",
+            "autonomy_mode": "banzai",
+            "blocked_decision": decision,
+            "escalation_question": decision["question"],
+            "escalation_options": decision["options"],
+            "escalation_resolved": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.command == (
+        f"echelon spec rewind phase1-lexicon --commit {shared_commit} "
+        "--next-phase checkpoint-assess --confirm"
+    )
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: RewindResult(
+            applied=True,
+            spec_id=spec_dir.name,
+            checkpoint_id=intended.id,
+            from_commit="b" * 40,
+            to_commit=shared_commit,
+            backup_ref="echelon/backup/collision",
+            message="Rewind complete.",
+        ),
+    )
+    command_args = shlex.split(action.command)[3:]
+
+    _cmd_rewind(command_args, project_root=tmp_path)
+
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [intended]
 
 
 def _git(repo: Path, *args: str) -> str:

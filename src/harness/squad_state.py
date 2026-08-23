@@ -1534,13 +1534,25 @@ def _last_dispatch_sha256(state: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+@dataclass(frozen=True)
+class _ManualPhaseReplayAuthority:
+    phase_id: str
+    decision_id: str
+    state_revision: int
+    v2_automatic_eligible: bool
+    spec_id: str
+    spec_dir: str
+    initial_state_updates: dict[str, Any]
+    claimed: bool = False
+
+
 class SquadStateStore:
     def __init__(self, squad_dir: Path) -> None:
         self._squad_dir = squad_dir
         self._path = squad_dir / "state.json"
         self._lock_path = squad_dir / "state.lock"
         self._staging_dir = squad_dir / "staging"
-        self._manual_phase_replay_authority: tuple[str, str, int, bool] | None = None
+        self._manual_phase_replay_authority: _ManualPhaseReplayAuthority | None = None
         _ensure_directory_durable(self._squad_dir)
         _ensure_directory_durable(self._staging_dir)
 
@@ -2552,6 +2564,8 @@ class SquadStateStore:
         *,
         expected_state_revision: int,
         v2_automatic_eligible: bool,
+        expected_spec_id: str,
+        expected_spec_dir: str,
     ) -> dict[str, object] | None:
         decision = self._human_input_decision_for_cas_unlocked(
             before,
@@ -2566,6 +2580,9 @@ class SquadStateStore:
             or decision["source_phase"] != phase_id
             or before.get("autonomy_mode") != "banzai"
             or before.get("status") != "blocked"
+            or before.get("phase") != phase_id
+            or before.get("spec_id") != expected_spec_id
+            or before.get("spec_dir") != expected_spec_dir
             or (
                 decision["schema_version"] == 3
                 and decision.get("automatic_eligible") is not True
@@ -2585,8 +2602,11 @@ class SquadStateStore:
         decision_id: str,
         expected_state_revision: int,
         v2_automatic_eligible: bool = False,
+        expected_spec_id: str,
+        expected_spec_dir: str,
+        initial_state_updates: Mapping[str, Any],
     ) -> bool:
-        """Arm a one-shot exact CAS for the controller's execution lease."""
+        """Arm a spec-bound replay capability for one execution lease."""
         if not isinstance(phase_id, str) or not phase_id.strip():
             raise StateAdvanceError(
                 "manual replay phase identity is invalid",
@@ -2597,8 +2617,37 @@ class SquadStateStore:
             return False
         if type(expected_state_revision) is not int:
             return False
+        if not isinstance(expected_spec_id, str) or not expected_spec_id.strip():
+            return False
+        if not isinstance(expected_spec_dir, str) or not expected_spec_dir.strip():
+            return False
+        if not isinstance(initial_state_updates, Mapping):
+            return False
         normalized_phase = phase_id.strip()
         normalized_id = decision_id.strip()
+        normalized_spec_id = expected_spec_id.strip()
+        normalized_spec_dir = expected_spec_dir.strip()
+        try:
+            updates = deepcopy(dict(initial_state_updates))
+        except Exception:
+            return False
+        allowed_update_keys = {
+            "manual_phase_run",
+            "phase_run_source_spec_dir",
+            "published_spec_dir",
+            "spec_dir",
+            "spec_id",
+        }
+        if (
+            not all(isinstance(key, str) for key in updates)
+            or not set(updates).issubset(allowed_update_keys)
+            or updates.get("manual_phase_run") is not True
+            or updates.get("spec_id") != normalized_spec_id
+            or updates.get("spec_dir") != normalized_spec_dir
+            or updates.get("phase_run_source_spec_dir") != normalized_spec_dir
+            or not isinstance(updates.get("published_spec_dir"), str)
+        ):
+            return False
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._failed_automatic_replay_decision_unlocked(
@@ -2607,33 +2656,27 @@ class SquadStateStore:
                 normalized_id,
                 expected_state_revision=expected_state_revision,
                 v2_automatic_eligible=v2_automatic_eligible,
+                expected_spec_id=normalized_spec_id,
+                expected_spec_dir=normalized_spec_dir,
             )
             if decision is None:
                 return False
-            self._manual_phase_replay_authority = (
-                normalized_phase,
-                normalized_id,
-                expected_state_revision,
-                v2_automatic_eligible,
+            self._manual_phase_replay_authority = _ManualPhaseReplayAuthority(
+                phase_id=normalized_phase,
+                decision_id=normalized_id,
+                state_revision=expected_state_revision,
+                v2_automatic_eligible=v2_automatic_eligible,
+                spec_id=normalized_spec_id,
+                spec_dir=normalized_spec_dir,
+                initial_state_updates=updates,
             )
             return True
 
-    def discard_failed_automatic_decision_for_manual_phase_replay(
+    def claim_failed_automatic_decision_for_manual_phase_replay(
         self,
         phase_id: str,
-        *,
-        decision_id: str | None = None,
-        expected_state_revision: int | None = None,
-        v2_automatic_eligible: bool = False,
     ) -> bool:
-        """Clear one exact failed automatic decision before replaying its phase.
-
-        The CLI authenticates v2 eligibility against the active workflow graph
-        and passes that result into this CAS.  V3 eligibility remains sealed in
-        the decision itself.  Omitting the exact revision and decision ID is a
-        no-op unless the CLI armed the one-shot authority for the controller's
-        execution lease, so other internal callers cannot retire it.
-        """
+        """Claim, but do not retire, one exact spec-bound replay capability."""
         if not isinstance(phase_id, str) or not phase_id.strip():
             raise StateAdvanceError(
                 "manual replay phase identity is invalid",
@@ -2642,40 +2685,98 @@ class SquadStateStore:
             )
         normalized_phase = phase_id.strip()
         with self._lock(exclusive=True):
-            if decision_id is None and expected_state_revision is None:
-                authority = self._manual_phase_replay_authority
-                self._manual_phase_replay_authority = None
-                if authority is None or authority[0] != normalized_phase:
-                    return False
-                _, decision_id, expected_state_revision, v2_automatic_eligible = (
-                    authority
-                )
-            if not isinstance(decision_id, str) or not decision_id.strip():
-                return False
-            if type(expected_state_revision) is not int:
+            authority = self._manual_phase_replay_authority
+            if (
+                authority is None
+                or authority.claimed
+                or authority.phase_id != normalized_phase
+            ):
                 return False
             before = self._load_unlocked()
             decision = self._failed_automatic_replay_decision_unlocked(
                 before,
                 normalized_phase,
-                decision_id.strip(),
-                expected_state_revision=expected_state_revision,
-                v2_automatic_eligible=v2_automatic_eligible,
+                authority.decision_id,
+                expected_state_revision=authority.state_revision,
+                v2_automatic_eligible=authority.v2_automatic_eligible,
+                expected_spec_id=authority.spec_id,
+                expected_spec_dir=authority.spec_dir,
             )
             if decision is None:
                 return False
-
-            desired = deepcopy(before)
-            desired.pop("blocked_decision", None)
-            desired.pop("recovery_instruction", None)
-            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
-                desired.pop(key, None)
-            desired["status"] = "running"
-            desired["phase"] = normalized_phase
-            desired["blocked_reason"] = None
-            return bool(
-                self._commit_human_input_state_unlocked(before, desired)
+            self._manual_phase_replay_authority = _ManualPhaseReplayAuthority(
+                phase_id=authority.phase_id,
+                decision_id=authority.decision_id,
+                state_revision=authority.state_revision,
+                v2_automatic_eligible=authority.v2_automatic_eligible,
+                spec_id=authority.spec_id,
+                spec_dir=authority.spec_dir,
+                initial_state_updates=deepcopy(authority.initial_state_updates),
+                claimed=True,
             )
+            return True
+
+    def retire_claimed_failed_automatic_decision_for_manual_phase_replay(
+        self,
+        phase_id: str,
+        *,
+        initial_state_updates: Mapping[str, Any],
+    ) -> bool:
+        """CAS-retire a claimed replay at its exact executor dispatch boundary."""
+        if not isinstance(phase_id, str) or not phase_id.strip():
+            raise StateAdvanceError(
+                "manual replay phase identity is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        if not isinstance(initial_state_updates, Mapping):
+            return False
+        normalized_phase = phase_id.strip()
+        try:
+            updates = deepcopy(dict(initial_state_updates))
+        except Exception:
+            return False
+        with self._lock(exclusive=True):
+            authority = self._manual_phase_replay_authority
+            if (
+                authority is None
+                or not authority.claimed
+                or authority.phase_id != normalized_phase
+                or updates != authority.initial_state_updates
+            ):
+                return False
+            try:
+                before = self._load_unlocked()
+                decision = self._failed_automatic_replay_decision_unlocked(
+                    before,
+                    normalized_phase,
+                    authority.decision_id,
+                    expected_state_revision=authority.state_revision,
+                    v2_automatic_eligible=authority.v2_automatic_eligible,
+                    expected_spec_id=authority.spec_id,
+                    expected_spec_dir=authority.spec_dir,
+                )
+                if decision is None:
+                    return False
+
+                desired = deepcopy(before)
+                desired.update(updates)
+                desired.pop("blocked_decision", None)
+                desired.pop("recovery_instruction", None)
+                for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                    desired.pop(key, None)
+                desired["status"] = "running"
+                desired["phase"] = normalized_phase
+                desired["blocked_reason"] = None
+                return bool(
+                    self._commit_human_input_state_unlocked(before, desired)
+                )
+            finally:
+                self._manual_phase_replay_authority = None
+
+    def clear_failed_automatic_decision_for_manual_phase_replay(self) -> None:
+        """Drop any unconsumed or claimed in-memory replay capability."""
+        self._manual_phase_replay_authority = None
 
     def rewind_failed_banzai_human_gate(
         self,

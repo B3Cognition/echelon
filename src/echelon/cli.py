@@ -3669,12 +3669,13 @@ def _decision_gate_rewind_action(
         item.phase == checkpoint.phase for item in ledger.checkpoints
     ) > 1
     commit = f" --commit {checkpoint.commit}" if duplicate_phase else ""
+    next_phase = f" --next-phase {source_phase}"
     return _RunRecoveryAction(
         "safe_rewind",
         reason=str(run_state.get("blocked_reason") or "gate_rejected"),
         phase=checkpoint.phase,
         command=(
-            f"echelon spec rewind {checkpoint.phase}{commit} --confirm"
+            f"echelon spec rewind {checkpoint.phase}{commit}{next_phase} --confirm"
         ),
         note=(
             "rewind the exact checkpoint ledger predecessor before replaying "
@@ -5645,6 +5646,8 @@ def _reset_rewind_state(
     *,
     checkpoint_phases_before_target: set[str] | None = None,
     boundary_completion_id: str = "",
+    preserve_resolved_gate_rejection: bool = False,
+    preserve_failed_human_gate_for_cas: bool = False,
 ) -> dict:
     rewound = dict(state)
     rewound["phase"] = phase
@@ -5652,16 +5655,35 @@ def _reset_rewind_state(
     rewound["iteration"] = 0
     rewound["spec_dir"] = spec_dir_ref
     rewound["blocked_reason"] = None
-    terminal_decision = False
+    decision: Mapping[str, object] | None = None
     try:
         decision = _validated_versioned_decision(state)
-        terminal_decision = (
-            decision is not None
-            and decision["status"] in {"resolved", "failed"}
+    except (RecoveryInstructionError, ValueError) as exc:
+        from echelon.rewind import RewindError
+
+        raise RewindError(f"versioned decision authority is invalid: {exc}") from exc
+    if decision is not None:
+        resolved_gate_rejection = (
+            preserve_resolved_gate_rejection
+            and decision["status"] == "resolved"
+            and decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("blocked_reason") == "gate_rejected"
         )
-    except (RecoveryInstructionError, ValueError):
-        terminal_decision = False
-    if not terminal_decision:
+        failed_human_gate = (
+            preserve_failed_human_gate_for_cas
+            and decision["status"] == "failed"
+            and decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("phase") == decision.get("source_phase")
+        )
+        if not (resolved_gate_rejection or failed_human_gate):
+            from echelon.rewind import RewindError
+
+            raise RewindError(
+                "versioned decision authority requires its source-specific recovery"
+            )
+    else:
         rewound["escalation_question"] = None
         rewound["escalation_resolved"] = False
         rewound["escalation_resolver"] = None
@@ -7849,12 +7871,15 @@ def _phase_state_updates_for_target(
     project_root: Path,
     current_state: dict,
     target_spec_dir: Path | None,
+    *,
+    materialize: bool = True,
 ) -> dict:
     """Build state fields that make phase context/output target the spec dir."""
     if target_spec_dir is None:
         return {}
 
-    target_spec_dir.mkdir(parents=True, exist_ok=True)
+    if materialize:
+        target_spec_dir.mkdir(parents=True, exist_ok=True)
 
     source_refs = [
         str(current_state.get("phase_run_source_spec_dir") or "").strip(),
@@ -7868,7 +7893,12 @@ def _phase_state_updates_for_target(
         source = Path(source_ref)
         if not source.is_absolute():
             source = project_root / source
-        if source.exists() and source.is_dir() and source.resolve() != target_spec_dir.resolve():
+        if (
+            materialize
+            and source.exists()
+            and source.is_dir()
+            and source.resolve() != target_spec_dir.resolve()
+        ):
             _copy_missing_tree(source, target_spec_dir)
             break
 
@@ -7884,6 +7914,112 @@ def _phase_state_updates_for_target(
         "phase_run_source_spec_dir": target_ref,
     }
     return updates
+
+
+@dataclass(frozen=True)
+class _FailedAutomaticPhaseReplay:
+    decision: Mapping[str, object]
+    state_revision: int
+    v2_automatic_eligible: bool
+    spec_id: str
+    spec_dir_ref: str
+    spec_dir: Path
+
+
+def _failed_automatic_phase_replay(
+    state: Mapping[str, object],
+    *,
+    phase_id: str,
+    spec_arg: str,
+    project_root: Path,
+    run_dir: Path,
+    graph: object,
+) -> _FailedAutomaticPhaseReplay | None:
+    """Validate failed replay authority before resolving or materializing a target."""
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    decision = _validated_versioned_decision(state)
+    if decision is None or decision["status"] != "failed":
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    revision = state.get("state_revision")
+    v2_eligible = _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+        graph=graph,
+    )
+    eligible = (
+        decision.get("automatic_eligible") is True
+        if decision["schema_version"] == 3
+        else v2_eligible
+    )
+    if decision["source_kind"] not in {
+        "provider_escalation",
+        "controller_safeguard",
+    }:
+        raise ValueError(
+            "failed human-gate authority requires its ledger-derived confirmed rewind command"
+        )
+    if (
+        decision["autonomy_mode"] != "banzai"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("status") != "blocked"
+        or state.get("phase") != source_phase
+        or phase_id != source_phase
+        or not eligible
+        or type(revision) is not int
+        or revision < 0
+    ):
+        raise ValueError(
+            "failed automatic decision can only be retired by its exact "
+            f"source replay: echelon phase run {source_phase}"
+        )
+    spec_id = str(state.get("spec_id") or "").strip()
+    spec_dir_ref = str(state.get("spec_dir") or "").strip()
+    if not spec_id or not spec_dir_ref:
+        raise ValueError("failed decision replay has no exact active spec identity")
+    spec_dir = Path(spec_dir_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+    expected_run_spec_dir = run_dir / "specs" / spec_id
+    if (
+        not spec_dir.is_dir()
+        or spec_dir.resolve() != expected_run_spec_dir.resolve()
+        or spec_dir.name != spec_id
+    ):
+        raise ValueError(
+            "failed decision replay is not bound to the active run-local spec"
+        )
+    selector = spec_arg.strip()
+    if selector:
+        candidate = Path(selector)
+        path_selector = candidate.is_absolute() or len(candidate.parts) > 1
+        if path_selector:
+            if not candidate.is_absolute():
+                candidate = project_root / candidate
+            selector_matches = (
+                candidate.is_dir()
+                and candidate.resolve() == spec_dir.resolve()
+            )
+        else:
+            selector_matches = selector == spec_id
+        if not selector_matches:
+            raise ValueError(
+                f"failed decision replay is bound to active spec {spec_id!r}; "
+                f"--spec {selector!r} selects a different target"
+            )
+    return _FailedAutomaticPhaseReplay(
+        decision=decision,
+        state_revision=revision,
+        v2_automatic_eligible=v2_eligible,
+        spec_id=spec_id,
+        spec_dir_ref=spec_dir_ref,
+        spec_dir=spec_dir,
+    )
 
 
 def _phase_context_resolution_rows(
@@ -9001,6 +9137,35 @@ class _FailedGateRewindAuthority:
     v2_automatic_eligible: bool
 
 
+def _resolve_rewind_checkpoint(
+    ledger: object,
+    target: str,
+    *,
+    commit: str,
+    next_phase: str,
+) -> object:
+    """Resolve the same recovery-specific ledger candidate rendered by status."""
+    from harness.phase_checkpoints import resolve_checkpoint
+
+    selected_ledger = ledger
+    if next_phase:
+        candidates = [
+            checkpoint
+            for checkpoint in ledger.checkpoints
+            if checkpoint.next_phase == next_phase
+            and checkpoint.rewind == "supported"
+        ]
+        if not candidates:
+            raise KeyError(
+                f"no supported checkpoint precedes requested phase {next_phase}"
+            )
+        selected_ledger = type(ledger)(
+            spec_id=ledger.spec_id,
+            checkpoints=candidates,
+        )
+    return resolve_checkpoint(selected_ledger, target, commit=commit)
+
+
 def _failed_gate_rewind_authority(
     state: Mapping[str, object],
     checkpoint: object,
@@ -9022,7 +9187,18 @@ def _failed_gate_rewind_authority(
         raise RewindError(f"versioned decision authority is invalid: {exc}") from exc
     assert decision is not None
     if decision["status"] == "resolved":
-        return None
+        source_phase = str(decision.get("source_phase") or "").strip()
+        if (
+            decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("blocked_reason") == "gate_rejected"
+            and str(getattr(checkpoint, "next_phase", "") or "").strip()
+            == source_phase
+        ):
+            return None
+        raise RewindError(
+            "resolved decision authority is not an exact gate-rejected rewind"
+        )
     if decision["status"] != "failed":
         raise RewindError("unresolved decision authority does not permit rewind")
     source_phase = str(decision.get("source_phase") or "").strip()
@@ -9070,7 +9246,9 @@ def _cmd_rewind(
 ) -> None:
     confirm = False
     checkpoint_commit = ""
+    checkpoint_next_phase = ""
     commit_seen = False
+    next_phase_seen = False
     target = ""
     invalid = False
     index = 0
@@ -9098,6 +9276,21 @@ def _cmd_rewind(
                 break
             index += 2
             continue
+        if arg == "--next-phase":
+            if (
+                next_phase_seen
+                or index + 1 >= len(args)
+                or args[index + 1].startswith("--")
+            ):
+                invalid = True
+                break
+            next_phase_seen = True
+            checkpoint_next_phase = args[index + 1].strip()
+            if not checkpoint_next_phase:
+                invalid = True
+                break
+            index += 2
+            continue
         if arg.startswith("--") or target:
             invalid = True
             break
@@ -9106,7 +9299,7 @@ def _cmd_rewind(
     if invalid or not target:
         print(
             "Usage: echelon spec rewind <checkpoint-phase-or-id> "
-            "[--commit <sha>] [--confirm]\n"
+            "[--commit <sha>] [--next-phase <phase-id>] [--confirm]\n"
             "Run `echelon spec checkpoint list` to see active-ledger targets.",
             file=sys.stderr,
         )
@@ -9137,17 +9330,17 @@ def _cmd_rewind(
     from echelon.rewind import RewindError, prepare_rewind
     from harness.phase_checkpoints import (
         load_checkpoint_ledger,
-        resolve_checkpoint,
         rewindable_checkpoint_targets,
         write_checkpoint_ledger,
     )
 
     ledger = load_checkpoint_ledger(spec_dir)
     try:
-        checkpoint = resolve_checkpoint(
+        checkpoint = _resolve_rewind_checkpoint(
             ledger,
             target,
             commit=checkpoint_commit,
+            next_phase=checkpoint_next_phase,
         )
     except (KeyError, ValueError) as exc:
         available = rewindable_checkpoint_targets(ledger)
@@ -9234,10 +9427,11 @@ def _cmd_rewind(
                         raise SystemExit(1)
                     ledger = load_checkpoint_ledger(spec_dir)
                     try:
-                        checkpoint = resolve_checkpoint(
+                        checkpoint = _resolve_rewind_checkpoint(
                             ledger,
                             target,
                             commit=checkpoint_commit,
+                            next_phase=checkpoint_next_phase,
                         )
                     except (KeyError, ValueError) as exc:
                         available = rewindable_checkpoint_targets(ledger)
@@ -9365,6 +9559,14 @@ def _cmd_rewind(
                             ),
                             boundary_completion_id=(
                                 checkpoint.boundary_completion_id
+                            ),
+                            preserve_resolved_gate_rejection=(
+                                failed_gate_authority is None
+                                and isinstance(state.get("blocked_decision"), Mapping)
+                                and state["blocked_decision"].get("status") == "resolved"
+                            ),
+                            preserve_failed_human_gate_for_cas=(
+                                failed_gate_authority is not None
                             ),
                         )
                         if failed_gate_authority is None:
@@ -9805,6 +10007,14 @@ def _cmd_drop_target(
         )
         return
 
+    from echelon.rewind import RewindError
+
+    try:
+        updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
+    except RewindError as exc:
+        print(f"✗ Cannot drop target: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
     spec_dirs = [spec_dir]
     published_ref = str(state.get("published_spec_dir") or "").strip()
     if published_ref:
@@ -9824,7 +10034,6 @@ def _cmd_drop_target(
                 if name not in removed:
                     removed.append(name)
 
-    updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
     updated["implementation_targets"] = replacement_targets
     updated["tasks_lexicon_pass"] = None
     updated["target_change"] = {
@@ -10167,8 +10376,43 @@ def _cmd_phase(
         )
         raise SystemExit(1)
 
+    from echelon.strict_json import loads_strict_json
+
+    state_path = run_dir / "state.json"
+    if state_path.exists():
+        try:
+            current_state = loads_strict_json(
+                state_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            print(f"✗ Could not read active run state: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+    else:
+        current_state = {}
+    if not isinstance(current_state, dict):
+        print("✗ Active run state must be a JSON object.", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        failed_replay = _failed_automatic_phase_replay(
+            current_state,
+            phase_id=phase_id,
+            spec_arg=spec_arg,
+            project_root=project_root,
+            run_dir=run_dir,
+            graph=graph,
+        )
+    except (RecoveryInstructionError, ValueError, TypeError) as exc:
+        print(f"✗ Invalid failed decision replay authority: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     state_store = SquadStateStore(run_dir)
-    current_state = state_store.load()
+    loaded_state = state_store.load()
+    if failed_replay is not None and loaded_state != current_state:
+        print(
+            "✗ Failed decision replay authority changed before target setup.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    current_state = loaded_state
     target_spec_dir = _resolve_phase_target_spec_dir(
         project_root,
         current_state,
@@ -10178,11 +10422,24 @@ def _cmd_phase(
     if spec_arg and target_spec_dir is None:
         print(f"✗ Spec not found for --spec {spec_arg!r}", file=sys.stderr)
         sys.exit(1)
+    if (
+        failed_replay is not None
+        and (
+            target_spec_dir is None
+            or target_spec_dir.resolve() != failed_replay.spec_dir.resolve()
+        )
+    ):
+        print(
+            "✗ Failed decision replay target does not match the active spec identity.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     initial_updates = _phase_state_updates_for_target(
         project_root,
         current_state,
         target_spec_dir,
+        materialize=failed_replay is None,
     )
     if initial_updates:
         initial_updates["manual_phase_run"] = True
@@ -10232,76 +10489,61 @@ def _cmd_phase(
         squad_dir=run_dir,
     )
 
-    raw_decision = current_state.get("blocked_decision")
-    if (
-        isinstance(raw_decision, Mapping)
-        and raw_decision.get("schema_version") in {2, 3}
-    ):
+    if failed_replay is not None:
         try:
-            replay_decision = _validated_versioned_decision(current_state)
-        except (RecoveryInstructionError, ValueError) as exc:
-            print(f"✗ Invalid persisted decision authority: {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-        if replay_decision is not None and replay_decision["status"] == "failed":
-            source_phase = str(
-                replay_decision.get("source_phase") or ""
-            ).strip()
-            if replay_decision["source_kind"] not in {
-                "provider_escalation",
-                "controller_safeguard",
-            }:
-                print(
-                    "✗ Failed human-gate authority requires its ledger-derived "
-                    "confirmed rewind command.",
-                    file=sys.stderr,
+            authorized = (
+                state_store.authorize_failed_automatic_decision_for_manual_phase_replay(
+                    phase_id,
+                    decision_id=str(failed_replay.decision["id"]),
+                    expected_state_revision=failed_replay.state_revision,
+                    v2_automatic_eligible=(
+                        failed_replay.v2_automatic_eligible
+                    ),
+                    expected_spec_id=failed_replay.spec_id,
+                    expected_spec_dir=failed_replay.spec_dir_ref,
+                    initial_state_updates=initial_updates,
                 )
-                raise SystemExit(1)
-            revision = current_state.get("state_revision")
-            v2_eligible = _v2_automatic_decision_is_registered(
-                replay_decision,
-                project_root=project_root,
-                graph=graph,
             )
-            try:
-                authorize_replay = (
-                    state_store.authorize_failed_automatic_decision_for_manual_phase_replay
-                )
-                authorized = (
-                    authorize_replay(
-                        phase_id,
-                        decision_id=str(replay_decision["id"]),
-                        expected_state_revision=revision,
-                        v2_automatic_eligible=v2_eligible,
-                    )
-                    if type(revision) is int
-                    else False
-                )
-            except (StateAdvanceError, ValueError, TypeError) as exc:
-                print(
-                    f"✗ Failed decision replay authority changed: {exc}",
-                    file=sys.stderr,
-                )
-                raise SystemExit(1) from exc
-            if not authorized:
-                print(
-                    "✗ Failed automatic decision can only be retired by its exact "
-                    f"source replay: echelon phase run {source_phase}",
-                    file=sys.stderr,
-                )
-                raise SystemExit(1)
+        except (StateAdvanceError, ValueError, TypeError) as exc:
             print(
-                "[squad] authorized failed automatic Banzai decision replay: "
-                f"{phase_id}",
-                flush=True,
+                f"✗ Failed decision replay authority changed: {exc}",
+                file=sys.stderr,
             )
+            raise SystemExit(1) from exc
+        if not authorized:
+            source_phase = str(
+                failed_replay.decision.get("source_phase") or ""
+            ).strip()
+            print(
+                "✗ Failed automatic decision can only be retired by its exact "
+                f"source replay: echelon phase run {source_phase}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        print(
+            "[squad] authorized failed automatic Banzai decision replay: "
+            f"{phase_id}",
+            flush=True,
+        )
 
     user_message = " ".join(message_parts) or current_state.get("user_message", "")
-    result = controller.run_single_phase(
-        phase_id,
-        user_message=user_message,
-        mode=mode,
-        initial_state_updates=initial_updates,
-    )
+    try:
+        result = controller.run_single_phase(
+            phase_id,
+            user_message=user_message,
+            mode=mode,
+            initial_state_updates=initial_updates,
+        )
+    except StateAdvanceError as exc:
+        if failed_replay is None:
+            raise
+        print(
+            f"✗ Failed decision replay authority changed before dispatch: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    finally:
+        state_store.clear_failed_automatic_decision_for_manual_phase_replay()
 
     next_action = (
         "echelon phase run phase1-lexicon"

@@ -6128,7 +6128,12 @@ class SquadController:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
 
-    def _guard_understanding_evidence(self, phase: str) -> str:
+    def _guard_understanding_evidence(
+        self,
+        phase: str,
+        *,
+        persist: bool = True,
+    ) -> str:
         """Route legacy or stale SAGE dispatches through deterministic analysis."""
         gate_by_target = {
             "phase1-why2": "phase1-understanding",
@@ -6145,7 +6150,8 @@ class SquadController:
         ):
             return phase
         state["phase"] = gate
-        self._state_store.save(state)
+        if persist:
+            self._state_store.save(state)
         print(
             f"[squad] {phase}: certified Understanding evidence missing or stale; "
             f"routing through {gate}",
@@ -6153,7 +6159,12 @@ class SquadController:
         )
         return gate
 
-    def _guard_phase1_quality_evidence(self, phase: str) -> str:
+    def _guard_phase1_quality_evidence(
+        self,
+        phase: str,
+        *,
+        persist: bool = True,
+    ) -> str:
         """Prevent Phase 1 certification from advancing on an uncertified spec.
 
         A later-phase resume carrying debt authority is also protected: the
@@ -6216,7 +6227,8 @@ class SquadController:
         state["convergence_guard_fire_count"] = 0
         state.pop("phase_recommendation", None)
         state["phase"] = "phase1-understanding"
-        self._state_store.save(state)
+        if persist:
+            self._state_store.save(state)
         print(
             f"[squad] {phase}: Phase 1 quality prerequisite missing or stale; "
             "routing through phase1-understanding",
@@ -6224,7 +6236,12 @@ class SquadController:
         )
         return "phase1-understanding"
 
-    def _guard_spec_lexicon_evidence(self, phase: str) -> str:
+    def _guard_spec_lexicon_evidence(
+        self,
+        phase: str,
+        *,
+        persist: bool = True,
+    ) -> str:
         """Route legacy downstream resumes through visible spec certification."""
         # INVESTIGATOR resolves a declared evidence gap before the next WHAT
         # amendment.  It is reachable from WHY2 but is not a downstream spec
@@ -6271,7 +6288,8 @@ class SquadController:
         state["convergence_guard_fire_count"] = 0
         state.pop("phase_recommendation", None)
         state["phase"] = "phase1-lexicon-derive"
-        self._state_store.save(state)
+        if persist:
+            self._state_store.save(state)
         print(
             f"[squad] {phase}: spec Lexicon evidence missing or stale; "
             "routing through phase1-lexicon-derive",
@@ -6358,18 +6376,25 @@ class SquadController:
             raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
 
         existing = self._state_store.load()
-        if self._state_store.discard_failed_automatic_decision_for_manual_phase_replay(
-            phase_id
-        ):
+        replay_claimed = (
+            self._state_store.claim_failed_automatic_decision_for_manual_phase_replay(
+                phase_id
+            )
+        )
+        if replay_claimed:
             print(
                 "[squad] retrying failed automatic Banzai decision via manual "
                 f"phase replay: {phase_id}",
                 flush=True,
             )
-            existing = self._state_store.load()
-        if self._unresolved_human_input_decision(existing) is not None:
+        if (
+            not replay_claimed
+            and self._unresolved_human_input_decision(existing) is not None
+        ):
             return self._unresolved_human_input_result(existing)
         if (
+            not replay_claimed
+            and
             existing.get("status") == "blocked"
             and existing.get("escalation_question")
             and not (
@@ -6401,7 +6426,7 @@ class SquadController:
                 self._state_store.save(state)
             self._ensure_telemetry_manifest()
             self._refresh_run_context("manual phase initialization")
-        else:
+        elif not replay_claimed:
             state = self._state_store.load()
             state["status"] = "running"
             state["phase"] = phase_id
@@ -6416,20 +6441,50 @@ class SquadController:
             self._ensure_telemetry_manifest()
             self._refresh_run_context(f"manual phase replay {phase_id}")
 
-        self._isolate_manual_phase_spec_dir()
+        if not replay_claimed:
+            self._isolate_manual_phase_spec_dir()
 
         phase = phase_id
-        guarded_phase = self._guard_constitution_provenance(phase)
+        guarded_phase = (
+            self._guard_constitution_provenance(phase, persist=False)
+            if replay_claimed
+            else self._guard_constitution_provenance(phase)
+        )
         if guarded_phase in TERMINAL_PHASES:
+            if replay_claimed:
+                self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
             return SquadResult.from_state(self._state_store.load())
         phase = guarded_phase
-        phase = self._guard_spec_lexicon_evidence(phase)
-        phase = self._guard_phase1_quality_evidence(phase)
-        phase = self._guard_understanding_evidence(phase)
+        phase = (
+            self._guard_spec_lexicon_evidence(phase, persist=False)
+            if replay_claimed
+            else self._guard_spec_lexicon_evidence(phase)
+        )
+        phase = (
+            self._guard_phase1_quality_evidence(phase, persist=False)
+            if replay_claimed
+            else self._guard_phase1_quality_evidence(phase)
+        )
+        phase = (
+            self._guard_understanding_evidence(phase, persist=False)
+            if replay_claimed
+            else self._guard_understanding_evidence(phase)
+        )
+        if replay_claimed and phase != phase_id:
+            self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
+            return SquadResult.from_state(self._state_store.load())
 
         node = self._graph.get(phase)
-        label = node.label or node.id
-        if self._skip_phase_if_condition_false(node, manual_phase_run=True):
+        if replay_claimed:
+            should_skip = not self._manual_replay_condition_allows_dispatch(node)
+        else:
+            should_skip = self._skip_phase_if_condition_false(
+                node,
+                manual_phase_run=True,
+            )
+        if should_skip:
+            if replay_claimed:
+                self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
             return SquadResult.from_state(self._state_store.load())
         self._start_declared_phase_timing(node)
         print(
@@ -6443,12 +6498,25 @@ class SquadController:
         )
 
         if node.type == "human_gate":
+            if replay_claimed:
+                self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
+                return SquadResult.from_state(self._state_store.load())
             self._intercept_human_gate(node)
             return SquadResult.from_state(self._state_store.load())
 
         executor = self._executors.get(node.type)
+        if replay_claimed:
+            if executor is None:
+                self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
+                return SquadResult.from_state(self._state_store.load())
+            try:
+                node = self._materialize_controller_phase_inputs(node)
+            except ControllerStateContractViolation:
+                self._state_store.clear_failed_automatic_decision_for_manual_phase_replay()
+                return SquadResult.from_state(self._state_store.load())
         try:
-            node = self._materialize_controller_phase_inputs(node)
+            if not replay_claimed:
+                node = self._materialize_controller_phase_inputs(node)
             if executor is None:
                 result = self._judgment_dispatch(
                     f"Unknown phase type {node.type!r} for phase {phase!r}",
@@ -6471,6 +6539,27 @@ class SquadController:
                         reason="manual_rerun",
                     )
                 ):
+                    if replay_claimed:
+                        retire_replay = (
+                            self._state_store
+                            .retire_claimed_failed_automatic_decision_for_manual_phase_replay
+                        )
+                        retired = retire_replay(
+                            phase_id,
+                            initial_state_updates=initial_state_updates or {},
+                        )
+                        if not retired:
+                            clear_replay = (
+                                self._state_store
+                                .clear_failed_automatic_decision_for_manual_phase_replay
+                            )
+                            clear_replay()
+                            raise StateAdvanceError(
+                                "failed decision replay authority changed before "
+                                "executor dispatch",
+                                json_path="$.blocked_decision",
+                                validator="human_input_authority",
+                            )
                     result = executor.execute(node, self._state_store)
         except ControllerStateContractViolation as exc:
             self._block_after_executor_contract_failure(node, exc)
@@ -6764,6 +6853,14 @@ class SquadController:
             flush=True,
         )
         return True
+
+    def _manual_replay_condition_allows_dispatch(self, node: PhaseNode) -> bool:
+        """Evaluate a replay condition without applying skip routing effects."""
+        condition = (node.condition or "").strip()
+        if not condition:
+            return True
+        state = self._state_store.load()
+        return self._evaluator.evaluate(condition, state) is True
 
     def _absolute_project_path(self, value: str | Path) -> Path:
         path = Path(value)
@@ -9456,7 +9553,12 @@ class SquadController:
         )
         return candidate
 
-    def _guard_constitution_provenance(self, phase: str) -> str:
+    def _guard_constitution_provenance(
+        self,
+        phase: str,
+        *,
+        persist: bool = True,
+    ) -> str:
         """Route normal spec/build phases through CHIEF until constitution is proven.
 
         The state machine owns the primary decision: phase1-constitution must have
@@ -9481,7 +9583,8 @@ class SquadController:
                 "phase1-constitution completed, but constitution artifact is "
                 "missing or still template"
             )
-            self._state_store.save(state)
+            if persist:
+                self._state_store.save(state)
             print(
                 "[squad] constitution guard → blocked "
                 "(phase1-constitution completed but artifact is invalid)",
@@ -9492,7 +9595,8 @@ class SquadController:
         reason = "missing phase1-constitution completion provenance"
         state["phase"] = "phase1-constitution"
         state["constitution_guard_reason"] = reason
-        self._state_store.save(state)
+        if persist:
+            self._state_store.save(state)
         print(
             f"[squad] constitution guard → phase1-constitution ({reason})",
             flush=True,
