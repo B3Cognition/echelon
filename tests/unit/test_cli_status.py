@@ -186,6 +186,65 @@ def _v2_decision(
     )
 
 
+def _versioned_active_decision(
+    *,
+    schema_version: int,
+    status: str,
+) -> dict[str, object]:
+    legacy = _v2_decision(status=status, autonomy_mode="banzai")
+    legacy["risk_level"] = "low"
+    legacy_options = legacy["options"]
+    assert isinstance(legacy_options, list)
+    legacy_options[0]["risk_level"] = "low"
+    if schema_version == 2:
+        return legacy
+    return validate_blocked_decision_v3(
+        {
+            **legacy,
+            "schema_version": 3,
+            "recommended_option_id": "ship-current",
+            "recommended_action": None,
+            "automatic_eligible": True,
+            "recommendation_rationale": (
+                "The reviewed scope is the bounded release candidate."
+            ),
+            "recommendation_confidence": "medium",
+            "recommendation_authority": "controller_evidence",
+            "recommendation_evidence": [
+                {
+                    "id": "checkpoint-assess:scope",
+                    "kind": "phase1_quality_certificate",
+                    "reference": "state:spec_quality_certificate",
+                    "digest": "a" * 64,
+                }
+            ],
+            "resolution_rationale": None,
+            "resolution_confidence": None,
+            "recommendation_followed": None,
+            "override_reason": None,
+        }
+    )
+
+
+def _write_unresolved_issue(spec_dir: Path) -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues
+
+### ISS-1: Choose a retry boundary
+**Severity:** HIGH
+**Action Required:** Choose the bounded retry policy.
+
+### Resolution Guidance
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** Provider throttling evidence.
+- **Values not inferable:** Maximum retry count.
+- **Banzai eligible:** no
+""",
+        encoding="utf-8",
+    )
+
+
 def _proportional_quality_decision() -> dict[str, object]:
     return build_blocked_decision_v2(
         decision_id="dec-quality-status",
@@ -783,6 +842,56 @@ def test_status_renders_v2_action_without_changing_state(
     assert state_path.read_bytes() == before
 
 
+@pytest.mark.parametrize("schema_version", [2, 3])
+@pytest.mark.parametrize("decision_status", ["pending", "resolving"])
+def test_status_active_decision_renders_one_decision_specific_next_step(
+    tmp_path: Path,
+    capsys,
+    schema_version: int,
+    decision_status: str,
+) -> None:
+    run_dir = tmp_path / "runs" / f"spec-active-v{schema_version}-{decision_status}"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    decision = _versioned_active_decision(
+        schema_version=schema_version,
+        status=decision_status,
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "blocked_reason": decision["reason_code"],
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RESOLVE_DECISION,
+                    reason_code=str(decision["reason_code"]),
+                    phase="phase1-what",
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(decision["id"]),
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert output.count("NEXT STEP") == 1
+    assert output.count("echelon spec continue") == 1
+    assert "controller-owned decision resolution pending" in output.lower()
+    assert "persisted decision" in output
+    assert "READY TO BUILD" not in output
+    assert "echelon build" not in output
+
+
 def test_blocked_status_without_decision_renders_one_recovery_surface(
     tmp_path: Path,
     capsys,
@@ -831,6 +940,8 @@ def test_status_invalid_decision_pair_fails_closed_before_unpaired_recovery(
         encoding="utf-8",
     )
     decision = _failed_provider_decision(schema_version=schema_version)
+    spec_dir = run_dir / "specs" / "001-invalid-authority"
+    _write_unresolved_issue(spec_dir)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
@@ -839,6 +950,7 @@ def test_status_invalid_decision_pair_fails_closed_before_unpaired_recovery(
                 "phase": "phase1-tracker",
                 "blocked_reason": decision["reason_code"],
                 "autonomy_mode": "banzai",
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
                 "blocked_decision": decision,
                 "recovery_instruction": RecoveryInstruction(
                     kind=RecoveryKind.RETRY_PHASE,
@@ -857,6 +969,7 @@ def test_status_invalid_decision_pair_fails_closed_before_unpaired_recovery(
     assert output.lower().count("invalid persisted decision") == 1
     assert "echelon spec continue" not in output
     assert "echelon phase run phase1-tracker" not in output
+    assert "echelon spec resolve" not in output
 
 
 @pytest.mark.parametrize("schema_version", [2, 3])
@@ -868,6 +981,8 @@ def test_squad_summary_invalid_decision_pair_has_no_executable_recovery(
     run_dir = tmp_path / "runs" / f"spec-summary-invalid-v{schema_version}"
     run_dir.mkdir(parents=True)
     decision = _failed_provider_decision(schema_version=schema_version)
+    spec_dir = run_dir / "specs" / "001-invalid-authority"
+    _write_unresolved_issue(spec_dir)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
@@ -876,6 +991,7 @@ def test_squad_summary_invalid_decision_pair_has_no_executable_recovery(
                 "phase": "phase1-tracker",
                 "blocked_reason": decision["reason_code"],
                 "autonomy_mode": "banzai",
+                "spec_dir": spec_dir.relative_to(tmp_path).as_posix(),
                 "blocked_decision": decision,
                 "recovery_instruction": RecoveryInstruction(
                     kind=RecoveryKind.RETRY_PHASE,
@@ -900,6 +1016,7 @@ def test_squad_summary_invalid_decision_pair_has_no_executable_recovery(
     assert output.lower().count("invalid persisted decision") == 1
     assert "echelon spec continue" not in output
     assert "echelon phase run phase1-tracker" not in output
+    assert "echelon spec resolve" not in output
 
 
 def test_failed_human_gate_status_renders_ledger_rewind_without_mutation(

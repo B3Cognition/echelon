@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 from collections.abc import Mapping
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -4699,6 +4700,113 @@ class TestHumanInputDecisionStateCAS:
 
         assert failed["blocked_decision"]["status"] == "failed"
         assert failed["phase"] == "terminal-blocked"
+
+    def test_failed_gate_rewind_detaches_caller_mapping_before_state_lock(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            autonomy_mode="banzai",
+        )
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        pending = store.set_human_input_decision(
+            request,
+            initial_status="pending",
+        )
+        claimed = store.claim_human_input_decision(
+            pending["blocked_decision"]["id"],
+            expected_state_revision=pending["state_revision"],
+        )
+        retry = store.record_human_input_resolution_failure(
+            pending["blocked_decision"]["id"],
+            expected_state_revision=claimed["state_revision"],
+            failure_code="provider_failed",
+        )
+        claimed = store.claim_human_input_decision(
+            pending["blocked_decision"]["id"],
+            expected_state_revision=retry["state_revision"],
+        )
+        failed = store.record_human_input_resolution_failure(
+            pending["blocked_decision"]["id"],
+            expected_state_revision=claimed["state_revision"],
+            failure_code="provider_failed",
+        )
+        rewound = deepcopy(failed)
+        rewound.update(
+            {
+                "status": "running",
+                "phase": "predecessor",
+                "blocked_reason": None,
+                "iteration": 0,
+            }
+        )
+
+        events: list[str] = []
+        lock_held = False
+
+        def observe(event: str) -> None:
+            assert lock_held is False, f"caller hook ran under state lock: {event}"
+            events.append(event)
+
+        class DeepcopyProbe:
+            def __deepcopy__(self, memo):
+                observe("deepcopy")
+                return "detached"
+
+        rewound["caller_probe"] = DeepcopyProbe()
+
+        class ObservedMapping(Mapping):
+            def __getitem__(self, key):
+                observe(f"getitem:{key}")
+                return rewound[key]
+
+            def __iter__(self):
+                observe("iter")
+                return iter(rewound)
+
+            def __len__(self):
+                observe("len")
+                return len(rewound)
+
+        real_lock = store._lock
+
+        @contextmanager
+        def observed_lock(*, exclusive):
+            nonlocal lock_held
+            events.append("lock")
+            lock_held = True
+            try:
+                with real_lock(exclusive=exclusive):
+                    yield
+            finally:
+                lock_held = False
+
+        with patch.object(store, "_lock", observed_lock):
+            result = store.rewind_failed_banzai_human_gate(
+                str(failed["blocked_decision"]["id"]),
+                expected_state_revision=failed["state_revision"],
+                source_phase="init",
+                predecessor_phase="predecessor",
+                rewound_state=ObservedMapping(),
+            )
+
+        assert events[-1] == "lock"
+        assert "deepcopy" in events
+        assert result == store.load()
+        assert result["caller_probe"] == "detached"
+        assert result["phase"] == "predecessor"
+        assert result["state_revision"] == failed["state_revision"] + 1
+        assert "blocked_decision" not in result
+        assert "recovery_instruction" not in result
 
     def test_claim_rejects_attempt_limit_independently_of_schema_validation(
         self,

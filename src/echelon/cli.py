@@ -5160,6 +5160,11 @@ def _issue_resolution_screen_guidance(
     return fields
 
 
+def _is_issue_resolution_recovery(action: _RunRecoveryAction) -> bool:
+    """Return whether one classified action authorizes issue-resolution CLI."""
+    return action.command.startswith("echelon spec resolve ")
+
+
 def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> None:
     """Record one issue decision, then run its targeted Phase 1 repair."""
     if len(args) < 2:
@@ -5536,9 +5541,7 @@ def _print_squad_summary(
     if status in {"blocked", "interrupted", "budget_exhausted"}:
         if action.note:
             fields.append(("note", action.note))
-        if status == "blocked" and (
-            "issues.md" in action.note.lower() or action.kind == "manual_recovery"
-        ):
+        if status == "blocked" and _is_issue_resolution_recovery(action):
             issues_recap = _current_issues_recap(project_root, squad_dir, state)
             if issues_recap:
                 recap, issues_path = issues_recap
@@ -6417,6 +6420,19 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 subtitle="RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
             )
             return
+        if action.kind == "resolve_decision":
+            fields = [
+                ("reason", action.reason),
+                ("phase", action.phase),
+                ("next", action.command),
+                ("note", action.note),
+            ]
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN BLOCKED — controller-owned decision resolution pending",
+            )
+            return
         if action.kind == "manual_recovery":
             fields = [
                 ("reason", action.reason),
@@ -6424,7 +6440,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             ]
             if action.command:
                 fields.insert(1, ("next", action.command))
-            if run_dir is not None:
+            if run_dir is not None and _is_issue_resolution_recovery(action):
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, run_dir, current_state)
                 )

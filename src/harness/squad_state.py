@@ -2940,6 +2940,31 @@ class SquadStateStore:
             )
         normalized_source = source_phase.strip()
         normalized_predecessor = predecessor_phase.strip()
+        try:
+            detached = deepcopy(dict(rewound_state))
+            desired = loads_strict_json(
+                json.dumps(detached, allow_nan=False)
+            )
+        except Exception as exc:
+            raise StateAdvanceError(
+                "failed gate rewind postimage is invalid",
+                json_path="$",
+                validator="type",
+            ) from exc
+        if (
+            not isinstance(desired, dict)
+            or not all(isinstance(key, str) for key in desired)
+            or desired.get("state_revision") != expected_state_revision
+            or desired.get("status") != "running"
+            or desired.get("phase") != normalized_predecessor
+            or desired.get("blocked_reason") is not None
+            or desired.get("iteration") != 0
+        ):
+            raise StateAdvanceError(
+                "failed gate rewind postimage does not match checked authority",
+                json_path="$",
+                validator="human_input_authority",
+            )
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -2969,15 +2994,8 @@ class SquadStateStore:
                     json_path="$.blocked_decision",
                     validator="human_input_authority",
                 )
-
-            desired = deepcopy(dict(rewound_state))
             if (
-                desired.get("state_revision") != expected_state_revision
-                or desired.get("status") != "running"
-                or desired.get("phase") != normalized_predecessor
-                or desired.get("blocked_reason") is not None
-                or desired.get("iteration") != 0
-                or desired.get("blocked_decision")
+                desired.get("blocked_decision")
                 != before.get("blocked_decision")
                 or desired.get("recovery_instruction")
                 != before.get("recovery_instruction")
