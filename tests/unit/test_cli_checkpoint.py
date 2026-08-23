@@ -5,9 +5,10 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from echelon.checkpoint_cli import run_checkpoint_command
-from echelon.cli import _classify_run_recovery, _cmd_rewind
+from echelon.cli import _classify_run_recovery
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,
@@ -456,9 +457,14 @@ def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
     )
 
 
+@pytest.mark.parametrize("entry_point", ["spec", "alias"])
 def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry_point: str,
 ) -> None:
+    from echelon.cli_app import app
+
     run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-collision")
     (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
     (spec_dir / "spec.md").write_text("# Intended checkpoint\n", encoding="utf-8")
@@ -561,10 +567,14 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
         f"echelon spec rewind phase1-lexicon --commit {shared_commit} "
         "--next-phase checkpoint-assess --confirm"
     )
-    command_args = shlex.split(action.command)[3:]
+    command_args = shlex.split(action.command)[1:]
+    if entry_point == "alias":
+        command_args = ["rewind", *command_args[2:]]
+    monkeypatch.chdir(tmp_path)
 
-    _cmd_rewind(command_args, project_root=tmp_path)
+    result = CliRunner().invoke(app, command_args)
 
+    assert result.exit_code == 0, result.output
     assert later_commit != shared_commit
     assert _git(tmp_path, "rev-parse", "HEAD") == shared_commit
     assert (spec_dir / "spec.md").read_text(encoding="utf-8") == "# Intended checkpoint\n"

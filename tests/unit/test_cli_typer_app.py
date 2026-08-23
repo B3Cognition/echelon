@@ -157,18 +157,25 @@ def test_re_help_exposes_explicit_one_source_refresh():
 
 
 @pytest.mark.unit
-def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
-    result = invoke_help("spec", "rewind")
+def test_rewind_entry_point_help_declares_exact_ledger_identity_options():
+    spec_result = invoke_help("spec", "rewind")
+    alias_result = invoke_help("rewind")
 
-    assert result.exit_code == 0
-    assert "Recorded checkpoint phase or ID" in result.output
-    assert "--commit" in result.output
-    assert "Safe phase id" not in result.output
+    for result in (spec_result, alias_result):
+        assert result.exit_code == 0
+        assert "Recorded checkpoint phase or ID" in result.output
+        assert "--commit" in result.output
+        assert "--next-phase" in result.output
+        assert "Safe phase id" not in result.output
 
 
 @pytest.mark.unit
-def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
-    from echelon.cli_app import run
+@pytest.mark.parametrize("command", [("spec", "rewind"), ("rewind",)])
+def test_rewind_typer_entry_points_forward_exact_checkpoint_identity(
+    monkeypatch,
+    command,
+):
+    from echelon.cli_app import app
 
     calls: list[list[str]] = []
     monkeypatch.setattr(
@@ -176,15 +183,55 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
         lambda args, project_root: calls.append(args),
     )
 
-    run([
-        "spec",
-        "rewind",
+    result = CliRunner().invoke(
+        app,
+        [
+            *command,
+            "phase1-what",
+            "--commit",
+            "98152f1",
+            "--next-phase",
+            "checkpoint-assess",
+            "--confirm",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [[
         "phase1-what",
         "--commit",
         "98152f1",
+        "--next-phase",
+        "checkpoint-assess",
         "--confirm",
-    ])
+    ]]
 
+
+@pytest.mark.unit
+def test_spec_rewind_omits_unset_next_phase_without_changing_legacy_args(
+    monkeypatch,
+):
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_rewind",
+        lambda args, project_root: calls.append(args),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "spec",
+            "rewind",
+            "phase1-what",
+            "--commit",
+            "98152f1",
+            "--confirm",
+        ],
+    )
+
+    assert result.exit_code == 0
     assert calls == [[
         "phase1-what",
         "--commit",
