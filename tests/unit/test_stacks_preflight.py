@@ -67,14 +67,14 @@ def test_available_required_command_passes_preflight() -> None:
 
 
 @pytest.mark.unit
-def test_required_registry_is_warning_not_blocker() -> None:
+def test_registry_without_a_probe_is_a_warning_not_blocker() -> None:
     resolved = resolve_stacks(
         ["playbook"],
         {
             "playbook": _stack(
                 "playbook",
                 requires_commands=["npx"],
-                requires_registries=["statsperform-nexus"],
+                requires_registries=["custom-registry"],
             )
         },
     )
@@ -84,6 +84,75 @@ def test_required_registry_is_warning_not_blocker() -> None:
     assert result.status == "warn"
     assert not result.has_errors
     assert [finding.code for finding in result.findings] == ["STACK_REGISTRY_UNVERIFIED"]
+
+
+@pytest.mark.unit
+def test_statsperform_nexus_registry_probe_suppresses_unverified_warning() -> None:
+    """A reachable authenticated registry must not be reported as unverified."""
+    resolved = resolve_stacks(
+        ["playbook"],
+        {
+            "playbook": _stack(
+                "playbook",
+                requires_registries=["statsperform-nexus"],
+            )
+        },
+    )
+    calls: list[list[str]] = []
+
+    result = run_stack_preflight(
+        resolved,
+        command_locator=lambda command: f"/bin/{command}",
+        command_runner=lambda command, _timeout_seconds: calls.append(command)
+        or subprocess.CompletedProcess(command, 0, stdout="1.2.3", stderr=""),
+    )
+
+    assert result.status == "pass"
+    assert result.findings == []
+    assert calls == [
+        [
+            "npm",
+            "view",
+            "@statsperform/playbook-cli",
+            "version",
+            "--registry=https://nexus.statsperform.tools/repository/public-npm/",
+        ]
+    ]
+
+
+@pytest.mark.unit
+def test_statsperform_nexus_registry_probe_reports_access_failure() -> None:
+    """An unavailable registry must not be reported as successfully verified."""
+    resolved = resolve_stacks(
+        ["playbook"],
+        {
+            "playbook": _stack(
+                "playbook",
+                requires_registries=["statsperform-nexus"],
+            )
+        },
+    )
+
+    result = run_stack_preflight(
+        resolved,
+        command_locator=lambda command: f"/bin/{command}",
+        command_runner=lambda command, _timeout_seconds: subprocess.CompletedProcess(
+            command, 1, stdout="", stderr="authentication required"
+        ),
+    )
+
+    assert result.status == "warn"
+    assert [finding.code for finding in result.findings] == [
+        "STACK_REGISTRY_PROBE_FAILED"
+    ]
+    assert "authentication required" in result.findings[0].message
+    assert result.findings[0].command == [
+        "npm",
+        "view",
+        "@statsperform/playbook-cli",
+        "version",
+        "--registry=https://nexus.statsperform.tools/repository/public-npm/",
+    ]
 
 
 @pytest.mark.unit
