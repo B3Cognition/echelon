@@ -1322,6 +1322,11 @@ def root_rewind(
         "--commit",
         help="Full checkpoint commit or unique abbreviated prefix.",
     ),
+    checkpoint_next_phase: Optional[str] = typer.Option(
+        None,
+        "--next-phase",
+        help="Exact next phase recorded by the selected checkpoint row.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
@@ -1329,6 +1334,7 @@ def root_rewind(
 
     args = [phase_id, *_ctx_args(ctx)]
     _extend_option(args, "--commit", checkpoint_commit)
+    _extend_option(args, "--next-phase", checkpoint_next_phase)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -2174,6 +2180,11 @@ def spec_rewind(
         "--commit",
         help="Full checkpoint commit or unique abbreviated prefix.",
     ),
+    checkpoint_next_phase: Optional[str] = typer.Option(
+        None,
+        "--next-phase",
+        help="Exact next phase recorded by the selected checkpoint row.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -2183,6 +2194,7 @@ def spec_rewind(
 
     args = [phase_id, *list(ctx.args)]
     _extend_option(args, "--commit", checkpoint_commit)
+    _extend_option(args, "--next-phase", checkpoint_next_phase)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())

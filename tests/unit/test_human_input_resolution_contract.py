@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import harness.human_input as human_input
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_decision_resolution_result,
@@ -22,6 +23,24 @@ OPTIONS = (
         outcome="approved",
     ),
 )
+
+
+def test_applied_resolution_retains_complete_nullable_audit() -> None:
+    resolution = human_input.AppliedHumanInputResolution(
+        selected_option_id="approve",
+        answer_text=None,
+        resolved_by="COMMANDER",
+        rationale="The sealed recommendation is supported by the evidence.",
+        confidence="low",
+    )
+
+    assert resolution.selected_option_id == "approve"
+    assert resolution.answer_text is None
+    assert resolution.resolved_by == "COMMANDER"
+    assert resolution.rationale == (
+        "The sealed recommendation is supported by the evidence."
+    )
+    assert resolution.confidence == "low"
 
 
 def _decision_resolution_payload(*, decision: dict[str, object] | None = None) -> dict[str, object]:

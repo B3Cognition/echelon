@@ -208,6 +208,34 @@ def test_workflow_gates_have_only_compiled_outcome_policy() -> None:
         } == {"approved", "rejected"}
 
 
+def test_every_static_choice_policy_has_one_recommended_option() -> None:
+    static_policy_producers: set[str] = set()
+    for phase in _workflow_phases().values():
+        for policy in phase.get("human_input", []):
+            if policy.get("recommendation_mode") != "static":
+                continue
+            static_policy_producers.add(phase["id"])
+            assert sum(option["recommended"] for option in policy["options"]) == 1
+    assert static_policy_producers == {"checkpoint-plan"}
+
+
+def test_checkpoint_assess_uses_registered_controller_preparation() -> None:
+    phases = _workflow_phases()
+    policy = phases["checkpoint-assess"]["human_input"][0]
+
+    assert policy["recommendation_mode"] == "controller"
+    assert not any(option["recommended"] for option in policy["options"])
+    registry = PhaseGraph(
+        DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    ).human_input_policy_registry()
+    assert registry.lookup(
+        "human_gate",
+        "checkpoint-assess",
+        "checkpoint_assess_decision_required",
+    ).recommendation_mode == "controller"
+
+
 def test_question_capable_provider_edges_do_not_accept_escalate() -> None:
     phases = _workflow_phases()
 

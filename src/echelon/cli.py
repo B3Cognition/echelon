@@ -117,7 +117,8 @@ Commands:
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
-  spec rewind <phase-id> [--commit <sha>]   Rewind the active squad run to a safe checkpoint.
+  spec rewind <phase-id> [--commit <sha>] [--next-phase <phase-id>]
+                                            Rewind the active squad run to a safe checkpoint.
   spec switch <spec-or-run-id> [--stash | --discard --confirm] [--restore-stash]
                                             Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
@@ -3452,7 +3453,7 @@ def _recovery_action_from_instruction(
             "safe_rewind",
             reason=reason,
             phase=phase,
-            command=f"echelon spec rewind {phase}",
+            command=_command_display("echelon spec rewind", [phase]),
             note="safe checkpoint cleanup is required before retry",
         )
     if kind == RecoveryKind.INCREASE_BUDGET:
@@ -3467,7 +3468,7 @@ def _recovery_action_from_instruction(
             "manual_recovery",
             reason=reason,
             phase=phase,
-            command=f"echelon phase run {phase}",
+            command=_command_display("echelon phase run", [phase]),
             note="run the recorded deterministic repair before continuing",
         )
     if kind == RecoveryKind.MANUAL_DIAGNOSIS:
@@ -3485,17 +3486,198 @@ def _recovery_action_from_instruction(
     )
 
 
-def _active_v2_decision(state: dict) -> dict[str, object] | None:
-    """Return the validated unresolved v2 decision without changing persisted state."""
-    from harness.blocked_decision import validate_blocked_decision_v2
-    from harness.recovery_instruction import validate_decision_recovery_pair
+def _active_versioned_decision(
+    state: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return one exact unresolved v2/v3 decision authority."""
+    decision = _validated_versioned_decision(state)
+    if decision is None:
+        return None
+    return (
+        decision
+        if decision["status"]
+        in {"pending", "resolving", "awaiting_human", "failed"}
+        else None
+    )
 
+
+def _active_v2_decision(state: dict) -> dict[str, object] | None:
+    """Compatibility view retained for callers auditing legacy v2 state."""
     raw_decision = state.get("blocked_decision")
     if not isinstance(raw_decision, dict) or raw_decision.get("schema_version") != 2:
         return None
-    decision = validate_blocked_decision_v2(raw_decision)
-    validate_decision_recovery_pair(decision, state.get("recovery_instruction"))
-    return decision if decision["status"] != "resolved" else None
+    return _active_versioned_decision(state)
+
+
+def _validated_versioned_decision(
+    state: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Validate a persisted v2/v3 decision and its exact recovery pair."""
+    from harness.blocked_decision import validate_blocked_decision
+    from harness.recovery_instruction import validate_decision_recovery_pair
+
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    decision = validate_blocked_decision(raw_decision)
+    validate_decision_recovery_pair(
+        decision,
+        state.get("recovery_instruction"),
+    )
+    return decision
+
+
+def _v2_automatic_decision_is_registered(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    """Reconstruct intrinsic v2 automatic eligibility from registered policy."""
+    if decision.get("schema_version") != 2 or project_root is None:
+        return False
+    try:
+        from harness.human_input import v2_automatic_decision_is_registered
+
+        if graph is None:
+            from harness.phase_graph import load_workspace_phase_graph
+
+            graph, _ = load_workspace_phase_graph(project_root)
+        registry = graph.human_input_policy_registry()
+        policy = registry.lookup(
+            str(decision.get("source_kind") or ""),
+            str(decision.get("producer_id") or ""),
+            str(decision.get("reason_code") or ""),
+        )
+        return v2_automatic_decision_is_registered(decision, policy)
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _automatic_decision_is_eligible(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    if decision.get("schema_version") == 3:
+        return decision.get("automatic_eligible") is True
+    return _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+        graph=graph,
+    )
+
+
+def _decision_gate_rewind_action(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    if project_root is None:
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    spec_dir, _ = _normalize_rewind_spec_dir(project_root, dict(run_state))
+    if spec_dir is None or not source_phase:
+        return None
+    from harness.phase_checkpoints import load_checkpoint_ledger
+
+    try:
+        ledger = load_checkpoint_ledger(spec_dir)
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    candidates = [
+        checkpoint
+        for checkpoint in ledger.checkpoints
+        if checkpoint.rewind == "supported"
+        and checkpoint.next_phase == source_phase
+    ]
+    if not candidates:
+        return None
+    checkpoint = candidates[-1]
+    duplicate_phase = sum(
+        item.phase == checkpoint.phase for item in ledger.checkpoints
+    ) > 1
+    command_args = [checkpoint.phase]
+    if duplicate_phase:
+        command_args.extend(("--commit", checkpoint.commit))
+    command_args.extend(("--next-phase", source_phase, "--confirm"))
+    return _RunRecoveryAction(
+        "safe_rewind",
+        reason=str(run_state.get("blocked_reason") or "gate_rejected"),
+        phase=checkpoint.phase,
+        command=_command_display("echelon spec rewind", command_args),
+        note=(
+            "rewind the exact checkpoint ledger predecessor before replaying "
+            "the human gate"
+        ),
+    )
+
+
+def _versioned_decision_recovery_action(
+    run_state: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    decision = _validated_versioned_decision(run_state)
+    if decision is None:
+        return None
+    status = decision["status"]
+    source_kind = decision["source_kind"]
+    if (
+        status == "resolved"
+        and source_kind == "human_gate"
+        and str(run_state.get("blocked_reason") or "").strip()
+        == "gate_rejected"
+    ):
+        return _decision_gate_rewind_action(
+            run_state,
+            decision,
+            project_root=project_root,
+        )
+    if (
+        status != "failed"
+        or decision.get("autonomy_mode") != "banzai"
+        or run_state.get("autonomy_mode") != "banzai"
+        or not _automatic_decision_is_eligible(
+            decision,
+            project_root=project_root,
+        )
+    ):
+        return None
+    if source_kind == "human_gate":
+        return _decision_gate_rewind_action(
+            run_state,
+            decision,
+            project_root=project_root,
+        )
+    if source_kind not in {"provider_escalation", "controller_safeguard"}:
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    if not source_phase or project_root is None:
+        return None
+    try:
+        from harness.phase_graph import load_workspace_phase_graph
+
+        graph, _ = load_workspace_phase_graph(project_root)
+        if source_phase not in graph.all_phase_ids():
+            return None
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    reason = str(decision.get("failure_code") or "").strip() or str(
+        run_state.get("blocked_reason") or decision.get("reason_code") or ""
+    ).strip()
+    return _RunRecoveryAction(
+        "manual_recovery",
+        reason=reason,
+        phase=source_phase,
+        command=_command_display("echelon phase run", [source_phase]),
+        note="replay the exact failed automatic decision source phase",
+    )
 
 
 def _retryable_failed_agent_block_phase(run_state: dict) -> str | None:
@@ -3643,6 +3825,111 @@ def _v2_decision_recommendation(decision: dict[str, object]) -> str:
             if isinstance(option, dict) and option.get("recommended") is True:
                 return f"{option['id']}: {option['label']}"
     return str(decision.get("recommended_answer") or "(none)")
+
+
+def _decision_option_display(
+    decision: Mapping[str, object],
+    option_id: object,
+) -> str:
+    identifier = str(option_id or "").strip()
+    if not identifier:
+        return "(none)"
+    options = decision.get("options")
+    if isinstance(options, list):
+        for option in options:
+            if isinstance(option, Mapping) and option.get("id") == identifier:
+                label = str(option.get("label") or "").strip()
+                return f"{identifier}: {label}" if label else identifier
+    return identifier
+
+
+def _decision_audit_fields(
+    decision: Mapping[str, object],
+) -> list[tuple[str, str]]:
+    """Render recommendation and resolution audit from a validated decision."""
+    fields: list[tuple[str, str]] = [
+        ("Decision ID", str(decision["id"])),
+        ("Decision status", str(decision["status"])),
+        ("Decision mode", str(decision["autonomy_mode"])),
+        ("Classification", str(decision["classification"])),
+        ("Question", str(decision["question"])),
+        ("Options", _render_v2_decision_options(dict(decision))),
+    ]
+    if decision.get("schema_version") == 3:
+        recommended_option = decision.get("recommended_option_id")
+        recommended_answer = str(
+            decision.get("recommended_answer") or ""
+        ).strip()
+        recommendation_target = (
+            _decision_option_display(decision, recommended_option)
+            if recommended_option is not None
+            else recommended_answer or "(human action only)"
+        )
+        fields.extend(
+            [
+                ("Recommendation", f"Recommended: {recommendation_target}"),
+                (
+                    "Recommendation rationale",
+                    str(decision["recommendation_rationale"]),
+                ),
+                (
+                    "Recommendation confidence",
+                    str(decision["recommendation_confidence"]),
+                ),
+            ]
+        )
+        recommended_action = str(
+            decision.get("recommended_action") or ""
+        ).strip()
+        if recommended_action:
+            fields.append(("Recommended action", recommended_action))
+    else:
+        fields.append(
+            (
+                "Recommendation",
+                f"Recommended: {_v2_decision_recommendation(dict(decision))}",
+            )
+        )
+    fields.append(("Risk", str(decision.get("risk_level") or "(none)")))
+
+    selected_option = decision.get("selected_option_id")
+    answer_text = str(decision.get("answer_text") or "").strip()
+    if selected_option is not None or answer_text:
+        fields.append(
+            (
+                "Answer",
+                _decision_option_display(decision, selected_option)
+                if selected_option is not None
+                else answer_text,
+            )
+        )
+    resolved_by = str(decision.get("resolved_by") or "").strip()
+    if resolved_by:
+        fields.append(("Resolved by", resolved_by))
+    if decision.get("schema_version") == 3 and decision.get("status") == "resolved":
+        followed = decision.get("recommendation_followed")
+        resolution = (
+            "Followed recommendation"
+            if followed is True
+            else "Overrode recommendation"
+            if followed is False
+            else "Recommendation action required human judgment"
+        )
+        fields.append(("Resolution", resolution))
+        resolution_rationale = str(
+            decision.get("resolution_rationale") or ""
+        ).strip()
+        resolution_confidence = str(
+            decision.get("resolution_confidence") or ""
+        ).strip()
+        override_reason = str(decision.get("override_reason") or "").strip()
+        if resolution_rationale:
+            fields.append(("Resolution rationale", resolution_rationale))
+        if resolution_confidence:
+            fields.append(("Resolution confidence", resolution_confidence))
+        if override_reason:
+            fields.append(("Override reason", override_reason))
+    return fields
 
 
 def _proportional_quality_decision_fields(
@@ -4092,7 +4379,7 @@ def _blocked_non_escalation_recovery_command(
         resolve_checkpoint(load_checkpoint_ledger(spec_dir), phase_id)
     except (KeyError, OSError, ValueError, TypeError):
         return None
-    return f"echelon spec rewind {phase_id}"
+    return _command_display("echelon spec rewind", [phase_id])
 
 
 def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
@@ -4215,6 +4502,23 @@ def _classify_run_recovery(
 
     if status != "blocked":
         return _RunRecoveryAction("advance")
+
+    try:
+        decision_recovery = _versioned_decision_recovery_action(
+            run_state,
+            project_root=project_root,
+        )
+    except (RecoveryInstructionError, ValueError) as exc:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="invalid_decision_authority",
+            note=(
+                f"invalid persisted decision authority: {exc}; restore or repair "
+                "the exact decision and recovery pair before retrying"
+            ),
+        )
+    if decision_recovery is not None:
+        return decision_recovery
 
     if reason == "proportional_quality_debt_declined":
         return _RunRecoveryAction(
@@ -4866,6 +5170,11 @@ def _issue_resolution_screen_guidance(
     return fields
 
 
+def _is_issue_resolution_recovery(action: _RunRecoveryAction) -> bool:
+    """Return whether one classified action authorizes issue-resolution CLI."""
+    return action.command.startswith("echelon spec resolve ")
+
+
 def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> None:
     """Record one issue decision, then run its targeted Phase 1 repair."""
     if len(args) < 2:
@@ -5242,9 +5551,7 @@ def _print_squad_summary(
     if status in {"blocked", "interrupted", "budget_exhausted"}:
         if action.note:
             fields.append(("note", action.note))
-        if status == "blocked" and (
-            "issues.md" in action.note.lower() or action.kind == "manual_recovery"
-        ):
+        if status == "blocked" and _is_issue_resolution_recovery(action):
             issues_recap = _current_issues_recap(project_root, squad_dir, state)
             if issues_recap:
                 recap, issues_path = issues_recap
@@ -5256,10 +5563,11 @@ def _print_squad_summary(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
     try:
-        summary_decision = _active_v2_decision(state)
+        summary_decision = _validated_versioned_decision(state)
     except (RecoveryInstructionError, ValueError):
         summary_decision = None
     if summary_decision is not None:
+        fields.extend(_decision_audit_fields(summary_decision))
         fields.extend(
             _proportional_quality_decision_fields(state, summary_decision)
         )
@@ -5269,7 +5577,7 @@ def _print_squad_summary(
     if status == "done" and spec_id:
         next_step = f"echelon delivery run {spec_id}"
     elif status in {"blocked", "interrupted", "budget_exhausted"}:
-        next_step = action.command or "echelon spec continue"
+        next_step = action.command
 
     from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
@@ -5388,6 +5696,8 @@ def _reset_rewind_state(
     *,
     checkpoint_phases_before_target: set[str] | None = None,
     boundary_completion_id: str = "",
+    preserve_resolved_gate_rejection: bool = False,
+    preserve_failed_human_gate_for_cas: bool = False,
 ) -> dict:
     rewound = dict(state)
     rewound["phase"] = phase
@@ -5395,9 +5705,38 @@ def _reset_rewind_state(
     rewound["iteration"] = 0
     rewound["spec_dir"] = spec_dir_ref
     rewound["blocked_reason"] = None
-    rewound["escalation_question"] = None
-    rewound["escalation_resolved"] = False
-    rewound["escalation_resolver"] = None
+    decision: Mapping[str, object] | None = None
+    try:
+        decision = _validated_versioned_decision(state)
+    except (RecoveryInstructionError, ValueError) as exc:
+        from echelon.rewind import RewindError
+
+        raise RewindError(f"versioned decision authority is invalid: {exc}") from exc
+    if decision is not None:
+        resolved_gate_rejection = (
+            preserve_resolved_gate_rejection
+            and decision["status"] == "resolved"
+            and decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("blocked_reason") == "gate_rejected"
+        )
+        failed_human_gate = (
+            preserve_failed_human_gate_for_cas
+            and decision["status"] == "failed"
+            and decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("phase") == decision.get("source_phase")
+        )
+        if not (resolved_gate_rejection or failed_human_gate):
+            from echelon.rewind import RewindError
+
+            raise RewindError(
+                "versioned decision authority requires its source-specific recovery"
+            )
+    else:
+        rewound["escalation_question"] = None
+        rewound["escalation_resolved"] = False
+        rewound["escalation_resolver"] = None
     rewound.pop("phase_a_readiness_blockers", None)
     # A rewind reopens the target phase's owned repair loop.  Retaining an
     # exhausted Lexicon certificate makes CARTOGRAPHER/ORCHESTRATOR conclude
@@ -6075,7 +6414,6 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("reason", action.reason),
                 ("phase", action.phase or "?"),
                 ("next", action.command),
-                ("then", "echelon spec continue"),
             ]
             _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
             return
@@ -6092,13 +6430,27 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 subtitle="RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
             )
             return
-        if action.kind == "manual_recovery":
+        if action.kind == "resolve_decision":
             fields = [
                 ("reason", action.reason),
+                ("phase", action.phase),
                 ("next", action.command),
                 ("note", action.note),
             ]
-            if run_dir is not None:
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN BLOCKED — controller-owned decision resolution pending",
+            )
+            return
+        if action.kind == "manual_recovery":
+            fields = [
+                ("reason", action.reason),
+                ("note", action.note),
+            ]
+            if action.command:
+                fields.insert(1, ("next", action.command))
+            if run_dir is not None and _is_issue_resolution_recovery(action):
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, run_dir, current_state)
                 )
@@ -7164,17 +7516,8 @@ def _cmd_run(
         implementation_targets,
         allow_missing=init_target,
     )
-    _workspace_git_preflight_for_squad_run(
-        project_root,
-        command_name=_command_display("echelon spec run", args),
-        user_message=message,
-        reset=reset,
-        manual_recovery=bool(next_phase),
-    )
-
-    config = load_config(project_root, squad_only=True)
     prev_dir = _find_current_run_dir(project_root)
-    active_v2_decision = False
+    active_versioned_decision = False
     if prev_dir is not None:
         try:
             previous_state = json.loads(
@@ -7185,20 +7528,40 @@ def _cmd_run(
                 if isinstance(previous_state, dict)
                 else None
             )
-            active_v2_decision = (
-                isinstance(previous_decision, dict)
-                and previous_decision.get("schema_version") == 2
-                and previous_decision.get("status")
-                in {"pending", "resolving", "awaiting_human", "failed"}
+            same_task = (
+                isinstance(previous_state, dict)
                 and message == previous_state.get("user_message", "")
             )
-        except (OSError, ValueError, TypeError):
+            candidate_is_active = (
+                not reset
+                and isinstance(previous_decision, dict)
+                and previous_decision.get("schema_version") in {2, 3}
+                and previous_decision.get("status") != "resolved"
+                and same_task
+            )
+            if candidate_is_active:
+                active_versioned_decision = (
+                    _active_versioned_decision(previous_state) is not None
+                )
+        except (RecoveryInstructionError, ValueError, TypeError) as exc:
+            print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        except OSError:
             pass
+    _workspace_git_preflight_for_squad_run(
+        project_root,
+        command_name=_command_display("echelon spec run", args),
+        user_message=message,
+        reset=reset,
+        manual_recovery=bool(next_phase) or active_versioned_decision,
+    )
+
+    config = load_config(project_root, squad_only=True)
     squad_dir, is_fresh = _select_squad_dir(
         project_root,
         message,
         reset=reset,
-        manual_recovery=bool(next_phase) or active_v2_decision,
+        manual_recovery=bool(next_phase) or active_versioned_decision,
         configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
         dirty_action=dirty_action,
         confirm_discard=confirm_discard,
@@ -7583,12 +7946,15 @@ def _phase_state_updates_for_target(
     project_root: Path,
     current_state: dict,
     target_spec_dir: Path | None,
+    *,
+    materialize: bool = True,
 ) -> dict:
     """Build state fields that make phase context/output target the spec dir."""
     if target_spec_dir is None:
         return {}
 
-    target_spec_dir.mkdir(parents=True, exist_ok=True)
+    if materialize:
+        target_spec_dir.mkdir(parents=True, exist_ok=True)
 
     source_refs = [
         str(current_state.get("phase_run_source_spec_dir") or "").strip(),
@@ -7602,7 +7968,12 @@ def _phase_state_updates_for_target(
         source = Path(source_ref)
         if not source.is_absolute():
             source = project_root / source
-        if source.exists() and source.is_dir() and source.resolve() != target_spec_dir.resolve():
+        if (
+            materialize
+            and source.exists()
+            and source.is_dir()
+            and source.resolve() != target_spec_dir.resolve()
+        ):
             _copy_missing_tree(source, target_spec_dir)
             break
 
@@ -7618,6 +7989,116 @@ def _phase_state_updates_for_target(
         "phase_run_source_spec_dir": target_ref,
     }
     return updates
+
+
+@dataclass(frozen=True)
+class _FailedAutomaticPhaseReplay:
+    decision: Mapping[str, object]
+    state_revision: int
+    v2_automatic_eligible: bool
+    spec_id: str
+    spec_dir_ref: str
+    spec_dir: Path
+
+
+def _failed_automatic_phase_replay(
+    state: Mapping[str, object],
+    *,
+    phase_id: str,
+    spec_arg: str,
+    project_root: Path,
+    run_dir: Path,
+    graph: object,
+) -> _FailedAutomaticPhaseReplay | None:
+    """Validate failed replay authority before resolving or materializing a target."""
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    decision = _validated_versioned_decision(state)
+    if decision is None or decision["status"] != "failed":
+        return None
+    source_phase = str(decision.get("source_phase") or "").strip()
+    revision = state.get("state_revision")
+    v2_eligible = _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+        graph=graph,
+    )
+    eligible = (
+        decision.get("automatic_eligible") is True
+        if decision["schema_version"] == 3
+        else v2_eligible
+    )
+    if decision["source_kind"] not in {
+        "provider_escalation",
+        "controller_safeguard",
+    }:
+        raise ValueError(
+            "failed human-gate authority requires its ledger-derived confirmed rewind command"
+        )
+    if (
+        decision["autonomy_mode"] != "banzai"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("status") != "blocked"
+        or state.get("phase") != source_phase
+        or phase_id != source_phase
+        or not eligible
+        or type(revision) is not int
+        or revision < 0
+    ):
+        replay_command = _command_display(
+            "echelon phase run",
+            [source_phase],
+        )
+        raise ValueError(
+            "failed automatic decision can only be retired by its exact "
+            f"source replay: {replay_command}"
+        )
+    spec_id = str(state.get("spec_id") or "").strip()
+    spec_dir_ref = str(state.get("spec_dir") or "").strip()
+    if not spec_id or not spec_dir_ref:
+        raise ValueError("failed decision replay has no exact active spec identity")
+    spec_dir = Path(spec_dir_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+    expected_run_spec_dir = run_dir / "specs" / spec_id
+    if (
+        not spec_dir.is_dir()
+        or spec_dir.resolve() != expected_run_spec_dir.resolve()
+        or spec_dir.name != spec_id
+    ):
+        raise ValueError(
+            "failed decision replay is not bound to the active run-local spec"
+        )
+    selector = spec_arg.strip()
+    if selector:
+        candidate = Path(selector)
+        path_selector = candidate.is_absolute() or len(candidate.parts) > 1
+        if path_selector:
+            if not candidate.is_absolute():
+                candidate = project_root / candidate
+            selector_matches = (
+                candidate.is_dir()
+                and candidate.resolve() == spec_dir.resolve()
+            )
+        else:
+            selector_matches = selector == spec_id
+        if not selector_matches:
+            raise ValueError(
+                f"failed decision replay is bound to active spec {spec_id!r}; "
+                f"--spec {selector!r} selects a different target"
+            )
+    return _FailedAutomaticPhaseReplay(
+        decision=decision,
+        state_revision=revision,
+        v2_automatic_eligible=v2_eligible,
+        spec_id=spec_id,
+        spec_dir_ref=spec_dir_ref,
+        spec_dir=spec_dir,
+    )
 
 
 def _phase_context_resolution_rows(
@@ -8246,36 +8727,23 @@ def _cmd_status(project_root: Path) -> None:
         ).strip()
         if provider_limit_message:
             fields.append(("Provider limit", provider_limit_message))
+        action = _RunRecoveryAction("advance")
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
             action = _classify_run_recovery(state, project_root=project_root)
-            fields.append(("Next", action.command))
             if action.reason == "phase_dispatch_limit":
                 guidance = _issue_resolution_guidance_recap(project_root, run_dir, state)
                 if guidance:
                     fields.append(("Issue guidance", guidance))
 
         try:
-            decision = _active_v2_decision(state)
-        except (RecoveryInstructionError, ValueError) as exc:
-            fields.append(("Decision", f"invalid persisted decision: {exc}"))
+            decision = _validated_versioned_decision(state)
+        except (RecoveryInstructionError, ValueError):
+            pass
         else:
             if decision is not None:
-                action = _classify_run_recovery(state, project_root=project_root)
-                fields.extend(
-                    [
-                        ("Decision ID", str(decision["id"])),
-                        ("Decision status", str(decision["status"])),
-                        ("Decision mode", str(decision["autonomy_mode"])),
-                        ("Classification", str(decision["classification"])),
-                        ("Question", str(decision["question"])),
-                        ("Options", _render_v2_decision_options(decision)),
-                        ("Recommendation", _v2_decision_recommendation(decision)),
-                        ("Risk", str(decision.get("risk_level") or "(none)")),
-                        ("Decision action", action.command),
-                    ]
-                )
+                fields.extend(_decision_audit_fields(decision))
                 fields.extend(
                     _proportional_quality_decision_fields(state, decision)
                 )
@@ -8389,7 +8857,7 @@ def _cmd_continue_impl(
         implementation_targets=state.get("implementation_targets") or (),
     )
     try:
-        decision = _active_v2_decision(state)
+        decision = _active_versioned_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
         print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -8727,13 +9195,115 @@ def _cmd_continue_impl(
     start_phase(next_phase, verb="Continuing from")
 
 
+@dataclass(frozen=True)
+class _FailedGateRewindAuthority:
+    decision_id: str
+    state_revision: int
+    source_phase: str
+    v2_automatic_eligible: bool
+
+
+def _resolve_rewind_checkpoint(
+    ledger: object,
+    target: str,
+    *,
+    commit: str,
+    next_phase: str,
+) -> object:
+    """Resolve the same recovery-specific ledger candidate rendered by status."""
+    from harness.phase_checkpoints import resolve_rewind_checkpoint
+
+    return resolve_rewind_checkpoint(
+        ledger,
+        target,
+        commit=commit,
+        next_phase=next_phase,
+    )
+
+
+def _failed_gate_rewind_authority(
+    state: Mapping[str, object],
+    checkpoint: object,
+    *,
+    project_root: Path,
+) -> _FailedGateRewindAuthority | None:
+    """Authorize a failed gate rewind before any Git or ledger mutation."""
+    from echelon.rewind import RewindError
+
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or raw_decision.get("schema_version") not in {2, 3}
+    ):
+        return None
+    try:
+        decision = _validated_versioned_decision(state)
+    except (RecoveryInstructionError, ValueError) as exc:
+        raise RewindError(f"versioned decision authority is invalid: {exc}") from exc
+    assert decision is not None
+    if decision["status"] == "resolved":
+        source_phase = str(decision.get("source_phase") or "").strip()
+        if (
+            decision["source_kind"] == "human_gate"
+            and state.get("status") == "blocked"
+            and state.get("blocked_reason") == "gate_rejected"
+            and str(getattr(checkpoint, "next_phase", "") or "").strip()
+            == source_phase
+        ):
+            return None
+        raise RewindError(
+            "resolved decision authority is not an exact gate-rejected rewind"
+        )
+    if decision["status"] != "failed":
+        raise RewindError("unresolved decision authority does not permit rewind")
+    source_phase = str(decision.get("source_phase") or "").strip()
+    predecessor = str(getattr(checkpoint, "phase", "") or "").strip()
+    checkpoint_next = str(
+        getattr(checkpoint, "next_phase", "") or ""
+    ).strip()
+    revision = state.get("state_revision")
+    v2_eligible = _v2_automatic_decision_is_registered(
+        decision,
+        project_root=project_root,
+    )
+    eligible = (
+        decision.get("automatic_eligible") is True
+        if decision["schema_version"] == 3
+        else v2_eligible
+    )
+    if (
+        decision["source_kind"] != "human_gate"
+        or decision["autonomy_mode"] != "banzai"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("status") != "blocked"
+        or state.get("phase") != source_phase
+        or not eligible
+        or checkpoint_next != source_phase
+        or not predecessor
+        or type(revision) is not int
+        or revision < 0
+    ):
+        raise RewindError(
+            "failed decision does not match the exact Banzai human-gate "
+            "rewind authority and checkpoint predecessor"
+        )
+    return _FailedGateRewindAuthority(
+        decision_id=str(decision["id"]),
+        state_revision=revision,
+        source_phase=source_phase,
+        v2_automatic_eligible=v2_eligible,
+    )
+
+
 def _cmd_rewind(
     args: list[str],
     project_root: Path,
 ) -> None:
     confirm = False
     checkpoint_commit = ""
+    checkpoint_next_phase = ""
     commit_seen = False
+    next_phase_seen = False
     target = ""
     invalid = False
     index = 0
@@ -8761,6 +9331,21 @@ def _cmd_rewind(
                 break
             index += 2
             continue
+        if arg == "--next-phase":
+            if (
+                next_phase_seen
+                or index + 1 >= len(args)
+                or args[index + 1].startswith("--")
+            ):
+                invalid = True
+                break
+            next_phase_seen = True
+            checkpoint_next_phase = args[index + 1].strip()
+            if not checkpoint_next_phase:
+                invalid = True
+                break
+            index += 2
+            continue
         if arg.startswith("--") or target:
             invalid = True
             break
@@ -8769,7 +9354,7 @@ def _cmd_rewind(
     if invalid or not target:
         print(
             "Usage: echelon spec rewind <checkpoint-phase-or-id> "
-            "[--commit <sha>] [--confirm]\n"
+            "[--commit <sha>] [--next-phase <phase-id>] [--confirm]\n"
             "Run `echelon spec checkpoint list` to see active-ledger targets.",
             file=sys.stderr,
         )
@@ -8800,17 +9385,17 @@ def _cmd_rewind(
     from echelon.rewind import RewindError, prepare_rewind
     from harness.phase_checkpoints import (
         load_checkpoint_ledger,
-        resolve_checkpoint,
         rewindable_checkpoint_targets,
         write_checkpoint_ledger,
     )
 
     ledger = load_checkpoint_ledger(spec_dir)
     try:
-        checkpoint = resolve_checkpoint(
+        checkpoint = _resolve_rewind_checkpoint(
             ledger,
             target,
             commit=checkpoint_commit,
+            next_phase=checkpoint_next_phase,
         )
     except (KeyError, ValueError) as exc:
         available = rewindable_checkpoint_targets(ledger)
@@ -8833,6 +9418,15 @@ def _cmd_rewind(
             f"  Checkpoint does not support rewind: {checkpoint.rewind_reason}",
             file=sys.stderr,
         )
+        sys.exit(1)
+    try:
+        _failed_gate_rewind_authority(
+            state,
+            checkpoint,
+            project_root=project_root,
+        )
+    except RewindError as exc:
+        print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
         sys.exit(1)
 
     from echelon.spec_lifecycle import (
@@ -8888,10 +9482,11 @@ def _cmd_rewind(
                         raise SystemExit(1)
                     ledger = load_checkpoint_ledger(spec_dir)
                     try:
-                        checkpoint = resolve_checkpoint(
+                        checkpoint = _resolve_rewind_checkpoint(
                             ledger,
                             target,
                             commit=checkpoint_commit,
+                            next_phase=checkpoint_next_phase,
                         )
                     except (KeyError, ValueError) as exc:
                         available = rewindable_checkpoint_targets(ledger)
@@ -8909,6 +9504,11 @@ def _cmd_rewind(
                             "checkpoint does not support rewind: "
                             f"{checkpoint.rewind_reason}"
                         )
+                    failed_gate_authority = _failed_gate_rewind_authority(
+                        state,
+                        checkpoint,
+                        project_root=project_root,
+                    )
                     replacement_state = deepcopy(state)
 
                     recovery_dirty_paths = frozenset()
@@ -8969,6 +9569,7 @@ def _cmd_rewind(
                         target=target,
                         confirm=confirm,
                         checkpoint_commit=checkpoint_commit,
+                        checkpoint_next_phase=checkpoint_next_phase,
                         discard_active_spec_dirty_paths=recovery_dirty_paths,
                     )
                     if not result.applied:
@@ -9015,8 +9616,37 @@ def _cmd_rewind(
                             boundary_completion_id=(
                                 checkpoint.boundary_completion_id
                             ),
+                            preserve_resolved_gate_rejection=(
+                                failed_gate_authority is None
+                                and isinstance(state.get("blocked_decision"), Mapping)
+                                and state["blocked_decision"].get("status") == "resolved"
+                            ),
+                            preserve_failed_human_gate_for_cas=(
+                                failed_gate_authority is not None
+                            ),
                         )
-                        store.save(rewound)
+                        if failed_gate_authority is None:
+                            store.save(rewound)
+                        else:
+                            from harness.squad_state import StateAdvanceError
+
+                            try:
+                                store.rewind_failed_banzai_human_gate(
+                                    failed_gate_authority.decision_id,
+                                    expected_state_revision=(
+                                        failed_gate_authority.state_revision
+                                    ),
+                                    source_phase=(
+                                        failed_gate_authority.source_phase
+                                    ),
+                                    predecessor_phase=checkpoint.phase,
+                                    rewound_state=rewound,
+                                    v2_automatic_eligible=(
+                                        failed_gate_authority.v2_automatic_eligible
+                                    ),
+                                )
+                            except StateAdvanceError as exc:
+                                raise RewindError(str(exc)) from exc
     except SpecLifecycleLocked as exc:
         print(
             "✗ Cannot rewind while the active spec run is still running.\n"
@@ -9433,6 +10063,14 @@ def _cmd_drop_target(
         )
         return
 
+    from echelon.rewind import RewindError
+
+    try:
+        updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
+    except RewindError as exc:
+        print(f"✗ Cannot drop target: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
     spec_dirs = [spec_dir]
     published_ref = str(state.get("published_spec_dir") or "").strip()
     if published_ref:
@@ -9452,7 +10090,6 @@ def _cmd_drop_target(
                 if name not in removed:
                     removed.append(name)
 
-    updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
     updated["implementation_targets"] = replacement_targets
     updated["tasks_lexicon_pass"] = None
     updated["target_change"] = {
@@ -9714,7 +10351,7 @@ def _cmd_phase(
     from harness.phase_graph import load_workspace_phase_graph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
-    from harness.squad_state import SquadStateStore
+    from harness.squad_state import SquadStateStore, StateAdvanceError
 
     graph, ext_dir = load_workspace_phase_graph(project_root)
 
@@ -9795,8 +10432,43 @@ def _cmd_phase(
         )
         raise SystemExit(1)
 
+    from echelon.strict_json import loads_strict_json
+
+    state_path = run_dir / "state.json"
+    if state_path.exists():
+        try:
+            current_state = loads_strict_json(
+                state_path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            print(f"✗ Could not read active run state: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+    else:
+        current_state = {}
+    if not isinstance(current_state, dict):
+        print("✗ Active run state must be a JSON object.", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        failed_replay = _failed_automatic_phase_replay(
+            current_state,
+            phase_id=phase_id,
+            spec_arg=spec_arg,
+            project_root=project_root,
+            run_dir=run_dir,
+            graph=graph,
+        )
+    except (RecoveryInstructionError, ValueError, TypeError) as exc:
+        print(f"✗ Invalid failed decision replay authority: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     state_store = SquadStateStore(run_dir)
-    current_state = state_store.load()
+    loaded_state = state_store.load()
+    if failed_replay is not None and loaded_state != current_state:
+        print(
+            "✗ Failed decision replay authority changed before target setup.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    current_state = loaded_state
     target_spec_dir = _resolve_phase_target_spec_dir(
         project_root,
         current_state,
@@ -9806,12 +10478,31 @@ def _cmd_phase(
     if spec_arg and target_spec_dir is None:
         print(f"✗ Spec not found for --spec {spec_arg!r}", file=sys.stderr)
         sys.exit(1)
+    if (
+        failed_replay is not None
+        and (
+            target_spec_dir is None
+            or target_spec_dir.resolve() != failed_replay.spec_dir.resolve()
+        )
+    ):
+        print(
+            "✗ Failed decision replay target does not match the active spec identity.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     initial_updates = _phase_state_updates_for_target(
         project_root,
         current_state,
         target_spec_dir,
+        materialize=failed_replay is None,
     )
+    if failed_replay is not None:
+        # Authorize and persist the exact identity representation sealed in the
+        # failed state after selector/path equivalence has been proven above.
+        initial_updates["spec_id"] = failed_replay.spec_id
+        initial_updates["spec_dir"] = failed_replay.spec_dir_ref
+        initial_updates["phase_run_source_spec_dir"] = failed_replay.spec_dir_ref
     if initial_updates:
         initial_updates["manual_phase_run"] = True
 
@@ -9860,13 +10551,65 @@ def _cmd_phase(
         squad_dir=run_dir,
     )
 
+    if failed_replay is not None:
+        try:
+            authorized = (
+                state_store.authorize_failed_automatic_decision_for_manual_phase_replay(
+                    phase_id,
+                    decision_id=str(failed_replay.decision["id"]),
+                    expected_state_revision=failed_replay.state_revision,
+                    v2_automatic_eligible=(
+                        failed_replay.v2_automatic_eligible
+                    ),
+                    expected_spec_id=failed_replay.spec_id,
+                    expected_spec_dir=failed_replay.spec_dir_ref,
+                    initial_state_updates=initial_updates,
+                )
+            )
+        except (StateAdvanceError, ValueError, TypeError) as exc:
+            print(
+                f"✗ Failed decision replay authority changed: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
+        if not authorized:
+            source_phase = str(
+                failed_replay.decision.get("source_phase") or ""
+            ).strip()
+            replay_command = _command_display(
+                "echelon phase run",
+                [source_phase],
+            )
+            print(
+                "✗ Failed automatic decision can only be retired by its exact "
+                f"source replay: {replay_command}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        print(
+            "[squad] authorized failed automatic Banzai decision replay: "
+            f"{phase_id}",
+            flush=True,
+        )
+
     user_message = " ".join(message_parts) or current_state.get("user_message", "")
-    result = controller.run_single_phase(
-        phase_id,
-        user_message=user_message,
-        mode=mode,
-        initial_state_updates=initial_updates,
-    )
+    try:
+        result = controller.run_single_phase(
+            phase_id,
+            user_message=user_message,
+            mode=mode,
+            initial_state_updates=initial_updates,
+        )
+    except StateAdvanceError as exc:
+        if failed_replay is None:
+            raise
+        print(
+            f"✗ Failed decision replay authority changed before dispatch: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    finally:
+        state_store.clear_failed_automatic_decision_for_manual_phase_replay()
 
     next_action = (
         "echelon phase run phase1-lexicon"
@@ -9895,7 +10638,7 @@ def _cmd_phase(
     )
 
 
-def _resume_v2_human_input(
+def _resume_versioned_human_input(
     *,
     answer: str,
     project_root: Path,
@@ -9910,12 +10653,12 @@ def _resume_v2_human_input(
     from harness.squad_provider import SquadCliProvider
 
     try:
-        decision = _active_v2_decision(state)
+        decision = _active_versioned_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
         print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     if decision is None:
-        print("✗ Active schema-v2 decision is missing.", file=sys.stderr)
+        print("✗ Active versioned decision is missing.", file=sys.stderr)
         raise SystemExit(1)
 
     from harness.phase_graph import load_workspace_phase_graph
@@ -10021,7 +10764,7 @@ def _cmd_resume(
                 raw_decision = state.get("blocked_decision")
                 if (
                     isinstance(raw_decision, dict)
-                    and raw_decision.get("schema_version") == 2
+                    and raw_decision.get("schema_version") in {2, 3}
                 ):
                     if state.get("status") != "blocked":
                         print(
@@ -10031,7 +10774,7 @@ def _cmd_resume(
                         )
                         print("  Nothing to resume.", file=sys.stderr)
                         raise SystemExit(1)
-                    _resume_v2_human_input(
+                    _resume_versioned_human_input(
                         answer=answer,
                         project_root=project_root,
                         ext_dir=ext_dir,
@@ -12174,7 +12917,8 @@ def _cmd_spec(args: list[str]) -> None:
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  add-input --input <role:path>...     Add evidence to a parked investigation run\n"
             "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
-            "  rewind <phase-id> [--commit <sha>]  Rewind the active squad run to a checkpoint\n"
+            "  rewind <phase-id> [--commit <sha>] [--next-phase <phase-id>]\n"
+            "                                      Rewind the active squad run to a checkpoint\n"
             "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
             "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"

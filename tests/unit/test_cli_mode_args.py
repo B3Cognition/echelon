@@ -10,6 +10,31 @@ import yaml
 from echelon.cli import _cmd_run, _consume_mode_arg, _print_squad_summary
 
 
+def _materialize_current_run_preflight(
+    project_root: Path,
+    *,
+    source_ids: tuple[str, ...] = ("app",),
+) -> None:
+    for source_id in source_ids:
+        source_root = project_root / "sources" / source_id
+        source_root.mkdir(parents=True, exist_ok=True)
+        package = source_root / "package.json"
+        if not package.exists():
+            package.write_text("{}\n", encoding="utf-8")
+    config = project_root / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        + "".join(
+            f"  - id: {source_id}\n    path: sources/{source_id}\n"
+            for source_id in source_ids
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_consume_mode_arg_accepts_split_form() -> None:
     mode, next_index = _consume_mode_arg(
         ["--mode", "banzai", "build notes"],
@@ -64,6 +89,7 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    _materialize_current_run_preflight(tmp_path)
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
 
     class FakeController:
@@ -141,6 +167,7 @@ def test_cmd_run_controller_exception_still_emits_one_squad_summary(
 
     from echelon.cli import _spec_summary_session
 
+    _materialize_current_run_preflight(tmp_path)
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
 
     class FailingController:
@@ -266,6 +293,10 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     product = tmp_path / "sources" / "PBS-E-45"
     product.mkdir(parents=True)
     (product / "requirements.md").write_text("# Product request\n", encoding="utf-8")
+    _materialize_current_run_preflight(
+        tmp_path,
+        source_ids=("api", "web"),
+    )
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
     captured: dict[str, object] = {}
 
@@ -325,6 +356,7 @@ def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    _materialize_current_run_preflight(tmp_path)
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
     captured: dict[str, object] = {}
 
@@ -373,6 +405,7 @@ def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
     capsys: pytest.CaptureFixture[str],
     state: dict[str, object],
 ) -> None:
+    _materialize_current_run_preflight(tmp_path)
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
     squad_dir.mkdir(parents=True)
     (squad_dir / "state.json").write_text(
