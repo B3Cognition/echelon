@@ -19,10 +19,10 @@ from typing import Any, Iterable, Iterator, Literal, Mapping
 
 from harness.blocked_decision import (
     BlockedDecisionError,
-    build_blocked_decision_v2,
+    build_blocked_decision_v3,
     ensure_blocked_decision,
     normalize_escalation_options,
-    validate_blocked_decision_v2,
+    validate_blocked_decision,
 )
 from harness.controller_lock_order import controller_lock_order
 from harness.echelon_result_schema import (
@@ -843,11 +843,11 @@ def _validate_prepared_controller_completion(
     return marker, intent, receipts, receipts_sha256, prefix_kind
 
 
-def _is_human_input_decision_v2(value: object) -> bool:
+def _is_human_input_decision(value: object) -> bool:
     return (
         isinstance(value, Mapping)
         and type(value.get("schema_version")) is int
-        and value.get("schema_version") == 2
+        and value.get("schema_version") in {2, 3}
     )
 
 
@@ -893,10 +893,10 @@ def _validate_human_input_authority_write(
 ) -> None:
     current_decision = current.get("blocked_decision")
     candidate_decision = candidate.get("blocked_decision")
-    current_is_v2 = _is_human_input_decision_v2(current_decision)
-    candidate_is_v2 = _is_human_input_decision_v2(candidate_decision)
+    current_is_authority = _is_human_input_decision(current_decision)
+    candidate_is_authority = _is_human_input_decision(candidate_decision)
 
-    if candidate_is_v2:
+    if candidate_is_authority:
         try:
             validate_decision_recovery_pair(
                 candidate_decision,
@@ -904,29 +904,29 @@ def _validate_human_input_authority_write(
             )
         except BlockedDecisionError as exc:
             raise StateAdvanceError(
-                f"invalid schema-v2 decision authority: {exc}",
+                f"invalid versioned decision authority: {exc}",
                 json_path="$.blocked_decision",
                 validator="human_input_authority",
             ) from exc
         except RecoveryInstructionError as exc:
             raise StateAdvanceError(
-                f"invalid schema-v2 recovery authority: {exc}",
+                f"invalid versioned recovery authority: {exc}",
                 json_path="$.recovery_instruction",
                 validator="human_input_authority",
             ) from exc
     if allow_update:
         return
-    if current_is_v2 != candidate_is_v2:
+    if current_is_authority != candidate_is_authority:
         raise StateAdvanceError(
-            "generic state writes cannot create or clear schema-v2 decision authority",
+            "generic state writes cannot create or clear versioned decision authority",
             json_path="$.blocked_decision",
             validator="human_input_authority",
         )
-    if not current_is_v2:
+    if not current_is_authority:
         return
     if current_decision != candidate_decision:
         raise StateAdvanceError(
-            "generic state writes cannot replace schema-v2 decision authority",
+            "generic state writes cannot replace versioned decision authority",
             json_path="$.blocked_decision",
             validator="human_input_authority",
         )
@@ -941,11 +941,11 @@ def _validate_human_input_authority_write(
         != candidate.get("recovery_instruction")
     ):
         raise StateAdvanceError(
-            "generic state writes cannot mutate schema-v2 recovery authority",
+            "generic state writes cannot mutate versioned recovery authority",
             json_path="$.recovery_instruction",
             validator="human_input_authority",
         )
-    validated = validate_blocked_decision_v2(current_decision)
+    validated = validate_blocked_decision(current_decision)
     if validated["status"] not in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES:
         for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
             if current.get(key) != candidate.get(key):
@@ -970,7 +970,7 @@ def _canonicalize_resolved_human_input_audit_for_diagnostic(
 ) -> bool:
     decision = state.get("blocked_decision")
     if not (
-        _is_human_input_decision_v2(decision)
+        _is_human_input_decision(decision)
         and decision.get("status") == "resolved"
     ):
         return False
@@ -1027,7 +1027,7 @@ def _validate_human_input_seal_path(
     transaction: Literal["advance", "setter"],
     from_phase: str | None = None,
 ) -> None:
-    if type(request) is not PreparedHumanInput or request.schema_version != 1:
+    if type(request) is not PreparedHumanInput or request.schema_version != 2:
         raise StateAdvanceError(
             "human-input sealing requires a prepared request",
             json_path="$.human_input",
@@ -1795,7 +1795,7 @@ class SquadStateStore:
         *,
         initial_status: str,
     ) -> dict[str, object]:
-        if type(request) is not PreparedHumanInput or request.schema_version != 1:
+        if type(request) is not PreparedHumanInput or request.schema_version != 2:
             raise StateAdvanceError(
                 "human-input sealing requires a prepared request",
                 json_path="$.human_input",
@@ -1830,33 +1830,11 @@ class SquadStateStore:
                 json_path="$.autonomy_mode",
                 validator="type",
             )
-        options = [
-            {
-                "id": option.id,
-                "label": option.label,
-                "description": option.description,
-                "recommended": option.recommended,
-                "risk_level": option.risk_level,
-                "next_phase": option.next_phase,
-                "outcome": option.outcome,
-            }
-            for option in request.options
-        ]
-        decision = build_blocked_decision_v2(
+        decision = build_blocked_decision_v3(
+            prepared=request,
             decision_id=f"dec-{secrets.token_hex(16)}",
             status=initial_status,
-            source_kind=request.source_kind,
-            producer_id=request.producer_id,
-            source_phase=request.phase_id,
-            reason_code=request.reason_code,
-            classification=request.classification,
-            question=request.question,
-            options=options,
-            recommended_answer=request.recommended_answer,
-            risk_level=request.risk_level,
-            resolution_handler=request.resolution_handler,
             autonomy_mode=str(autonomy_mode),
-            source_state_revision=request.source_state_revision,
         )
         recovery = _human_input_recovery_for_decision(decision)
         if recovery is None:
@@ -1872,7 +1850,9 @@ class SquadStateStore:
         state["recovery_instruction"] = instruction
         state["blocked_reason"] = request.reason_code
         state["escalation_question"] = request.question
-        state["escalation_options"] = normalize_escalation_options(options)
+        state["escalation_options"] = normalize_escalation_options(
+            decision["options"]
+        )
         return decision
 
     @staticmethod
@@ -1880,8 +1860,8 @@ class SquadStateStore:
         state: Mapping[str, Any],
     ) -> None:
         existing = state.get("blocked_decision")
-        if _is_human_input_decision_v2(existing):
-            validated_existing = validate_blocked_decision_v2(existing)
+        if _is_human_input_decision(existing):
+            validated_existing = validate_blocked_decision(existing)
             validate_decision_recovery_pair(
                 validated_existing,
                 state.get("recovery_instruction"),
@@ -1936,13 +1916,13 @@ class SquadStateStore:
                 validator="stale_state",
             )
         decision = state.get("blocked_decision")
-        if not _is_human_input_decision_v2(decision):
+        if not _is_human_input_decision(decision):
             raise StateAdvanceError(
-                "schema-v2 human-input decision is missing",
+                "versioned human-input decision is missing",
                 json_path="$.blocked_decision",
                 validator="human_input_authority",
             )
-        validated = validate_blocked_decision_v2(decision)
+        validated = validate_blocked_decision(decision)
         validate_decision_recovery_pair(
             validated,
             state.get("recovery_instruction"),
@@ -1966,7 +1946,7 @@ class SquadStateStore:
         state: dict[str, Any],
         decision: Mapping[str, object],
     ) -> None:
-        validated = validate_blocked_decision_v2(decision)
+        validated = validate_blocked_decision(decision)
         recovery = _human_input_recovery_for_decision(validated)
         instruction = recovery.to_dict() if recovery is not None else None
         validate_decision_recovery_pair(validated, instruction)
@@ -2073,13 +2053,13 @@ class SquadStateStore:
                 return False
             raw_decision = before.get("blocked_decision")
             if raw_decision is not None:
-                if not _is_human_input_decision_v2(raw_decision):
+                if not _is_human_input_decision(raw_decision):
                     raise StateAdvanceError(
                         "dispatch-cap diagnosis cannot replace malformed authority",
                         json_path="$.blocked_decision",
                         validator="human_input_authority",
                     )
-                decision = validate_blocked_decision_v2(raw_decision)
+                decision = validate_blocked_decision(raw_decision)
                 validate_decision_recovery_pair(
                     decision,
                     before.get("recovery_instruction"),
@@ -2117,9 +2097,9 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             raw_decision = before.get("blocked_decision")
-            if not _is_human_input_decision_v2(raw_decision):
+            if not _is_human_input_decision(raw_decision):
                 return deepcopy(before)
-            decision = validate_blocked_decision_v2(raw_decision)
+            decision = validate_blocked_decision(raw_decision)
             validate_decision_recovery_pair(
                 decision,
                 before.get("recovery_instruction"),
@@ -2206,9 +2186,9 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             raw_decision = before.get("blocked_decision")
-            if not _is_human_input_decision_v2(raw_decision):
+            if not _is_human_input_decision(raw_decision):
                 return False
-            decision = validate_blocked_decision_v2(raw_decision)
+            decision = validate_blocked_decision(raw_decision)
             validate_decision_recovery_pair(
                 decision,
                 before.get("recovery_instruction"),
@@ -2244,6 +2224,8 @@ class SquadStateStore:
         token_usage_delta: int = 0,
         prepared_completion: PreparedControllerCompletion | None = None,
         resolved_at: str | None = None,
+        resolution_rationale: str | None = None,
+        resolution_confidence: str | None = None,
     ) -> dict[str, Any]:
         if type(resolution) is not HumanInputResolution:
             raise StateAdvanceError(
@@ -2349,21 +2331,55 @@ class SquadStateStore:
                 expected_state_revision=expected_state_revision,
                 allowed_statuses=_ACTIVE_HUMAN_INPUT_DECISION_STATUSES,
             )
-            resolved = validate_blocked_decision_v2(
-                {
-                    **decision,
-                    "status": "resolved",
-                    "selected_option_id": resolution.selected_option_id,
-                    "answer_text": resolution.answer_text,
-                    "resolved_by": resolution.resolved_by,
-                    "failure_code": None,
-                    "resolved_at": (
-                        datetime.now(timezone.utc).isoformat()
-                        if resolved_at is None
-                        else resolved_at
-                    ),
-                }
-            )
+            resolution_postimage = {
+                **decision,
+                "status": "resolved",
+                "selected_option_id": resolution.selected_option_id,
+                "answer_text": resolution.answer_text,
+                "resolved_by": resolution.resolved_by,
+                "failure_code": None,
+                "resolved_at": (
+                    datetime.now(timezone.utc).isoformat()
+                    if resolved_at is None
+                    else resolved_at
+                ),
+            }
+            if decision["schema_version"] == 3:
+                if resolution.resolved_by == "semi":
+                    resolution_rationale = (
+                        resolution_rationale
+                        or str(decision["recommendation_rationale"])
+                    )
+                    resolution_confidence = (
+                        resolution_confidence
+                        or str(decision["recommendation_confidence"])
+                    )
+                recommended_target = (
+                    decision.get("recommended_option_id")
+                    or decision.get("recommended_answer")
+                )
+                selected_target = (
+                    resolution.selected_option_id or resolution.answer_text
+                )
+                followed = (
+                    None
+                    if decision.get("recommended_action") is not None
+                    else selected_target == recommended_target
+                )
+                resolution_postimage.update(
+                    {
+                        "resolution_rationale": resolution_rationale,
+                        "resolution_confidence": resolution_confidence,
+                        "recommendation_followed": followed,
+                        "override_reason": (
+                            resolution_rationale
+                            if resolution.resolved_by in {"semi", "COMMANDER"}
+                            and followed is False
+                            else None
+                        ),
+                    }
+                )
+            resolved = validate_blocked_decision(resolution_postimage)
             desired = deepcopy(before)
             for key in removals:
                 desired.pop(key, None)
@@ -4194,7 +4210,7 @@ class SquadStateStore:
             desired[_CONTROLLER_COMPLETION_FAILURE_KEY] = diagnostic
             active_decision = state.get("blocked_decision")
             if not (
-                _is_human_input_decision_v2(active_decision)
+                _is_human_input_decision(active_decision)
                 and active_decision.get("status")
                 in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES
             ):

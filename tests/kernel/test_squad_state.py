@@ -268,12 +268,13 @@ def _human_input_request(
                             sort_keys=True,
                             separators=(",", ":"),
                         ),
-                        recommended=False,
+                        recommended=True,
                         risk_level="medium",
                         next_phase="phase1-what",
                         outcome=None,
                     ),
                 ),
+                recommended_option_id=candidate["issue_id"],
             )
         return request
     producer_id = producer_id or "init"
@@ -3951,7 +3952,7 @@ class TestUpdatedAt:
 
 
 class TestHumanInputDecisionStateCAS:
-    def test_human_input_non_provider_seal_commits_one_v2_pair(self, tmp_path):
+    def test_human_input_non_provider_seal_commits_one_v3_pair(self, tmp_path):
         store = _store(tmp_path)
         store.initialize(
             "r1",
@@ -3982,7 +3983,7 @@ class TestHumanInputDecisionStateCAS:
             "reject",
         ]
         decision = sealed["blocked_decision"]
-        assert decision["schema_version"] == 2
+        assert decision["schema_version"] == 3
         assert decision["status"] == "awaiting_human"
         assert decision["source_kind"] == "human_gate"
         assert decision["producer_id"] == "init"
@@ -3995,6 +3996,17 @@ class TestHumanInputDecisionStateCAS:
         assert decision["resolved_by"] is None
         assert decision["failure_code"] is None
         assert decision["resolved_at"] is None
+        assert decision["recommended_option_id"] == "approve"
+        assert decision["recommended_action"] is None
+        assert decision["automatic_eligible"] is True
+        assert decision["recommendation_rationale"]
+        assert decision["recommendation_confidence"] == "medium"
+        assert decision["recommendation_authority"] == "provider_evidence"
+        assert decision["recommendation_evidence"]
+        assert decision["resolution_rationale"] is None
+        assert decision["resolution_confidence"] is None
+        assert decision["recommendation_followed"] is None
+        assert decision["override_reason"] is None
         assert sealed["recovery_instruction"] == {
             "schema_version": 2,
             "kind": "await_human_answer",
@@ -4112,7 +4124,9 @@ class TestHumanInputDecisionStateCAS:
 
         sealed = store.set_human_input_decision(
             request,
-            initial_status="pending",
+            initial_status=(
+                "pending" if request.automatic_eligible else "awaiting_human"
+            ),
         )
 
         assert sealed == store.load()
@@ -4212,7 +4226,7 @@ class TestHumanInputDecisionStateCAS:
             ),
         ],
     )
-    def test_human_input_provider_advance_is_preimage_or_complete_v2_postimage(
+    def test_human_input_provider_advance_is_preimage_or_complete_v3_postimage(
         self,
         tmp_path,
         source_kind,
@@ -4258,6 +4272,10 @@ class TestHumanInputDecisionStateCAS:
                 original_save(state, **kwargs)
             raise OSError("injected human-input save ambiguity")
 
+        initial_status = (
+            "pending" if request.automatic_eligible else "awaiting_human"
+        )
+
         with patch.object(
             store,
             "_save_unlocked",
@@ -4269,7 +4287,7 @@ class TestHumanInputDecisionStateCAS:
                     "next",
                     decision,
                     human_input=request,
-                    human_input_initial_status="pending",
+                    human_input_initial_status=initial_status,
                 )
             else:
                 with pytest.raises(StateAdvanceError):
@@ -4278,7 +4296,7 @@ class TestHumanInputDecisionStateCAS:
                         "next",
                         decision,
                         human_input=request,
-                        human_input_initial_status="pending",
+                        human_input_initial_status=initial_status,
                     )
 
         after = store.load()
@@ -4291,7 +4309,7 @@ class TestHumanInputDecisionStateCAS:
         assert after["provider_fact"] == "attested"
         assert after["last_dispatch"]["dispatch_id"] == "d" * 32
         assert after["last_dispatch"]["state_revision"] == receipt.state_revision
-        assert after["blocked_decision"]["schema_version"] == 2
+        assert after["blocked_decision"]["schema_version"] == 3
         assert after["blocked_decision"]["source_kind"] == source_kind
         assert after["blocked_decision"]["source_state_revision"] == (
             before["state_revision"]
@@ -4438,6 +4456,50 @@ class TestHumanInputDecisionStateCAS:
         assert failed["recovery_instruction"]["phase"] == ""
         assert "escalation_question" not in failed
 
+    def test_v3_commander_override_persists_complete_resolution_audit(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            autonomy_mode="banzai",
+        )
+        pending = _seal_provider_human_input_via_advance(store)
+        decision_id = pending["blocked_decision"]["id"]
+        claimed = store.claim_human_input_decision(
+            decision_id,
+            expected_state_revision=pending["state_revision"],
+        )
+
+        resolved = store.apply_human_input_state_resolution(
+            decision_id,
+            expected_state_revision=claimed["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id=None,
+                answer_text="Use the safer bounded alternative.",
+                resolved_by="COMMANDER",
+            ),
+            resolution_rationale="The alternative avoids an unsafe assumption.",
+            resolution_confidence="high",
+            state_updates={"status": "running", "phase": "next"},
+            state_removals=(),
+            resolved_at="2026-07-28T10:01:00+00:00",
+        )
+
+        decision = resolved["blocked_decision"]
+        assert decision["schema_version"] == 3
+        assert decision["recommendation_followed"] is False
+        assert decision["resolution_rationale"] == (
+            "The alternative avoids an unsafe assumption."
+        )
+        assert decision["resolution_confidence"] == "high"
+        assert decision["override_reason"] == decision["resolution_rationale"]
+
     def test_human_input_setup_failure_fails_pending_without_claiming(
         self,
         tmp_path,
@@ -4475,7 +4537,7 @@ class TestHumanInputDecisionStateCAS:
 
         with (
             patch(
-                "harness.squad_state.validate_blocked_decision_v2",
+                "harness.squad_state.validate_blocked_decision",
                 side_effect=lambda value: deepcopy(dict(value)),
             ),
             patch(
@@ -4496,7 +4558,6 @@ class TestHumanInputDecisionStateCAS:
         [
             ("pending", 2),
             ("resolving", 0),
-            ("awaiting_human", 1),
             ("failed", 3),
             ("resolved", 3),
         ],
@@ -4589,6 +4650,8 @@ class TestHumanInputDecisionStateCAS:
                     state_updates={"status": "running", "phase": "next"},
                     state_removals=(),
                     token_usage_delta=17,
+                    resolution_rationale="The bounded answer is safer.",
+                    resolution_confidence="medium",
                 )
             else:
                 operation = lambda: store.record_human_input_resolution_failure(
@@ -4733,6 +4796,10 @@ class TestHumanInputDecisionStateCAS:
         assert decision["answer_text"] is None
         assert decision["resolved_by"] == "user"
         assert decision["resolved_at"]
+        assert decision["recommendation_followed"] is True
+        assert decision["resolution_rationale"] is None
+        assert decision["resolution_confidence"] is None
+        assert decision["override_reason"] is None
         assert resolved["status"] == "running"
         assert resolved["phase"] == "next"
         assert resolved["resolution_effect"] == "applied"
@@ -4999,7 +5066,7 @@ class TestHumanInputDecisionStateCAS:
 
         assert store.load() != before
 
-    def test_generic_save_preserves_active_decision_v2_authority_exactly(
+    def test_generic_save_preserves_active_decision_v3_authority_exactly(
         self,
         tmp_path,
     ):
@@ -5044,7 +5111,7 @@ class TestHumanInputDecisionStateCAS:
             "escalation_options",
         ],
     )
-    def test_generic_save_rejects_active_decision_v2_authority_changes(
+    def test_generic_save_rejects_active_decision_v3_authority_changes(
         self,
         tmp_path,
         field,
@@ -5084,7 +5151,7 @@ class TestHumanInputDecisionStateCAS:
 
         assert store.load() == sealed
 
-    def test_generic_save_cannot_create_or_clear_decision_v2_authority(
+    def test_generic_save_cannot_create_or_clear_decision_v3_authority(
         self,
         tmp_path,
     ):
@@ -5123,8 +5190,48 @@ class TestHumanInputDecisionStateCAS:
             source.save(cleared)
         assert source.load() == sealed
 
+    def test_generic_save_cannot_mutate_legacy_v2_decision_authority(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        legacy = deepcopy(sealed)
+        legacy_decision = legacy["blocked_decision"]
+        legacy_decision["schema_version"] = 2
+        for field in (
+            "recommended_option_id",
+            "recommended_action",
+            "automatic_eligible",
+            "recommendation_rationale",
+            "recommendation_confidence",
+            "recommendation_authority",
+            "recommendation_evidence",
+            "resolution_rationale",
+            "resolution_confidence",
+            "recommendation_followed",
+            "override_reason",
+        ):
+            legacy_decision.pop(field)
+        store._path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        candidate = deepcopy(legacy)
+        candidate["blocked_decision"]["question"] = "Mutated"
+        with pytest.raises(StateAdvanceError, match="generic state writes"):
+            store.save(candidate)
+
+        assert store.load() == legacy
+
     @pytest.mark.parametrize("terminal_status", ["resolved", "failed"])
-    def test_generic_save_cannot_replace_terminal_decision_v2_but_seal_can(
+    def test_generic_save_cannot_replace_terminal_decision_v3_but_seal_can(
         self,
         tmp_path,
         terminal_status,
