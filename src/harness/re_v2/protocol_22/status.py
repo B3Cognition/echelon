@@ -1,4 +1,4 @@
-"""Read-only status and terminal banners for protocol 2.2."""
+"""Read-only status and terminal banners for schema-2 RE protocols."""
 
 from __future__ import annotations
 
@@ -890,7 +890,10 @@ def _telemetry_document(
         "completed_staging_commits": _safe_entry_count(
             paths.root / "captures" / "committed"
         ),
-        "incomplete_staging": _safe_entry_count(paths.root / "captures" / ".staging"),
+        "incomplete_staging": _incomplete_staging_count(
+            paths.root / "captures" / ".staging",
+            paths.root / "captures" / "committed",
+        ),
         "provider_observations": [
             {
                 "dispatches": dispatches,
@@ -947,6 +950,50 @@ def _safe_entry_count(path: Path) -> int:
         return len(names)
     finally:
         os.close(directory_fd)
+
+
+def _incomplete_staging_count(staging: Path, committed: Path) -> int:
+    """Count staging authorities that have no committed hard-link counterpart."""
+    if not staging.exists() and not staging.is_symlink():
+        return 0
+    staging_fd = _open_directory_path_nofollow(staging, "capture staging directory")
+    committed_fd: int | None = None
+    try:
+        if committed.exists() or committed.is_symlink():
+            committed_fd = _open_directory_path_nofollow(
+                committed,
+                "committed capture directory",
+            )
+        incomplete = 0
+        for name in os.listdir(staging_fd):
+            if name.startswith("."):
+                continue
+            metadata = os.stat(name, dir_fd=staging_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise Protocol22StatusError(
+                    f"unsafe capture staging entry in {staging}: {name}"
+                )
+            if committed_fd is None:
+                incomplete += 1
+                continue
+            try:
+                committed_metadata = os.stat(
+                    f"{name}.json",
+                    dir_fd=committed_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                incomplete += 1
+                continue
+            if not stat.S_ISREG(committed_metadata.st_mode):
+                raise Protocol22StatusError(
+                    f"unsafe committed capture entry for staging dispatch {name}"
+                )
+        return incomplete
+    finally:
+        if committed_fd is not None:
+            os.close(committed_fd)
+        os.close(staging_fd)
 
 
 def _root_projection_status(path: Path, artifact_hash: str) -> str:

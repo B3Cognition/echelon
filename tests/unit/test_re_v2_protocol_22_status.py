@@ -122,6 +122,10 @@ def test_complete_status_exposes_exact_layered_authority_and_not_run_boundaries(
     assert document["budget"]["active_ms"]["charged"] >= 0
     assert document["telemetry"]["result_contract_reconstructed"] == provider.calls
     assert document["telemetry"]["unknown_token_dispatches"] == provider.calls
+    assert document["telemetry"]["completed_staging_commits"] == len(
+        context.graph.templates
+    )
+    assert document["telemetry"]["incomplete_staging"] == 0
     assert document["budget"]["tokens"]["trusted_observed"] == 0
     assert document["not_run"] == {
         "exhaustive_re": "not run",
@@ -131,6 +135,25 @@ def test_complete_status_exposes_exact_layered_authority_and_not_run_boundaries(
     }
     assert "full quality" not in human.lower()
     assert "full re complete" not in human.lower()
+
+
+@pytest.mark.unit
+def test_status_counts_only_staging_without_a_committed_counterpart(
+    tmp_path: Path,
+) -> None:
+    context, _provider = _completed(tmp_path)
+    incomplete = context.paths.root / "captures" / ".staging" / "dispatch-incomplete"
+    incomplete.mkdir()
+
+    document = protocol_22_status_document(
+        context.paths.root.parent,
+        context=context,
+    )
+
+    assert document["telemetry"]["completed_staging_commits"] == len(
+        context.graph.templates
+    )
+    assert document["telemetry"]["incomplete_staging"] == 1
 
 
 @pytest.mark.unit
