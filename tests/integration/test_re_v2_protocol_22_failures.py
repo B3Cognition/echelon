@@ -1,28 +1,18 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from tests.support.re_v2_bounded_api import CapturedRequest
-from tests.support.re_v2_layered_workspace import build_and_commit_fixture
+from tests.support.re_v2_layered_workspace import (
+    CapturedProviderRequest,
+    build_and_commit_fixture,
+)
 
 
-def _request_context(request: CapturedRequest) -> dict[str, object]:
-    body = request.json
-    assert isinstance(body, dict)
-    messages = body["messages"]
-    assert isinstance(messages, list)
-    raw = next(
-        message["content"]
-        for message in messages
-        if isinstance(message, dict) and message.get("role") == "user"
-    )
-    context = json.loads(raw)
-    assert isinstance(context, dict)
-    return context
+def _request_context(request: CapturedProviderRequest) -> dict[str, object]:
+    return dict(request.context)
 
 
 @pytest.mark.integration
@@ -35,10 +25,9 @@ def test_permanently_invalid_domain_fails_only_its_dependency_closure(
 
     fixture = build_and_commit_fixture(tmp_path, "invalid-domain")
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
-    monkeypatch.setenv("ECHELON_TEST_API_KEY", "fixture-secret")
     monkeypatch.chdir(fixture.root)
 
-    with fixture.api:
+    with fixture.provider:
         result = CliRunner().invoke(app, ["re", "run", "--engine", "v2"])
 
     assert result.exit_code == 0, result.output
@@ -59,7 +48,7 @@ def test_permanently_invalid_domain_fails_only_its_dependency_closure(
     assert status["accepted_siblings"]
     assert {root["source_id"] for root in status["source_roots"]} == {"web"}
 
-    contexts = [_request_context(request) for request in fixture.api.requests]
+    contexts = [_request_context(request) for request in fixture.provider.requests]
     broken_calls = [
         context
         for context in contexts
@@ -89,13 +78,12 @@ def test_usage_breach_blocks_exact_executor_and_cannot_be_budget_reopened(
 
     fixture = build_and_commit_fixture(tmp_path, "executor-breach")
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
-    monkeypatch.setenv("ECHELON_TEST_API_KEY", "fixture-secret")
     monkeypatch.chdir(fixture.root)
     runner = CliRunner()
 
-    with fixture.api:
+    with fixture.provider:
         result = runner.invoke(app, ["re", "run", "--engine", "v2"])
-        calls = len(fixture.api.requests)
+        calls = len(fixture.provider.requests)
         run_dir = fixture.run_directories()[0]
         paths = ReV2Paths.for_run(run_dir)
         events_before = paths.events.read_bytes()
@@ -106,7 +94,7 @@ def test_usage_breach_blocks_exact_executor_and_cannot_be_budget_reopened(
 
     assert result.exit_code == 0, result.output
     assert calls == 1
-    assert len(fixture.api.requests) == calls
+    assert len(fixture.provider.requests) == calls
     assert continued.exit_code == 2
     assert "terminal protocol-2.2 runs cannot receive budget" in continued.output
     assert paths.events.read_bytes() == events_before

@@ -45,6 +45,7 @@ class _ProviderSpy:
         prompt_metadata: dict[str, object] | None = None,
         allow_result_repair: bool = True,
         strict_result_envelope: bool = False,
+        isolated_workspace: bool = False,
     ) -> SquadAgentResult:
         self.calls.append(
             {
@@ -55,6 +56,7 @@ class _ProviderSpy:
                 "prompt_metadata": prompt_metadata,
                 "allow_result_repair": allow_result_repair,
                 "strict_result_envelope": strict_result_envelope,
+                "isolated_workspace": isolated_workspace,
             }
         )
         return self.result
@@ -219,6 +221,7 @@ def test_adapter_delegates_exact_prosaic_metadata_and_strict_result_contract(
     assert call["prompt_metadata"] == frontmatter
     assert call["allow_result_repair"] is False
     assert call["strict_result_envelope"] is True
+    assert call["isolated_workspace"] is True
     assert call["result_contract"] == EchelonResultContract(
         allowed_state_update_keys=frozenset(),
         allowed_verdicts=frozenset({"DONE"}),

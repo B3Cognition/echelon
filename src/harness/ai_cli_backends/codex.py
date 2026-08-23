@@ -57,7 +57,27 @@ class CodexCliBackend:
                 final_path = temp_file.name
 
         model = _codex_model_for_request(request)
-        allow_non_git_cwd = request.metadata.get("allow_non_git_cwd") is True
+        isolated_workspace = request.metadata.get("isolated_workspace") is True
+        allow_non_git_cwd = (
+            request.metadata.get("allow_non_git_cwd") is True
+            or isolated_workspace
+        )
+        raw_prompt_metadata = request.metadata.get("prompt_metadata")
+        isolated_workspace_error = _isolated_workspace_error(
+            request,
+            raw_prompt_metadata,
+            allow_unsafe_host_execution=(
+                self._config.llm.tool_policy.allow_unsafe_host_execution
+            ),
+        ) if isolated_workspace else None
+        if isolated_workspace_error is not None:
+            _unlink_if_present(final_path)
+            return CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr=isolated_workspace_error,
+                metadata={"isolated_workspace": "invalid"},
+            )
         isolated_user_config = not self._config.llm.codex_inherit_user_config
         raw_prompt_metadata = request.metadata.get("prompt_metadata")
         read_roots: tuple[str, ...] = ()
@@ -86,8 +106,12 @@ class CodexCliBackend:
                 request, raw_prompt_metadata, "tool_operational_metadata_paths"
             )
 
-        sandbox_exec = _sandbox_exec_path() if forbidden_roots else None
-        if forbidden_roots and sandbox_exec is None:
+        sandbox_exec = (
+            _sandbox_exec_path()
+            if forbidden_roots and not isolated_workspace
+            else None
+        )
+        if forbidden_roots and not isolated_workspace and sandbox_exec is None:
             _unlink_if_present(final_path)
             return CliRunResult(
                 exit_code=125,
@@ -123,7 +147,7 @@ class CodexCliBackend:
             codex_permission_profile=permission_profile,
             output_last_message=final_path or None,
         )
-        if forbidden_roots and unsafe:
+        if forbidden_roots and unsafe and not isolated_workspace:
             assert sandbox_exec is not None
             cmd = [
                 sandbox_exec,
@@ -305,6 +329,53 @@ def _unlink_if_present(path: str) -> None:
         os.unlink(path)
     except OSError:
         pass
+
+
+def _is_empty_isolated_directory(path: str) -> bool:
+    root = Path(path)
+    try:
+        return (
+            root.is_dir()
+            and not root.is_symlink()
+            and next(root.iterdir(), None) is None
+        )
+    except OSError:
+        return False
+
+
+_ISOLATED_WORKSPACE_SCOPE_KEYS = (
+    "tool_read_roots",
+    "tool_write_paths",
+    "tool_forbidden_roots",
+    "tool_operational_roots",
+    "tool_operational_read_paths",
+    "tool_operational_metadata_paths",
+)
+
+
+def _isolated_workspace_error(
+    request: CliRunRequest,
+    prompt_metadata: object,
+    *,
+    allow_unsafe_host_execution: bool,
+) -> str | None:
+    """Validate the narrow profile that delegates containment to Codex itself."""
+    if allow_unsafe_host_execution:
+        return "isolated workspace rejects unsafe host execution policy"
+    if not _is_empty_isolated_directory(request.cwd):
+        return "isolated workspace requires an empty isolated working directory"
+    if not isinstance(prompt_metadata, Mapping):
+        return None
+
+    root = Path(request.cwd).resolve()
+    for key in _ISOLATED_WORKSPACE_SCOPE_KEYS:
+        for raw_path in _prompt_scope_paths(request, prompt_metadata, key):
+            if not Path(raw_path).is_relative_to(root):
+                return (
+                    "isolated workspace requires all prompt tool scopes inside "
+                    "that directory"
+                )
+    return None
 
 
 @dataclass(frozen=True)

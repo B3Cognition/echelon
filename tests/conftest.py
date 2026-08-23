@@ -72,6 +72,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "unit: Unit tests (no external deps)")
     config.addinivalue_line("markers", "contract: Contract tests (provider interface)")
     config.addinivalue_line("markers", "integration: Integration tests (may need Docker/git)")
+    config.addinivalue_line("markers", "live: Live provider tests (require explicit opt-in and credentials)")
     config.addinivalue_line("markers", "system: System tests (full Docker + fixture repos)")
     config.addinivalue_line("markers", "e2e: End-to-end smoke tests")
     config.addinivalue_line("markers", "docker: Tests that require Docker daemon")

@@ -155,6 +155,7 @@ class SquadCliBaselineExecutor:
             prompt_metadata=dict(artifact.frontmatter),
             allow_result_repair=False,
             strict_result_envelope=True,
+            isolated_workspace=True,
         )
         ended_at = _utc_now()
         timing = RawExecutionTimingV1(

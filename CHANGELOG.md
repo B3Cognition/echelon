@@ -162,6 +162,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Prosaic shared-provider RE v2 baselines** — New opt-in v2 runs use protocol
+  `2.3` and execute L1 compact baselines through the same Prosaic frontmatter
+  and shared AI coding-provider path as specification and delivery workflows.
+  Provider-neutral fixtures cover result contracts, usage breaches, bounded
+  large sources, and restart stability. Isolated non-Git candidate roots now
+  request the provider's native workspace sandbox when an outer macOS sandbox
+  would prevent Codex from writing the single authorized `baseline.json`;
+  legacy protocol `2.2` runs remain readable and recoverable without new
+  provider-specific RE authority.
+
 - **EGR-165 layered compact RE baseline** — Opt-in RE v2 protocol `2.2`
   now makes the bounded L0 inventory and L1 compact baseline an explicit
   dependency graph with source-, content-, partition-, domain-, layer-,

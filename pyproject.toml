@@ -63,6 +63,7 @@ markers = [
   "unit: Unit tests (no external deps)",
   "contract: Contract tests (provider interface)",
   "integration: Integration tests (may need Docker/git)",
+  "live: Live provider tests (require explicit opt-in and credentials)",
   "system: System tests (full Docker + fixture repos)",
   "e2e: End-to-end smoke tests",
   "performance: Reference performance budgets",

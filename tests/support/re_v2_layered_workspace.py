@@ -6,18 +6,20 @@ import os
 from pathlib import Path
 import subprocess
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Mapping
+from unittest.mock import patch
 
-from tests.support.re_v2_bounded_api import (
-    CapturedRequest,
-    ScriptedBoundedApi,
-    ScriptedResponse,
-    valid_response,
-)
+from harness.ai_cli_backend import CliRunRequest, CliRunResult
 
 
 _SCENARIOS = frozenset(
-    {"complete", "invalid-domain", "executor-breach", "large-source"}
+    {
+        "complete",
+        "executor-breach",
+        "invalid-domain",
+        "large-source",
+        "live-codex",
+    }
 )
 _DOMAIN_SURFACES = (
     "responsibilities",
@@ -42,7 +44,7 @@ _SOURCE_SURFACES = (
 class LayeredWorkspaceFixture:
     root: Path
     source_domains: Mapping[str, tuple[str, ...]]
-    api: ScriptedBoundedApi
+    provider: ScriptedSharedProvider
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -63,6 +65,103 @@ class LayeredWorkspaceFixture:
             )
         )
 
+@dataclass(frozen=True, slots=True)
+class CapturedProviderRequest:
+    project_root: Path
+    prompt: str
+    prompt_metadata: Mapping[str, object]
+    provider_name: str
+    timeout_ms: int | None
+    request_metadata: Mapping[str, object]
+    context: Mapping[str, object]
+
+    @property
+    def body(self) -> bytes:
+        return self.prompt.encode("utf-8")
+
+class ScriptedSharedProvider:
+    """Script the backend seam while preserving shared-provider behavior."""
+
+    def __init__(self, scenario: str, *, provider_name: str) -> None:
+        self.scenario = scenario
+        self.name = provider_name
+        self.requests: list[CapturedProviderRequest] = []
+        self._patcher = None
+
+    def __enter__(self) -> ScriptedSharedProvider:
+        self._patcher = patch(
+            "harness.llm_provider.create_ai_cli_backend",
+            return_value=self,
+        )
+        self._patcher.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        del exc
+        if self._patcher is not None:
+            self._patcher.stop()
+            self._patcher = None
+
+    def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+        return self.run_agent(request)
+
+    def run_agent(self, request: CliRunRequest) -> CliRunResult:
+        context = _prompt_context(request.prompt)
+        raw_prompt_metadata = request.metadata.get("prompt_metadata", {})
+        prompt_metadata = (
+            dict(raw_prompt_metadata)
+            if isinstance(raw_prompt_metadata, Mapping)
+            else {}
+        )
+        captured = CapturedProviderRequest(
+            project_root=Path(request.cwd),
+            prompt=request.prompt,
+            prompt_metadata=MappingProxyType(prompt_metadata),
+            provider_name=self.name,
+            timeout_ms=max(1, int(request.timeout_s * 1000)),
+            request_metadata=MappingProxyType(dict(request.metadata)),
+            context=MappingProxyType(context),
+        )
+        self.requests.append(captured)
+
+        invalid = self.scenario == "invalid-domain" and any(
+            str(excerpt.get("source_relative_path", "")).startswith("src/broken/")
+            for excerpt in context.get("evidence", [])
+            if isinstance(excerpt, dict)
+        )
+        candidate = _candidate(context, useful=not invalid)
+        captured.project_root.joinpath("baseline.json").write_text(
+            json.dumps(candidate, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        stdout = (
+            "malformed result contract\n"
+            if self.scenario == "large-source"
+            else "echelon_result:\n  verdict: DONE\n  state_updates: {}\n"
+        )
+        if self.scenario == "executor-breach":
+            token_usage = 300_001
+            token_usage_details = {
+                "input_tokens": 300_000,
+                "output_tokens": 1,
+            }
+        elif self.scenario == "large-source":
+            token_usage = 0
+            token_usage_details = {}
+        else:
+            token_usage = 15
+            token_usage_details = {"input_tokens": 10, "output_tokens": 5}
+        return CliRunResult(
+            exit_code=0,
+            stdout=stdout,
+            stderr="",
+            token_usage=token_usage,
+            metadata={
+                "response_model": "fixture-shared-model",
+                "token_usage_details": token_usage_details,
+            },
+        )
+
 
 def create_layered_workspace(
     tmp_path: Path,
@@ -79,9 +178,8 @@ def build_and_commit_fixture(
         raise ValueError(f"unknown fixture scenario: {scenario}")
     root = tmp_path / "layered-workspace"
     root.mkdir(parents=True)
-    api = ScriptedBoundedApi(
-        default_response=ScriptedResponse(body=_response_factory(scenario))
-    )
+    cli_name = "codex" if scenario == "live-codex" else "opencode"
+    provider = ScriptedSharedProvider(scenario, provider_name=cli_name)
     source_domains = _source_layout(scenario)
     for source_id, domains in source_domains.items():
         source = root / "sources" / source_id
@@ -110,26 +208,36 @@ def build_and_commit_fixture(
         _git(source, "add", ".")
         _git(source, "commit", "-m", f"build {source_id} fixture")
 
-    _write_text(root / ".echelon" / "config.yml", _config(api, source_domains))
-    agent_source = (
-        Path(__file__).resolve().parents[2]
-        / "prosaic"
-        / "subagents"
-        / "echelon.re-baseliner.md"
+    _write_text(
+        root / ".echelon" / "config.yml",
+        _config(
+            source_domains,
+            timeout_ms=120_000 if scenario == "live-codex" else 30_000,
+            cli_name=cli_name,
+        ),
     )
-    agent_target = (
-        root
-        / ".echelon"
-        / "prosaic"
-        / "subagents"
-        / "echelon.re-baseliner.md"
-    )
-    agent_target.parent.mkdir(parents=True, exist_ok=True)
-    agent_target.write_bytes(agent_source.read_bytes())
-    return LayeredWorkspaceFixture(root, source_domains, api)
+    if scenario != "live-codex":
+        agent_source = (
+            Path(__file__).resolve().parents[2]
+            / "prosaic"
+            / "subagents"
+            / "echelon.re-baseliner.md"
+        )
+        agent_target = (
+            root
+            / ".echelon"
+            / "prosaic"
+            / "subagents"
+            / "echelon.re-baseliner.md"
+        )
+        agent_target.parent.mkdir(parents=True, exist_ok=True)
+        agent_target.write_bytes(agent_source.read_bytes())
+    return LayeredWorkspaceFixture(root, source_domains, provider)
 
 
 def _source_layout(scenario: str) -> dict[str, tuple[str, ...]]:
+    if scenario == "live-codex":
+        return {"api": ("src/orders",)}
     if scenario == "invalid-domain":
         return {
             "api": ("src/broken", "src/orders"),
@@ -144,8 +252,10 @@ def _source_layout(scenario: str) -> dict[str, tuple[str, ...]]:
 
 
 def _config(
-    api: ScriptedBoundedApi,
     source_domains: Mapping[str, tuple[str, ...]],
+    *,
+    timeout_ms: int,
+    cli_name: str,
 ) -> str:
     source_lines = "".join(
         f"    - id: {source_id}\n      path: sources/{source_id}\n"
@@ -159,63 +269,21 @@ def _config(
         "harness:\n"
         "  provider: docker\n"
         "  llm:\n"
-        "    cli: openai-compatible\n"
-        f"    base_url: {api.base_url}\n"
-        "    model: gpt-example\n"
-        "    api_key_env: ECHELON_TEST_API_KEY\n"
-        "    max_tokens: 2048\n"
-        "    timeout_ms: 30000\n"
-        "    re_v2_baseline:\n"
-        "      model_revision: gpt-example-2026-08-01\n"
-        "      revision_authority: provider_resolved_revision\n"
-        "      provider_context_tokens: 262144\n"
-        "      request_path: /chat/completions\n"
-        "      api_protocol_version: '1'\n"
-        "      fixed_framing_byte_upper_bound: 4096\n"
+        f"    cli: {cli_name}\n"
+        "    model: fixture-shared-model\n"
+        f"    timeout_ms: {timeout_ms}\n"
     )
 
 
-def _response_factory(scenario: str) -> Callable[[CapturedRequest], object]:
-    def respond(request: CapturedRequest) -> object:
-        context = _request_context(request)
-        invalid = scenario == "invalid-domain" and any(
-            str(excerpt.get("source_relative_path", "")).startswith("src/broken/")
-            for excerpt in context.get("evidence", [])
-            if isinstance(excerpt, dict)
-        )
-        candidate = _candidate(context, useful=not invalid)
-        content = json.dumps(candidate, sort_keys=True, separators=(",", ":"))
-        if scenario == "executor-breach":
-            usage: object = {
-                "prompt_tokens": 300_000,
-                "completion_tokens": 1,
-                "total_tokens": 300_001,
-            }
-            return valid_response(content=content, usage=usage)
-        response = valid_response(content=content)
-        if scenario == "large-source":
-            response.pop("usage", None)
-        return response
-
-    return respond
-
-
-def _request_context(request: CapturedRequest) -> dict[str, object]:
-    raw = request.json
-    messages = raw.get("messages", []) if isinstance(raw, dict) else []
-    user = next(
-        (
-            message.get("content")
-            for message in messages
-            if isinstance(message, dict) and message.get("role") == "user"
-        ),
-        None,
-    )
-    if not isinstance(user, str):
-        raise ValueError("bounded fixture request has no user context")
-    context = json.loads(user)
+def _prompt_context(prompt: str) -> dict[str, object]:
+    marker = "## Bounded context (canonical JSON)\n"
+    schema_marker = "\n\n## Authorial response schema (canonical JSON)\n"
+    if marker not in prompt or schema_marker not in prompt:
+        raise ValueError("shared-provider fixture prompt has no bounded context")
+    raw = prompt.split(marker, 1)[1].split(schema_marker, 1)[0]
+    context = json.loads(raw)
     if not isinstance(context, dict):
-        raise ValueError("bounded fixture user context is not an object")
+        raise ValueError("shared-provider fixture context is not an object")
     return context
 
 
@@ -322,7 +390,9 @@ def _git(root: Path, *args: str) -> None:
 
 
 __all__ = (
+    "CapturedProviderRequest",
     "LayeredWorkspaceFixture",
+    "ScriptedSharedProvider",
     "build_and_commit_fixture",
     "create_layered_workspace",
 )

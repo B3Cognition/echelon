@@ -43,41 +43,22 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
     from harness.re_v2.protocol_22.inventory import InventoryArtifactV1
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.policies import policy_for
-    from harness.re_v2.protocol_22.provider import (
-        BoundedApiBaselineExecutor,
-        RawExecutionResultV1,
-    )
     from harness.re_v2.protocol_22.schema import load_canonical_object
     from harness.re_v2.protocol_22.status import protocol_22_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "large-source")
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
-    monkeypatch.setenv("ECHELON_TEST_API_KEY", "fixture-secret")
     monkeypatch.chdir(fixture.root)
     runner = CliRunner()
 
-    original_execute = BoundedApiBaselineExecutor.execute
-
-    def execute_with_malformed_result(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        result = original_execute(self, *args, **kwargs)
-        if result.outcome != "candidate_ready":
-            return result
-        return RawExecutionResultV1(
-            stdout=b"malformed result contract\n",
-            stderr=result.stderr,
-            provider_usage=result.provider_usage,
-            timing=result.timing,
-            outcome="invalid_response",
-        )
-
-    with fixture.api:
+    with fixture.provider:
         shadow = runner.invoke(
             app,
             ["re", "run", "--engine", "v2", "--shadow"],
         )
         assert shadow.exit_code == 0, shadow.output
-        assert fixture.api.requests == []
+        assert fixture.provider.requests == []
         assert "deterministic initial dispatches: 8" in shadow.output
         assert "provider initial dispatches: 2" in shadow.output
         assert "maximum shared-retry dispatches: 2" in shadow.output
@@ -87,15 +68,10 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
         assert "whole-run shared-retry reservation:" in shadow.output
         assert "provider requests issued: 0" in shadow.output
 
-        monkeypatch.setattr(
-            BoundedApiBaselineExecutor,
-            "execute",
-            execute_with_malformed_result,
-        )
         completed = runner.invoke(app, ["re", "continue"])
         assert completed.exit_code == 0, completed.output
         assert "L1 COMPACT BASELINE COMPLETE" in completed.output
-        calls = len(fixture.api.requests)
+        calls = len(fixture.provider.requests)
         run_dir = fixture.run_directories()[0]
         paths = ReV2Paths.for_run(run_dir)
         before_events = paths.events.read_bytes()
@@ -103,7 +79,7 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
         replayed = runner.invoke(app, ["re", "continue"])
 
     assert replayed.exit_code == 0, replayed.output
-    assert len(fixture.api.requests) == calls == 2
+    assert len(fixture.provider.requests) == calls == 2
     assert paths.events.read_bytes() == before_events
     status = protocol_22_status_document(run_dir)
     assert status["status"] == "complete"
@@ -183,18 +159,15 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
         )
 
     executor = inputs.executor_contract.entry_for("compact-baseline")
-    tokenizer = executor.request_tokenizer
-    assert tokenizer is not None
-    for request in fixture.api.requests:
-        conservative_input = (
-            len(request.body) + tokenizer.fixed_framing_byte_upper_bound
+    assert executor.execution_mode == "cli"
+    assert executor.request_tokenizer is None
+    for request in fixture.provider.requests:
+        assert (
+            len(request.body)
+            <= executor.limits.max_billable_tokens_per_dispatch
         )
-        reserved = (
-            conservative_input
-            + executor.limits.max_completion_tokens_per_call
-        )
-        assert reserved <= executor.limits.provider_context_tokens
-        assert reserved <= executor.limits.max_billable_tokens_per_dispatch
+        assert request.prompt_metadata["model_tier"] == "strong"
+        assert request.prompt_metadata["effort"] == "high"
 
     calls_by_item = Counter(
         (
@@ -202,7 +175,7 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
             context["scope"]["source_id"],
             context["scope"]["domain_key"],
         )
-        for context in map(_request_context, fixture.api.requests)
+        for context in map(_request_context, fixture.provider.requests)
     )
     assert max(calls_by_item.values()) == 1
     assert set(calls_by_item.values()) == {1}
