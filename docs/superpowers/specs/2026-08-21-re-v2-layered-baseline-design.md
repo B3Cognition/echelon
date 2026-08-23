@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-21  
 **Finding:** EGR-165  
-**Status:** Revised after protocol-boundary architecture review; implementation pending
+**Status:** Protocol 2.2 implemented; API-only execution superseded for new runs
 
 > **Protocol note (2026-08-23):** This document is historical design authority
 > for protocol 2.2 and its API-only compact-baseline executor. Its direct

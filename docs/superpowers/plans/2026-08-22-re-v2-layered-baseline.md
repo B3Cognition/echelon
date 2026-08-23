@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-21-re-v2-layered-baseline-design.md`
 
+> **Implementation status note (2026-08-23):** This plan records the completed
+> protocol-2.2 kernel. Do not rerun or reimplement its manifest, graph, object
+> store, candidate capture, certification, budget, ledger, recovery,
+> materialization, or status tasks for protocol 2.3. The only follow-on plan is
+> `2026-08-23-re-v2-prosaic-shared-provider-integration.md`, which reuses those
+> components and replaces the API-only L1 dispatch seam through the existing
+> Prosaic/shared-provider path.
+
 ## Global Constraints
 
 - New runs use engine protocol `2.2` and run-manifest schema `2`; protocol `2.0` and `2.1` schema-1 manifests, model identities, event lines, ledger lines, recovery, status, and continuation remain byte-for-byte stable.

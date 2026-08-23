@@ -1,523 +1,311 @@
-# RE v2 Prosaic-First Provider Execution Design
+# RE v2 Prosaic Shared-Provider Integration Design
 
 **Date:** 2026-08-23
-**Status:** Revised after rejection of RE-owned provider execution; written-spec
-review pending
-**Relationship:** Corrects the API-only execution path introduced by
-`2026-08-21-re-v2-layered-baseline-design.md`
+**Status:** Revised after full reuse audit; written-spec review pending
+**Relationship:** Replaces protocol 2.2's API-only L1 executor without replacing
+the protocol 2.2 execution kernel or Echelon's provider architecture
 
 ## Purpose
 
-RE v2 must follow the same model-execution architecture as Echelon spec and
-delivery. Prosaic owns neutral agent prose and neutral execution metadata.
-Echelon loads that authority through Prosaic and dispatches it through the
-workspace's normally configured AI coding provider. Provider adapters translate
-the neutral metadata to provider-specific models and controls.
-
-The non-negotiable invariant is:
-
-> Every RE model invocation is a pinned Prosaic agent invocation dispatched
-> through Echelon's shared AI coding provider path.
-
-No RE module may choose a concrete model, open a provider HTTP connection,
-launch a provider binary, read provider credentials, or independently interpret
-Prosaic execution metadata.
-
-This invariant applies only to model-backed work. Deterministic work must not
-acquire a fake Prosaic or provider dependency merely for architectural
-uniformity.
-
-## Current L0/L1 Verification
-
-The current implementation has different answers for the two implemented
-layers:
-
-- **L0 is correct:** inventory, partitioning, and evidence-pack construction use
-  `DeterministicExecutionDependenciesV1` and the in-process deterministic
-  executor. L0 makes no model call, so it neither uses nor should use Prosaic.
-- **L1 is incorrect:** it is model-backed but does not execute a normally
-  inspected Prosaic agent through the shared provider path.
-
-The verified L1 divergences are:
-
-- `_re_v22_agent_bytes` reads the installed Markdown file as raw bytes instead
-  of inspecting it through Prosaic, so YAML frontmatter becomes prompt text.
-- The protocol hashes those raw bytes but does not pin the separately parsed
-  agent body and frontmatter authority.
-- `BoundedApiBaselineExecutor` opens an HTTP connection itself, reads
-  `OPENAI_API_KEY`, selects a concrete model, and accepts only the
-  `openai-compatible` provider.
-- The executor takes RE-owned reasoning settings instead of the Prosaic
-  agent's `model_tier` and `effort` metadata.
-- The baseliner currently declares `tools: write`, while its prose says never to
-  invoke a tool. The metadata and invariant protocol therefore contradict each
-  other.
-
-These are architectural defects, not merely missing Codex support. Adding more
-RE-specific transports would duplicate the provider layer and preserve the
-wrong ownership boundary.
-
-## Decision
-
-Protocol 2.3 has exactly two execution kinds:
-
-1. `deterministic_in_process` for controller-owned computation with no model
-   invocation; and
-2. `prosaic_agent` for every model-backed producer.
-
-`prosaic_agent` means all of the following:
-
-- the agent is defined under `prosaic/subagents/`;
-- the installed workspace authority is inspected through
-  `ProsaicPromptLoader`;
-- the separated body and frontmatter are pinned in the run;
-- the body is dispatched through `SquadCliProvider`, which delegates to
-  `AICodingCliProvider` and the selected shared provider adapter;
-- the frontmatter is supplied as `prompt_metadata` rather than copied into the
-  prompt body; and
-- the normal shared result-contract validator remains authoritative.
-
-RE has no API, CLI, strict, contained, or fallback execution modes of its own.
-Transport is an implementation detail of the shared provider adapter. RE may
-record which controls the selected adapter could enforce, but those observations
-must not create a parallel provider-selection system.
-
-## Options Considered
-
-### Prosaic plus the shared provider path — selected
-
-This is the architecture already established for spec and delivery. It keeps
-agent intent provider-neutral and puts provider-specific translation in one
-place.
-
-### RE-specific capability-negotiated transports — rejected
-
-The earlier protocol 2.3 proposal added `strict_bounded`, `contained_api`, and
-`contained_cli` executors. This would make RE a second provider framework,
-cause feature drift, and let RE configuration override Prosaic authority.
-
-### Force Prosaic into deterministic L0 — rejected
-
-L0 inventory and evidence construction contain no model work. Requiring Prosaic
-there would add a failure mode without adding semantic authority. The correct
-verification is that L0 runs without Prosaic or a provider, while every L1 call
-provably passes through both.
-
-## Layer Boundary
-
-### L0: deterministic inventory
-
-L0 remains controller-owned and deterministic:
-
-- execution kind is `deterministic_in_process`;
-- agent authority and agent hashes are null;
-- provider and model attempts are zero;
-- provider input and output tokens are zero;
-- no provider object is created; and
-- no Prosaic executable, installed agent bundle, provider CLI, provider
-  credential, or network connection is required.
-
-An inventory-only run must complete when all Prosaic and provider facilities are
-unavailable. If future L0 work requires a model, that work is either reclassified
-above L0 or implemented as a Prosaic agent invocation.
-
-### L1: compact baseline
-
-L1 is model-backed and therefore has execution kind `prosaic_agent`. Its work
-item names:
-
-- the neutral agent ID `echelon.re-baseliner`;
-- the pinned Prosaic authority artifact;
-- its deterministic L0 and context-pack dependencies;
-- the result contract and candidate path; and
-- controller-owned budget reservations.
-
-The controller dispatches the pinned body through `SquadCliProvider` and passes
-the pinned frontmatter as `prompt_metadata`. The provider produces an isolated
-candidate and a structured `echelon_result`. The existing deterministic capture,
-schema validation, evidence checks, certification, and publication rules remain
-authoritative.
-
-The graph validator enforces an exclusive choice: deterministic nodes have no
-agent authority, and model-backed nodes have one pinned Prosaic authority.
-
-## End-to-End Authority Flow
+Every model-backed RE operation must use the same execution path as Echelon spec
+and delivery:
 
 ```text
-prosaic/subagents/echelon.re-baseliner.md
-                      |
-             workspace installation
-                      |
-      ProsaicPromptLoader / `prosaic inspect`
-                 /                    \
-        neutral body            neutral frontmatter
-                 \                    /
-              pinned run authority
-                      |
-               SquadCliProvider
-                      |
-             AICodingCliProvider
-                      |
-     configured shared provider adapter
-       (Claude / Codex / Copilot / OpenCode /
-              OpenAI-compatible / generic)
-                      |
-       isolated baseline + echelon_result
-                      |
-     controller capture, validation, certification
+ProsaicPromptLoader
+  -> ProsaicCommandArtifact(body, frontmatter)
+  -> SquadCliProvider.exec_agent(prompt_metadata=frontmatter)
+  -> AICodingCliProvider
+  -> configured provider adapter
 ```
 
-This is the only model-execution flow allowed in RE v2.
+RE must not select concrete models, interpret neutral metadata, open provider
+connections, launch provider binaries, read credentials, or add a second
+provider abstraction.
 
-## Prosaic Inspection Authority
+The implementation is a thin integration into the existing protocol 2.2
+kernel. It is not a new execution framework.
 
-At run creation, before publishing a manifest for model-backed work, the
-controller calls:
+## Current State
+
+- L0 inventory, partitioning, evidence, and context construction are already
+  deterministic in-process operations. They make no model call and must not
+  load Prosaic or construct a provider.
+- L1 currently reads the baseliner Markdown as raw bytes and uses the direct
+  `BoundedApiBaselineExecutor`. That bypasses Prosaic inspection and restricts
+  L1 to the OpenAI-compatible API.
+- Echelon already loads Prosaic body/frontmatter correctly for other workflows,
+  forwards frontmatter through `SquadCliProvider`, maps it in provider adapters,
+  validates `echelon_result`, and records normalized invocation telemetry.
+- Protocol 2.2 already implements the graph, executor catalog, content-addressed
+  object store, execution input, candidate capture, certification, budget,
+  ledger, recovery, materialization, status, and final-state banner.
+- `ExecutorContractEntryV1` already recognizes `execution_mode: cli`; only the
+  provider preparation/capture/controller branches remain API-specific.
+
+## Reuse Matrix
+
+| Need | Existing authority to reuse | Permitted change |
+|---|---|---|
+| Load agent body and metadata | `ProsaicPromptLoader.load_subagent` and `ProsaicCommandArtifact` | Serialize the existing artifact canonically for the existing agent-contract hash |
+| Provider selection and metadata mapping | `SquadCliProvider`, `AICodingCliProvider`, and existing adapters | None; pass pinned frontmatter unchanged |
+| Result validation | `EchelonResultContract` and `SquadCliProvider.exec_agent` | Define one RE dispatch contract using existing fields |
+| Agent authority | `RequestRendererAuthorityV1.agent_contract_hash`, `InstalledAuthorityRegistry.agent_contracts`, and `ObjectStore` | Store canonical inspected artifact bytes instead of raw Markdown for new 2.3 runs |
+| Execution identity | `ExecutionInputV1` and `PreparedExecutionV1` | Generalize the existing provider branch to permit CLI without an API envelope |
+| Executor selection | `ExecutorContractEntryV1` and `ExecutorContractCatalogV1` | Add one shared-AI-CLI adapter entry using the already-declared `cli` mode |
+| Candidate isolation and capture | Existing candidate root, `Protocol22ExecutionStore`, candidate inventory, capture, and commit | Generalize `execution_mode` from API-only to provider-backed API or CLI |
+| Usage and budget | `DispatchReservationV1`, `NormalizedUsageV1`, protocol-2.2 budget replay | Canonically persist the existing normalized usage value; retain full-reservation charging when usage is unavailable or untrusted |
+| Retry and recovery | Protocol-2.2 events, controller, recovery, and at-most-once dispatch IDs | Generalize API checks to provider-backed checks; add no new recovery machine |
+| Certification and artifacts | Existing baseline parser, certifier, receipts, ledger, and materialization | None |
+| Status and banner | Existing protocol-2.2 status renderer | Report configured provider/model telemetry already returned by the shared provider |
+| Protocol compatibility | `RunManifestV2`, schema 2, existing catalog/input files | Accept protocol `2.3` in the same schema; do not create schema 3 |
+
+## Explicitly Rejected Duplicates
+
+The implementation must not add:
+
+- a `ProsaicAgentAuthorityV1` wrapper around `ProsaicCommandArtifact`;
+- a goal-aware Prosaic loader parallel to ordinary creation/graph branching;
+- a new Prosaic authority catalog parallel to `agent_contracts`;
+- a `ProsaicDispatchInputV1` parallel to `ExecutionInputV1`;
+- a protocol-2.3 object store, candidate store, event schema, budget, ledger,
+  recovery controller, materializer, or status implementation;
+- shared-provider metadata normalization already owned by provider adapters;
+- an RE-owned API/CLI/provider factory; or
+- manifest schema 3 when schema 2 already holds the required catalog and input
+  references.
+
+## Protocol Decision
+
+New baseline runs identify themselves as engine protocol `2.3` while retaining
+run-manifest schema `2`. Protocol 2.3 means:
+
+- deterministic producer entries remain exactly the protocol-2.2 entries;
+- compact-baseline producer entries use `execution_mode: cli` and the shared
+  AI coding provider adapter;
+- the agent contract object contains canonical inspected
+  `ProsaicCommandArtifact` body/frontmatter rather than raw Markdown; and
+- all other graph, identity, storage, certification, budget, recovery, and
+  status behavior remains the existing schema-2 behavior.
+
+Protocols 2.0 through 2.2 remain readable. New 2.2 baseline creation is disabled
+when 2.3 ships. An old 2.2 run may validate or adopt an already committed
+capture, but it may not issue a new direct provider request.
+
+The schema-1 `re_v2.controller.ProviderProcessWorkExecutor` is not a missing
+shared-provider adapter for this work. It owns the legacy process/lease/event
+contract for protocols 2.0 and 2.1, while schema 2 already has a different
+execution-input, capture-commit, budget, and recovery chain. Routing 2.3 through
+that controller would replace or duplicate the protocol-2.2 kernel. Protocol
+2.3 therefore extends schema 2's already-declared `cli` executor seam and reuses
+only the common `SquadCliProvider` below both orchestration layers.
+
+## L0 Boundary
+
+Inventory/L0 creation selects only deterministic executor entries. Therefore it:
+
+- does not call `ProsaicPromptLoader`;
+- does not construct `SquadCliProvider` or any provider adapter;
+- records zero provider attempts and tokens; and
+- remains byte-identical to protocol 2.2 for the same snapshot and policy.
+
+This boundary is enforced by tests that make Prosaic loading and provider
+construction raise if touched during an inventory run.
+
+## L1 Agent Authority
+
+For a baseline run, creation calls the existing:
 
 ```python
-ProsaicPromptLoader(workspace_root).load_subagent("echelon.re-baseliner")
+artifact = ProsaicPromptLoader(project_root).load_subagent(
+    "echelon.re-baseliner"
+)
 ```
 
-The loader invokes Prosaic inspection against the installed
-`.echelon/prosaic` source. A missing executable, missing installed agent,
-inspection failure, or malformed frontmatter fails creation before the manifest
-becomes authoritative. The diagnostic tells the operator when workspace
-migration or installation is required.
+Missing authority fails before manifest publication with workspace migration
+guidance. The returned `ProsaicCommandArtifact` is serialized canonically as:
 
-The controller stores a `ProsaicAgentAuthorityV1` artifact containing:
+```json
+{"body":"<inspected body>","frontmatter":{"name":"echelon.re-baseliner"}}
+```
+
+The example is abbreviated; the stored frontmatter is the complete inspected
+mapping. The existing `ObjectStore` stores these bytes, the existing
+`agent_contract_hash` identifies them, and the installed-authority registry maps
+the agent ID to that hash. Continuation reads the run-pinned object; it does not
+reinspect mutable installed prose.
+
+No additional authority model is required.
+
+## Shared Provider Dispatch
+
+The only genuinely new runtime component is a thin compact-baseline executor
+adapter around `SquadCliProvider`. It:
+
+1. verifies the existing executor, execution input, agent-contract hash,
+   context hash, response-schema hash, reservation, candidate root, and deadline;
+2. decodes the run-pinned `ProsaicCommandArtifact`;
+3. renders the existing compact-baseline context/schema instructions;
+4. calls `SquadCliProvider.exec_agent` in the existing isolated candidate root;
+5. supplies the pinned frontmatter as `prompt_metadata` without interpreting or
+   replacing `model_tier`, `effort`, `tools`, or `execution`;
+6. disables automatic result repair so retries remain visible to the RE budget;
+7. uses strict shared `EchelonResultContract` validation; and
+8. adapts `SquadAgentResult` into the existing `RawExecutionResultV1` capture
+   surface, including the provider/model observations already returned by the
+   shared provider.
+
+The adapter never constructs a concrete backend. `SquadCliProvider` performs
+the existing configuration cascade and provider dispatch.
+
+## Candidate and Result Contract
+
+The baseliner's intentional `tools: write` authority is restricted by the
+existing isolated candidate root. It writes exactly `baseline.json` and returns:
 
 ```yaml
-schema_version: 1
-artifact_id: <content-addressed ID>
-artifact_type: prosaic_agent_authority
-agent_id: echelon.re-baseliner
-body_hash: sha256:<hash>
-frontmatter_hash: sha256:<hash>
-frontmatter:
-  name: echelon.re-baseliner
-  description: <neutral description>
-  execution: agent
-  tools: write
-  color: orange
-  model_tier: strong
-  effort: high
-inspection:
-  loader_schema_version: 1
-  receipt_hash: sha256:<hash>
+echelon_result:
+  verdict: DONE
+  state_updates: {}
 ```
 
-The exact inspected body is stored as a run artifact. Continuation and retry use
-the pinned body and frontmatter; they do not silently re-read a changed installed
-agent. A new agent revision requires a new run authority rather than mutating an
-existing run.
+The adapter supplies:
 
-An L0-only run does not inspect or pin an unused agent.
-
-## Frontmatter Authority
-
-Prosaic frontmatter is the sole authority for model intent:
-
-- `model_tier` expresses the neutral model capability tier;
-- `effort` expresses the neutral reasoning-effort request;
-- `tools` expresses the neutral tool capability;
-- `execution` expresses the execution form; and
-- `name` identifies the agent.
-
-RE configuration must not add a compact-baseline concrete model, model revision,
-reasoning effort, or provider-specific tool policy. Workspace configuration
-selects the provider and the ordinary shared provider mappings, exactly as it
-does for other Echelon features.
-
-The run records the selected provider and observed effective model/effort for
-diagnostics and reproducibility. Those observations do not replace the pinned
-neutral authority and do not become cross-provider eligibility gates.
-
-## Shared Provider Mapping
-
-Shared provider adapters—not RE—translate the baseliner's neutral metadata:
-
-- `model_tier: strong` to the provider's configured strong model;
-- `effort: high` to the closest supported reasoning control;
-- `tools: write` to the closest safe provider-native capability; and
-- `execution: agent` to the normal agent execution path.
-
-Current adapters already map model tiers unevenly, while effort and tools are
-not uniformly enforced. That is a shared provider-layer defect. The
-implementation must close it in the common adapter contracts and tests so spec,
-delivery, and RE receive the same behavior.
-
-When a provider cannot express an exact control, its adapter applies the same
-documented fallback used by other Echelon workflows and records the effective
-control. Lack of an exact revision, hard output-token ceiling, native no-tools
-switch, or reasoning-effort flag does not make that provider ineligible and
-must not cause RE to substitute another provider.
-
-## Agent Tool and Output Contract
-
-`tools: write` is intentional. The baseliner receives a fresh isolated execution
-root containing only:
-
-- the immutable context pack;
-- the candidate schema and instructions; and
-- an empty designated output path, `baseline.json`.
-
-The live source tree, run-control files, registry, manifest, and accepted
-artifacts are not exposed as writable agent authority. The agent protocol is
-revised to say:
-
-- ALWAYS consume only the supplied immutable context;
-- ALWAYS write exactly the designated candidate file;
-- ALWAYS return the normal structured `echelon_result` declaring
-  `candidate_ready` and the candidate path;
-- NEVER discover or read the live source workspace;
-- NEVER write controller-owned state or accepted artifacts; and
-- NEVER claim semantic-audit or workspace-synthesis completion.
-
-Candidate capture rejects missing files, extra files, symlinks, path escape,
-schema violations, and evidence references outside the immutable pack.
-
-The shared `SquadCliProvider` result validator is the only result-contract
-authority. RE must not infer or synthesize success from prose or merely from a
-file appearing. Internal automatic result repair is disabled for this dispatch;
-a malformed result becomes a durable counted RE attempt followed by the normal
-RE retry policy.
-
-## Provider Selection and Switching
-
-Each new dispatch resolves the provider through the ordinary Echelon
-configuration cascade. RE contains no hidden provider override, API-key lookup,
-or fallback provider.
-
-The run pins the Prosaic authority, snapshot, policy, context, and certifier. It
-does not pin a concrete provider as semantic authority. A continuation may use a
-newly configured provider for unresolved work, matching existing Echelon
-behavior. Every dispatch receipt records the configured provider adapter,
-reported model, effective controls, and usage so a provider switch is visible.
-
-Already accepted artifacts remain immutable and are not regenerated solely
-because the configured provider changes.
-
-## Budget Semantics
-
-The existing run-wide token and wall-time budgets remain controller authority.
-Before a model dispatch, the controller durably reserves its maximum allowed
-spend. Controller operational metadata—dispatch ID, result schema, isolated
-paths, and reservations—is separate from Prosaic frontmatter and cannot
-overwrite `model_tier`, `effort`, `tools`, `execution`, or agent identity.
-
-Shared adapters return normalized usage and enforcement telemetry:
-
-- actual trusted usage is charged when available;
-- unknown or untrusted usage charges the full reservation;
-- wall time and controller-observed bytes remain hard local limits; and
-- provider-side hard caps versus dispatch-boundary limits are reported honestly.
-
-Budget policy controls whether a dispatch may start and how usage is charged. It
-does not select a weaker model or change Prosaic effort.
-
-## Durable Dispatch and Recovery
-
-Before invoking a provider, the controller commits a `ProsaicDispatchInputV1`
-containing:
-
-```yaml
-schema_version: 1
-dispatch_id: <stable unique ID>
-work_item_id: <ID>
-attempt_number: <integer>
-agent_authority_id: <artifact ID>
-agent_body_hash: sha256:<hash>
-frontmatter_hash: sha256:<hash>
-context_pack_id: <artifact ID>
-context_pack_hash: sha256:<hash>
-result_contract: <shared contract ID>
-candidate_path: baseline.json
-controller_scope:
-  source_id: <source ID>
-  domain_id: <domain ID>
-reservation:
-  token_limit: <integer>
-  wall_time_seconds: <integer>
+```python
+EchelonResultContract(
+    allowed_state_update_keys=frozenset(),
+    allowed_verdicts=frozenset({"DONE"}),
+    unexpected_state_updates="reject",
+)
 ```
 
-The selected provider and effective provider observations belong in the dispatch
-receipt because they are resolved at execution time. They do not belong in the
-semantic work item or artifact identity.
+The existing candidate scanner rejects missing/extra files, symlinks, special
+files, path escape, and invalid bytes. The existing certifier validates schema,
+evidence, utility, and scope. A valid result without a valid candidate is not
+success; a valid candidate with malformed result follows the existing
+result-contract reconstruction/retry rules.
 
-Recovery follows the existing durable-dispatch rules:
+## Frontmatter and Provider Behavior
 
-1. commit `dispatch_started` before external execution;
-2. never issue the same `dispatch_id` twice;
-3. adopt a complete isolated capture when its hashes and result contract verify;
-4. otherwise mark the attempt abandoned, charge it conservatively, and create a
-   new attempt with a new dispatch ID; and
-5. publish only after deterministic certification succeeds.
+The adapter passes the complete pinned frontmatter unchanged. Existing provider
+handling remains authoritative:
 
-## Protocol Compatibility
+- provider selection follows normal workspace configuration;
+- model-tier, effort, and tool behavior follow the selected adapter's existing
+  mapping/fallback behavior;
+- provider-specific limitations remain normal provider telemetry; and
+- RE does not make an adapter eligible or ineligible based on optional controls.
 
-Protocol 2.3 uses manifest schema 3 and adds an optional catalog of pinned
-Prosaic agent authorities. It preserves protocol 2.2 artifact identity, policy,
-producer, L0, capture, certification, and publication rules where they do not
-conflict with this design.
+If a provider adapter has a general metadata deficiency, that is a separate
+provider-layer issue affecting all workflows. It is not part of RE 2.3 unless a
+real RE integration test exposes a regression in an already-supported behavior.
 
-Protocols 2.0 through 2.2 remain readable for validation, status, and recovery.
-New 2.2 runs are disabled after 2.3 ships.
+## Budget and Usage
 
-Because every new model invocation must use Prosaic, an unresolved 2.2 run may
-adopt and certify an already completed direct-executor capture, but it may not
-issue another direct provider request. Status explains that unresolved L1 work
-requires a new 2.3 run. Deterministic L0 artifacts can be reconstructed or
-reused according to their existing content-addressed rules; L1 adoption remains
-a distinct explicitly validated operation.
+Protocol 2.3 reuses the protocol-2.2 reservation and replay structures. CLI
+dispatch uses a conservative reservation derived from the existing executor
+limits and context/prompt bounds. `SquadAgentResult.token_usage` and
+`token_usage_details` are converted to the existing `NormalizedUsageV1` value
+and stored canonically through the existing provider-usage blob slot:
 
-The old direct HTTP executor remains only as historical protocol-reading code
-until its compatibility window ends. It is not registered for new dispatch.
+- complete trustworthy usage is charged as observed;
+- missing or incomplete usage is marked unavailable/untrusted and charges the
+  full reservation through existing budget replay;
+- observed usage above reservation remains an existing breach signal; and
+- wall time remains the existing hard local deadline.
 
-## Status and Telemetry
+No new budget schema or accounting engine is introduced.
 
-Status makes the layer boundary explicit.
+The existing `ExecutionCaptureV1.provider_name` and
+`resolved_model_revision` slots persist the shared provider's observed provider
+and model values. The legacy field name does not turn an observed CLI model
+name into immutable model-revision authority; Prosaic frontmatter plus the
+selected provider adapter remain the request authority.
 
-For L0 it reports:
+## Durable Execution and Recovery
 
-- execution: deterministic in process;
-- Prosaic agent: not applicable;
-- provider/model attempts: 0;
-- provider tokens: 0; and
-- quality scope: inventory and evidence only.
+The existing ordering remains unchanged:
 
-For L1 it reports:
+```text
+prepare existing ExecutionInputV1
+  -> durable dispatch_started
+  -> shared provider invocation
+  -> existing capture and commit
+  -> dispatch_observed
+  -> existing candidate persistence/certification/acceptance
+```
 
-- agent: `echelon.re-baseliner` and pinned authority hash;
-- neutral model intent: `strong`;
-- neutral effort: `high`;
-- neutral tools: `write`;
-- configured provider and reported effective model/controls;
-- usage and token-limit enforcement class;
-- compact-baseline certification result; and
-- quality scope: L1 compact baseline, not semantic audit or workspace synthesis.
+For CLI mode, `ExecutionInputV1` uses its existing agent-contract and context
+hashes. Its API-envelope hash is null because there is no API request envelope;
+the pinned agent, context, response schema, executor implementation digest, and
+fixed renderer contract deterministically define the prompt.
 
-Provider limitations are telemetry, not a reason to bypass Prosaic or silently
-change provider.
+Certification loads the already-pinned context bytes through
+`ExecutionInputV1.context_bundle_hash`. It does not depend on an API message
+envelope and does not introduce a second context container.
 
-## Future Layers
+Recovery continues to use existing dispatch IDs and capture states. A started
+dispatch is never reissued. An incomplete abandoned dispatch is charged at its
+reservation and may create a new retry dispatch only under existing retry
+limits.
 
-The graph schema generalizes this rule to L2 and later work:
+No parallel recovery state machine is allowed.
 
-- every deterministic node declares `deterministic_in_process` and has no agent;
-- every model-backed node declares `prosaic_agent` and names one pinned Prosaic
-  authority; and
-- graph validation rejects a node that declares both or neither execution
-  authority.
+## Minimal Code Surface
 
-Adding L2 repair, semantic audit, synthesis, or other model-backed work therefore
-requires adding or selecting a neutral Prosaic agent, not adding a provider call
-inside RE.
+Expected implementation changes are limited to:
 
-## Failure Semantics
+- `prosaic/subagents/echelon.re-baseliner.md`: align write/result prose with the
+  shared result contract;
+- `src/harness/re_v2/protocol_22/executors.py`: resolve the already-supported
+  CLI execution mode without concrete model authority;
+- `src/harness/re_v2/protocol_22/execution.py`: generalize existing provider
+  preparation/capture from API-only to API-or-CLI;
+- `src/harness/re_v2/protocol_22/model.py`: allow protocol 2.3 in schema 2 and
+  CLI capture/input nullability without adding fields;
+- `src/harness/re_v2/protocol_22/provider.py`: retain shared rendering/usage
+  value helpers, add canonical encoding for the existing normalized usage
+  value, and carry observed provider/model values on the existing raw-result
+  surface; no new transport;
+- one focused thin adapter file, `src/harness/re_v2/protocol_22/cli_provider.py`;
+- `src/harness/re_v2/protocol_22/controller.py` and `recovery.py`: generalize
+  existing provider-backed branches;
+- `src/harness/re_v2/run_store.py` and `src/echelon/cli.py`: select/read protocol
+  2.3 and use existing Prosaic/provider factories; and
+- existing status/tests where protocol literals or provider labels are closed.
 
-Run creation fails before manifest publication when:
+No other new production package is expected.
 
-- required Prosaic inspection is unavailable or invalid;
-- the required agent is missing from the installed workspace bundle;
-- required neutral metadata is missing or malformed; or
-- the configured shared provider is unavailable under normal Echelon rules.
+## Verification
 
-A started provider attempt fails durably and counts against retry/budget policy
-when:
-
-- provider execution fails;
-- the shared result contract is absent or malformed;
-- candidate capture fails; or
-- deterministic certification rejects the candidate.
-
-Path escape, unexpected mutation, authority mismatch, and receipt/hash mismatch
-remain safety failures.
-
-Missing exact model revision, exact internal request count, trusted token usage,
-or provider-native hard caps are reported as limitations. They do not authorize
-a bypass around Prosaic and do not justify a provider substitution.
-
-## Verification Matrix
-
-### L0 boundary
-
-1. An inventory-only run completes with Prosaic execution mocked unavailable,
-   the installed Prosaic bundle absent, provider construction set to fail,
-   credentials absent, and network/provider binaries unavailable.
-2. Every L0 producer has `deterministic_in_process`, null agent authority, zero
-   provider attempts, and zero provider tokens.
-3. Provider and Prosaic spies observe zero calls during L0 execution.
-4. Protocol 2.3 produces the same deterministic L0 bytes as protocol 2.2 for the
-   same snapshot and policy.
-
-### L1 Prosaic authority
-
-5. Run creation calls `ProsaicPromptLoader.load_subagent` for the baseliner and
-   fails atomically on missing or malformed authority.
-6. The exact inspected body and canonical frontmatter are separately hashed,
-   stored, and reused on continuation.
-7. A provider spy receives the exact body without YAML frontmatter and receives
-   `name`, `execution: agent`, `model_tier: strong`, `effort: high`, and
-   `tools: write` through `prompt_metadata`.
-8. Static architecture tests reject provider SDK/network imports, provider
-   binary launches, credential lookup, concrete model mappings, and direct
-   backend construction under the protocol 2.3 RE package.
-9. Every L1 dispatch passes through `SquadCliProvider` and the shared result
-   validator; tests prove RE cannot synthesize a successful result.
-10. Retry reuses the pinned Prosaic authority, creates a new dispatch ID, and
-    records any configured provider change in the receipt.
-
-### Shared provider behavior
-
-11. Contract tests cover neutral `strong`, `high`, `write`, and `agent`
-    translation or documented fallback for every first-party provider adapter.
-12. No RE configuration field can select a concrete model or override protected
-    Prosaic metadata.
-13. Codex, Claude, Copilot, OpenCode, OpenAI-compatible, and generic configured
-    providers remain eligible through the shared path.
-14. A real Codex-provider pilot proves inspected Prosaic authority, isolated
-    candidate output, shared result validation, certification, and telemetry.
-15. At least one non-Codex provider fixture or authenticated pilot proves the
-    same provider-neutral flow.
-
-### Recovery and compatibility
-
-16. Crash-before-dispatch, crash-after-provider, crash-after-capture, and
-    crash-after-certification tests preserve at-most-once dispatch IDs and
-    conservative charging.
-17. A changed installed Prosaic agent does not mutate an existing run's pinned
-    authority.
-18. Provider switching affects only unresolved dispatch receipts and does not
-    stale accepted artifacts.
-19. Protocol 2.0 through 2.2 runs remain readable.
-20. An unresolved 2.2 run cannot issue a new direct provider request after 2.3
-    activation and receives an actionable migration diagnostic.
-21. Status distinguishes L0 deterministic completeness from L1 Prosaic-backed
-    compact-baseline completeness and from later full-quality layers.
-
-## Consequences
-
-This design removes the false choice between provider parity and semantic
-quality. RE receives the same provider portability as spec and delivery because
-it uses the same architecture. Provider limitations remain visible without
-becoming RE-specific eligibility policy.
-
-The main implementation cost is that shared provider metadata handling must be
-made consistent, particularly for effort and tools. That work benefits all
-Echelon workflows and belongs in the shared layer.
+1. L0 completes with Prosaic loading and provider construction set to fail.
+2. L1 creation calls the existing Prosaic loader exactly once and stores the
+   exact inspected body/frontmatter through the existing object store.
+3. A `SquadCliProvider` spy receives the exact body-derived prompt and complete
+   pinned frontmatter; no YAML frontmatter appears in prompt text.
+4. Static tests show no provider backend construction, credential lookup,
+   concrete model mapping, or network code in RE's CLI adapter.
+5. Existing Claude/Codex/OpenAI-compatible metadata-mapping tests remain
+   unchanged and pass; RE adds no duplicate mapping tests.
+6. The standard shared result validator accepts `DONE` with empty updates and
+   rejects missing/malformed/extra control output without internal repair.
+7. Existing candidate, certification, budget, ledger, recovery, and status
+   suites pass for both API 2.2 fixtures and CLI 2.3 fixtures; CLI certification
+   reads the context named by the execution input rather than an API envelope.
+8. Schema-1 and protocol-2.2 canonical compatibility tests remain unchanged.
+9. A real Codex workspace pilot completes L1 through the shared provider path.
+10. One non-Codex provider fixture proves the same adapter boundary without
+    adding provider-specific RE code.
 
 ## Completion Criteria
 
 The correction is complete when:
 
-- L0 is proven fully deterministic and independent of Prosaic/provider runtime;
-- every L1 model call uses a pinned inspected Prosaic agent;
-- every such call passes through the shared provider facade and result contract;
-- no active RE v2 path owns provider transport, credentials, concrete models,
-  or metadata translation;
-- the baseliner's `tools: write` contract and prose agree;
-- shared adapters honor or truthfully degrade neutral model, effort, and tool
-  metadata across all supported providers;
-- recovery and budgets remain durable and provider-neutral; and
-- operator status states both the execution authority and the achieved quality
-  layer without implying full RE completion.
+- redundant protocol-2.3 authority/provider/budget/recovery abstractions are
+  absent;
+- L0 has zero Prosaic/provider interaction;
+- every L1 model call loads Prosaic and uses `SquadCliProvider`;
+- existing provider metadata handling is reused unchanged;
+- protocol-2.2 graph, identity, storage, candidate, certification, budget,
+  ledger, recovery, and status machinery carry protocol 2.3;
+- old protocols remain readable without new direct provider calls; and
+- real-provider telemetry shows the configured provider performed the work.
