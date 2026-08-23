@@ -748,7 +748,7 @@ phases:
     human_input:
       - reason_code: checkpoint_assess_decision_required
         classification: material
-        recommendation_mode: static
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: gate_outcome
         allow_free_text: false
@@ -762,7 +762,7 @@ phases:
           - id: approve
             label: Approve
             description: Continue to feasibility assessment.
-            recommended: true
+            recommended: false
             risk_level: medium
             next_phase: phase2-decide
             outcome: approved
