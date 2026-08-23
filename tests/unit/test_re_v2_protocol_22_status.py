@@ -15,11 +15,17 @@ from harness.re_v2.protocol_22.status import (
 from tests.unit.test_re_v2_protocol_22_controller import _baseline_context
 
 
-def _completed(tmp_path: Path, *, provider_mode: str = "api"):
+def _completed(
+    tmp_path: Path,
+    *,
+    provider_mode: str = "api",
+    engine_protocol_version: str = "2.2",
+):
     context, provider = _baseline_context(
         tmp_path,
         malformed_result=True,
         provider_mode=provider_mode,
+        engine_protocol_version=engine_protocol_version,
     )
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "completed"
@@ -358,15 +364,20 @@ def test_executor_failure_status_names_exact_receipt_and_blocked_contract_fanout
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("engine_protocol_version", ("2.2", "2.3"))
 def test_legacy_status_entrypoint_selects_protocol_22_from_immutable_manifest(
     tmp_path: Path,
+    engine_protocol_version: str,
 ) -> None:
     from harness.re_v2.status import render_v2_status
 
-    context, _provider = _completed(tmp_path)
+    context, _provider = _completed(
+        tmp_path,
+        engine_protocol_version=engine_protocol_version,
+    )
 
     document = json.loads(render_v2_status(context.paths.root.parent, as_json=True))
 
-    assert document["engine_protocol_version"] == "2.2"
+    assert document["engine_protocol_version"] == engine_protocol_version
     assert document["status"] == "complete"
     assert document["banner"] == "L1 COMPACT BASELINE COMPLETE"

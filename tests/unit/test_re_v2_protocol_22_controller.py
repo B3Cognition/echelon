@@ -582,6 +582,7 @@ def _baseline_context(
     active_ms_limit: int | None = None,
     token_limit: int | None = None,
     provider_mode: str = "api",
+    engine_protocol_version: str = "2.2",
 ) -> tuple[Protocol22RunContext, _ScriptedProvider]:
     if source_domains is None:
         input_set, raw_manifest = _input_fixture()
@@ -638,6 +639,7 @@ def _baseline_context(
         raw_manifest,
         run_id=f"re-baseline-controller-{tmp_path.name}",
         initial_budget_policy=budget,
+        engine_protocol_version=engine_protocol_version,
     )
     paths = create_protocol_22_run_store(
         tmp_path / manifest.run_id, manifest, input_set
