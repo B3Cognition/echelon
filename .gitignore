@@ -43,6 +43,7 @@ tests/benchmarks/reports/
 # Prosaic bundle during workspace initialization.
 .claude/agents/
 .claude/skills/
+/extension/
 .worktrees/
 docs/echelon-*run-*.md
 
