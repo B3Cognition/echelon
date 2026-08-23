@@ -4,10 +4,12 @@ from .authority import (
     ProsaicAgentAuthorityV1,
     Protocol23AuthorityError,
     RE_BASELINER_AGENT_ID,
+    load_re_agent_authorities,
 )
 
 __all__ = (
     "ProsaicAgentAuthorityV1",
     "Protocol23AuthorityError",
     "RE_BASELINER_AGENT_ID",
+    "load_re_agent_authorities",
 )

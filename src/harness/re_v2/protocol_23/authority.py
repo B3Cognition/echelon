@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 
 
@@ -122,3 +123,28 @@ class ProsaicAgentAuthorityV1:
                 "receipt_hash": self.inspection_receipt_hash,
             },
         }
+
+
+def load_re_agent_authorities(
+    project_root: Path,
+    *,
+    goal: str,
+    loader: ProsaicPromptLoader | None = None,
+) -> Mapping[str, ProsaicAgentAuthorityV1]:
+    """Inspect and pin exactly the Prosaic agents required by *goal*."""
+    if goal == "inventory":
+        return MappingProxyType({})
+    if goal != "baseline":
+        raise Protocol23AuthorityError(f"unsupported RE v2 goal: {goal!r}")
+    resolved_loader = loader or ProsaicPromptLoader(project_root)
+    artifact = resolved_loader.load_subagent(RE_BASELINER_AGENT_ID)
+    if artifact is None:
+        raise Protocol23AuthorityError(
+            "installed Prosaic agent echelon.re-baseliner is missing; run "
+            "`echelon workspace migrate-to-prosaic` before starting RE"
+        )
+    authority = ProsaicAgentAuthorityV1.from_artifact(
+        RE_BASELINER_AGENT_ID,
+        artifact,
+    )
+    return MappingProxyType({RE_BASELINER_AGENT_ID: authority})
