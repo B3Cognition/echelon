@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -316,6 +317,64 @@ def _seed_current_checkpoint_debt(
         lambda *_args, **_kwargs: True,
     )
     return "user"
+
+
+def _prepare_real_v3_quality_debt(
+    tmp_path: Path,
+) -> tuple[SquadController, SquadStateStore]:
+    from tests.integration.test_squad_controller import (
+        _coordinate_prepared_result,
+        _make_proportional_assessment_numerically_passing,
+        _mark_constitution_complete,
+        _proportional_assessment_fixture,
+        _start_proportional_quality_loop,
+    )
+
+    controller, store = _start_proportional_quality_loop(
+        tmp_path,
+        automatic_consumed=3,
+    )
+    _mark_constitution_complete(tmp_path, store)
+    updates, result = _proportional_assessment_fixture(
+        controller,
+        store,
+        0,
+    )
+    _make_proportional_assessment_numerically_passing(updates)
+    state = store.load()
+    state.update(updates)
+    store.save(state)
+
+    route = _coordinate_prepared_result(
+        controller,
+        controller._graph.get("phase1-why2"),
+        result,
+    )
+    assert route == "terminal-blocked"
+    assert store.load()["blocked_decision"]["schema_version"] == 3
+    return controller, store
+
+
+def _accept_real_v3_quality_debt(
+    tmp_path: Path,
+) -> tuple[SquadController, SquadStateStore]:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    assert controller.resume_with_human_input("continue_with_debt") is True
+    return controller, store
+
+
+def _advance_real_debt_fixture_to_checkpoint(
+    store: SquadStateStore,
+) -> None:
+    state = store.load()
+    state["status"] = "running"
+    state["phase"] = "checkpoint-assess"
+    state["completed_phases"] = [
+        *state.get("completed_phases", []),
+        "phase1-lexicon-derive",
+        "phase1-lexicon",
+    ]
+    store.save(state)
 
 
 def _request(
@@ -2626,6 +2685,267 @@ def test_checkpoint_assess_pass_and_lexicon_prepare_approve_before_dispatch(
     }
     assert decision["recommendation_authority"] == "controller_evidence"
     provider.exec_agent.assert_called_once()
+
+
+def test_real_v3_debt_acceptance_persists_one_canonical_decision_postimage(
+    tmp_path: Path,
+) -> None:
+    _controller, store = _accept_real_v3_quality_debt(tmp_path)
+
+    state = store.load()
+    authorization = state["spec_quality_debt_authorization"]
+    debt_path = tmp_path / str(authorization["debt_artifact"])
+    debt = json.loads(debt_path.read_text(encoding="utf-8"))
+    resolved = state["blocked_decision"]
+    canonical = (
+        json.dumps(
+            resolved,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    assert resolved["schema_version"] == 3
+    assert resolved == authorization["resolved_decision"]
+    assert resolved == debt["resolved_decision"]
+    assert authorization["resolved_decision_sha256"] == hashlib.sha256(
+        canonical
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("tamper", ["embedded_decision", "completion"])
+def test_real_v3_debt_tampering_is_stale(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    _controller, store = _accept_real_v3_quality_debt(tmp_path)
+    state = store.load()
+    assert has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+    if tamper == "embedded_decision":
+        authorization = dict(state["spec_quality_debt_authorization"])
+        resolved = dict(authorization["resolved_decision"])
+        resolved["resolution_rationale"] = "Tampered audit rationale."
+        resolved["resolution_confidence"] = "low"
+        authorization["resolved_decision"] = resolved
+        state["spec_quality_debt_authorization"] = authorization
+    else:
+        completion = dict(state["last_human_input_completion"])
+        completion["receipts_sha256"] = "f" * 64
+        state["last_human_input_completion"] = completion
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_debt_acceptance_aborts_before_publication_on_postimage_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    before = store.load()
+    original_builder = squad_module.build_quality_debt_authorization
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        divergent = dict(authorization["resolved_decision"])
+        divergent.update(
+            {
+                "resolution_rationale": "Injected divergent audit.",
+                "resolution_confidence": "low",
+            }
+        )
+        divergent = validate_blocked_decision(divergent)
+        decision_bytes = (
+            json.dumps(
+                divergent,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        decision_digest = hashlib.sha256(decision_bytes).hexdigest()
+        for record in (authorization, debt):
+            record["resolved_decision"] = divergent
+            record["resolved_decision_sha256"] = decision_digest
+        debt_bytes = (
+            json.dumps(debt, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        authorization["debt_artifact_sha256"] = hashlib.sha256(
+            debt_bytes
+        ).hexdigest()
+        return replace(
+            prepared,
+            authorization=authorization,
+            debt=debt,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    state = store.load()
+    assert state == before
+    assert state["blocked_decision"]["status"] == "awaiting_human"
+    assert "spec_quality_debt_authorization" not in state
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+
+
+def test_debt_acceptance_aborts_on_completion_receipt_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    before = store.load()
+    original_builder = squad_module.build_quality_debt_authorization
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        for record in (authorization, debt):
+            binding = dict(record["resolution_completion"])
+            binding["completion_id"] = "f" * 32
+            record["resolution_completion"] = binding
+        debt_bytes = (
+            json.dumps(debt, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        authorization["debt_artifact_sha256"] = hashlib.sha256(
+            debt_bytes
+        ).hexdigest()
+        return replace(
+            prepared,
+            authorization=authorization,
+            debt=debt,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    state = store.load()
+    assert state == before
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+
+
+def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(
+    tmp_path: Path,
+) -> None:
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    controller, store = _accept_real_v3_quality_debt(tmp_path)
+    accepted = store.load()
+    debt_decision = accepted["blocked_decision"]
+    assert has_current_quality_debt_authorization(
+        accepted,
+        project_root=tmp_path,
+    )
+    _advance_real_debt_fixture_to_checkpoint(store)
+
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    checkpoint = store.load()
+    assert checkpoint["blocked_decision"]["id"] != debt_decision["id"]
+    assert checkpoint["blocked_decision"]["source_phase"] == (
+        "checkpoint-assess"
+    )
+    assert has_current_quality_debt_authorization(
+        checkpoint,
+        project_root=tmp_path,
+    )
+
+
+def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
+    tmp_path: Path,
+) -> None:
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    controller, store = _accept_real_v3_quality_debt(tmp_path)
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+    _advance_real_debt_fixture_to_checkpoint(store)
+
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+    controller.resume_with_human_input("reject")
+    rejected = store.load()
+    assert rejected["phase"] == "terminal-blocked"
+    assert rejected["blocked_decision"]["selected_option_id"] == "reject"
+    assert has_current_quality_debt_authorization(
+        rejected,
+        project_root=tmp_path,
+    )
+
+    reset = store.load()
+    reset["status"] = "running"
+    reset["phase"] = "checkpoint-assess"
+    reset["blocked_reason"] = None
+    store.save(reset)
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+    fresh = store.load()["blocked_decision"]
+    assert fresh["status"] == "awaiting_human"
+    assert fresh["selected_option_id"] is None
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+
+    assert controller.resume_with_human_input("approve") is True
+    approved = store.load()
+    assert approved["phase"] == "phase2-decide"
+    assert approved["blocked_decision"]["selected_option_id"] == "approve"
+    assert has_current_quality_debt_authorization(
+        approved,
+        project_root=tmp_path,
+    )
+    assert controller._guard_phase1_quality_evidence("phase2-decide") == (
+        "phase2-decide"
+    )
+    assert store.load()["phase"] != "phase1-understanding"
 
 
 def test_checkpoint_assess_accepted_debt_keeps_fail_evidence_authorized(

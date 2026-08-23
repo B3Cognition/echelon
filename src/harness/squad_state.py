@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Literal, Mapping
+from typing import Any, Callable, Iterable, Iterator, Literal, Mapping
 
 from harness.blocked_decision import (
     BlockedDecisionError,
@@ -841,6 +841,114 @@ def _validate_prepared_controller_completion(
             validator="completion_receipts",
         )
     return marker, intent, receipts, receipts_sha256, prefix_kind
+
+
+def _validate_quality_debt_resolution_postimage(
+    resolved: Mapping[str, object],
+    updates: Mapping[str, Any],
+    completion_intent: Mapping[str, object],
+) -> None:
+    """Require one canonical debt decision across state and staged effect."""
+    if set(updates) != {"spec_quality_debt_authorization"}:
+        raise StateAdvanceError(
+            "quality-debt resolution postimage updates are invalid",
+            json_path="$.spec_quality_debt_authorization",
+            validator="resolution_postimage",
+        )
+    authorization = updates.get("spec_quality_debt_authorization")
+    quality_effect = completion_intent.get("quality_effect")
+    payload = (
+        quality_effect.get("payload")
+        if isinstance(quality_effect, Mapping)
+        else None
+    )
+    debt = payload.get("debt") if isinstance(payload, Mapping) else None
+    effect_authorization = (
+        payload.get("authorization")
+        if isinstance(payload, Mapping)
+        else None
+    )
+    if (
+        not isinstance(authorization, Mapping)
+        or not isinstance(debt, Mapping)
+        or not isinstance(effect_authorization, Mapping)
+        or not isinstance(quality_effect, Mapping)
+        or quality_effect.get("kind") != "proportional_quality"
+        or quality_effect.get("operation") != "debt_write"
+        or payload.get("operation") != "debt_write"
+        or dict(effect_authorization) != dict(authorization)
+        or authorization.get("resolved_decision") != dict(resolved)
+        or debt.get("resolved_decision") != dict(resolved)
+        or authorization.get("resolved_decision_sha256")
+        != debt.get("resolved_decision_sha256")
+        or authorization.get("decision_id") != resolved.get("id")
+        or authorization.get("resolved_by") != resolved.get("resolved_by")
+    ):
+        raise StateAdvanceError(
+            "quality-debt resolved postimage diverged",
+            json_path="$.spec_quality_debt_authorization.resolved_decision",
+            validator="resolution_postimage",
+        )
+    shared_keys = set(authorization) - {
+        "debt_artifact",
+        "debt_artifact_sha256",
+    }
+    if (
+        set(debt) != shared_keys | {"repair_accounting", "selection_rationale"}
+        or any(debt.get(key) != authorization.get(key) for key in shared_keys)
+    ):
+        raise StateAdvanceError(
+            "quality-debt authorization and artifact postimages diverged",
+            json_path="$.spec_quality_debt_authorization",
+            validator="resolution_postimage",
+        )
+    route = completion_intent.get("route")
+    expected_completion = {
+        "schema_version": 1,
+        "completion_id": completion_intent.get("completion_id"),
+        "from_phase": (
+            route.get("from_phase") if isinstance(route, Mapping) else None
+        ),
+        "to_phase": (
+            route.get("to_phase") if isinstance(route, Mapping) else None
+        ),
+    }
+    if authorization.get("resolution_completion") != expected_completion:
+        raise StateAdvanceError(
+            "quality-debt completion postimage diverged",
+            json_path=(
+                "$.spec_quality_debt_authorization.resolution_completion"
+            ),
+            validator="resolution_postimage",
+        )
+    _, resolved_digest = _canonical_completion_document(dict(resolved))
+    if authorization.get("resolved_decision_sha256") != resolved_digest:
+        raise StateAdvanceError(
+            "quality-debt resolved postimage digest changed",
+            json_path=(
+                "$.spec_quality_debt_authorization."
+                "resolved_decision_sha256"
+            ),
+            validator="resolution_postimage",
+        )
+    try:
+        debt_content = (
+            json.dumps(dict(debt), indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise StateAdvanceError(
+            "quality-debt artifact postimage is invalid",
+            json_path="$.spec_quality_debt_authorization",
+            validator="resolution_postimage",
+        ) from exc
+    if hashlib.sha256(debt_content).hexdigest() != authorization.get(
+        "debt_artifact_sha256"
+    ):
+        raise StateAdvanceError(
+            "quality-debt artifact postimage digest changed",
+            json_path="$.spec_quality_debt_authorization.debt_artifact_sha256",
+            validator="resolution_postimage",
+        )
 
 
 def _is_human_input_decision(value: object) -> bool:
@@ -2419,6 +2527,11 @@ class SquadStateStore:
         token_usage_delta: int = 0,
         prepared_completion: PreparedControllerCompletion | None = None,
         resolved_at: str | None = None,
+        resolved_postimage_builder: Callable[
+            [Mapping[str, object]],
+            tuple[Mapping[str, Any], PreparedControllerCompletion],
+        ]
+        | None = None,
     ) -> dict[str, Any]:
         if type(resolution) is not AppliedHumanInputResolution:
             raise StateAdvanceError(
@@ -2439,6 +2552,23 @@ class SquadStateStore:
                 "human-input resolution timestamp is invalid",
                 json_path="$.resolved_at",
                 validator="type",
+            )
+        if resolved_postimage_builder is not None and not callable(
+            resolved_postimage_builder
+        ):
+            raise StateAdvanceError(
+                "human-input resolution postimage builder is invalid",
+                json_path="$.resolution_postimage",
+                validator="type",
+            )
+        if (
+            resolved_postimage_builder is not None
+            and prepared_completion is not None
+        ):
+            raise StateAdvanceError(
+                "human-input resolution completion is ambiguous",
+                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                validator="completion_binding",
             )
         if not isinstance(state_updates, Mapping):
             raise StateAdvanceError(
@@ -2491,21 +2621,21 @@ class SquadStateStore:
                 validator="human_input_authority",
             )
 
-        completion_marker: dict[str, object] | None = None
-        completion_intent: dict[str, object] | None = None
-        if prepared_completion is not None:
+        def validate_resolution_completion(
+            prepared: PreparedControllerCompletion,
+        ) -> tuple[dict[str, object], dict[str, object]]:
             (
-                completion_marker,
-                completion_intent,
+                marker,
+                intent,
                 _,
                 _,
                 prefix_kind,
-            ) = _validate_prepared_controller_completion(prepared_completion)
-            route = completion_intent["route"]
+            ) = _validate_prepared_controller_completion(prepared)
+            route = intent["route"]
             if (
-                completion_marker["origin"] != "resolution"
+                marker["origin"] != "resolution"
                 or prefix_kind != "bound"
-                or completion_marker["step"] != "quality"
+                or marker["step"] != "quality"
                 or type(route) is not dict
                 or route.get("kind") != "resolution"
                 or route.get("decision_id") != decision_id
@@ -2515,6 +2645,14 @@ class SquadStateStore:
                     json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
                     validator="completion_binding",
                 )
+            return marker, intent
+
+        completion_marker: dict[str, object] | None = None
+        completion_intent: dict[str, object] | None = None
+        if prepared_completion is not None:
+            completion_marker, completion_intent = (
+                validate_resolution_completion(prepared_completion)
+            )
 
         with self._lock(exclusive=True):
             before = self._load_unlocked()
@@ -2570,39 +2708,112 @@ class SquadStateStore:
                     }
                 )
             resolved = validate_blocked_decision(resolution_postimage)
-            desired = deepcopy(before)
-            for key in removals:
-                desired.pop(key, None)
-            for key in (
-                "blocked_reason",
-                "escalation_question",
-                "escalation_options",
-                "escalation_resolved",
-            ):
-                desired.pop(key, None)
-            for key, value in detached_updates.items():
-                if key == "status":
-                    self._transition_status(desired, value)
-                else:
-                    desired[key] = value
-            desired["token_usage"] = (
-                int(desired.get("token_usage") or 0) + token_usage_delta
-            )
-            self._replace_human_input_decision_unlocked(desired, resolved)
-            if completion_marker is not None and completion_intent is not None:
-                route = completion_intent["route"]
-                if (
-                    route["from_phase"] != before.get("phase")
-                    or route["to_phase"] != desired.get("phase")
-                    or PENDING_CONTROLLER_COMPLETION_KEY in before
-                ):
-                    raise StateAdvanceError(
-                        "human-input completion route changed",
-                        json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
-                        validator="completion_binding",
+            dynamic_completion: PreparedControllerCompletion | None = None
+            try:
+                if resolved_postimage_builder is not None:
+                    built = resolved_postimage_builder(deepcopy(resolved))
+                    if type(built) is not tuple or len(built) != 2:
+                        raise StateAdvanceError(
+                            "human-input resolution postimage is invalid",
+                            json_path="$.resolution_postimage",
+                            validator="resolution_postimage",
+                        )
+                    raw_updates, dynamic_completion = built
+                    if not isinstance(raw_updates, Mapping):
+                        raise StateAdvanceError(
+                            "human-input resolution postimage is invalid",
+                            json_path="$.resolution_postimage",
+                            validator="resolution_postimage",
+                        )
+                    try:
+                        dynamic_updates = deepcopy(dict(raw_updates))
+                    except Exception as exc:
+                        raise StateAdvanceError(
+                            "human-input resolution postimage is invalid",
+                            json_path="$.resolution_postimage",
+                            validator="resolution_postimage",
+                        ) from exc
+                    if (
+                        not all(
+                            isinstance(key, str) for key in dynamic_updates
+                        )
+                        or set(dynamic_updates) & set(detached_updates)
+                        or set(dynamic_updates)
+                        & _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS
+                    ):
+                        raise StateAdvanceError(
+                            "human-input resolution postimage updates are invalid",
+                            json_path="$.resolution_postimage",
+                            validator="resolution_postimage",
+                        )
+                    completion_marker, completion_intent = (
+                        validate_resolution_completion(dynamic_completion)
                     )
-                desired[PENDING_CONTROLLER_COMPLETION_KEY] = completion_marker
-            return self._commit_human_input_state_unlocked(before, desired)
+                    _validate_quality_debt_resolution_postimage(
+                        resolved,
+                        dynamic_updates,
+                        completion_intent,
+                    )
+                    detached_updates.update(dynamic_updates)
+
+                desired = deepcopy(before)
+                for key in removals:
+                    desired.pop(key, None)
+                for key in (
+                    "blocked_reason",
+                    "escalation_question",
+                    "escalation_options",
+                    "escalation_resolved",
+                ):
+                    desired.pop(key, None)
+                for key, value in detached_updates.items():
+                    if key == "status":
+                        self._transition_status(desired, value)
+                    else:
+                        desired[key] = value
+                desired["token_usage"] = (
+                    int(desired.get("token_usage") or 0)
+                    + token_usage_delta
+                )
+                self._replace_human_input_decision_unlocked(
+                    desired,
+                    resolved,
+                )
+                if (
+                    completion_marker is not None
+                    and completion_intent is not None
+                ):
+                    route = completion_intent["route"]
+                    if (
+                        route["from_phase"] != before.get("phase")
+                        or route["to_phase"] != desired.get("phase")
+                        or PENDING_CONTROLLER_COMPLETION_KEY in before
+                    ):
+                        raise StateAdvanceError(
+                            "human-input completion route changed",
+                            json_path=(
+                                f"$.{PENDING_CONTROLLER_COMPLETION_KEY}"
+                            ),
+                            validator="completion_binding",
+                        )
+                    desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
+                        completion_marker
+                    )
+                return self._commit_human_input_state_unlocked(
+                    before,
+                    desired,
+                )
+            except BaseException:
+                if dynamic_completion is not None:
+                    try:
+                        current = self._load_unlocked()
+                        if current.get(
+                            PENDING_CONTROLLER_COMPLETION_KEY
+                        ) != dynamic_completion.marker.to_dict():
+                            dynamic_completion.discard()
+                    except Exception:
+                        pass
+                raise
 
     def initialize(
         self,

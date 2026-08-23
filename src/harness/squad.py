@@ -885,6 +885,14 @@ class _HumanInputResolutionEffects:
     route: str
     completion: PreparedControllerCompletion | None = None
     resolved_at: str | None = None
+    resolved_postimage_builder: (
+        Callable[
+            [Mapping[str, object]],
+            tuple[Mapping[str, object], PreparedControllerCompletion],
+        ]
+        | None
+    ) = None
+    resolved_postimage_completion_id: str | None = None
 
 
 class SquadController:
@@ -4329,62 +4337,79 @@ class SquadController:
 
             resolved_at = datetime.now(timezone.utc).isoformat()
             completion_id = uuid.uuid4().hex
-            try:
-                prepared_debt = build_quality_debt_authorization(
-                    project_root=self._project_root,
-                    spec_dir=self._proportional_spec_dir(state),
-                    candidate=candidate,
-                    candidate_manifest=manifest_path,
-                    repair_state=repair,
-                    understanding_state=state.get(
-                        "understanding_evidence"
-                    ),
-                    candidate_evidence_state=evidence,
-                    decision=decision,
-                    decision_id=str(decision["id"]),
-                    resolved_by=resolution.resolved_by,
-                    resolved_at=resolved_at,
-                    completion_id=completion_id,
-                    from_phase=str(state.get("phase") or ""),
-                    to_phase=route,
-                )
-            except (QualityCandidateIntegrityError, ValueError) as exc:
-                raise HumanInputPolicyError(
-                    "quality-debt authorization could not be constructed"
-                ) from exc
             snapshot = self._state_store.capture_routing_snapshot(
                 expected_phase=str(state.get("phase") or "")
             )
-            completion = self._prepare_controller_completion(
-                from_phase=str(state.get("phase") or ""),
-                to_phase=route,
-                snapshot=snapshot,
-                manual_phase_run=False,
-                conditional_skip=False,
-                record_completion=True,
-                publication_marker=None,
-                origin="resolution",
-                resolution_decision_id=str(decision["id"]),
-                completion_id=completion_id,
-                quality_effect={
-                    "kind": "proportional_quality",
-                    "operation": "debt_write",
-                    "payload": prepared_debt.effect_payload(),
-                },
-            )
+
+            def build_resolved_postimage(
+                resolved_decision: Mapping[str, object],
+            ) -> tuple[
+                Mapping[str, object],
+                PreparedControllerCompletion,
+            ]:
+                try:
+                    prepared_debt = build_quality_debt_authorization(
+                        project_root=self._project_root,
+                        spec_dir=self._proportional_spec_dir(state),
+                        candidate=candidate,
+                        candidate_manifest=manifest_path,
+                        repair_state=repair,
+                        understanding_state=state.get(
+                            "understanding_evidence"
+                        ),
+                        candidate_evidence_state=evidence,
+                        decision=resolved_decision,
+                        decision_id=str(decision["id"]),
+                        resolved_by=resolution.resolved_by,
+                        resolved_at=resolved_at,
+                        completion_id=completion_id,
+                        from_phase=str(state.get("phase") or ""),
+                        to_phase=route,
+                    )
+                except (
+                    QualityCandidateIntegrityError,
+                    ValueError,
+                ) as exc:
+                    raise HumanInputPolicyError(
+                        "quality-debt authorization could not be constructed"
+                    ) from exc
+                completion = self._prepare_controller_completion(
+                    from_phase=str(state.get("phase") or ""),
+                    to_phase=route,
+                    snapshot=snapshot,
+                    manual_phase_run=False,
+                    conditional_skip=False,
+                    record_completion=True,
+                    publication_marker=None,
+                    origin="resolution",
+                    resolution_decision_id=str(decision["id"]),
+                    completion_id=completion_id,
+                    quality_effect={
+                        "kind": "proportional_quality",
+                        "operation": "debt_write",
+                        "payload": prepared_debt.effect_payload(),
+                    },
+                )
+                return (
+                    {
+                        "spec_quality_debt_authorization": (
+                            prepared_debt.authorization
+                        )
+                    },
+                    completion,
+                )
+
             return _HumanInputResolutionEffects(
                 state_updates={
                     "status": "running",
                     "phase": route,
                     "spec_status": "accepted_with_debt",
-                    "spec_quality_debt_authorization": (
-                        prepared_debt.authorization
-                    ),
                 },
                 state_removals=frozenset({"quality_gate_remediation"}),
                 route=route,
-                completion=completion,
                 resolved_at=resolved_at,
+                resolved_postimage_builder=build_resolved_postimage,
+                resolved_postimage_completion_id=completion_id,
             )
 
         if selected.id == "stop":
@@ -4575,6 +4600,9 @@ class SquadController:
                 token_usage_delta=token_usage_delta,
                 prepared_completion=effects.completion,
                 resolved_at=effects.resolved_at,
+                resolved_postimage_builder=(
+                    effects.resolved_postimage_builder
+                ),
             )
         except BaseException:
             if effects.completion is not None:
@@ -4587,12 +4615,16 @@ class SquadController:
                 except Exception:
                     pass
             raise
-        if effects.completion is not None:
+        completion_id = (
+            effects.completion.marker.completion_id
+            if effects.completion is not None
+            else effects.resolved_postimage_completion_id
+        )
+        if completion_id is not None:
             recovery = self._drain_pending_controller_completion()
             if (
                 not recovery.recovered
-                or recovery.completion_id
-                != effects.completion.marker.completion_id
+                or recovery.completion_id != completion_id
             ):
                 return False
             resolved = self._state_store.load()
