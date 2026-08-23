@@ -254,6 +254,7 @@ COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
 DISPATCH_CAP_ISSUES_MAX_BYTES = 65_536
 _BOUNDED_TEXT_CHUNK_CHARS = 1_024
 _CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
+_CONTEXT_FILE_MIN_EXCERPT_BYTES = 256
 _WHY2_CERTIFIED_METRICS = (
     "overall",
     "structure",
@@ -3671,17 +3672,13 @@ class SquadController:
         node: PhaseNode,
         snapshot: RoutingStateSnapshot,
     ) -> None:
-        state = snapshot.state
-        state["status"] = "blocked"
-        state["phase"] = node.id
-        state["blocked_reason"] = "decision_recommendation_unavailable"
-        state.pop("escalation_question", None)
-        state.pop("escalation_options", None)
-        state["recovery_instruction"] = retry_phase_recovery(
-            node.id,
-            "decision_recommendation_unavailable",
-        ).to_dict()
-        if self._state_store.commit_routing_snapshot_state(snapshot, state):
+        if node.id != "checkpoint-assess":
+            raise HumanInputPolicyError(
+                "checkpoint recommendation blocker used for another phase"
+            )
+        if self._state_store.block_checkpoint_recommendation_unavailable(
+            snapshot
+        ):
             self._record_blocker_event(
                 node.id,
                 "decision_recommendation_unavailable",
@@ -4949,18 +4946,53 @@ class SquadController:
             key: state.get(key)
             for key in policy.context_state_keys
         }
-        prompt.append("### State\n")
-        _append_bounded_json(prompt, context_state)
+        state_header = "### State\n"
+        file_headers = tuple(
+            f"\n### File {template}\n"
+            for template in policy.context_paths
+        )
+        section_overhead = sum(
+            len(header.encode("utf-8")) + 1
+            for header in (state_header, *file_headers)
+        )
+        content_budget = prompt.remaining - section_overhead
+        required_file_budget = (
+            len(file_headers) * _CONTEXT_FILE_MIN_EXCERPT_BYTES
+        )
+        if content_budget < required_file_budget:
+            raise HumanInputPolicyError(
+                "COMMANDER registered context cannot preserve every file excerpt"
+            )
+        distributable = content_budget - required_file_budget
+        section_count = len(file_headers) + 1
+        shared_budget, extra_bytes = divmod(
+            distributable,
+            section_count,
+        )
+        state_budget = shared_budget + (1 if extra_bytes else 0)
+        file_budgets = tuple(
+            _CONTEXT_FILE_MIN_EXCERPT_BYTES
+            + shared_budget
+            + (1 if index + 1 < extra_bytes else 0)
+            for index in range(len(file_headers))
+        )
+
+        prompt.append(state_header)
+        bounded_state = _BoundedUtf8Builder(state_budget)
+        _append_bounded_json(bounded_state, context_state)
+        prompt.append(bounded_state.build())
         prompt.append("\n")
-        for template in policy.context_paths:
-            if prompt.remaining <= 0:
-                break
-            if not prompt.append(f"\n### File {template}\n"):
-                break
+        for template, header, file_budget in zip(
+            policy.context_paths,
+            file_headers,
+            file_budgets,
+            strict=True,
+        ):
+            prompt.append(header)
             content = self._read_human_input_context_file(
                 template,
                 state,
-                byte_limit=prompt.remaining,
+                byte_limit=file_budget,
             )
             prompt.append(content)
             prompt.append("\n")

@@ -2217,6 +2217,77 @@ class SquadStateStore:
             )
             return True
 
+    def block_checkpoint_recommendation_unavailable(
+        self,
+        snapshot: RoutingStateSnapshot,
+    ) -> bool:
+        """Install checkpoint retry recovery after retiring terminal authority."""
+        if (
+            type(snapshot) is not RoutingStateSnapshot
+            or snapshot.phase != "checkpoint-assess"
+        ):
+            raise StateAdvanceError(
+                "checkpoint recommendation snapshot is invalid",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if (
+                before.get("phase") != snapshot.phase
+                or before.get("state_revision", 0)
+                != snapshot.state_revision
+                or _last_dispatch_sha256(before)
+                != snapshot.previous_dispatch_sha256
+            ):
+                return False
+            raw_decision = before.get("blocked_decision")
+            if raw_decision is not None:
+                if not _is_human_input_decision(raw_decision):
+                    raise StateAdvanceError(
+                        "checkpoint recommendation cannot replace malformed authority",
+                        json_path="$.blocked_decision",
+                        validator="human_input_authority",
+                    )
+                decision = validate_blocked_decision(raw_decision)
+                validate_decision_recovery_pair(
+                    decision,
+                    before.get("recovery_instruction"),
+                )
+                if decision["status"] != "resolved":
+                    raise StateAdvanceError(
+                        "checkpoint recommendation cannot replace unresolved authority",
+                        json_path="$.blocked_decision.status",
+                        validator="human_input_authority",
+                    )
+
+            desired = deepcopy(before)
+            desired.pop("blocked_decision", None)
+            desired.pop("recovery_instruction", None)
+            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                desired.pop(key, None)
+            desired["status"] = "blocked"
+            desired["phase"] = "checkpoint-assess"
+            desired["blocked_reason"] = (
+                "decision_recommendation_unavailable"
+            )
+            desired["recovery_instruction"] = RecoveryInstruction(
+                kind=RecoveryKind.RETRY_PHASE,
+                reason_code="decision_recommendation_unavailable",
+                phase="checkpoint-assess",
+                requires_human_input=False,
+            ).to_dict()
+            self._save_exact_state_unlocked(
+                before,
+                desired,
+                allow_human_input_authority_update=True,
+                json_path="$.recovery_instruction",
+                error_message=(
+                    "atomic checkpoint recommendation failure save failed"
+                ),
+            )
+            return True
+
     def recover_interrupted_human_input_decision(self) -> dict[str, Any]:
         with self._lock(exclusive=True):
             before = self._load_unlocked()

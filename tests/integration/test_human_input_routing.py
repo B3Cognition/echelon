@@ -16,7 +16,10 @@ import yaml
 
 import harness.squad as squad_module
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
-from harness.blocked_decision import build_blocked_decision_v2
+from harness.blocked_decision import (
+    build_blocked_decision_v2,
+    validate_blocked_decision,
+)
 from harness.config import HarnessConfig, LlmConfig
 from harness.human_input import (
     HumanInputOption,
@@ -31,7 +34,11 @@ from harness.human_input import (
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.prepared_phase_result import prepare_phase_result
-from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+from harness.recovery_instruction import (
+    RecoveryKind,
+    RecoveryInstruction,
+    validate_recovery_instruction,
+)
 from harness.squad import SquadController, _ProviderHumanInputAdvance
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore, StateAdvanceError
@@ -2654,6 +2661,36 @@ def test_checkpoint_assess_accepted_debt_keeps_fail_evidence_authorized(
     assert "Verdict: FAIL" in prompt
 
 
+def test_checkpoint_assess_accepted_debt_reserves_raw_fail_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    _seed_current_checkpoint_debt(monkeypatch, store)
+    spec_dir = Path(str(store.load()["spec_dir"]))
+    (spec_dir / "spec.md").write_text(
+        "# Oversized specification\n" + ("x" * 1_000_000),
+        encoding="utf-8",
+    )
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert len(prompt.encode("utf-8")) <= (
+        squad_module.COMMANDER_DECISION_PROMPT_MAX_BYTES
+    )
+    assert "authorized debt" in prompt
+    assert "### File {spec_dir}/quality-gates.md" in prompt
+    assert "Verdict: FAIL" in prompt
+
+
 @pytest.mark.parametrize("authority_state", ("missing", "stale"))
 def test_checkpoint_assess_missing_or_stale_authority_blocks_before_provider(
     tmp_path: Path,
@@ -2697,6 +2734,81 @@ def test_checkpoint_assess_missing_or_stale_authority_blocks_before_provider(
     ).to_dict()
     assert "blocked_decision" not in state
     provider.exec_agent.assert_not_called()
+
+
+def test_checkpoint_assess_stale_debt_retires_resolved_authority_for_restart(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-plan")
+    )
+    resolved = validate_blocked_decision(
+        store.load()["blocked_decision"]
+    )
+    assert resolved["schema_version"] == 3
+    assert resolved["status"] == "resolved"
+
+    state = store.load()
+    state["phase"] = "checkpoint-assess"
+    stale_authorization = {
+        "schema_version": 1,
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "decision_id": resolved["id"],
+        "debt_artifact": "spec/quality-debt.json",
+        "debt_artifact_sha256": "4" * 64,
+        "resolved_decision": resolved,
+        "resolved_decision_sha256": "5" * 64,
+    }
+    state["spec_quality_debt_authorization"] = stale_authorization
+    store.save(state)
+    provider.exec_agent.reset_mock()
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    ) is False
+
+    persisted = store.load()
+    assert persisted["status"] == "blocked"
+    assert persisted["phase"] == "checkpoint-assess"
+    assert persisted["blocked_reason"] == (
+        "decision_recommendation_unavailable"
+    )
+    assert "blocked_decision" not in persisted
+    assert persisted["spec_quality_debt_authorization"] == (
+        stale_authorization
+    )
+    provider.exec_agent.assert_not_called()
+
+    restarted_store = SquadStateStore(store.squad_dir)
+    restarted_provider = MagicMock()
+    restarted = SquadController(
+        provider=restarted_provider,
+        state_store=restarted_store,
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    restarted_state = restarted_store.load()
+    assert restarted_state == persisted
+    recovery = validate_recovery_instruction(
+        restarted_state["recovery_instruction"]
+    )
+    assert recovery.kind is RecoveryKind.RETRY_PHASE
+    assert recovery.phase == "checkpoint-assess"
+    assert restarted.resume_pending_human_input() is False
+    assert restarted_store.load() == persisted
+    restarted_provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(
