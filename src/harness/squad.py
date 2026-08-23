@@ -64,9 +64,9 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     PreparedHumanInput,
     ProportionalQualityRecommendationEvidence,
+    RecommendationEvidence,
     gate_outcome_route_error,
     legacy_recovery_policy_alias,
-    prepare_controller_proportional_quality_decision,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -2708,7 +2708,6 @@ class SquadController:
             or option.label
             != f"{candidate['issue_id']}: {candidate['title']}"
             or option.description != canonical
-            or option.recommended
             or option.risk_level != "medium"
             or option.next_phase != "phase1-what"
             or option.outcome is not None
@@ -2758,7 +2757,6 @@ class SquadController:
             or not option.label.startswith(prefix)
             or len(option.label) <= len(prefix)
             or option.description != canonical
-            or option.recommended
             or option.risk_level != "medium"
             or option.next_phase != "phase1-what"
             or option.outcome is not None
@@ -3277,21 +3275,31 @@ class SquadController:
                 ):
                     return None
 
-            alias_registry = HumanInputPolicyRegistry((policy,))
-            request = alias_registry.prepare(
-                source_kind="legacy_recovery",
-                producer_id=policy.producer_id,
-                phase_id=source_phase,
-                reason_code=reason_code,
-                question=question,
-                recommended_answer=state.get(
-                    "escalation_recommended_answer"
-                ),
-                risk_level=state.get("escalation_risk_level"),
-                source_state_revision=int(state["state_revision"]),
-            )
-            if options:
-                request = replace(request, options=options)
+            if self._is_dynamic_dispatch_cap_policy(policy):
+                request = self._human_input_registry.prepare_controller(
+                    source_kind="controller_safeguard",
+                    producer_id=policy.producer_id,
+                    phase_id=source_phase,
+                    reason_code=reason_code,
+                    question=question,
+                    source_state_revision=int(state["state_revision"]),
+                    option_contract=options,
+                )
+                request = replace(request, source_kind="legacy_recovery")
+            else:
+                alias_registry = HumanInputPolicyRegistry((policy,))
+                request = alias_registry.prepare(
+                    source_kind="legacy_recovery",
+                    producer_id=policy.producer_id,
+                    phase_id=source_phase,
+                    reason_code=reason_code,
+                    question=question,
+                    recommended_answer=state.get(
+                        "escalation_recommended_answer"
+                    ),
+                    risk_level=state.get("escalation_risk_level"),
+                    source_state_revision=int(state["state_revision"]),
+                )
             return request
         except (
             HumanInputPolicyError,
@@ -3331,8 +3339,8 @@ class SquadController:
             for option in options:
                 self._validate_dispatch_cap_option(option)
         elif policy.source_kind != "provider_escalation":
-            proportional_options = (
-                policy.resolution_handler == "proportional_quality_debt"
+            controller_options = (
+                policy.recommendation_mode == "controller"
                 and len([option for option in options if option.recommended])
                 == 1
                 and tuple(
@@ -3352,7 +3360,7 @@ class SquadController:
             )
             if (
                 options != policy.options
-                and not proportional_options
+                and not controller_options
                 and not legacy_options
             ):
                 raise HumanInputPolicyError(
@@ -3408,8 +3416,8 @@ class SquadController:
             for option in request.options:
                 self._validate_dispatch_cap_option(option)
         elif request.source_kind != "provider_escalation":
-            proportional_options = (
-                request.resolution_handler == "proportional_quality_debt"
+            controller_options = (
+                policy.recommendation_mode == "controller"
                 and len(
                     [option for option in request.options if option.recommended]
                 )
@@ -3420,7 +3428,7 @@ class SquadController:
                 )
                 == policy.options
             )
-            if request.options != policy.options and not proportional_options:
+            if request.options != policy.options and not controller_options:
                 raise HumanInputPolicyError(
                     "prepared request options do not match their registered policy"
                 )
@@ -3464,19 +3472,220 @@ class SquadController:
             node_label=label,
             journal_path=self._squad_dir / "reasoning-journal.jsonl",
         )
-        request = self._human_input_registry.prepare(
-            source_kind=policy.source_kind,
-            producer_id=policy.producer_id,
-            phase_id=node.id,
-            reason_code=policy.reason_code,
-            question=(
-                f"Review {label} artifacts in {spec_dir}. "
-                "Approve to continue or reject to stop for revision."
-                f"{checkpoint_context}"
-            ),
-            source_state_revision=snapshot.state_revision,
+        question = (
+            f"Review {label} artifacts in {spec_dir}. "
+            "Approve to continue or reject to stop for revision."
+            f"{checkpoint_context}"
         )
+        if policy.recommendation_mode == "controller":
+            if node.id != "checkpoint-assess":
+                raise HumanInputPolicyError(
+                    "human gate has no callable controller preparer"
+                )
+            try:
+                request = self._prepare_checkpoint_assessment_decision(
+                    snapshot.state,
+                    question=question,
+                    source_state_revision=snapshot.state_revision,
+                )
+            except (HumanInputPolicyError, OSError, TypeError, ValueError):
+                self._block_checkpoint_recommendation_unavailable(
+                    node,
+                    snapshot,
+                )
+                return False
+        else:
+            request = self._human_input_registry.prepare(
+                source_kind=policy.source_kind,
+                producer_id=policy.producer_id,
+                phase_id=node.id,
+                reason_code=policy.reason_code,
+                question=question,
+                source_state_revision=snapshot.state_revision,
+            )
         return self.handle_human_input(request)
+
+    def _prepare_checkpoint_assessment_decision(
+        self,
+        state: Mapping[str, object],
+        *,
+        question: str,
+        source_state_revision: int,
+    ) -> PreparedHumanInput:
+        """Prepare checkpoint approval from current registered controller state."""
+        from harness.phase1_quality import (
+            has_current_phase1_quality_certificate,
+        )
+        from harness.phase1_quality_debt import (
+            has_current_quality_debt_authorization,
+        )
+        from harness.spec_lexicon_gate import (
+            has_current_spec_lexicon_evidence,
+        )
+
+        state_copy = dict(state)
+        if has_current_quality_debt_authorization(
+            state_copy,
+            project_root=self._project_root,
+        ):
+            authorization = state_copy.get(
+                "spec_quality_debt_authorization"
+            )
+            if not isinstance(authorization, Mapping):
+                raise HumanInputPolicyError(
+                    "accepted-debt checkpoint authority is missing"
+                )
+            resolver = authorization.get("resolved_by")
+            if not isinstance(resolver, str) or not resolver.strip():
+                raise HumanInputPolicyError(
+                    "accepted-debt checkpoint resolver is missing"
+                )
+            spec_root = self._validated_spec_root(state_copy)
+            if spec_root is None:
+                raise HumanInputPolicyError(
+                    "accepted-debt checkpoint specification root is missing"
+                )
+            quality_gates_path = spec_root / "quality-gates.md"
+            try:
+                metadata = quality_gates_path.lstat()
+                quality_gates_bytes = quality_gates_path.read_bytes()
+            except OSError as exc:
+                raise HumanInputPolicyError(
+                    "accepted-debt quality-gate evidence is missing"
+                ) from exc
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+                metadata.st_mode
+            ):
+                raise HumanInputPolicyError(
+                    "accepted-debt quality-gate evidence is invalid"
+                )
+            authorization_digest = _canonical_payload_sha256(
+                dict(authorization)
+            )
+            evidence = (
+                RecommendationEvidence(
+                    id="checkpoint-assess:accepted-debt",
+                    kind="accepted_with_debt",
+                    reference="state:spec_quality_debt_authorization",
+                    digest=authorization_digest,
+                ),
+                RecommendationEvidence(
+                    id="checkpoint-assess:quality-gates",
+                    kind="quality_gate_failure",
+                    reference=self._repo_relative_or_absolute(
+                        quality_gates_path
+                    ),
+                    digest=hashlib.sha256(quality_gates_bytes).hexdigest(),
+                ),
+            )
+            return self._human_input_registry.prepare_controller(
+                source_kind="human_gate",
+                producer_id="checkpoint-assess",
+                reason_code="checkpoint_assess_decision_required",
+                phase_id="checkpoint-assess",
+                question=question,
+                source_state_revision=source_state_revision,
+                authority_kind="accepted_with_debt",
+                authority_evidence=evidence,
+                accepted_debt_resolver=resolver.strip(),
+                authorization_digest=authorization_digest,
+            )
+
+        if not has_current_phase1_quality_certificate(
+            state_copy,
+            project_root=self._project_root,
+        ):
+            raise HumanInputPolicyError(
+                "ordinary Phase 1 quality authority is missing or stale"
+            )
+        certificate = state_copy.get("spec_quality_certificate")
+        if not isinstance(certificate, Mapping):
+            raise HumanInputPolicyError(
+                "ordinary Phase 1 quality certificate is missing"
+            )
+        lexicon_config = self._lexicon_gate_config()
+        lexicon_gate = lexicon_config.get("lexicon_gate")
+        lexicon_required = bool(
+            isinstance(lexicon_gate, Mapping)
+            and lexicon_gate.get("spec_enabled")
+        )
+        if lexicon_required and not has_current_spec_lexicon_evidence(
+            state_copy,
+            project_root=self._project_root,
+            config=lexicon_config,
+        ):
+            raise HumanInputPolicyError(
+                "Spec Lexicon authority is missing or stale"
+            )
+        evidence_items = [
+            RecommendationEvidence(
+                id="checkpoint-assess:phase1-quality",
+                kind="phase1_quality_certificate",
+                reference="state:spec_quality_certificate",
+                digest=_canonical_payload_sha256(dict(certificate)),
+            )
+        ]
+        if lexicon_required:
+            report_ref = state_copy.get("lexicon_report")
+            if not isinstance(report_ref, str) or not report_ref.strip():
+                raise HumanInputPolicyError(
+                    "Spec Lexicon report reference is missing"
+                )
+            report_path = Path(report_ref)
+            if not report_path.is_absolute():
+                report_path = self._project_root / report_path
+            try:
+                report_metadata = report_path.lstat()
+                report_bytes = report_path.read_bytes()
+            except OSError as exc:
+                raise HumanInputPolicyError(
+                    "Spec Lexicon report cannot be read"
+                ) from exc
+            if stat.S_ISLNK(report_metadata.st_mode) or not stat.S_ISREG(
+                report_metadata.st_mode
+            ):
+                raise HumanInputPolicyError(
+                    "Spec Lexicon report is invalid"
+                )
+            evidence_items.append(
+                RecommendationEvidence(
+                    id="checkpoint-assess:spec-lexicon",
+                    kind="spec_lexicon_pass",
+                    reference=self._repo_relative_or_absolute(report_path),
+                    digest=hashlib.sha256(report_bytes).hexdigest(),
+                )
+            )
+        return self._human_input_registry.prepare_controller(
+            source_kind="human_gate",
+            producer_id="checkpoint-assess",
+            reason_code="checkpoint_assess_decision_required",
+            phase_id="checkpoint-assess",
+            question=question,
+            source_state_revision=source_state_revision,
+            authority_kind="ordinary_pass",
+            authority_evidence=tuple(evidence_items),
+        )
+
+    def _block_checkpoint_recommendation_unavailable(
+        self,
+        node: PhaseNode,
+        snapshot: RoutingStateSnapshot,
+    ) -> None:
+        state = snapshot.state
+        state["status"] = "blocked"
+        state["phase"] = node.id
+        state["blocked_reason"] = "decision_recommendation_unavailable"
+        state.pop("escalation_question", None)
+        state.pop("escalation_options", None)
+        state["recovery_instruction"] = retry_phase_recovery(
+            node.id,
+            "decision_recommendation_unavailable",
+        ).to_dict()
+        if self._state_store.commit_routing_snapshot_state(snapshot, state):
+            self._record_blocker_event(
+                node.id,
+                "decision_recommendation_unavailable",
+            )
 
     def handle_human_input(
         self,
@@ -4673,6 +4882,29 @@ class SquadController:
             "recommended_answer": validated["recommended_answer"],
             "risk_level": validated["risk_level"],
         }
+        authoritative_recommendation = {
+            "recommended_option_id": validated.get(
+                "recommended_option_id"
+            ),
+            "recommended_answer": validated.get("recommended_answer"),
+            "automatic_eligible": validated.get("automatic_eligible"),
+            "rationale": validated.get("recommendation_rationale"),
+            "confidence": validated.get("recommendation_confidence"),
+            "authority": validated.get("recommendation_authority"),
+            "evidence": validated.get("recommendation_evidence") or [],
+        }
+        debt_evidence = any(
+            isinstance(item, Mapping)
+            and item.get("kind") == "quality_gate_failure"
+            for item in authoritative_recommendation["evidence"]
+        )
+        debt_note = (
+            "The retained quality_gate_failure evidence is authorized debt "
+            "under the accepted_with_debt authority; keep the raw FAIL visible "
+            "and do not reinterpret it as an ordinary PASS.\n\n"
+            if debt_evidence
+            else ""
+        )
         instructions = (
             "# COMMANDER DECISION RESOLUTION\n\n"
             "Return exactly this envelope for a choice:\n\n"
@@ -4695,6 +4927,9 @@ class SquadController:
             "mutate state, counters, recovery, or routing.\n\n"
             "## Prepared Request\n"
             f"{json.dumps(request_payload, ensure_ascii=False, sort_keys=True)}\n\n"
+            "## Authoritative Recommendation\n"
+            f"{json.dumps(authoritative_recommendation, ensure_ascii=False, sort_keys=True)}\n\n"
+            f"{debt_note}"
             "## Registered Context\n"
         )
         base_size = len(instructions.encode("utf-8"))
@@ -5548,17 +5783,14 @@ class SquadController:
                     f"(limit {phase_limit}) without converging or advancing. "
                     "Select exactly one sealed evidence-backed issue resolution."
                 )
-                request = self._human_input_registry.prepare(
+                request = self._human_input_registry.prepare_controller(
                     source_kind="controller_safeguard",
                     producer_id="phase_dispatch_limit",
                     phase_id=phase,
                     reason_code="phase_dispatch_limit",
                     question=escalation_q,
                     source_state_revision=cap_state["state_revision"],
-                )
-                request = replace(
-                    request,
-                    options=cap_options,
+                    option_contract=cap_options,
                 )
                 self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
@@ -10056,8 +10288,9 @@ class SquadController:
             reason_code,
             reason_code,
         )
-        request = prepare_controller_proportional_quality_decision(
-            self._human_input_registry,
+        request = self._human_input_registry.prepare_controller(
+            source_kind="controller_safeguard",
+            producer_id=reason_code,
             reason_code=reason_code,
             phase_id="phase1-why2",
             question=(
@@ -10090,32 +10323,7 @@ class SquadController:
         recommended_option_id = next(
             option.id for option in request.options if option.recommended
         )
-        if recommended_option_id == "extend_once":
-            recommendation_rationale = (
-                "Residual gates improved within the configured borderline margin "
-                "without formal-statement growth, so one final repair is favored."
-            )
-        elif reason_code == "proportional_quality_extension_exhausted":
-            recommendation_rationale = (
-                "The single authorized extension is consumed and quality still "
-                "fails, so the remaining non-stop choice is explicit debt acceptance."
-            )
-        elif last_repair_outcome == "no_artifact_progress":
-            recommendation_rationale = (
-                "The repair produced no artifact progress, so another automatic "
-                "attempt is not favored over explicit debt acceptance."
-            )
-        elif recommendation_current.failed_gate_count == 0:
-            recommendation_rationale = (
-                "Numeric gates pass, but authoritative non-critical SAGE "
-                "findings remain; extension is not inferred from an empty "
-                "numeric comparison, so explicit debt acceptance is favored."
-            )
-        else:
-            recommendation_rationale = (
-                "At least one residual gate is outside the improving borderline "
-                "case or formal statements grew, so explicit debt acceptance is favored."
-            )
+        recommendation_rationale = request.recommendation_rationale
         quality_effect: dict[str, object]
         if current_candidate is not None:
             raw_effect = state.get("_proportional_quality_effect")

@@ -967,24 +967,33 @@ class HumanInputPolicyRegistry:
             source_state_revision=source_state_revision,
         )
 
-
-_CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
-    (
-        "human_gate",
-        "checkpoint-assess",
-        "checkpoint_assess_decision_required",
-    ): "prepare_controller_checkpoint_assessment_decision",
-    (
-        "controller_safeguard",
-        "proportional_quality_budget_exhausted",
-        "proportional_quality_budget_exhausted",
-    ): "prepare_controller_proportional_quality_decision",
-    (
-        "controller_safeguard",
-        "proportional_quality_extension_exhausted",
-        "proportional_quality_extension_exhausted",
-    ): "prepare_controller_proportional_quality_decision",
-})
+    def prepare_controller(
+        self,
+        *,
+        source_kind: HumanInputSourceKind,
+        producer_id: str,
+        reason_code: str,
+        phase_id: str,
+        question: str,
+        source_state_revision: int,
+        **controller_evidence: object,
+    ) -> PreparedHumanInput:
+        """Invoke only the preparer registered for one exact policy triple."""
+        policy = self.lookup(source_kind, producer_id, reason_code)
+        key = (policy.source_kind, policy.producer_id, policy.reason_code)
+        preparer = _CONTROLLER_RECOMMENDATION_PREPARERS.get(key)
+        if preparer is None or policy.recommendation_mode != "controller":
+            raise HumanInputPolicyError(
+                "policy has no registered controller recommendation preparer"
+            )
+        return preparer(
+            self,
+            reason_code=policy.reason_code,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+            **controller_evidence,
+        )
 
 
 def _derive_automatic_eligibility(
@@ -1010,6 +1019,249 @@ def _within_inclusive_decimal_margin(
 ) -> bool:
     """Compare decimal-domain quality inputs without binary subtraction drift."""
     return Decimal(str(threshold)) - Decimal(str(score)) <= Decimal(str(margin))
+
+
+def _controller_preparation_identity(
+    policy: HumanInputPolicy,
+    *,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+) -> tuple[str, str, int]:
+    normalized_phase = _clean_string(phase_id, "phase_id")
+    if normalized_phase not in policy.allowed_phase_ids:
+        raise HumanInputPolicyError("phase_id is not allowed by the selected policy")
+    normalized_question = _clean_bounded_string(
+        question,
+        "question",
+        max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+        max_characters=4_000,
+    )
+    if type(source_state_revision) is not int or source_state_revision < 0:
+        raise HumanInputPolicyError(
+            "source_state_revision must be a non-negative integer"
+        )
+    return normalized_phase, normalized_question, source_state_revision
+
+
+def prepare_controller_checkpoint_assessment_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    authority_kind: object,
+    authority_evidence: object,
+    accepted_debt_resolver: object = None,
+    authorization_digest: object = None,
+) -> PreparedHumanInput:
+    """Select checkpoint approval from current controller-certified authority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "checkpoint assessment preparation requires a policy registry"
+        )
+    if reason_code != "checkpoint_assess_decision_required":
+        raise HumanInputPolicyError(
+            "reason_code is not the checkpoint assessment decision"
+        )
+    policy = registry.lookup(
+        "human_gate",
+        "checkpoint-assess",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if authority_kind not in {"ordinary_pass", "accepted_with_debt"}:
+        raise HumanInputPolicyError(
+            "checkpoint assessment authority is unavailable"
+        )
+    if (
+        type(authority_evidence) is not tuple
+        or not authority_evidence
+        or not all(
+            isinstance(item, RecommendationEvidence)
+            for item in authority_evidence
+        )
+        or len({item.id for item in authority_evidence})
+        != len(authority_evidence)
+    ):
+        raise HumanInputPolicyError(
+            "checkpoint assessment evidence is invalid"
+        )
+    evidence_kinds = {item.kind for item in authority_evidence}
+    if authority_kind == "ordinary_pass":
+        if (
+            "phase1_quality_certificate" not in evidence_kinds
+            or not evidence_kinds
+            <= {"phase1_quality_certificate", "spec_lexicon_pass"}
+            or accepted_debt_resolver is not None
+            or authorization_digest is not None
+        ):
+            raise HumanInputPolicyError(
+                "ordinary checkpoint authority evidence is invalid"
+            )
+        rationale = (
+            "Current ordinary Phase 1 PASS authority"
+            + (
+                " and current Spec Lexicon pass authority"
+                if "spec_lexicon_pass" in evidence_kinds
+                else ""
+            )
+            + " authorize the existing approve option."
+        )
+    else:
+        resolver = _clean_bounded_string(
+            accepted_debt_resolver,
+            "accepted_debt_resolver",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        )
+        if (
+            not isinstance(authorization_digest, str)
+            or _SHA256_DIGEST.fullmatch(authorization_digest) is None
+            or evidence_kinds
+            != {"accepted_with_debt", "quality_gate_failure"}
+            or not any(
+                item.kind == "accepted_with_debt"
+                and item.digest == authorization_digest
+                for item in authority_evidence
+            )
+        ):
+            raise HumanInputPolicyError(
+                "accepted-debt checkpoint authority evidence is invalid"
+            )
+        rationale = (
+            "Current accepted_with_debt authority resolved by "
+            f"{resolver} authorizes the existing approve option under "
+            f"authorization digest {authorization_digest}; the retained "
+            "quality-gate FAIL is authorized debt, not an ordinary PASS."
+        )
+
+    if {option.id for option in policy.options} != {"approve", "reject"}:
+        raise HumanInputPolicyError(
+            "checkpoint assessment option contract is invalid"
+        )
+    prepared_options = tuple(
+        replace(option, recommended=option.id == "approve")
+        for option in policy.options
+    )
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id="approve",
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=rationale,
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=authority_evidence,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
+def prepare_controller_phase_dispatch_limit_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    option_contract: object,
+) -> PreparedHumanInput:
+    """Recommend the first eligible issues.md option without inventing priority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "phase dispatch preparation requires a policy registry"
+        )
+    if reason_code != "phase_dispatch_limit":
+        raise HumanInputPolicyError("reason_code is not a phase dispatch limit")
+    policy = registry.lookup(
+        "controller_safeguard",
+        "phase_dispatch_limit",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if (
+        type(option_contract) is not tuple
+        or not option_contract
+        or not all(isinstance(option, HumanInputOption) for option in option_contract)
+        or any(option.recommended for option in option_contract)
+        or any(option.outcome is not None for option in option_contract)
+    ):
+        raise HumanInputPolicyError(
+            "phase dispatch option contract is invalid"
+        )
+    _validate_options(
+        option_contract,
+        allowed_target_phases=policy.allowed_target_phases,
+    )
+    selected = option_contract[0]
+    prepared_options = tuple(
+        replace(option, recommended=index == 0)
+        for index, option in enumerate(option_contract)
+    )
+    evidence_payload = {
+        "kind": "phase_dispatch_issue",
+        "phase_id": normalized_phase,
+        "document_order": [option.id for option in option_contract],
+        "recommended_option": _recommendation_option_payload(
+            prepared_options[0]
+        ),
+    }
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=selected.id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "The selected issue is the first eligible entry in authoritative "
+            "issues.md document order. This is a deterministic processing "
+            "choice, not a product or quality priority claim."
+        ),
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"phase-dispatch-limit:{selected.id}",
+                kind="phase_dispatch_issue",
+                reference=f"issues.md#{selected.id}",
+                digest=_canonical_sha256(evidence_payload),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
 
 
 def prepare_controller_proportional_quality_decision(
@@ -1137,12 +1389,40 @@ def prepare_controller_proportional_quality_decision(
         replace(option, recommended=option.id == recommended_id)
         for option in option_contract
     )
-    normalized_phase = _clean_string(phase_id, "phase_id")
-    if normalized_phase not in policy.allowed_phase_ids:
-        raise HumanInputPolicyError("phase_id is not allowed by the selected policy")
-    normalized_question = _clean_string(question, "question")
-    if len(normalized_question) > 4_000:
-        raise HumanInputPolicyError("question must not exceed 4,000 characters")
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if should_extend:
+        rationale = (
+            "Residual gates improved within the configured borderline margin "
+            "without formal-statement growth, so one final repair is favored."
+        )
+    elif reason_code == "proportional_quality_extension_exhausted":
+        rationale = (
+            "The single authorized extension is consumed and quality still "
+            "fails, so the remaining non-stop choice is explicit debt acceptance."
+        )
+    elif no_artifact_progress:
+        rationale = (
+            "The repair produced no artifact progress, so another automatic "
+            "attempt is not favored over explicit debt acceptance."
+        )
+    elif not current_failures:
+        rationale = (
+            "Numeric gates pass, but authoritative qualitative failures remain; "
+            "extension is not inferred from an empty numeric comparison, so "
+            "explicit debt acceptance is favored."
+        )
+    else:
+        rationale = (
+            "At least one residual gate is outside the improving borderline "
+            "case or formal statements grew, so explicit debt acceptance is favored."
+        )
     return PreparedHumanInput(
         schema_version=2,
         source_kind=policy.source_kind,
@@ -1155,10 +1435,8 @@ def prepare_controller_proportional_quality_decision(
         recommended_answer=None,
         recommended_option_id=recommended_id,
         recommended_action=None,
-        automatic_eligible=False,
-        recommendation_rationale=(
-            "Controller quality evidence selected the bounded decision option."
-        ),
+        automatic_eligible=True,
+        recommendation_rationale=rationale,
         recommendation_confidence="medium",
         recommendation_authority="controller_evidence",
         recommendation_evidence=(
@@ -1198,8 +1476,32 @@ def prepare_controller_proportional_quality_decision(
         ),
         risk_level=None,
         resolution_handler=policy.resolution_handler,
-        source_state_revision=source_state_revision,
+        source_state_revision=revision,
     )
+
+
+_CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
+    (
+        "human_gate",
+        "checkpoint-assess",
+        "checkpoint_assess_decision_required",
+    ): prepare_controller_checkpoint_assessment_decision,
+    (
+        "controller_safeguard",
+        "phase_dispatch_limit",
+        "phase_dispatch_limit",
+    ): prepare_controller_phase_dispatch_limit_decision,
+    (
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    ): prepare_controller_proportional_quality_decision,
+    (
+        "controller_safeguard",
+        "proportional_quality_extension_exhausted",
+        "proportional_quality_extension_exhausted",
+    ): prepare_controller_proportional_quality_decision,
+})
 
 
 def legacy_recovery_policy_alias(

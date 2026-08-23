@@ -211,6 +211,106 @@ def _workflow_gate_controller(
     return controller, store, provider
 
 
+def _seed_current_checkpoint_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    controller: SquadController,
+    store: SquadStateStore,
+) -> None:
+    state = store.load()
+    spec_dir = Path(str(state["spec_dir"]))
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# Certified specification\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality gates\n\nVerdict: PASS\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "issues.md").write_text(
+        "# Issues\n\nNo issues found.\n",
+        encoding="utf-8",
+    )
+    lexicon_report = spec_dir / "spec-lexicon-report.json"
+    lexicon_report.write_text(
+        json.dumps({"schema_version": 1, "ok": True}, sort_keys=True),
+        encoding="utf-8",
+    )
+    state.update(
+        {
+            "spec_quality_certificate": {
+                "schema_version": 2,
+                "status": "passed",
+                "source_path": "spec/spec.md",
+                "source_sha256": "1" * 64,
+                "understanding_evidence": "runs/spec-test/evidence.json",
+                "understanding_evidence_sha256": "2" * 64,
+                "sage_phase": "phase1-why2",
+                "sage_evidence": "spec/issues.md",
+                "sage_evidence_sha256": "3" * 64,
+                "sage_verdict": "PASS",
+            },
+            "lexicon_evaluation": "passed",
+            "lexicon_pass": True,
+            "lexicon_report": str(lexicon_report),
+        }
+    )
+    store.save(state)
+    controller._gate_config_cache = {
+        "lexicon_gate": {
+            "enabled": True,
+            "spec_enabled": True,
+            "artifacts": {"spec": {"enabled": True}},
+        }
+    }
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_phase1_quality_certificate",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "harness.spec_lexicon_gate.has_current_spec_lexicon_evidence",
+        lambda *_args, **_kwargs: True,
+    )
+
+
+def _seed_current_checkpoint_debt(
+    monkeypatch: pytest.MonkeyPatch,
+    store: SquadStateStore,
+) -> str:
+    state = store.load()
+    spec_dir = Path(str(state["spec_dir"]))
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# Debt-authorized specification\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality gates\n\nVerdict: FAIL\nOverall: 0.70 / 0.80\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "issues.md").write_text(
+        "# Issues\n\nResidual quality debt remains.\n",
+        encoding="utf-8",
+    )
+    state["spec_quality_debt_authorization"] = {
+        "schema_version": 1,
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "decision_id": "dec-quality-debt",
+        "debt_artifact": "spec/quality-debt.json",
+        "debt_artifact_sha256": "4" * 64,
+        "resolved_decision_sha256": "5" * 64,
+    }
+    store.save(state)
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_phase1_quality_certificate",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    return "user"
+
+
 def _request(
     controller: SquadController,
     store: SquadStateStore,
@@ -392,21 +492,19 @@ def _seal_dispatch_cap_decision(
     initial_status: str = "awaiting_human",
     legacy: bool = False,
 ) -> tuple[str, int]:
-    request = controller._human_input_registry.prepare(
+    option_contract = (
+        tuple(_dispatch_cap_option(item) for item in candidates)
+        if legacy
+        else controller._dispatch_cap_options(list(candidates))
+    )
+    request = controller._human_input_registry.prepare_controller(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
         phase_id="phase1-what",
         reason_code=policy.reason_code,
         question="Select one sealed evidence-backed issue resolution.",
         source_state_revision=store.load()["state_revision"],
-    )
-    request = replace(
-        request,
-        options=(
-            tuple(_dispatch_cap_option(item) for item in candidates)
-            if legacy
-            else controller._dispatch_cap_options(list(candidates))
-        ),
+        option_contract=option_contract,
     )
     store.set_human_input_decision(request, initial_status=initial_status)
     state = store.load()
@@ -2462,6 +2560,7 @@ def test_human_input_handler_gate_applies_declared_outcome(
 )
 def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     gate_id: str,
     mode: str,
     commander_option: str | None,
@@ -2480,6 +2579,8 @@ def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
         autonomy_mode=mode,
         provider_result=provider_result,
     )
+    if gate_id == "checkpoint-assess":
+        _seed_current_checkpoint_pass(monkeypatch, controller, store)
 
     controller._intercept_human_gate(controller._graph.get(gate_id))
 
@@ -2492,6 +2593,110 @@ def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
     assert provider.exec_agent.call_count == (
         1 if mode == "banzai" else 0
     )
+
+
+def test_checkpoint_assess_pass_and_lexicon_prepare_approve_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    _seed_current_checkpoint_pass(monkeypatch, controller, store)
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["recommended_option_id"] == "approve"
+    assert {evidence["kind"] for evidence in decision["recommendation_evidence"]} == {
+        "phase1_quality_certificate",
+        "spec_lexicon_pass",
+    }
+    assert decision["recommendation_authority"] == "controller_evidence"
+    provider.exec_agent.assert_called_once()
+
+
+def test_checkpoint_assess_accepted_debt_keeps_fail_evidence_authorized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    resolver = _seed_current_checkpoint_debt(monkeypatch, store)
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["recommended_option_id"] == "approve"
+    assert "accepted_with_debt" in decision["recommendation_rationale"]
+    assert resolver in decision["recommendation_rationale"]
+    assert any(
+        evidence["kind"] == "quality_gate_failure"
+        for evidence in decision["recommendation_evidence"]
+    )
+    prompt = provider.exec_agent.call_args.args[1]
+    assert prompt.index("## Authoritative Recommendation") < prompt.index(
+        "## Registered Context"
+    )
+    assert "authorized debt" in prompt
+    assert "quality_gate_failure" in prompt
+    assert "Verdict: FAIL" in prompt
+
+
+@pytest.mark.parametrize("authority_state", ("missing", "stale"))
+def test_checkpoint_assess_missing_or_stale_authority_blocks_before_provider(
+    tmp_path: Path,
+    authority_state: str,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    if authority_state == "stale":
+        state = store.load()
+        state["completed_phases"] = ["phase1-why2"]
+        state["spec_quality_certificate"] = {
+            "schema_version": 2,
+            "status": "passed",
+            "source_path": "spec/spec.md",
+            "source_sha256": "0" * 64,
+            "sage_evidence": "spec/issues.md",
+            "sage_evidence_sha256": "0" * 64,
+            "sage_verdict": "PASS",
+        }
+        store.save(state)
+    before_revision = store.load()["state_revision"]
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    ) is False
+
+    state = store.load()
+    assert state["state_revision"] == before_revision + 1
+    assert state["status"] == "blocked"
+    assert state["phase"] == "checkpoint-assess"
+    assert state["blocked_reason"] == "decision_recommendation_unavailable"
+    assert state["recovery_instruction"] == RecoveryInstruction(
+        kind=RecoveryKind.RETRY_PHASE,
+        reason_code="decision_recommendation_unavailable",
+        phase="checkpoint-assess",
+        requires_human_input=False,
+    ).to_dict()
+    assert "blocked_decision" not in state
+    provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -3125,9 +3330,11 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     assert request.reason_code == "phase_dispatch_limit"
     assert request.phase_id == "phase1-what"
     assert request.source_state_revision == store.load()["state_revision"]
-    assert request.options == controller._dispatch_cap_options([
-        _dispatch_cap_candidate(),
-    ])
+    assert request.recommended_option_id == "ISS-001"
+    assert [option.id for option in request.options if option.recommended] == [
+        "ISS-001"
+    ]
+    assert "first eligible entry" in request.recommendation_rationale
     assert call.kwargs == {}
     provider.exec_agent.assert_not_called()
 
@@ -4276,17 +4483,16 @@ def test_task6_fix_round1_commander_invalid_dispatch_cap_answer_consumes_attempt
     state = store.load()
     state["phase_dispatch_counts"] = {"phase1-what": 6}
     store.save(state)
-    request = controller._human_input_registry.prepare(
+    request = controller._human_input_registry.prepare_controller(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
         phase_id="phase1-what",
         reason_code=policy.reason_code,
         question="Select one sealed evidence-backed issue resolution.",
         source_state_revision=store.load()["state_revision"],
-    )
-    request = replace(
-        request,
-        options=(_dispatch_cap_option(_dispatch_cap_candidate()),),
+        option_contract=(
+            _dispatch_cap_option(_dispatch_cap_candidate()),
+        ),
     )
 
     assert controller.handle_human_input(request) is (not invalid_second_answer)
@@ -5136,13 +5342,22 @@ def test_material_proportional_quality_decision_status_is_autonomy_bounded(
         reason_code,
         reason_code,
     )
-    request = registry.prepare(
+    extension_exhausted = (
+        reason_code == "proportional_quality_extension_exhausted"
+    )
+    request = registry.prepare_controller(
         source_kind="controller_safeguard",
         producer_id=policy.producer_id,
         phase_id="phase1-why2",
         reason_code=policy.reason_code,
         question="Choose how to resolve the exhausted proportional quality budget.",
         source_state_revision=12,
+        repair_state=_proportional_repair_state(
+            extension_authorized=1 if extension_exhausted else 0,
+            extension_consumed=1 if extension_exhausted else 0,
+        ),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
     )
 
     assert select_initial_decision_status(autonomy_mode, policy, request) == (
