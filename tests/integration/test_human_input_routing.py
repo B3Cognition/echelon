@@ -32,7 +32,10 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     HumanInputResolution,
     ProportionalQualityRecommendationEvidence,
+    RecommendationEvidence,
     controller_safeguard_policies,
+    prepare_controller_checkpoint_assessment_decision,
+    prepare_controller_phase_dispatch_limit_decision,
     prepare_controller_proportional_quality_decision,
     select_initial_decision_status,
 )
@@ -1467,6 +1470,287 @@ def test_pending_or_resolving_v2_banzai_recovers_then_migrates_before_dispatch(
     assert resolved["resolution_rationale"] == rationale
     assert resolved["resolution_confidence"] == "medium"
     provider.exec_agent.assert_called_once()
+
+
+def _controller_migration_prepared(
+    controller: SquadController,
+    store: SquadStateStore,
+    producer_id: str,
+):
+    registry = controller._human_input_registry
+    revision = store.load()["state_revision"]
+    question = f"Retain the current {producer_id} controller decision?"
+    if producer_id == "checkpoint-assess":
+        return prepare_controller_checkpoint_assessment_decision(
+            registry,
+            reason_code="checkpoint_assess_decision_required",
+            phase_id="checkpoint-assess",
+            question=question,
+            source_state_revision=revision,
+            authority_kind="ordinary_pass",
+            authority_evidence=(
+                RecommendationEvidence(
+                    id="checkpoint-assess:quality",
+                    kind="phase1_quality_certificate",
+                    reference="state:spec_quality_certificate",
+                    digest="c" * 64,
+                ),
+            ),
+        )
+    if producer_id == "phase_dispatch_limit":
+        candidate = _dispatch_cap_candidate()
+        return prepare_controller_phase_dispatch_limit_decision(
+            registry,
+            reason_code="phase_dispatch_limit",
+            phase_id="phase1-what",
+            question=question,
+            source_state_revision=revision,
+            option_contract=controller._dispatch_cap_options([candidate]),
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        producer_id,
+        producer_id,
+    )
+    extension_exhausted = producer_id == (
+        "proportional_quality_extension_exhausted"
+    )
+    return prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code=producer_id,
+        phase_id="phase1-why2",
+        question=question,
+        source_state_revision=revision,
+        repair_state=_proportional_repair_state(
+            extension_authorized=1 if extension_exhausted else 0,
+            extension_consumed=1 if extension_exhausted else 0,
+        ),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
+    )
+
+
+def _seal_legacy_controller_migration(
+    store: SquadStateStore,
+    prepared,
+) -> dict[str, object]:
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-migrate-{prepared.producer_id}",
+        status="pending",
+        source_kind=prepared.source_kind,
+        producer_id=prepared.producer_id,
+        source_phase=prepared.phase_id,
+        reason_code=prepared.reason_code,
+        classification=prepared.classification,
+        question=prepared.question,
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in prepared.options
+        ],
+        recommended_answer=prepared.recommended_answer,
+        risk_level=prepared.risk_level,
+        resolution_handler=prepared.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=prepared.source_state_revision,
+        now="2026-08-23T12:00:00+00:00",
+    )
+    state = store.load()
+    state.update(
+        {
+            "status": "blocked",
+            "phase": prepared.phase_id,
+            "blocked_reason": prepared.reason_code,
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=prepared.reason_code,
+                phase=prepared.phase_id,
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    return decision
+
+
+@pytest.mark.parametrize(
+    "producer_id",
+    (
+        "checkpoint-assess",
+        "phase_dispatch_limit",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    ),
+)
+def test_v2_controller_decision_restart_uses_registered_dynamic_preparer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    producer_id: str,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    setup_policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=setup_policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    if producer_id == "checkpoint-assess":
+        _seed_current_checkpoint_pass(monkeypatch, controller, store)
+        question = "Retain the current checkpoint-assess controller decision?"
+        prepared = controller._prepare_checkpoint_assessment_decision(
+            store.load(),
+            question=question,
+            source_state_revision=store.load()["state_revision"],
+        )
+    else:
+        if producer_id == "phase_dispatch_limit":
+            spec_dir = Path(str(store.load()["spec_dir"]))
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            (spec_dir / "issues.md").write_text(
+                """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+                encoding="utf-8",
+            )
+        prepared = _controller_migration_prepared(controller, store, producer_id)
+    decision = _seal_legacy_controller_migration(store, prepared)
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    if producer_id == "checkpoint-assess":
+        dynamic = MagicMock(
+            wraps=restarted._prepare_checkpoint_assessment_decision
+        )
+        monkeypatch.setattr(
+            restarted,
+            "_prepare_checkpoint_assessment_decision",
+            dynamic,
+        )
+    elif producer_id == "phase_dispatch_limit":
+        candidates = MagicMock(
+            wraps=restarted._banzai_issue_resolution_candidates
+        )
+        monkeypatch.setattr(
+            restarted,
+            "_banzai_issue_resolution_candidates",
+            candidates,
+        )
+        dynamic = candidates
+    else:
+        dynamic = MagicMock(return_value=(prepared, {}))
+        monkeypatch.setattr(
+            restarted,
+            "_prepare_proportional_quality_decision",
+            dynamic,
+        )
+
+    migrated = restarted._migrate_pending_v2_banzai_decision(
+        store.load(),
+        decision,
+    )
+
+    assert migrated is not None
+    sealed = store.load()["blocked_decision"]
+    assert sealed["schema_version"] == 3
+    assert sealed["id"] == decision["id"]
+    assert sealed["producer_id"] == producer_id
+    assert sealed["recommended_option_id"] == prepared.recommended_option_id
+    dynamic.assert_called_once()
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "producer_id",
+    (
+        "checkpoint-assess",
+        "phase_dispatch_limit",
+        "proportional_quality_budget_exhausted",
+    ),
+)
+def test_v2_controller_migration_missing_or_stale_authority_fails_pre_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    producer_id: str,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    setup_policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=setup_policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    prepared = _controller_migration_prepared(controller, store, producer_id)
+    decision = _seal_legacy_controller_migration(store, prepared)
+    if producer_id == "checkpoint-assess":
+        dynamic = MagicMock(
+            wraps=controller._prepare_checkpoint_assessment_decision
+        )
+        monkeypatch.setattr(
+            controller,
+            "_prepare_checkpoint_assessment_decision",
+            dynamic,
+        )
+    elif producer_id == "phase_dispatch_limit":
+        dynamic = MagicMock(
+            wraps=controller._banzai_issue_resolution_candidates
+        )
+        monkeypatch.setattr(
+            controller,
+            "_banzai_issue_resolution_candidates",
+            dynamic,
+        )
+    else:
+        dynamic = MagicMock(
+            wraps=controller._prepare_proportional_quality_decision
+        )
+        monkeypatch.setattr(
+            controller,
+            "_prepare_proportional_quality_decision",
+            dynamic,
+        )
+
+    assert controller._migrate_pending_v2_banzai_decision(
+        store.load(),
+        decision,
+    ) is None
+
+    failed = store.load()["blocked_decision"]
+    assert failed["schema_version"] == 2
+    assert failed["status"] == "failed"
+    dynamic.assert_called_once()
+    provider.exec_agent.assert_not_called()
 
 
 def test_provider_v3_seal_survives_process_restart_with_same_decision_id(

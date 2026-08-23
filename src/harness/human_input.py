@@ -995,6 +995,20 @@ class HumanInputPolicyRegistry:
             **controller_evidence,
         )
 
+    def has_controller_preparer(
+        self,
+        source_kind: HumanInputSourceKind,
+        producer_id: str,
+        reason_code: str,
+    ) -> bool:
+        """Return whether one exact registered policy has a controller preparer."""
+        policy = self.lookup(source_kind, producer_id, reason_code)
+        key = (policy.source_kind, policy.producer_id, policy.reason_code)
+        return (
+            policy.recommendation_mode == "controller"
+            and key in _CONTROLLER_RECOMMENDATION_PREPARERS
+        )
+
 
 def _derive_automatic_eligibility(
     *,

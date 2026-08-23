@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shlex
 import subprocess
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from echelon.cli import (
     _cmd_continue,
     _cmd_repair_traceability,
     _cmd_rewind,
+    _failed_automatic_phase_replay,
     _reset_rewind_state,
 )
 from harness.blocked_decision import (
@@ -830,6 +832,115 @@ def test_prepare_rewind_rejects_unsupported_checkpoint_before_git_access(
             target="legacy-migration",
             confirm=False,
         )
+
+
+def test_prepare_rewind_shell_quotes_unusual_checkpoint_continuation(
+    tmp_path: Path,
+) -> None:
+    spec_id = "001-demo"
+    _git(tmp_path, "init", "-b", spec_id)
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    spec_dir = tmp_path / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Baseline\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "baseline")
+    checkpoint_commit = _git(tmp_path, "rev-parse", "HEAD")
+    checkpoint_id = "phase one's boundary"
+    next_phase = "phase two's review"
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id=checkpoint_id,
+            spec_id=spec_id,
+            phase=checkpoint_id,
+            next_phase=next_phase,
+            commit=checkpoint_commit,
+            metadata_commit="",
+            source="test",
+            run_id="run unusual",
+            created_at="2026-08-23T12:00:00+00:00",
+        ),
+    )
+    (spec_dir / "spec.md").write_text("# Later\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "later")
+
+    preview = prepare_rewind(
+        project_root=tmp_path,
+        spec=spec_id,
+        spec_dir=spec_dir,
+        target=checkpoint_id,
+        checkpoint_commit=checkpoint_commit,
+        checkpoint_next_phase=next_phase,
+        confirm=False,
+    )
+    command = preview.message.split("Continue with:\n  ", 1)[1].splitlines()[0]
+
+    parsed = shlex.split(command)
+    assert parsed == [
+        "echelon",
+        "spec",
+        "rewind",
+        checkpoint_id,
+        "--commit",
+        checkpoint_commit,
+        "--next-phase",
+        next_phase,
+        "--confirm",
+    ]
+    applied = prepare_rewind(
+        project_root=tmp_path,
+        spec=spec_id,
+        spec_dir=spec_dir,
+        target=parsed[3],
+        checkpoint_commit=parsed[5],
+        checkpoint_next_phase=parsed[7],
+        confirm=parsed[8] == "--confirm",
+    )
+    assert applied.applied is True
+    assert _git(tmp_path, "rev-parse", "HEAD") == checkpoint_commit
+
+
+def test_failed_replay_guidance_shell_quotes_unusual_graph_phase(
+    tmp_path: Path,
+) -> None:
+    source_phase = "phase repair's boundary"
+    decision = _v3_gate_decision(
+        status="failed",
+        decision_id="dec-unusual-replay",
+        source_kind="controller_safeguard",
+        source_phase=source_phase,
+    )
+    state = {
+        "state_revision": 7,
+        "status": "blocked",
+        "phase": "different-phase",
+        "autonomy_mode": "banzai",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-1/specs/001-demo",
+        "blocked_decision": decision,
+        "recovery_instruction": _failed_decision_recovery(decision),
+    }
+
+    with pytest.raises(ValueError) as exc:
+        _failed_automatic_phase_replay(
+            state,
+            phase_id=source_phase,
+            spec_arg="",
+            project_root=tmp_path,
+            run_dir=tmp_path / "runs" / "spec-1",
+            graph=SimpleNamespace(),
+        )
+
+    rendered = str(exc.value).split("source replay: ", 1)[1]
+    assert shlex.split(rendered) == [
+        "echelon",
+        "phase",
+        "run",
+        source_phase,
+    ]
 
 
 @pytest.mark.parametrize(

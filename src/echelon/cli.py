@@ -3486,17 +3486,27 @@ def _recovery_action_from_instruction(
     )
 
 
-def _active_v2_decision(state: dict) -> dict[str, object] | None:
-    """Return the validated unresolved v2 decision without changing persisted state."""
-    from harness.blocked_decision import validate_blocked_decision_v2
-    from harness.recovery_instruction import validate_decision_recovery_pair
+def _active_versioned_decision(
+    state: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return one exact unresolved v2/v3 decision authority."""
+    decision = _validated_versioned_decision(state)
+    if decision is None:
+        return None
+    return (
+        decision
+        if decision["status"]
+        in {"pending", "resolving", "awaiting_human", "failed"}
+        else None
+    )
 
+
+def _active_v2_decision(state: dict) -> dict[str, object] | None:
+    """Compatibility view retained for callers auditing legacy v2 state."""
     raw_decision = state.get("blocked_decision")
     if not isinstance(raw_decision, dict) or raw_decision.get("schema_version") != 2:
         return None
-    decision = validate_blocked_decision_v2(raw_decision)
-    validate_decision_recovery_pair(decision, state.get("recovery_instruction"))
-    return decision if decision["status"] != "resolved" else None
+    return _active_versioned_decision(state)
 
 
 def _validated_versioned_decision(
@@ -7506,17 +7516,8 @@ def _cmd_run(
         implementation_targets,
         allow_missing=init_target,
     )
-    _workspace_git_preflight_for_squad_run(
-        project_root,
-        command_name=_command_display("echelon spec run", args),
-        user_message=message,
-        reset=reset,
-        manual_recovery=bool(next_phase),
-    )
-
-    config = load_config(project_root, squad_only=True)
     prev_dir = _find_current_run_dir(project_root)
-    active_v2_decision = False
+    active_versioned_decision = False
     if prev_dir is not None:
         try:
             previous_state = json.loads(
@@ -7527,20 +7528,40 @@ def _cmd_run(
                 if isinstance(previous_state, dict)
                 else None
             )
-            active_v2_decision = (
-                isinstance(previous_decision, dict)
-                and previous_decision.get("schema_version") == 2
-                and previous_decision.get("status")
-                in {"pending", "resolving", "awaiting_human", "failed"}
+            same_task = (
+                isinstance(previous_state, dict)
                 and message == previous_state.get("user_message", "")
             )
-        except (OSError, ValueError, TypeError):
+            candidate_is_active = (
+                not reset
+                and isinstance(previous_decision, dict)
+                and previous_decision.get("schema_version") in {2, 3}
+                and previous_decision.get("status") != "resolved"
+                and same_task
+            )
+            if candidate_is_active:
+                active_versioned_decision = (
+                    _active_versioned_decision(previous_state) is not None
+                )
+        except (RecoveryInstructionError, ValueError, TypeError) as exc:
+            print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        except OSError:
             pass
+    _workspace_git_preflight_for_squad_run(
+        project_root,
+        command_name=_command_display("echelon spec run", args),
+        user_message=message,
+        reset=reset,
+        manual_recovery=bool(next_phase) or active_versioned_decision,
+    )
+
+    config = load_config(project_root, squad_only=True)
     squad_dir, is_fresh = _select_squad_dir(
         project_root,
         message,
         reset=reset,
-        manual_recovery=bool(next_phase) or active_v2_decision,
+        manual_recovery=bool(next_phase) or active_versioned_decision,
         configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
         dirty_action=dirty_action,
         confirm_discard=confirm_discard,
@@ -8028,9 +8049,13 @@ def _failed_automatic_phase_replay(
         or type(revision) is not int
         or revision < 0
     ):
+        replay_command = _command_display(
+            "echelon phase run",
+            [source_phase],
+        )
         raise ValueError(
             "failed automatic decision can only be retired by its exact "
-            f"source replay: echelon phase run {source_phase}"
+            f"source replay: {replay_command}"
         )
     spec_id = str(state.get("spec_id") or "").strip()
     spec_dir_ref = str(state.get("spec_dir") or "").strip()
@@ -8832,7 +8857,7 @@ def _cmd_continue_impl(
         implementation_targets=state.get("implementation_targets") or (),
     )
     try:
-        decision = _active_v2_decision(state)
+        decision = _active_versioned_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
         print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -10551,9 +10576,13 @@ def _cmd_phase(
             source_phase = str(
                 failed_replay.decision.get("source_phase") or ""
             ).strip()
+            replay_command = _command_display(
+                "echelon phase run",
+                [source_phase],
+            )
             print(
                 "✗ Failed automatic decision can only be retired by its exact "
-                f"source replay: echelon phase run {source_phase}",
+                f"source replay: {replay_command}",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -10609,7 +10638,7 @@ def _cmd_phase(
     )
 
 
-def _resume_v2_human_input(
+def _resume_versioned_human_input(
     *,
     answer: str,
     project_root: Path,
@@ -10624,12 +10653,12 @@ def _resume_v2_human_input(
     from harness.squad_provider import SquadCliProvider
 
     try:
-        decision = _active_v2_decision(state)
+        decision = _active_versioned_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
         print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     if decision is None:
-        print("✗ Active schema-v2 decision is missing.", file=sys.stderr)
+        print("✗ Active versioned decision is missing.", file=sys.stderr)
         raise SystemExit(1)
 
     from harness.phase_graph import load_workspace_phase_graph
@@ -10735,7 +10764,7 @@ def _cmd_resume(
                 raw_decision = state.get("blocked_decision")
                 if (
                     isinstance(raw_decision, dict)
-                    and raw_decision.get("schema_version") == 2
+                    and raw_decision.get("schema_version") in {2, 3}
                 ):
                     if state.get("status") != "blocked":
                         print(
@@ -10745,7 +10774,7 @@ def _cmd_resume(
                         )
                         print("  Nothing to resume.", file=sys.stderr)
                         raise SystemExit(1)
-                    _resume_v2_human_input(
+                    _resume_versioned_human_input(
                         answer=answer,
                         project_root=project_root,
                         ext_dir=ext_dir,

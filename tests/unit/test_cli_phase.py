@@ -5,13 +5,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 
 import pytest
 
-from echelon.cli import _cmd_continue, _cmd_phase, _cmd_run
-from harness.blocked_decision import build_blocked_decision_v2
+from echelon.cli import (
+    _classify_run_recovery,
+    _cmd_continue,
+    _cmd_phase,
+    _cmd_run,
+)
+from harness.blocked_decision import (
+    build_blocked_decision_v2,
+    validate_blocked_decision_v3,
+)
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
 from harness.squad_provider import SquadAgentResult
@@ -187,6 +196,43 @@ def _seal_pending_v2_decision(
     store._path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def _promote_active_decision_to_v3(run_dir: Path, *, status: str) -> str:
+    """Promote the sealed fixture without changing its durable identity."""
+    store = SquadStateStore(run_dir)
+    state = store.load()
+    legacy = state["blocked_decision"]
+    decision = validate_blocked_decision_v3(
+        {
+            **legacy,
+            "schema_version": 3,
+            "recommended_option_id": "approve",
+            "recommended_action": None,
+            "automatic_eligible": True,
+            "recommendation_rationale": (
+                "The retained checkpoint evidence supports approval."
+            ),
+            "recommendation_confidence": "high",
+            "recommendation_authority": "controller_evidence",
+            "recommendation_evidence": [
+                {
+                    "id": "checkpoint-plan:retained",
+                    "kind": "checkpoint_evidence",
+                    "reference": "state:completed_phases",
+                    "digest": "a" * 64,
+                }
+            ],
+            "resolution_rationale": None,
+            "resolution_confidence": None,
+            "recommendation_followed": None,
+            "override_reason": None,
+        }
+    )
+    assert decision["status"] == status
+    state["blocked_decision"] = decision
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    return str(decision["id"])
+
+
 def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
     _cmd_phase(["list"], project_root=tmp_path, ext_dir=EXT_DIR)
 
@@ -323,6 +369,103 @@ def test_continue_resolves_eligible_v2_decisions_through_real_controller(
     assert decision["status"] == "resolved"
     assert decision["resolved_by"] == ("semi" if autonomy_mode == "semi" else "COMMANDER")
     assert (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip() == run_dir.name
+
+
+@pytest.mark.parametrize("decision_status", ("pending", "resolving"))
+def test_displayed_continue_resolves_v3_decision_in_the_same_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    decision_status: str,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    switchable_run_dir = run_dir.with_name("spec-001")
+    run_dir.rename(switchable_run_dir)
+    (tmp_path / "runs" / ".current").write_text("spec-001\n", encoding="utf-8")
+    run_dir = switchable_run_dir
+    _seal_pending_v2_decision(
+        run_dir,
+        status=decision_status,
+        autonomy_mode="semi",
+        seed_constitution=True,
+    )
+    decision_id = _promote_active_decision_to_v3(
+        run_dir,
+        status=decision_status,
+    )
+    before_runs = {path.name for path in (tmp_path / "runs").iterdir() if path.is_dir()}
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            return SquadAgentResult(
+                exit_code=1,
+                echelon_result=None,
+                raw_output="physical provider stopped after decision resolution",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    action = _classify_run_recovery(
+        SquadStateStore(run_dir).load(),
+        project_root=tmp_path,
+    )
+    displayed_argv = shlex.split(action.command)
+    assert displayed_argv == ["echelon", "spec", "continue"]
+
+    with pytest.raises((SystemExit, StateAdvanceError)):
+        _cmd_continue(
+            displayed_argv[3:],
+            project_root=tmp_path,
+            ext_dir=EXT_DIR,
+        )
+
+    current = (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip()
+    resolved = SquadStateStore(run_dir).load()["blocked_decision"]
+    assert current == run_dir.name
+    assert resolved["id"] == decision_id
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by"] == "semi"
+    assert {path.name for path in (tmp_path / "runs").iterdir() if path.is_dir()} == before_runs
+
+
+def test_invalid_v3_decision_pair_cannot_make_the_active_run_resumable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    switchable_run_dir = run_dir.with_name("spec-001")
+    run_dir.rename(switchable_run_dir)
+    (tmp_path / "runs" / ".current").write_text("spec-001\n", encoding="utf-8")
+    run_dir = switchable_run_dir
+    _seal_pending_v2_decision(run_dir, status="pending", autonomy_mode="semi")
+    _promote_active_decision_to_v3(run_dir, status="pending")
+    store = SquadStateStore(run_dir)
+    state = store.load()
+    state["recovery_instruction"]["decision_id"] = "dec-stale-recovery"
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    before = (run_dir / "state.json").read_bytes()
+    before_runs = {path.name for path in (tmp_path / "runs").iterdir() if path.is_dir()}
+
+    class ForbiddenProvider:
+        def __init__(self, _config: object) -> None:
+            raise AssertionError("invalid authority must fail before provider construction")
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", ForbiddenProvider)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_run(
+            ["validate the pending decision"],
+            project_root=tmp_path,
+            ext_dir=EXT_DIR,
+        )
+
+    assert exc.value.code == 1
+    assert (run_dir / "state.json").read_bytes() == before
+    assert (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip() == run_dir.name
+    assert {path.name for path in (tmp_path / "runs").iterdir() if path.is_dir()} == before_runs
 
 
 def test_direct_run_with_a_different_message_preserves_active_v2_decision_run(

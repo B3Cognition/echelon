@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
+import shlex
 import stat
 
 from echelon.git_helpers import (
@@ -218,18 +219,17 @@ def prepare_rewind(
             f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint"
         )
     )
+    command_args = ["echelon", "spec", "rewind", target]
+    if checkpoint_commit:
+        command_args.extend(["--commit", checkpoint_commit])
+    if checkpoint_next_phase:
+        command_args.extend(["--next-phase", checkpoint_next_phase])
+    command_args.append("--confirm")
     message = (
         f"{action}\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
         "Continue with:\n  "
-        f"echelon spec rewind {target}"
-        + (f" --commit {checkpoint_commit}" if checkpoint_commit else "")
-        + (
-            f" --next-phase {checkpoint_next_phase}"
-            if checkpoint_next_phase
-            else ""
-        )
-        + " --confirm"
+        + shlex.join(command_args)
     )
     if dirty_paths:
         message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))

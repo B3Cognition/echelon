@@ -5185,6 +5185,64 @@ class SquadController:
             return False
         return v2_automatic_decision_is_registered(decision, policy)
 
+    def _prepare_v2_controller_migration_decision(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+    ) -> PreparedHumanInput:
+        """Reconstruct legacy controller recommendations from current authority."""
+        producer_id = str(decision["producer_id"])
+        revision = state.get("state_revision")
+        if type(revision) is not int or revision < 0:
+            raise HumanInputPolicyError(
+                "legacy controller decision revision is invalid"
+            )
+        if producer_id == "checkpoint-assess":
+            return self._prepare_checkpoint_assessment_decision(
+                state,
+                question=str(decision["question"]),
+                source_state_revision=revision,
+            )
+        if producer_id == "phase_dispatch_limit":
+            candidates = self._banzai_issue_resolution_candidates(dict(state))
+            return self._human_input_registry.prepare_controller(
+                source_kind=str(decision["source_kind"]),
+                producer_id=producer_id,
+                phase_id=str(decision["source_phase"]),
+                reason_code=str(decision["reason_code"]),
+                question=str(decision["question"]),
+                source_state_revision=revision,
+                option_contract=self._dispatch_cap_options(candidates),
+            )
+        if producer_id in {
+            "proportional_quality_budget_exhausted",
+            "proportional_quality_extension_exhausted",
+        }:
+            repair_state = state.get("phase1_quality_repair")
+            if not isinstance(repair_state, Mapping):
+                raise HumanInputPolicyError(
+                    "legacy proportional quality authority is missing"
+                )
+            candidate_evidence = state.get(
+                "proportional_quality_candidate_evidence"
+            )
+            last_repair_outcome = (
+                candidate_evidence.get("last_repair_outcome")
+                if isinstance(candidate_evidence, Mapping)
+                else None
+            )
+            prepared, _updates = self._prepare_proportional_quality_decision(
+                state,
+                repair_state=repair_state,
+                reason_code=str(decision["reason_code"]),
+                source_state_revision=revision,
+                last_repair_outcome=last_repair_outcome,
+            )
+            return prepared
+        raise HumanInputPolicyError(
+            f"controller migration preparer is not registered: {producer_id}"
+        )
+
     def _migrate_pending_v2_banzai_decision(
         self,
         state: Mapping[str, object],
@@ -5228,7 +5286,21 @@ class SquadController:
                         }
                     )
                 prepare_args["options"] = provider_options
-            prepared = registry.prepare(**prepare_args)
+            registered_controller_preparer = (
+                registry.has_controller_preparer(
+                    str(decision["source_kind"]),
+                    str(decision["producer_id"]),
+                    str(decision["reason_code"]),
+                )
+            )
+            prepared = (
+                self._prepare_v2_controller_migration_decision(
+                    state,
+                    decision,
+                )
+                if registered_controller_preparer
+                else registry.prepare(**prepare_args)
+            )
             if not self._v2_migration_preserves_decision_contract(
                 decision,
                 prepared,
@@ -5239,7 +5311,9 @@ class SquadController:
         except (
             BlockedDecisionError,
             HumanInputPolicyError,
+            QualityCandidateIntegrityError,
             KeyError,
+            OSError,
             TypeError,
             ValueError,
         ):

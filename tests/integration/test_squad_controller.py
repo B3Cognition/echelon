@@ -41,10 +41,12 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     HumanInputResolution,
 )
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_checkpoints import PhaseCheckpointError, load_checkpoint_ledger
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
+from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
 from harness.squad import (
     ControllerEnrichment,
     SquadController,
@@ -7334,6 +7336,90 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_restart_migrates_v2_proportional_decision_from_candidate_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, _calls = _run_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+            autonomy_mode="semi",
+        )
+        result = ctrl.run("msg", "semi")
+        sealed_state = store.load()
+        sealed = sealed_state["blocked_decision"]
+        assert result.status == "blocked"
+        assert sealed["schema_version"] == 3
+        assert sealed["producer_id"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        legacy = build_blocked_decision_v2(
+            decision_id=str(sealed["id"]),
+            status="pending",
+            source_kind=str(sealed["source_kind"]),
+            producer_id=str(sealed["producer_id"]),
+            source_phase=str(sealed["source_phase"]),
+            reason_code=str(sealed["reason_code"]),
+            classification=str(sealed["classification"]),
+            question=str(sealed["question"]),
+            options=[
+                {**dict(option), "recommended": False}
+                for option in sealed["options"]
+            ],
+            recommended_answer=sealed["recommended_answer"],
+            risk_level=sealed["risk_level"],
+            resolution_handler=str(sealed["resolution_handler"]),
+            autonomy_mode="banzai",
+            source_state_revision=int(sealed["source_state_revision"]),
+            now=str(sealed["created_at"]),
+        )
+        legacy_state = dict(sealed_state)
+        legacy_state.update(
+            {
+                "autonomy_mode": "banzai",
+                "status": "blocked",
+                "blocked_decision": legacy,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.RESOLVE_DECISION,
+                    reason_code=str(legacy["reason_code"]),
+                    phase=str(legacy["source_phase"]),
+                    requires_human_input=False,
+                    schema_version=2,
+                    decision_id=str(legacy["id"]),
+                ).to_dict(),
+            }
+        )
+        store._path.write_text(json.dumps(legacy_state), encoding="utf-8")
+        provider = MagicMock()
+        restarted = SquadController(
+            provider=provider,
+            state_store=store,
+            phase_graph=PhaseGraph(
+                DEFINITION,
+                prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+            ),
+            ext_dir=EXT_ROOT / "runtime",
+            project_root=tmp_path,
+            squad_dir=store.squad_dir,
+        )
+
+        migrated = restarted._migrate_pending_v2_banzai_decision(
+            store.load(),
+            legacy,
+        )
+
+        assert migrated is not None
+        current = store.load()["blocked_decision"]
+        assert current["schema_version"] == 3
+        assert current["id"] == legacy["id"]
+        assert current["recommended_option_id"] == sealed[
+            "recommended_option_id"
+        ]
+        assert current["recommendation_evidence"] == sealed[
+            "recommendation_evidence"
+        ]
+        provider.exec_agent.assert_not_called()
+
     def test_repairable_sage_contradiction_routes_to_what_not_candidate_integrity(
         self,
         tmp_path: Path,
