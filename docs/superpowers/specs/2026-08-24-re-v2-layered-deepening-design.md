@@ -118,7 +118,7 @@ pins:
 - source snapshot and partition identities;
 - requested target layer;
 - normalized selected scope;
-- layer-policy catalog hash;
+- existing artifact-policy catalog hash;
 - producer/executor/verifier authority hashes; and
 - run-wide resource ceilings.
 
@@ -133,28 +133,50 @@ The child is self-contained. Adoption verifies source bytes and then stores
 them through the existing content-addressed object store. This is not
 regeneration: the adopted artifact hash remains identical.
 
-For every adopted artifact, the child retains a canonical proof containing:
+The child stores one immutable `ParentAuthorityBundleV1`, referenced from its
+schema-3 manifest. It contains parent/run provenance once, plus a sorted mapping
+from each adopted artifact key to its existing acceptance closure:
 
 ```yaml
 schema_version: 1
-source_run_id: <safe run id>
+direct_parent_run_id: <safe run id>
 source_manifest_hash: sha256:...
 source_event_chain_hash: sha256:...
 source_terminal_event_hash: sha256:...
 source_ledger_chain_hash: sha256:...
-source_ledger_entry_hash: sha256:...
-source_certification_receipt_hash: sha256:...
-artifact_key_hash: sha256:...
-artifact_hash: sha256:...
-dependency_hashes: [sha256:...]
+lineage_root_run_id: <safe run id>
+ancestor_bundle_hashes: [sha256:...]
+artifacts:
+  - artifact_key_id: sha256:...
+    artifact_hash: sha256:...
+    dependency_hashes: [sha256:...]
+    certification_receipt_id: sha256:...
+    candidate_assessment_id: sha256:... | null
+    artifact_acceptance_receipt_id: sha256:...
+    source_run_id: <safe run id>
+    source_ledger_entry_hash: sha256:...
 ```
 
-The proof, source manifest bytes, authenticated event-chain bytes through the
-terminal envelope, authenticated ledger-chain bytes through the source entry,
-certification receipt, artifact-key bytes, and artifact bytes are copied as
-verified content-addressed objects. The child ledger appends an
-`artifact_adopted` entry referencing those hashes. Copying the authenticated
-chain prefixes lets the child revalidate provenance even after the parent run
+The bundle, source manifest bytes, authenticated event-chain bytes through the
+terminal envelope, and authenticated ledger-chain bytes through the terminal
+source entry are stored once as verified content-addressed objects. For every
+adopted output, the adopter copies the schema-aware object closure and replays
+the parent's existing canonical `CertificationReceiptV2`, optional
+`CandidateAssessmentReceiptV1`, and `ArtifactAcceptanceReceiptV2` payloads into
+the child through the typed durable-ledger facade, in their required order. It
+does not define a second accepted-artifact or certification receipt type.
+
+When the direct parent is schema 3, `ancestor_bundle_hashes` contains its exact
+transitive parent-authority bundle closure and every referenced chain object.
+The adopter verifies that closure while checking the manifest parent links and
+copies it without flattening or rewriting ancestor provenance.
+
+The child ledger record hashes are naturally new because the child has its own
+hash chain; the nested receipt identities and artifact hashes remain exact. A
+protocol-2.4 `artifact_adopted` event points to the bundle and imported receipt
+IDs so status can distinguish adoption from local generation without granting
+the event a parallel acceptance authority. Copying the authenticated parent
+chain bytes lets the child revalidate provenance even after the parent run
 directory is removed; a lone terminal envelope or ledger line is insufficient
 authority.
 
@@ -236,8 +258,9 @@ or adapter version bump.
 L2 must not edit a source module whose bytes contribute to an installed
 protocol-2.3 executor, renderer, calculator, normalizer, verifier, partitioner,
 or ownership digest. Schema-3 behavior lives in focused protocol-2.4 modules
-and plugs into the existing executor, producer, verifier, event, ledger, and
-status registration seams.
+and plugs into the existing generic storage, Prosaic/provider, authority,
+candidate, accounting, event-envelope, ledger-envelope, and status-routing
+seams.
 
 Shared canonical value modules may gain schema-3 types or strictly additive L2
 branches only when protocol-2.0-through-2.3 canonical fixtures prove that every
@@ -245,6 +268,31 @@ old input has identical bytes, validation outcome, identity, and behavior. L2
 must not copy the execution kernel into a second controller. If the existing
 registration seams cannot host L2 without changing a pinned protocol-2.3
 authority, implementation stops and this design is revisited.
+
+### Mandatory execution-seam proof
+
+The current `Protocol22Controller`, `Protocol22RunContext`, recovery functions,
+and some execution helpers intentionally require exact schema-2 types. They are
+not declared reusable merely because their algorithms look relevant.
+
+Before implementing L2 producers, the first implementation slice must prove in
+tests that a minimal schema-3 work item can pass through the existing shared
+provider executor and durable candidate-capture path while using:
+
+- the configured `SquadCliProvider` and `AICodingCliProvider`;
+- existing executor-contract and installed-authority validation;
+- existing reservation and usage normalization;
+- existing capture, inventory, and commit stores;
+- `EventStore` and `DurableLedger`; and
+- no copied code from `Protocol22Controller`, protocol-2.2 recovery, or
+  protocol-2.2 execution.
+
+A thin protocol-2.4 orchestration state machine may own only new lineage,
+adoption, selected-scope, and L2 transition rules. It may not duplicate provider
+invocation, usage accounting, candidate durability, receipt append/replay, or
+at-most-once dispatch mechanics. If the seam proof cannot meet that boundary,
+implementation pauses for an explicit stable-kernel refactor design; it does
+not solve the problem by forking the protocol-2.2 controller.
 
 ## Public CLI
 
@@ -268,10 +316,13 @@ Rules:
 - `--domain` is valid only with exactly one selected source.
 - A source without `--domain` expands to every domain owned by that source in
   the authenticated parent partition.
-- Source and domain IDs are exact IDs from the parent partition, not globs.
+- Source IDs are exact `WorkspacePartitionCatalogV1` source IDs. Domain CLI
+  values are exact `presentation_domain_id` values resolved within the selected
+  source to their immutable `domain_key`; neither form accepts globs.
 - Repeated source/domain values are rejected instead of silently deduplicated.
-- `--from-run` is optional. Without it, Echelon resolves the current deepest
-  compatible completed run in the active lineage.
+- `--from-run` is optional. Without it, Echelon uses the current run resolved by
+  the existing `.current-re` mechanism and requires that authority to be a
+  compatible completed parent or an idempotently matching child.
 - The selected parent must expose certified prerequisites for the requested
   scope and the exact current snapshot.
 - V1-only flags and `--engine` are invalid for `deepen`.
@@ -293,9 +344,21 @@ echelon re deepen --to L2 --all \
 ### Idempotent command resolution
 
 The semantic request identity is derived from lineage-root authority, snapshot,
-normalized selection, target layer, and layer-policy catalog. The direct parent
-is recorded provenance but does not make an otherwise identical request new.
-Token/time ceilings are operational authorization and do not affect identity.
+normalized selection, target layer, and the existing artifact-policy catalog
+identity. The direct parent is recorded provenance but does not make an
+otherwise identical request new. Token/time ceilings are operational
+authorization and do not affect identity.
+
+Without `--from-run`, resolution starts from the run selected by the existing
+`.current-re` resolver; it does not introduce a second "deepest run" registry.
+Under one workspace deepening-creation lock, the resolver inspects immutable
+schema-3 manifests in that active lineage for the semantic request identity.
+This scan is only for creation idempotency; accepted-artifact reuse still comes
+exclusively from the selected direct parent's authenticated root.
+
+The creation lock uses the repository's existing no-follow regular-file and
+`flock` pattern. It is a scoped serialization point for child allocation and
+active-pointer publication, not a new lock service or run-state authority.
 
 When the same request already exists:
 
@@ -337,6 +400,11 @@ A dirty source stops with commit/stash/revert guidance. A changed clean source
 stops with guidance to create a new L0/L1 baseline. `--from-run` selects an
 authority; it is not permission to deepen stale code.
 
+Preflight reuses the clean-Git composite snapshot/workspace-manifest validators
+and the authenticated `WorkspacePartitionCatalogV1` descriptors. It does not
+add another repository walker, source catalog, domain-discovery pass, or dirty
+tree interpretation.
+
 Files are opened with the existing no-follow and stable-stat patterns. Any
 change observed between validation and copy aborts child creation. Adoption
 never reads source evidence from the live checkout; provider work reads only
@@ -344,30 +412,65 @@ the copied immutable snapshot and adopted objects.
 
 ## Child creation and active pointer
 
-Child creation follows manifest-last durability:
+Child creation extends the established protocol-2.2 input-publication path; it
+does not introduce a whole-run staging directory or rename lifecycle.
 
-1. create a unique staging directory below the run root;
-2. write and fsync immutable input catalogs and verified adoption objects;
-3. write and fsync the schema-3 manifest last;
-4. atomically rename staging to the final run directory;
-5. append `run_created` and adoption events through the normal hash-chained
-   event store;
-6. derive and verify the initial projection; and
-7. update the workspace active pointer last.
+1. allocate the ID with the existing RE v2 run-ID allocator;
+2. create the standard `ReV2Paths` layout;
+3. publish adopted blobs through `ObjectStore`;
+4. publish the workspace-partition, artifact-policy, executor-contract, and
+   parent-authority input references with the same new-file, fsync, no-follow,
+   and fault-hook helpers used by `create_protocol_22_run_store`;
+5. link the immutable schema-3 manifest last;
+6. append `run_created` and adoption events through `EventStore` with the
+   protocol-2.4 `EventProtocol`;
+7. import the accepted receipt closure through the typed durable ledger and
+   derive the initial projection; and
+8. activate it last with the existing active-pointer publisher.
 
-Failure before the final rename leaves no visible run. Failure after the rename
-but before active-pointer update leaves a discoverable recoverable run and does
-not displace the prior active run. Recovery is idempotent and never repeats a
-completed adoption copy.
+The implementation should extract a schema-neutral manifest-last publication
+helper from `create_protocol_22_run_store`, or add a thin schema-3 factory over
+the same primitives. It must retain the existing incomplete-store detection and
+fault-injection behavior. A crash before the manifest link leaves an incomplete
+discoverable store that creation recovery can validate and remove/restart under
+the creation lock. A crash after the manifest link but before active-pointer
+publication leaves a discoverable recoverable run and does not displace the
+prior active run. Recovery is idempotent and never repeats an imported receipt.
 
-The child manifest records an adoption-root hash over the sorted adoption-proof
-hashes. Projection replay recomputes it. A mismatch fails closed before
-planning or provider dispatch.
+The child manifest references `ParentAuthorityBundleV1`; its identity commits
+the sorted adopted-artifact map and parent chain objects. Input loading and
+projection replay recompute that identity before planning or provider dispatch.
 
-## Layer catalog and dependency graph
+## Artifact policy and dependency graph
 
-Protocol 2.4 stores one closed layer catalog. Layer selection is not inferred
-from filenames or prose.
+Protocol 2.4 does not add a layer catalog. The existing artifact-policy catalog,
+executor-contract catalog, workspace-partition catalog, and graph templates are
+the closed authority; layer selection is not inferred from filenames or prose.
+
+Schema-3 extends the current canonical planning vocabulary additively:
+
+- `ArtifactScope` remains the scope identity;
+- `ArtifactKeyV2`, `WorkTemplateV2`, `WorkItemV2`, and
+  `instantiate_work_item_v2` remain the identity shapes and binding rule;
+- their closed layer/goal validation gains protocol-2.4 L2 values while fixtures
+  prove every schema-2 value retains identical bytes and identity;
+- a protocol-2.4 graph builder constructs selected L2 templates from
+  `WorkspacePartitionCatalogV1`, policy entries, and executor entries; and
+- `PlanningAuthorityV2`, `PlanningBudgetV2`, `PlanDecisionV2`, and the existing
+  delta-planning algorithm remain the planner contracts.
+
+`Protocol22Graph` itself remains closed to schema-2 inventory/baseline. The
+protocol-2.4 graph is a focused wrapper over the same template and planning
+primitives, not a copied planner. The artifact-policy catalog version used by
+schema 3 adds the exact L2 slots; it replaces the proposed layer catalog rather
+than duplicating it.
+
+The graph retains imported L0/L1 `WorkTemplateV2` and `WorkItemV2` values
+exactly, including their original `inventory` or `baseline` goal IDs. It adds
+only selected L2 templates under the closed `selective-deepening` goal. The
+protocol-2.4 graph therefore permits this authenticated mixed-goal prerequisite
+closure; it never rekeys adopted work as L2 merely to satisfy a homogeneous-goal
+assumption.
 
 ### Registered L2 work
 
@@ -375,7 +478,7 @@ For each selected domain:
 
 ```text
 adopted L0 domain inventory
-  + adopted L1 domain evidence pack
+  + adopted L0 domain evidence pack
   + adopted L1 domain context/depth debt
   + adopted L1 domain baseline
     -> deterministic L2 targeted evidence pack
@@ -483,8 +586,10 @@ prosaic/subagents/echelon.re-deepener.md
 
 Its frontmatter owns model tier, effort, tools, color, and neutral execution
 metadata. The intended initial policy is `model_tier: strong`, `effort: high`,
-and write-only candidate authority. Prosaic inspection supplies the exact
-artifact bytes and interpreted metadata pinned into the child object store.
+and write-only candidate authority. `ProsaicPromptLoader.load_subagent` and
+`canonical_prosaic_agent_bytes` supply the exact artifact bytes and interpreted
+metadata pinned into the child object store, following the existing
+`_prepare_re_v22_creation` pattern.
 The existing internal candidate filename remains `baseline.json`; L2 changes
 the pinned layer policy and Prosaic instructions, not the provider result or
 candidate-capture protocol.
@@ -514,6 +619,14 @@ RE must not:
 - grant source-discovery tools to the authoring agent; or
 - infer success from process exit alone.
 
+The protocol-2.4 installed-authority registry is an additive registration over
+`InstalledAuthorityRegistry` and the existing executor-catalog resolver. It
+registers the new agent and L2 verifier/policy authorities while retaining the
+existing compact response-schema bytes, request renderer, shared CLI adapter,
+reservation calculator, usage normalizer, and execution path. If implementation
+requires a different provider response envelope, this L2 design is violated. It
+does not fork registry or executor resolution.
+
 The controller still captures provider output durably before parsing and
 accepts an artifact only through deterministic certification.
 
@@ -536,9 +649,14 @@ dispatch. The exact counters remain separate, and one attempt cannot be
 relabeled to bypass another exhausted limit.
 
 Run-wide token and provider-active-time ceilings remain independent operational
-authorization. Raising either ceiling appends a budget event and resumes the
-same semantic child identity. It does not increase provider, generation,
-result-contract, artifact-contract, or future semantic-round limits.
+authorization. Schema 3 reuses `BudgetPolicyV2`, `BudgetDecisionV2`,
+`evaluate_budget_v22`, and the existing budget/dispatch event counters; it adds
+no second budget model. The schema-3 `selective-deepening` validator requires
+the already-representable literal attempt tuple `(2, 2, 0, 1, 1, 1)`. Raising
+either ceiling appends the existing
+`budget_authorized` event and resumes the same semantic child identity. It does
+not increase provider, generation, result-contract, artifact-contract, or
+future semantic-round limits.
 
 Unknown or untrusted provider usage follows the existing conservative
 reservation-charging rule and remains visible in status. L2 does not add a
@@ -583,14 +701,17 @@ exhaustion into a partial terminal result.
 
 ## Status and final banner
 
-`echelon re status` and `--json` add:
+`echelon re status` and `--json` keep the current protocol router. The generic
+`render_v2_status` dispatch gains a protocol-2.4 renderer which follows
+`protocol_22_status_document` and `_render_human`; no second status command,
+pointer resolver, or status cache is introduced. The document adds:
 
 - protocol and manifest schema;
 - direct parent and lineage root run IDs;
 - parent manifest and terminal-event hashes;
 - source snapshot identity;
 - target layer and normalized requested scope;
-- adopted artifact/proof counts by layer;
+- adopted artifact/imported-receipt counts by layer;
 - planned, accepted, unresolved, and failed requested outputs;
 - per-source and per-domain layer states;
 - intentionally unselected domain counts;
@@ -621,13 +742,16 @@ failed requested outputs: 0
 
 ## Recovery and failure isolation
 
-Adoption and execution use the existing append-only event, candidate capture,
-ledger, and projection-replay primitives.
+Adoption and execution use `EventStore` with a protocol-2.4 `EventProtocol`,
+`DurableLedger` with a protocol-2.4 typed facade extending the protocol-2.2
+receipt decoder, and the existing candidate-capture and projection-replay
+primitives. The event envelope, ledger envelope, locking, canonical framing,
+idempotent append, and at-most-once dispatch machinery remain shared.
 
 Recovery handles these boundaries idempotently:
 
-1. adoption object copied but no adoption proof committed;
-2. adoption proof committed but no ledger/event entry;
+1. adoption object copied but no parent-authority bundle committed;
+2. parent-authority bundle committed but no imported ledger/event entry;
 3. adoption event appended but projection not checkpointed;
 4. dispatch leased but not started;
 5. dispatch started with no durable observation;
@@ -635,7 +759,7 @@ Recovery handles these boundaries idempotently:
 7. candidate committed but not certified;
 8. certification recorded but artifact not accepted;
 9. all requested artifacts accepted but terminal event absent; and
-10. terminal event durable but active pointer/status cache stale.
+10. terminal event durable but active pointer stale.
 
 The existing at-most-once external-dispatch rule remains. A started dispatch is
 never reissued under the same dispatch ID. Indeterminate external execution
@@ -649,14 +773,20 @@ for a later child lineage.
 
 ## Materialization and publication boundary
 
-Protocol 2.4 materializes immutable run-local L2 JSON, Markdown, and exact-root
+Protocol 2.4 extends `materialize_accepted_l1`, `materialized_path_for`, and the
+existing exact-root/projection specifications with L2 cases. It keeps the same
+materialization lock, altered-projection quarantine, atomic publication, and
+byte-exact rebuild rules. This is an additive layer-aware materializer, not a
+new framework.
+
+It materializes immutable run-local L2 JSON, Markdown, and exact-root
 projections below the child run. It does not write workspace `re/` or trigger
 workspace synthesis.
 
 Materialized L2 is rebuildable from accepted objects and receipts. Deleting a
-projection and rebuilding it must produce byte-identical output. Adoption
-proofs and object-store authorities are not projections and are never rebuilt
-from Markdown.
+projection and rebuilding it must produce byte-identical output. The
+parent-authority bundle and object-store authorities are not projections and are
+never rebuilt from Markdown.
 
 EGR-168 will later synthesize an accepted source-root set. Its design must
 consume exact L0/L1/L2 roots and must not make L2 depend on synthesis.
@@ -683,6 +813,28 @@ Telemetry must distinguish deterministic adoption/planning from model-backed
 authoring. It must be possible to answer how much L2 reused, how much it
 generated, and why any requested output remains incomplete.
 
+## Rejected parallel machinery
+
+The following alternatives are explicitly rejected because Echelon already has
+the required authority or durability mechanism:
+
+- a layer catalog beside the artifact-policy and executor catalogs;
+- a selector/source index beside `WorkspacePartitionCatalogV1`;
+- a new provider adapter, model mapper, result envelope, or usage estimator;
+- a second accepted-artifact/adoption receipt hierarchy beside the typed ledger;
+- a whole-run staging/rename publisher beside manifest-last run-store creation;
+- a second active-run resolver or status cache beside `.current-re` and replay;
+- a new planner or budget engine beside the V2 planning and accounting
+  contracts; and
+- a new materialization framework beside accepted-object projection replay.
+
+The only new semantic authorities are the schema-3 manifest values, the
+parent-authority bundle, L2 artifact-policy entries, and the protocol-2.4 event
+additions required to report adoption and selected scope. The provider-facing
+result envelope and accepted compact claim/evidence artifact schema remain the
+L1 contracts; L2 depth comes from layer identity, dependency selection, and
+policy, not a second authorial format.
+
 ## Verification strategy
 
 ### Compatibility
@@ -704,8 +856,9 @@ generated, and why any requested output remains incomplete.
 
 ### Adoption
 
-- Verify manifest, terminal event, copied event-chain prefix, copied ledger-chain
-  prefix, receipt, key, artifact, dependency, and root hashes independently.
+- Verify the parent-authority bundle, manifest, terminal event, copied
+  event-chain prefix, copied ledger-chain prefix, imported receipts, key,
+  artifact, dependency, and root hashes independently.
 - Reject projections and provider verdicts as adoption authority.
 - Reject symlink substitution, path escape, mutation during read, conflicting
   receipts, missing objects, and cyclic dependencies.
@@ -725,6 +878,9 @@ generated, and why any requested output remains incomplete.
 
 ### Prosaic/provider boundary
 
+- Make the mandatory execution-seam proof the first implementation gate.
+- Fail that gate if protocol 2.4 copies protocol-2.2 controller, recovery, or
+  execution code instead of composing the shared provider/capture substrate.
 - Assert `echelon.re-deepener` is installed through normal Prosaic migration.
 - Assert inspected frontmatter is pinned and passed unchanged to
   `SquadCliProvider`.
@@ -754,7 +910,8 @@ After focused and complete repository tests pass:
 3. run L0/L1 with the configured Codex provider if no compatible baseline is
    already available;
 4. deepen one real source/domain to L2;
-5. inspect events, ledger, adoption proofs, candidates, status, and telemetry;
+5. inspect events, ledger, parent-authority bundle, candidates, status, and
+   telemetry;
 6. repeat the same command and prove zero provider dispatches;
 7. deepen a second scope and prove the first L2 artifact is adopted, not
    regenerated; and
@@ -767,10 +924,12 @@ suite. A real pilot is evidence, not a substitute for deterministic tests.
 
 Production changes should remain within these responsibilities:
 
+- a first, disposable execution-seam proof which must pass before L2 feature
+  implementation proceeds;
 - CLI parsing/routing for `re deepen`;
 - schema-3 manifest and selection/lineage values;
 - deterministic parent resolver and adopter;
-- layer-aware policy/graph extensions;
+- additive artifact-policy and shared planning-primitive extensions;
 - L2 deterministic evidence/context/root producers;
 - L2 authorial normalization and deterministic certification;
 - the neutral Prosaic deepener role;
@@ -786,11 +945,19 @@ Existing components remain authoritative:
 | Result envelope | `EchelonResultContract` |
 | Source authority | clean-Git composite snapshot and pinned snapshot reader |
 | Object authority | existing `ObjectStore` |
-| Events and replay | existing hash-chained event store/projection model |
+| Immutable input publication | `ReV2Paths` and the manifest-last `create_protocol_22_run_store` primitives |
+| Parent resolution and activation | `resolve_current_re_run`, `_new_re_v2_run_id`, `_activate_re_v2_run` |
+| Selection authority | `WorkspacePartitionCatalogV1` source/domain descriptors |
+| Planning identities | `ArtifactScope`, `ArtifactKeyV2`, `WorkTemplateV2`, `WorkItemV2` |
+| Delta planning | `PlanningAuthorityV2`, `PlanningBudgetV2`, `PlanDecisionV2`, `plan_next_v22` algorithm |
+| Policy and execution authority | artifact-policy and executor-contract catalogs |
+| Events and replay | `EventStore`, `EventProtocol`, and the existing projection model |
+| Ledger | `DurableLedger` plus existing certification/assessment/acceptance receipts |
 | Candidate durability | existing staging, inventory, commit, and recovery stores |
-| Accounting | existing reservation and normalized usage types |
+| Accounting | `BudgetPolicyV2`, `evaluate_budget_v22`, reservation and normalized usage types |
 | Acceptance | controller-owned certifier and ledger |
-| Status routing | existing protocol-selected status surface |
+| Materialization | existing exact projection specs, locking, quarantine, and rebuild path |
+| Status routing | `render_v2_status` and the protocol-2.2 status-document/render pattern |
 
 If implementation appears to require replacing one of those components, work
 stops and the design is revisited. L2 is an extension of the proven kernel, not
@@ -800,21 +967,23 @@ a second RE system.
 
 The L2 increment is complete only when:
 
-1. protocol 2.4 creates schema-3 child runs without changing old protocols;
-2. lower-layer adoption is self-contained, hash-verified, and replayable;
-3. the CLI supports the approved explicit selectors and idempotent resolution;
-4. L2 schedules only missing work over exact L0/L1 dependencies;
-5. all authorial calls use the neutral Prosaic deepener through the existing
+1. the execution-seam proof demonstrates reuse without a forked controller,
+   recovery engine, provider path, or candidate store;
+2. protocol 2.4 creates schema-3 child runs without changing old protocols;
+3. lower-layer adoption is self-contained, hash-verified, and replayable;
+4. the CLI supports the approved explicit selectors and idempotent resolution;
+5. L2 schedules only missing work over exact L0/L1 dependencies;
+6. all authorial calls use the neutral Prosaic deepener through the existing
    shared provider path;
-6. no new provider adapter or provider-specific branch exists;
-7. attempts are bounded and no semantic/whole-domain repair loop exists;
-8. requested-scope completion and partial source coverage are reported
+7. no new provider adapter or provider-specific branch exists;
+8. attempts are bounded and no semantic/whole-domain repair loop exists;
+9. requested-scope completion and partial source coverage are reported
    truthfully;
-9. crash recovery performs no duplicate external dispatch;
-10. repeated and unrelated deepening produce zero unnecessary provider calls;
-11. the installed real-workspace pilot preserves clean source Git and records
+10. crash recovery performs no duplicate external dispatch;
+11. repeated and unrelated deepening produce zero unnecessary provider calls;
+12. the installed real-workspace pilot preserves clean source Git and records
     usable telemetry; and
-12. compatibility, focused RE v2, and complete repository gates pass.
+13. compatibility, focused RE v2, and complete repository gates pass.
 
 Passing these criteria establishes selective L2 depth. It does not establish
 semantic audit, workspace synthesis, exhaustive L4 coverage, atomic repair,
