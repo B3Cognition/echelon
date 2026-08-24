@@ -122,7 +122,7 @@ class CodexCliBackend:
 
         unsafe = self._config.llm.tool_policy.allow_unsafe_host_execution
         permission_profile = None
-        if forbidden_roots and not unsafe:
+        if forbidden_roots and not unsafe and not isolated_workspace:
             permission_profile = (
                 _PRODUCT_PLANE_PERMISSION_PROFILE,
                 _codex_product_plane_permission_profile(
