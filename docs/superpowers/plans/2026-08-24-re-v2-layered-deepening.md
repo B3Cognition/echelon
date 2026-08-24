@@ -241,11 +241,11 @@ git commit -m "feat(re-v2): plan selected L2 deltas"
 - Produces: `build_parent_authority_bundle(parent: ValidatedParentV1) -> tuple[ParentAuthorityBundleV1, Mapping[str, bytes]]`.
 - Produces: `import_parent_acceptance_closure(parent, child_objects, child_ledger) -> AdoptionReportV1` using existing certification, candidate-assessment, and artifact-acceptance append methods.
 
-- [ ] **Step 1: Write failing parent and adoption tests**
+- [x] **Step 1: Write failing parent and adoption tests**
 
 Cover complete schema-2 parent success; nonterminal/failed/partial rejection; dirty Git rejection with commit/stash/revert guidance; commit mismatch; symlink/path escape; corrupt event/ledger chains; missing receipt/object/dependency; cyclic schema-3 lineage; and successful replay after deleting the parent.
 
-- [ ] **Step 2: Run adoption tests and confirm RED**
+- [x] **Step 2: Run adoption tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py`
 
@@ -255,11 +255,11 @@ Expected: collection fails because the adopter is absent.
 
 Resolve beneath `runs/`, load exact manifest/events/ledger, require exactly one `run_completed`, verify current clean-Git composite commits against the snapshot, copy direct parent manifest/event/ledger bytes once, and recursively copy schema-3 ancestor bundle objects. Use stable-stat/no-follow helpers already used by snapshot and object stores.
 
-- [ ] **Step 4: Import exact typed receipt closure**
+- [x] **Step 4: Import exact typed receipt closure**
 
 For each accepted artifact in sorted key order, copy every schema-aware referenced object, then append its existing certification/work item, optional candidate assessment, and artifact acceptance receipt through `Protocol22Ledger`. Add a read-only ledger-history accessor rather than parsing ledger JSON independently.
 
-- [ ] **Step 5: Run adoption and ledger regression tests**
+- [x] **Step 5: Run adoption and ledger regression tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py tests/unit/test_re_v2_protocol_22_ledger.py`
 

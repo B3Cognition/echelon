@@ -469,12 +469,18 @@ class DurableLedger(Generic[LedgerViewT]):
         self.protocol = protocol
 
     def replay(self) -> LedgerViewT:
+        """Replay and return the typed immutable authority projection."""
+        _history, view = self.replay_with_history()
+        return view
+
+    def replay_with_history(self) -> tuple[tuple[LedgerRecord, ...], LedgerViewT]:
+        """Replay once and return both the authenticated envelope and projection."""
         self._validate_parent()
         lock_fd = self._open_lock()
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_SH)
-            _, state = self._read_replay()
-            return state.view()
+            history, state = self._read_replay()
+            return history, state.view()
         except ReV2LedgerError:
             raise
         except OSError as exc:
