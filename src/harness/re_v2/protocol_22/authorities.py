@@ -236,7 +236,7 @@ def validate_installed_authorities(
                 )
                 add(
                     "agent_contract",
-                    "echelon.re-baseliner",
+                    _agent_contract_id(entry.producer_family),
                     renderer.agent_contract_hash,
                 )
                 for schema in renderer.response_schemas:
@@ -270,6 +270,16 @@ def validate_installed_authorities(
                 )
             )
     return tuple(mismatches)
+
+
+def _agent_contract_id(producer_family: str) -> str:
+    if producer_family == "compact-baseline":
+        return "echelon.re-baseliner"
+    if producer_family == "compact-deepening":
+        return "echelon.re-deepener"
+    raise Protocol22AuthorityError(
+        f"provider-backed producer has no agent authority: {producer_family}"
+    )
 
 
 __all__ = (

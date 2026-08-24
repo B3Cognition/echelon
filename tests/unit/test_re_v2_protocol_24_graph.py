@@ -14,6 +14,7 @@ from harness.re_v2.protocol_22.graph import (
 from harness.re_v2.protocol_22.inputs import ValidatedProtocol22Inputs
 from harness.re_v2.protocol_22.model import CatalogReferenceV1, WorkTemplateV2
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError
+from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
 from harness.re_v2.protocol_24.graph import (
     build_protocol_24_graph,
     validate_protocol_24_graph_authority,
@@ -62,10 +63,14 @@ def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
         parent_work,
     ) = _accepted_parent_fixture()
     policy = build_deepening_v1_policy_catalog()
+    executors = build_deepening_executor_catalog(
+        parent_inputs.executor_contract,
+        "sha256:" + "a" * 64,
+    )
     inputs = ValidatedProtocol22Inputs(
         workspace_partition=parent_inputs.workspace_partition,
         artifact_policy=policy,
-        executor_contract=parent_inputs.executor_contract,
+        executor_contract=executors,
         immutable_objects={},
     )
     orders = next(
@@ -172,6 +177,11 @@ def test_graph_preserves_parent_templates_and_limits_l2_to_selection() -> None:
         "source-baseline-root",
     }
     assert len({item.scope.domain_key for item in l2 if item.scope.domain_key}) == 1
+    assert {
+        item.producer_family
+        for item in l2
+        if item.artifact_kind in {"domain-baseline", "source-overview"}
+    } == {"compact-deepening"}
     assert all(
         accepted_parent[item.template_id][0] == item for item in imported
     )

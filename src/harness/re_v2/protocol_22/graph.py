@@ -52,6 +52,7 @@ _PRODUCER_FAMILY = {
 _PRODUCER_ID = {
     family: f"{family}-producer-v1" for family in frozenset(_PRODUCER_FAMILY.values())
 }
+_PRODUCER_ID["compact-deepening"] = "compact-deepening-producer-v1"
 _BASELINE_KINDS = frozenset(_PRODUCER_FAMILY)
 _INVENTORY_KINDS = frozenset(
     {
@@ -813,7 +814,7 @@ def build_work_template_v2(
 ) -> WorkTemplateV2:
     """Build one template from the existing catalog and executor authorities."""
     scope, _partition_id = _identity_for_kind(source, domain, artifact_kind)
-    family = _PRODUCER_FAMILY[artifact_kind]
+    family = _producer_family(layer, artifact_kind)
     policy = policy_for(inputs.artifact_policy, layer, artifact_kind)
     try:
         executor = inputs.executor_contract.entry_for(family)
@@ -904,7 +905,7 @@ def _resolve_contract(
         policy = policy_for(policy_catalog, selected_layer, artifact_kind)
     except (Protocol22PolicyError, AttributeError) as exc:
         raise Protocol22GraphError(str(exc)) from exc
-    family = _PRODUCER_FAMILY[artifact_kind]
+    family = _producer_family(selected_layer, artifact_kind)
     if executor.producer_family != family:
         raise Protocol22GraphError(
             f"executor producer family does not match {artifact_kind}"
@@ -918,13 +919,21 @@ def _resolve_contract(
             f"executor result contract does not match {artifact_kind} policy"
         )
     expected_modes = (
-        {"api", "cli"} if family == "compact-baseline" else {"in_process"}
+        {"api", "cli"}
+        if family in {"compact-baseline", "compact-deepening"}
+        else {"in_process"}
     )
     if executor.execution_mode not in expected_modes:
         raise Protocol22GraphError(
             f"executor mode does not match {artifact_kind} producer family"
         )
     return policy
+
+
+def _producer_family(layer: str, artifact_kind: str) -> str:
+    if layer == "L2" and artifact_kind in {"domain-baseline", "source-overview"}:
+        return "compact-deepening"
+    return _PRODUCER_FAMILY[artifact_kind]
 
 
 def _contracts_for_template(

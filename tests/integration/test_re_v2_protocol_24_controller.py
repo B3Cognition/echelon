@@ -19,6 +19,7 @@ from harness.re_v2.protocol_24.adoption import (
     build_parent_authority_bundle,
     import_parent_acceptance_closure,
 )
+from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
 from harness.re_v2.protocol_24.graph import build_protocol_24_graph
 from harness.re_v2.protocol_24.inputs import (
@@ -73,6 +74,12 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
     parent = _completed_parent(tmp_path)
     bundle, authority_objects = build_parent_authority_bundle(parent)
     policy = build_deepening_v1_policy_catalog()
+    deepener_bytes = b"pinned test deepener authority\n"
+    deepener_hash = content_digest(deepener_bytes)
+    executors = build_deepening_executor_catalog(
+        parent.inputs.executor_contract,
+        deepener_hash,
+    )
     source = parent.inputs.workspace_partition.sources[0]
     domain = source.domains[0]
     base = manifest_v3(run_id="re-child-controller")
@@ -89,7 +96,7 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
             "artifact-policy.json",
         ),
         executor_contract_catalog=CatalogReferenceV1(
-            parent.inputs.executor_contract.identity,
+            executors.identity,
             "executor-contract.json",
         ),
         parent_authority_bundle=CatalogReferenceV1(
@@ -113,10 +120,11 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
     input_set = Protocol24InputSet(
         workspace_partition=parent.inputs.workspace_partition,
         artifact_policy=policy,
-        executor_contract=parent.inputs.executor_contract,
+        executor_contract=executors,
         immutable_objects={
             **dict(parent.inputs.immutable_objects),
             **dict(authority_objects),
+            deepener_hash: deepener_bytes,
         },
         parent_authority_bundle=bundle,
     )
@@ -182,9 +190,20 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
 
 
 def _registry(parent: ValidatedParentV1):
+    from dataclasses import replace
+
     from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 
-    return _registry_from_inputs(parent.inputs)
+    registry = _registry_from_inputs(parent.inputs)
+    return replace(
+        registry,
+        agent_contracts={
+            **dict(registry.agent_contracts),
+            "echelon.re-deepener": content_digest(
+                b"pinned test deepener authority\n"
+            ),
+        },
+    )
 
 
 @pytest.mark.integration

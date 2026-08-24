@@ -400,11 +400,11 @@ git commit -m "feat(re-v2): compose L2 with shared controller"
 
 Assert selected evidence comes only from the immutable snapshot; omitted/debt descriptors are exact; domain/source context bounds are enforced; source roots bind exact selected domains; exact L1 claim/evidence duplicates are rejected; insufficient evidence becomes unknown; accepted L2 remains unaudited.
 
-- [ ] **Step 2: Write failing Prosaic authority tests**
+- [x] **Step 2: Write failing Prosaic authority tests**
 
 Assert frontmatter includes `model_tier: strong`, `effort: high`, write-only tools, neutral provider metadata, and that the exact inspected bytes enter the executor catalog without provider-name branching.
 
-- [ ] **Step 3: Run artifact/Prosaic tests and confirm RED**
+- [x] **Step 3: Run artifact/Prosaic tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_artifacts.py tests/unit/test_re_v2_protocol_24_prosaic.py`
 
@@ -414,7 +414,7 @@ Expected: failures for missing L2 policy/role integration.
 
 Add additive layer-policy branches and producer registry entries outside pinned authority files. Supply L2 context/policy to the unchanged provider executor. Reuse `CompactCertificationAssessmentV2`, `CertificationReceiptV2`, `CandidateAssessmentReceiptV1`, and `ArtifactAcceptanceReceiptV2`.
 
-- [ ] **Step 5: Add and load the neutral deepener role**
+- [x] **Step 5: Add and load the neutral deepener role**
 
 The prose accepts only the pinned context and writes only `baseline.json`; it never discovers source files, invokes tools outside the candidate workspace, emits provider-specific controls, performs semantic audit, or requests repair.
 
