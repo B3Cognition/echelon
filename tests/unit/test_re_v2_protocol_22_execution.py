@@ -17,6 +17,7 @@ from harness.re_v2.protocol_22.baseline import (
     CompactCandidateError,
     parse_authorial_candidate,
 )
+from harness.re_v2.protocol_22.cli_provider import SquadCliBaselineExecutor
 from harness.re_v2.protocol_22.execution import (
     CandidateInventoryV1,
     Committed,
@@ -55,6 +56,7 @@ from harness.re_v2.protocol_22.response_schemas import (
     canonical_response_schema_bytes,
 )
 from harness.re_v2.run_store import ReV2Paths
+from harness.squad_provider import SquadAgentResult
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.unit.test_re_v2_protocol_22_executors import _registry
 from tests.unit.test_re_v2_protocol_22_graph import _fixture, _template
@@ -549,6 +551,94 @@ def test_provider_capture_persists_regular_candidate_stdout_usage_and_closure(
         assert captured.capture.provider_name == "codex"
         assert captured.capture.resolved_model_revision == "gpt-5.6-codex"
         assert closure.provider_envelope is None
+
+
+def test_protocol_24_l2_item_reuses_cli_execution_and_candidate_capture(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    baseline_item, dependencies = _provider_dependencies("cli")
+    l2_key = replace(
+        baseline_item.output_key,
+        layer="L2",
+    )
+    l2_item = replace(
+        baseline_item,
+        template_id=digest("selective-deepening-template"),
+        goal_id="selective-deepening",
+        output_key=l2_key,
+    )
+
+    prepared = store.prepare_execution(
+        l2_item,
+        "initial_generation",
+        dependencies,
+    )
+    payload = b'{"schema_version":1,"surfaces":{},"unknowns":[]}'
+    candidate_root = _candidate_root(tmp_path, None)
+    calls: list[dict[str, object]] = []
+
+    class _WritingProvider:
+        def exec_agent(
+            self,
+            project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            Path(project_root, "baseline.json").write_bytes(payload)
+            calls.append({"prompt": prompt, **kwargs})
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output=(
+                    "echelon_result:\n"
+                    "  verdict: DONE\n"
+                    "  state_updates: {}\n"
+                ),
+                duration_ms=25,
+                timed_out=False,
+                token_usage=12,
+                token_usage_details={
+                    "input_tokens": 8,
+                    "cached_input_tokens": 2,
+                    "output_tokens": 4,
+                    "reasoning_output_tokens": 1,
+                    "total_tokens": 12,
+                },
+                provider_name="codex",
+                model_name="gpt-5.6-codex",
+                stderr="",
+            )
+
+    raw_result = SquadCliBaselineExecutor(
+        dependencies.executor,
+        provider=_WritingProvider(),  # type: ignore[arg-type]
+    ).execute(
+        prepared.execution_input,
+        dependencies.agent_bytes,
+        dependencies.context_bytes,
+        dependencies.response_schema_bytes,
+        prepared.reservation,
+        candidate_root,
+        10**12,
+    )
+    captured = store.capture_provider_result(
+        prepared,
+        candidate_root,
+        raw_result,
+    )
+    committed = store.commit_capture(captured)
+    candidate = store.persist_candidate(committed)
+    inventory = committed.closure.candidate_inventory
+
+    assert candidate.work_item_id == l2_item.work_item_id
+    assert inventory is not None
+    assert inventory.entries[0].relative_path == "baseline.json"
+    assert inventory.entries[0].content_hash == content_digest(payload)
+    assert candidate.candidate_inventory_hash == inventory.identity
+    assert committed.closure.capture.provider_name == "codex"
+    assert calls[0]["allow_result_repair"] is False
+    assert calls[0]["strict_result_envelope"] is True
 
 
 def test_cli_capture_preserves_missing_provider_observation_as_unavailable(

@@ -31,16 +31,16 @@ from .schema import (
 )
 
 
-GoalV2 = Literal["baseline", "inventory"]
-LayerV2 = Literal["L0", "L1"]
+GoalV2 = Literal["baseline", "inventory", "selective-deepening"]
+LayerV2 = Literal["L0", "L1", "L2"]
 AttemptKindV2 = Literal[
     "initial_generation",
     "result_contract_retry",
     "artifact_contract_retry",
 ]
 
-_GOALS = frozenset({"baseline", "inventory"})
-_LAYERS = frozenset({"L0", "L1"})
+_GOALS = frozenset({"baseline", "inventory", "selective-deepening"})
+_LAYERS = frozenset({"L0", "L1", "L2"})
 _ATTEMPT_KINDS = frozenset(
     {"initial_generation", "result_contract_retry", "artifact_contract_retry"}
 )
@@ -70,7 +70,7 @@ _ARTIFACT_LAYERS = {
     "domain-evidence-pack": "L0",
     "domain-context-bundle": "L1",
     "source-overview-context-bundle": "L1",
-    "domain-baseline": "L1",
+    "domain-baseline": frozenset({"L1", "L2"}),
     "source-overview": "L1",
     "source-baseline-root": "L1",
 }
@@ -208,9 +208,13 @@ def _validate_scope_for_artifact(scope: ArtifactScope, artifact_kind: str) -> No
 
 def _validate_artifact_layer(artifact_kind: str, layer: str) -> None:
     expected = _ARTIFACT_LAYERS.get(artifact_kind)
-    if expected is not None and layer != expected:
+    if isinstance(expected, str) and layer != expected:
         raise Protocol22SchemaError(
             f"{artifact_kind} requires layer {expected}, not {layer}"
+        )
+    if isinstance(expected, frozenset) and layer not in expected:
+        raise Protocol22SchemaError(
+            f"{artifact_kind} requires one of layers {sorted(expected)}, not {layer}"
         )
 
 
