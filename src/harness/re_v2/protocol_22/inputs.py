@@ -135,6 +135,42 @@ def create_protocol_22_run_store(
             f"manifest run_id {manifest.run_id!r} does not match run directory {run_dir.name!r}"
         )
     prepared = _prepare_inputs(manifest, inputs)
+    return _publish_immutable_run_inputs(
+        run_dir,
+        manifest,
+        inputs.immutable_objects,
+        (
+            (
+                "workspace_partition",
+                manifest.workspace_partition_catalog,
+                prepared.workspace_payload,
+            ),
+            (
+                "artifact_policy",
+                manifest.artifact_policy_catalog,
+                prepared.artifact_policy_payload,
+            ),
+            (
+                "executor_contract",
+                manifest.executor_contract_catalog,
+                prepared.executor_payload,
+            ),
+        ),
+        fault_hook,
+        protocol_label="protocol-2.2",
+    )
+
+
+def _publish_immutable_run_inputs(
+    run_dir: Path,
+    manifest: object,
+    immutable_objects: Mapping[str, bytes],
+    catalogs: tuple[tuple[str, CatalogReferenceV1, bytes], ...],
+    fault_hook: FaultHook | None,
+    *,
+    protocol_label: str,
+) -> ReV2Paths:
+    """Shared no-clobber publication primitive with the manifest linked last."""
     _ensure_run_directory(run_dir)
     paths = ReV2Paths.for_run(run_dir)
     if paths.root.exists() or paths.root.is_symlink():
@@ -155,7 +191,7 @@ def create_protocol_22_run_store(
 
         try:
             object_store = ObjectStore(paths.objects)
-            for object_hash, payload in inputs.immutable_objects.items():
+            for object_hash, payload in immutable_objects.items():
                 published = object_store.put_blob(payload)
                 if published != object_hash:
                     raise Protocol22InputStoreError(
@@ -164,28 +200,11 @@ def create_protocol_22_run_store(
                 _fault(fault_hook, f"object_published:{object_hash}")
         except ReV2LedgerError as exc:
             raise Protocol22InputStoreError(
-                f"cannot publish protocol-2.2 immutable object: {exc}"
+                f"cannot publish {protocol_label} immutable object: {exc}"
             ) from exc
         _fsync_directory(paths.objects / "sha256")
         _fsync_directory(paths.objects)
 
-        catalogs = (
-            (
-                "workspace_partition",
-                manifest.workspace_partition_catalog,
-                prepared.workspace_payload,
-            ),
-            (
-                "artifact_policy",
-                manifest.artifact_policy_catalog,
-                prepared.artifact_policy_payload,
-            ),
-            (
-                "executor_contract",
-                manifest.executor_contract_catalog,
-                prepared.executor_payload,
-            ),
-        )
         for name, reference, payload in catalogs:
             destination = _prepare_input_destination(paths.inputs, reference)
             _write_new_file(destination, payload, mode=0o400)
@@ -199,7 +218,7 @@ def create_protocol_22_run_store(
         raise
     except OSError as exc:
         raise Protocol22InputStoreError(
-            f"cannot publish immutable protocol-2.2 run inputs: {exc}"
+            f"cannot publish immutable {protocol_label} run inputs: {exc}"
         ) from exc
 
 
@@ -557,10 +576,13 @@ def _read_regular_beneath(root: Path, relative: str, label: str) -> bytes:
 
 def _publish_manifest_last(
     paths: ReV2Paths,
-    manifest: RunManifestV2,
+    manifest: object,
     fault_hook: FaultHook | None,
 ) -> None:
-    payload = canonical_json_bytes(manifest.to_json_dict())
+    to_json_dict = getattr(manifest, "to_json_dict", None)
+    if not callable(to_json_dict):
+        raise Protocol22InputStoreError("manifest has no canonical JSON contract")
+    payload = canonical_json_bytes(to_json_dict())
     temporary: Path | None = None
     try:
         descriptor, name = tempfile.mkstemp(

@@ -289,31 +289,31 @@ git commit -m "feat(re-v2): adopt certified parent authority"
 - Produces: `Protocol24InputSet`, `ValidatedProtocol24Inputs`, `create_protocol_24_run_store`, and `load_protocol_24_inputs`.
 - Reuses: one extracted manifest-last publication primitive shared with `create_protocol_22_run_store`.
 
-- [ ] **Step 1: Write failing manifest-last and fault-boundary tests**
+- [x] **Step 1: Write failing manifest-last and fault-boundary tests**
 
 Assert objects/catalogs precede the manifest, existing files are no-clobber, incomplete stores are detected, symlinks are rejected, and every fault hook leaves either no manifest or a fully loadable immutable input set.
 
-- [ ] **Step 2: Run input tests and confirm RED**
+- [x] **Step 2: Run input tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_inputs.py`
 
 Expected: collection fails because schema-3 input publication is absent.
 
-- [ ] **Step 3: Extract the schema-neutral publication helper**
+- [x] **Step 3: Extract the schema-neutral publication helper**
 
 Keep protocol-2.2 public APIs and fault labels stable. The helper accepts prepared named catalog payloads, immutable blobs, and canonical manifest bytes, and performs the existing directory creation, object publication, new-file writes, fsyncs, and manifest-last link.
 
-- [ ] **Step 4: Implement schema-3 publication/loading**
+- [x] **Step 4: Implement schema-3 publication/loading**
 
 Publish workspace partition, combined artifact policy, executor contract, and parent authority bundle references. Authenticate all four before graph construction or dispatch.
 
-- [ ] **Step 5: Run old/new input tests**
+- [x] **Step 5: Run old/new input tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_inputs.py tests/unit/test_re_v2_protocol_24_inputs.py`
 
 Expected: all pass with unchanged protocol-2.2 fixtures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_22/inputs.py \
