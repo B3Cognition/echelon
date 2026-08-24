@@ -69,6 +69,7 @@ def _l2_inputs(fixture: object) -> ValidatedProtocol22Inputs:
         executor_contract=build_deepening_executor_catalog(
             fixture.inputs.executor_contract,
             digest("deepener-agent"),
+            digest("deepening-implementation"),
         ),
         immutable_objects={},
     )

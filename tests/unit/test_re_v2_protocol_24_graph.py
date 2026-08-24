@@ -66,6 +66,7 @@ def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
     executors = build_deepening_executor_catalog(
         parent_inputs.executor_contract,
         "sha256:" + "a" * 64,
+        "sha256:" + "b" * 64,
     )
     inputs = ValidatedProtocol22Inputs(
         workspace_partition=parent_inputs.workspace_partition,

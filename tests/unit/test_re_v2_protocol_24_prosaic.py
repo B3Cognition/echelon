@@ -10,7 +10,15 @@ from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptL
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.authorities import validate_installed_authorities
 from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
-from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.artifacts import (
+    DEEPENING_IN_PROCESS_ADAPTER_ID,
+    DEEPENING_PRODUCER_FAMILY,
+    DEEPENING_VERIFIER_ID,
+    L2_CONTEXT_PRODUCER_FAMILY,
+    L2_EVIDENCE_PRODUCER_FAMILY,
+    L2_ROOT_PRODUCER_FAMILY,
+    build_deepening_executor_catalog,
+)
 from tests.unit.test_re_v2_protocol_22_inputs import _input_fixture
 from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 
@@ -58,24 +66,64 @@ def test_deepening_executor_reuses_shared_adapter_with_deepener_agent_hash() -> 
     catalog = build_deepening_executor_catalog(
         inherited.executor_contract,
         content_digest(agent_bytes),
+        content_digest(b"deepening implementation"),
     )
 
     baseline = inherited.executor_contract.entry_for("compact-baseline")
     deepening = catalog.entry_for("compact-deepening")
-    assert tuple(
-        entry for entry in catalog.entries if entry.producer_family != "compact-deepening"
-    ) == inherited.executor_contract.entries
+    assert all(entry in catalog.entries for entry in inherited.executor_contract.entries)
+    assert {
+        entry.producer_family
+        for entry in catalog.entries
+        if entry not in inherited.executor_contract.entries
+    } == {
+        DEEPENING_PRODUCER_FAMILY,
+        L2_CONTEXT_PRODUCER_FAMILY,
+        L2_EVIDENCE_PRODUCER_FAMILY,
+        L2_ROOT_PRODUCER_FAMILY,
+    }
     assert deepening == replace(
         baseline,
-        producer_family="compact-deepening",
+        producer_family=DEEPENING_PRODUCER_FAMILY,
+        verifier=replace(
+            baseline.verifier,
+            verifier_id=DEEPENING_VERIFIER_ID,
+            verifier_version="v1",
+            implementation_digest=content_digest(b"deepening implementation"),
+        ),
         request_renderer=replace(
             baseline.request_renderer,
             agent_contract_hash=content_digest(agent_bytes),
         ),
     )
+    deterministic = tuple(
+        catalog.entry_for(family)
+        for family in (
+            L2_CONTEXT_PRODUCER_FAMILY,
+            L2_EVIDENCE_PRODUCER_FAMILY,
+            L2_ROOT_PRODUCER_FAMILY,
+        )
+    )
+    assert all(
+        entry.adapter_id == DEEPENING_IN_PROCESS_ADAPTER_ID
+        and entry.executor_implementation_digest
+        == content_digest(b"deepening implementation")
+        and entry.verifier == deepening.verifier
+        for entry in deterministic
+    )
     registry = _registry_from_inputs(inherited)
     registry = replace(
         registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            DEEPENING_IN_PROCESS_ADAPTER_ID: content_digest(
+                b"deepening implementation"
+            ),
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            DEEPENING_VERIFIER_ID: content_digest(b"deepening implementation"),
+        },
         agent_contracts={
             **dict(registry.agent_contracts),
             "echelon.re-deepener": content_digest(agent_bytes),
@@ -114,4 +162,3 @@ def test_installed_loader_uses_normal_subagent_inspection(
 
     assert loaded is not None
     assert loaded.frontmatter == artifact.frontmatter
-

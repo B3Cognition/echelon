@@ -53,6 +53,9 @@ _PRODUCER_ID = {
     family: f"{family}-producer-v1" for family in frozenset(_PRODUCER_FAMILY.values())
 }
 _PRODUCER_ID["compact-deepening"] = "compact-deepening-producer-v1"
+_PRODUCER_ID["targeted-evidence-pack"] = "targeted-evidence-pack-producer-v1"
+_PRODUCER_ID["deepening-context-bundle"] = "deepening-context-bundle-producer-v1"
+_PRODUCER_ID["deepening-source-root"] = "deepening-source-root-producer-v1"
 _BASELINE_KINDS = frozenset(_PRODUCER_FAMILY)
 _INVENTORY_KINDS = frozenset(
     {
@@ -931,8 +934,18 @@ def _resolve_contract(
 
 
 def _producer_family(layer: str, artifact_kind: str) -> str:
-    if layer == "L2" and artifact_kind in {"domain-baseline", "source-overview"}:
-        return "compact-deepening"
+    if layer == "L2":
+        if artifact_kind in {"domain-baseline", "source-overview"}:
+            return "compact-deepening"
+        if artifact_kind == "domain-evidence-pack":
+            return "targeted-evidence-pack"
+        if artifact_kind in {
+            "domain-context-bundle",
+            "source-overview-context-bundle",
+        }:
+            return "deepening-context-bundle"
+        if artifact_kind == "source-baseline-root":
+            return "deepening-source-root"
     return _PRODUCER_FAMILY[artifact_kind]
 
 

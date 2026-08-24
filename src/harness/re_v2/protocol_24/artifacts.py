@@ -73,6 +73,11 @@ from harness.re_v2.protocol_22.schema import (
 
 DEEPENER_AGENT_ID = "echelon.re-deepener"
 DEEPENING_PRODUCER_FAMILY = "compact-deepening"
+DEEPENING_IN_PROCESS_ADAPTER_ID = "re-v2-in-process-deepening-v1"
+DEEPENING_VERIFIER_ID = "deepening-verifier-v1"
+L2_EVIDENCE_PRODUCER_FAMILY = "targeted-evidence-pack"
+L2_CONTEXT_PRODUCER_FAMILY = "deepening-context-bundle"
+L2_ROOT_PRODUCER_FAMILY = "deepening-source-root"
 _BASELINE_KINDS = frozenset({"domain-baseline", "source-overview"})
 
 
@@ -329,6 +334,7 @@ class L2CompactBaselineArtifactV1:
 def build_deepening_executor_catalog(
     inherited: ExecutorContractCatalogV1,
     deepener_agent_hash: str,
+    deepening_implementation_digest: str,
 ) -> ExecutorContractCatalogV1:
     """Add one L2 role binding while preserving the shared provider contract."""
     if not isinstance(inherited, ExecutorContractCatalogV1):
@@ -336,24 +342,50 @@ def build_deepening_executor_catalog(
             "deepening executor construction requires an executor catalog"
         )
     digest_value(deepener_agent_hash, "deepener_agent_hash")
+    implementation_digest = digest_value(
+        deepening_implementation_digest,
+        "deepening_implementation_digest",
+    )
     baseline = inherited.entry_for("compact-baseline")
     if baseline.request_renderer is None:
         raise Protocol22ExecutorError(
             "compact baseline executor has no shared request renderer"
         )
+    verifier = replace(
+        baseline.verifier,
+        verifier_id=DEEPENING_VERIFIER_ID,
+        verifier_version="v1",
+        implementation_digest=implementation_digest,
+    )
     deepening = replace(
         baseline,
         producer_family=DEEPENING_PRODUCER_FAMILY,
+        verifier=verifier,
         request_renderer=replace(
             baseline.request_renderer,
             agent_contract_hash=deepener_agent_hash,
         ),
     )
+    deterministic = []
+    for inherited_family, l2_family in (
+        ("evidence-pack", L2_EVIDENCE_PRODUCER_FAMILY),
+        ("context-bundle", L2_CONTEXT_PRODUCER_FAMILY),
+        ("source-baseline-root", L2_ROOT_PRODUCER_FAMILY),
+    ):
+        deterministic.append(
+            replace(
+                inherited.entry_for(inherited_family),
+                producer_family=l2_family,
+                adapter_id=DEEPENING_IN_PROCESS_ADAPTER_ID,
+                executor_implementation_digest=implementation_digest,
+                verifier=verifier,
+            )
+        )
     return ExecutorContractCatalogV1(
         schema_version=1,
         entries=tuple(
             sorted(
-                (*inherited.entries, deepening),
+                (*inherited.entries, *deterministic, deepening),
                 key=lambda entry: entry.producer_family,
             )
         ),
@@ -772,7 +804,7 @@ def build_l2_source_baseline_root(
         or work_item.output_key.artifact_kind != "source-baseline-root"
         or work_item.output_key.layer != "L2"
         or work_item.goal_id != "selective-deepening"
-        or work_item.producer_family != "source-baseline-root"
+        or work_item.producer_family != L2_ROOT_PRODUCER_FAMILY
         or not isinstance(accepted_inputs, AcceptedDependencySetV2)
         or not isinstance(partition, WorkspacePartitionCatalogV1)
     ):
@@ -843,9 +875,9 @@ def _validate_l2_deterministic_item(
         raise Protocol22CertificationError("L2 deterministic invocation is invalid")
     policy = policy_for(policies, "L2", artifact_kind)
     expected_family = {
-        "domain-evidence-pack": "evidence-pack",
-        "domain-context-bundle": "context-bundle",
-        "source-overview-context-bundle": "context-bundle",
+        "domain-evidence-pack": L2_EVIDENCE_PRODUCER_FAMILY,
+        "domain-context-bundle": L2_CONTEXT_PRODUCER_FAMILY,
+        "source-overview-context-bundle": L2_CONTEXT_PRODUCER_FAMILY,
     }[artifact_kind]
     if (
         work_item.producer_family != expected_family
@@ -1250,6 +1282,11 @@ def _duplicates_lower_layer_claim(
 __all__ = (
     "DEEPENER_AGENT_ID",
     "DEEPENING_PRODUCER_FAMILY",
+    "DEEPENING_IN_PROCESS_ADAPTER_ID",
+    "DEEPENING_VERIFIER_ID",
+    "L2_CONTEXT_PRODUCER_FAMILY",
+    "L2_EVIDENCE_PRODUCER_FAMILY",
+    "L2_ROOT_PRODUCER_FAMILY",
     "L2CompactArtifactEnvelopeV1",
     "L2CompactBaselineArtifactV1",
     "L2SourceBaselineRootV1",

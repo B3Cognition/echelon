@@ -397,6 +397,7 @@ git commit -m "feat(re-v2): compose L2 with shared controller"
 - Produces: deterministic L2 targeted domain evidence/context and selection-relative source context/root using existing artifact value schemas.
 - Produces: installed authority entry for `echelon.re-deepener` loaded by `ProsaicPromptLoader.load_subagent` and canonicalized by `canonical_prosaic_agent_bytes`.
 - Reuses: existing compact response schema, candidate parser, certification receipts, renderer, CLI adapter, reservation calculator, and usage normalizer.
+- Pins: protocol-2.4 deterministic producer and verifier IDs to a digest of the L2 implementation while retaining the inherited shared provider-adapter ID and digest unchanged.
 
 - [x] **Step 1: Write failing L2 artifact/policy tests**
 

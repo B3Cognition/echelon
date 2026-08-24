@@ -34,7 +34,7 @@ layer exists.
 
 All model-backed work continues through neutral Prosaic prose and Echelon's
 existing shared coding-provider path. This design adds no provider adapter,
-adapter ID, model mapping, API transport, credential handling, or
+provider-adapter ID, model mapping, API transport, credential handling, or
 provider-specific RE branch.
 
 ## Context
@@ -252,6 +252,11 @@ executor entry differs only in controller-owned producer policy, pinned
 Prosaic-agent hash, response-schema hash, and verifier authority. Protocol 2.3
 continues through its existing context path. There is no provider-adapter fork
 or adapter version bump.
+
+The new in-process L2 evidence/context/root producers are separate installed
+code and therefore use a protocol-2.4 deterministic executor ID and digest;
+they must not borrow the protocol-2.3 in-process digest. This is authority
+bookkeeping for deterministic Python, not a provider adapter or transport.
 
 ### Frozen protocol-2.3 authority rule
 

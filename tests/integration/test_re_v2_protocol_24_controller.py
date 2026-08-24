@@ -111,6 +111,7 @@ def _child_context(
     executors = build_deepening_executor_catalog(
         parent.inputs.executor_contract,
         deepener_hash,
+        content_digest(b"protocol-2.4 test runtime"),
     )
     source = parent.inputs.workspace_partition.sources[0]
     domain = source.domains[0]
@@ -332,6 +333,18 @@ def _registry(parent: ValidatedParentV1):
     registry = _registry_from_inputs(parent.inputs)
     return replace(
         registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            "re-v2-in-process-deepening-v1": content_digest(
+                b"protocol-2.4 test runtime"
+            ),
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            "deepening-verifier-v1": content_digest(
+                b"protocol-2.4 test runtime"
+            ),
+        },
         agent_contracts={
             **dict(registry.agent_contracts),
             "echelon.re-deepener": content_digest(
