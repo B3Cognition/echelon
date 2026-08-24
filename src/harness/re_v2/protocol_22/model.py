@@ -67,12 +67,12 @@ _ARTIFACT_LAYERS = {
     "source-partition": "L0",
     "domain-inventory": "L0",
     "source-evidence-pack": "L0",
-    "domain-evidence-pack": "L0",
-    "domain-context-bundle": "L1",
-    "source-overview-context-bundle": "L1",
+    "domain-evidence-pack": frozenset({"L0", "L2"}),
+    "domain-context-bundle": frozenset({"L1", "L2"}),
+    "source-overview-context-bundle": frozenset({"L1", "L2"}),
     "domain-baseline": frozenset({"L1", "L2"}),
-    "source-overview": "L1",
-    "source-baseline-root": "L1",
+    "source-overview": frozenset({"L1", "L2"}),
+    "source-baseline-root": frozenset({"L1", "L2"}),
 }
 
 

@@ -14,6 +14,7 @@ from .inputs import Protocol22InputSet, ValidatedProtocol22Inputs
 from .model import (
     ArtifactKeyV2,
     ArtifactScope,
+    BudgetPolicyV2,
     RunManifestV2,
     WorkItemV2,
     WorkTemplateV2,
@@ -147,6 +148,16 @@ class PlanningBudgetV2(Protocol):
         raise NotImplementedError
 
 
+class PlanningGraphV2(Protocol):
+    @property
+    def templates(self) -> tuple[WorkTemplateV2, ...]:
+        raise NotImplementedError
+
+    @property
+    def inputs(self) -> ValidatedProtocol22Inputs | Protocol22InputSet:
+        raise NotImplementedError
+
+
 PlanActionV2 = Literal[
     "reuse",
     "generate",
@@ -236,15 +247,10 @@ class Protocol22Graph:
     CATALOG_HASH_KEYS: ClassVar[frozenset[str]] = _CATALOG_HASH_KEYS
 
     def __post_init__(self) -> None:
-        if not isinstance(self.templates, (list, tuple)) or any(
-            not isinstance(item, WorkTemplateV2) for item in self.templates
-        ):
-            raise Protocol22GraphError(
-                "Protocol22Graph templates must be schema-2 WorkTemplateV2 values"
-            )
-        templates = tuple(self.templates)
-        if not templates:
-            raise Protocol22GraphError("Protocol22Graph templates must be nonempty")
+        templates = normalize_graph_templates_v2(
+            self.templates,
+            label="Protocol22Graph",
+        )
         if not isinstance(self.requested_goals, (list, tuple)) or tuple(
             self.requested_goals
         ) not in {("baseline",), ("inventory",)}:
@@ -285,34 +291,21 @@ class Protocol22Graph:
                         f"private inputs {label} catalog hash does not match graph authority"
                     )
 
-        by_id: dict[str, WorkTemplateV2] = {}
-        logical_outputs: dict[tuple[str, str, str], str] = {}
-        for item in templates:
-            template_id = item.template_id
-            if template_id in by_id:
-                raise Protocol22GraphError(f"duplicate template ID: {template_id}")
-            by_id[template_id] = item
-            slot = (item.scope.identity, item.artifact_kind, item.layer)
-            if slot in logical_outputs:
-                raise Protocol22GraphError(
-                    "duplicate logical output (scope, artifact_kind, layer)"
-                )
-            logical_outputs[slot] = template_id
-        for template_id, item in by_id.items():
-            for dependency_id in item.required_template_ids:
-                if dependency_id not in by_id:
-                    raise Protocol22GraphError(
-                        f"template {template_id} has missing dependency {dependency_id}"
-                    )
-        _topological_order(by_id)
-        canonical = tuple(sorted(templates, key=_template_order_key))
-        object.__setattr__(self, "templates", canonical)
+        object.__setattr__(self, "templates", templates)
         object.__setattr__(self, "requested_goals", goals)
         object.__setattr__(
             self,
             "catalog_hashes",
             MappingProxyType(dict(sorted(hashes.items()))),
         )
+
+    @property
+    def inputs(self) -> ValidatedProtocol22Inputs | Protocol22InputSet:
+        if self._inputs is None:
+            raise Protocol22GraphError(
+                "graph has no authenticated immutable inputs for item instantiation"
+            )
+        return self._inputs
 
 
 def build_protocol_22_graph(
@@ -556,9 +549,22 @@ def plan_next_v22(
     authority: PlanningAuthorityV2,
     budget: PlanningBudgetV2,
 ) -> PlanDecisionV2:
-    """Compute the safe unresolved delta without mutating replay authority."""
+    """Compatibility facade retaining protocol-2.2 nominal validation."""
     if not isinstance(graph, Protocol22Graph):
         raise Protocol22GraphError("planning requires Protocol22Graph")
+    return plan_next_v2(graph, authority, budget)
+
+
+def plan_next_v2(
+    graph: PlanningGraphV2,
+    authority: PlanningAuthorityV2,
+    budget: PlanningBudgetV2,
+) -> PlanDecisionV2:
+    """Compute a safe unresolved delta over shared schema-2 graph primitives."""
+    templates = normalize_graph_templates_v2(
+        getattr(graph, "templates", None),
+        label="planning graph",
+    )
     for method in ("artifact_for_key", "work_failure", "executor_failure"):
         if not callable(getattr(authority, method, None)):
             raise Protocol22GraphError(
@@ -570,7 +576,7 @@ def plan_next_v22(
             "planning budget is missing item_attempt_available"
         )
 
-    by_id = {item.template_id: item for item in graph.templates}
+    by_id = {item.template_id: item for item in templates}
     accepted: dict[str, AcceptedArtifactV2] = {}
     states: dict[str, str] = {}
     ready: list[WorkItemV2] = []
@@ -637,11 +643,13 @@ def plan_next_v22(
             dependency_id: accepted[dependency_id]
             for dependency_id in template.required_template_ids
         }
-        if graph._inputs is None:
+        try:
+            graph_inputs = graph.inputs
+        except (AttributeError, Protocol22GraphError) as exc:
             raise Protocol22GraphError(
                 "graph has no authenticated immutable inputs for item instantiation"
-            )
-        item = instantiate_ready_item(template, dependencies, graph._inputs)
+            ) from exc
+        item = instantiate_ready_item(template, dependencies, graph_inputs)
         artifact = authority.artifact_for_key(item.output_key.identity)
         if artifact is not None:
             if not isinstance(artifact, AcceptedArtifactV2):
@@ -754,7 +762,7 @@ def plan_next_v22(
         raise Protocol22GraphError(
             "protocol-2.2 planner did not explain every graph template"
         )
-    order = {item.template_id: index for index, item in enumerate(graph.templates)}
+    order = {item.template_id: index for index, item in enumerate(templates)}
     return PlanDecisionV2(
         ready=tuple(sorted(ready, key=lambda item: order[item.template_id])),
         explanations=explanations,
@@ -769,22 +777,46 @@ def _build_template(
     artifact_kind: str,
     required_template_ids: tuple[str, ...],
 ) -> WorkTemplateV2:
+    return build_work_template_v2(
+        goal_id=manifest.requested_goals[0],
+        budget=manifest.initial_budget_policy,
+        inputs=inputs,
+        source=source,
+        domain=domain,
+        artifact_kind=artifact_kind,
+        layer="L0" if artifact_kind in _INVENTORY_KINDS else "L1",
+        required_template_ids=required_template_ids,
+    )
+
+
+def build_work_template_v2(
+    *,
+    goal_id: str,
+    budget: BudgetPolicyV2,
+    inputs: ValidatedProtocol22Inputs | Protocol22InputSet,
+    source: SourceDescriptorV1,
+    domain: DomainDescriptorV1 | None,
+    artifact_kind: str,
+    layer: str,
+    required_template_ids: tuple[str, ...],
+) -> WorkTemplateV2:
+    """Build one template from the existing catalog and executor authorities."""
     scope, _partition_id = _identity_for_kind(source, domain, artifact_kind)
     family = _PRODUCER_FAMILY[artifact_kind]
-    policy = policy_for(
-        inputs.artifact_policy,
-        "L0" if artifact_kind in _INVENTORY_KINDS else "L1",
-        artifact_kind,
-    )
+    policy = policy_for(inputs.artifact_policy, layer, artifact_kind)
     try:
         executor = inputs.executor_contract.entry_for(family)
     except Protocol22ExecutorError as exc:
         raise Protocol22GraphError(str(exc)) from exc
-    _resolve_contract(artifact_kind, inputs.artifact_policy, executor)
-    budget = manifest.initial_budget_policy
+    _resolve_contract(
+        artifact_kind,
+        inputs.artifact_policy,
+        executor,
+        layer=layer,
+    )
     return WorkTemplateV2(
         identity_schema_version=2,
-        goal_id=manifest.requested_goals[0],
+        goal_id=goal_id,
         scope=scope,
         artifact_kind=artifact_kind,
         layer=policy.layer,
@@ -851,10 +883,14 @@ def _resolve_contract(
     artifact_kind: str,
     policy_catalog: object,
     executor: ExecutorContractEntryV1,
+    *,
+    layer: str | None = None,
 ) -> ArtifactPolicyEntryV1:
-    layer = "L0" if artifact_kind in _INVENTORY_KINDS else "L1"
+    selected_layer = layer or (
+        "L0" if artifact_kind in _INVENTORY_KINDS else "L1"
+    )
     try:
-        policy = policy_for(policy_catalog, layer, artifact_kind)
+        policy = policy_for(policy_catalog, selected_layer, artifact_kind)
     except (Protocol22PolicyError, AttributeError) as exc:
         raise Protocol22GraphError(str(exc)) from exc
     family = _PRODUCER_FAMILY[artifact_kind]
@@ -950,6 +986,44 @@ def _template_order_key(item: WorkTemplateV2) -> tuple[object, ...]:
     )
 
 
+def normalize_graph_templates_v2(
+    templates: object,
+    *,
+    label: str,
+) -> tuple[WorkTemplateV2, ...]:
+    """Validate and canonicalize the shared schema-2 template graph."""
+    if not isinstance(templates, (list, tuple)) or any(
+        not isinstance(item, WorkTemplateV2) for item in templates
+    ):
+        raise Protocol22GraphError(
+            f"{label} templates must be schema-2 WorkTemplateV2 values"
+        )
+    values = tuple(templates)
+    if not values:
+        raise Protocol22GraphError(f"{label} templates must be nonempty")
+    by_id: dict[str, WorkTemplateV2] = {}
+    logical_outputs: dict[tuple[str, str, str], str] = {}
+    for item in values:
+        template_id = item.template_id
+        if template_id in by_id:
+            raise Protocol22GraphError(f"duplicate template ID: {template_id}")
+        by_id[template_id] = item
+        slot = (item.scope.identity, item.artifact_kind, item.layer)
+        if slot in logical_outputs:
+            raise Protocol22GraphError(
+                "duplicate logical output (scope, artifact_kind, layer)"
+            )
+        logical_outputs[slot] = template_id
+    for template_id, item in by_id.items():
+        for dependency_id in item.required_template_ids:
+            if dependency_id not in by_id:
+                raise Protocol22GraphError(
+                    f"template {template_id} has missing dependency {dependency_id}"
+                )
+    _topological_order(by_id)
+    return tuple(sorted(values, key=_template_order_key))
+
+
 def _topological_order(
     by_id: Mapping[str, WorkTemplateV2],
 ) -> tuple[str, ...]:
@@ -998,10 +1072,14 @@ __all__ = (
     "PlanExplanationV2",
     "PlanningAuthorityV2",
     "PlanningBudgetV2",
+    "PlanningGraphV2",
     "Protocol22Graph",
     "Protocol22GraphError",
     "WorkFailureStateV2",
     "build_protocol_22_graph",
+    "build_work_template_v2",
     "instantiate_ready_item",
+    "normalize_graph_templates_v2",
+    "plan_next_v2",
     "plan_next_v22",
 )

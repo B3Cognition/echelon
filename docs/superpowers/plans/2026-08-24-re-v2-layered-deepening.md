@@ -177,11 +177,11 @@ git commit -m "feat(re-v2): add protocol 2.4 manifest authority"
 - Produces: `Protocol24Graph` and `build_protocol_24_graph(manifest, inputs, accepted_parent) -> Protocol24Graph` using existing `ArtifactScope`, `WorkTemplateV2`, and `WorkItemV2` identities.
 - Produces: `plan_next_v2(graph, authority, budget) -> PlanDecisionV2`; `plan_next_v22` remains a compatibility facade.
 
-- [ ] **Step 1: Write failing policy tests for exact L2 slots and limits**
+- [x] **Step 1: Write failing policy tests for exact L2 slots and limits**
 
 Assert the combined catalog includes inherited hashes unchanged and L2 limits of 160 KiB/163,840 tokens for domain context, 128 KiB/131,072 tokens for source context, and 64 KiB authorial JSON for both provider artifacts.
 
-- [ ] **Step 2: Write failing graph tests for selected closure**
+- [x] **Step 2: Write failing graph tests for selected closure**
 
 ```python
 def test_domain_selection_plans_only_selected_l2_delta() -> None:
@@ -193,27 +193,27 @@ def test_domain_selection_plans_only_selected_l2_delta() -> None:
 
 Also assert imported L0/L1 template/work identities remain exact, unrelated domains are absent from required outputs, source roots are selection-relative, L3/L4 are rejected, and duplicate exact claims cannot be represented as new dependencies.
 
-- [ ] **Step 3: Run policy/graph tests and confirm RED**
+- [x] **Step 3: Run policy/graph tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_policies.py tests/unit/test_re_v2_protocol_24_graph.py`
 
 Expected: failure because protocol-2.4 catalog/graph builders are absent.
 
-- [ ] **Step 4: Generalize shared value validation additively**
+- [x] **Step 4: Generalize shared value validation additively**
 
 Permit L2 only for the registered artifact kinds. Refactor policy validation to key by `(layer, artifact_kind)` while preserving every L0/L1 entry byte. Extract the body of `plan_next_v22` into `plan_next_v2` against a structural graph interface; keep `plan_next_v22`'s existing type/error behavior before delegation.
 
-- [ ] **Step 5: Implement the combined catalog and selected graph**
+- [x] **Step 5: Implement the combined catalog and selected graph**
 
 The graph includes exact imported prerequisite templates with their original `inventory`/`baseline` goals and adds only selected L2 templates with `selective-deepening`. Dependencies bind accepted parent artifact hashes through `instantiate_work_item_v2`; accepted exact keys plan as `reuse`.
 
-- [ ] **Step 6: Run old and new policy/graph matrices**
+- [x] **Step 6: Run old and new policy/graph matrices**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_model.py tests/unit/test_re_v2_protocol_22_policies.py tests/unit/test_re_v2_protocol_22_graph.py tests/unit/test_re_v2_protocol_24_policies.py tests/unit/test_re_v2_protocol_24_graph.py`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_22/model.py \

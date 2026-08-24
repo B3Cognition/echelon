@@ -82,20 +82,37 @@ EXPECTED_POLICY_SLOTS = frozenset(
         ("L1", "source-baseline-root"),
     }
 )
+DEEPENING_POLICY_SLOTS = frozenset(
+    {
+        *EXPECTED_POLICY_SLOTS,
+        ("L2", "domain-evidence-pack"),
+        ("L2", "domain-context-bundle"),
+        ("L2", "domain-baseline"),
+        ("L2", "source-overview-context-bundle"),
+        ("L2", "source-overview"),
+        ("L2", "source-baseline-root"),
+    }
+)
 
 _ALL_CLASSIFIER_ROLES = frozenset((*SOURCE_EVIDENCE_ROLES, *DOMAIN_EVIDENCE_ROLES))
 _GLOB_RE = re.compile(r"[A-Za-z0-9*?._/\[\]-]+\Z")
-_POLICY_KIND = {
-    "source-inventory": ("L0", "source-inventory-v1", "empty"),
-    "source-partition": ("L0", "source-partition-v1", "empty"),
-    "domain-inventory": ("L0", "domain-inventory-v1", "empty"),
-    "source-evidence-pack": ("L0", "evidence-pack-v1", "source_evidence"),
-    "domain-evidence-pack": ("L0", "evidence-pack-v1", "domain_evidence"),
-    "domain-context-bundle": ("L1", "context-bundle-v1", "context"),
-    "source-overview-context-bundle": ("L1", "context-bundle-v1", "context"),
-    "domain-baseline": ("L1", "compact-v1", "compact"),
-    "source-overview": ("L1", "compact-v1", "compact"),
-    "source-baseline-root": ("L1", "source-baseline-root-v1", "empty"),
+_POLICY_SLOT = {
+    ("L0", "source-inventory"): ("source-inventory-v1", "empty"),
+    ("L0", "source-partition"): ("source-partition-v1", "empty"),
+    ("L0", "domain-inventory"): ("domain-inventory-v1", "empty"),
+    ("L0", "source-evidence-pack"): ("evidence-pack-v1", "source_evidence"),
+    ("L0", "domain-evidence-pack"): ("evidence-pack-v1", "domain_evidence"),
+    ("L1", "domain-context-bundle"): ("context-bundle-v1", "context"),
+    ("L1", "source-overview-context-bundle"): ("context-bundle-v1", "context"),
+    ("L1", "domain-baseline"): ("compact-v1", "compact"),
+    ("L1", "source-overview"): ("compact-v1", "compact"),
+    ("L1", "source-baseline-root"): ("source-baseline-root-v1", "empty"),
+    ("L2", "domain-evidence-pack"): ("evidence-pack-v1", "domain_evidence"),
+    ("L2", "domain-context-bundle"): ("context-bundle-v1", "context"),
+    ("L2", "domain-baseline"): ("compact-v1", "compact"),
+    ("L2", "source-overview-context-bundle"): ("context-bundle-v1", "context"),
+    ("L2", "source-overview"): ("compact-v1", "compact"),
+    ("L2", "source-baseline-root"): ("source-baseline-root-v1", "empty"),
 }
 
 
@@ -513,7 +530,7 @@ PolicyParameters = (
 @dataclass(frozen=True, slots=True)
 class ArtifactPolicyEntryV1:
     artifact_kind: str
-    layer: Literal["L0", "L1"]
+    layer: Literal["L0", "L1", "L2"]
     content_policy_version: str
     selection_policy_version: str | None
     artifact_schema_version: int
@@ -554,11 +571,14 @@ class ArtifactPolicyEntryV1:
 
     def __post_init__(self) -> None:
         safe_id(self.artifact_kind, "ArtifactPolicyEntryV1.artifact_kind")
-        expected = _POLICY_KIND.get(self.artifact_kind)
+        if not isinstance(self.layer, str):
+            _policy_error("ArtifactPolicyEntryV1.layer must be a string")
+        expected = _POLICY_SLOT.get((self.layer, self.artifact_kind))
         if expected is None:
-            _policy_error(f"unknown artifact policy kind {self.artifact_kind!r}")
-        expected_layer, expected_version, parameter_branch = expected
-        literal(self.layer, expected_layer, "ArtifactPolicyEntryV1.layer")
+            _policy_error(
+                f"unknown artifact policy slot {(self.layer, self.artifact_kind)!r}"
+            )
+        expected_version, parameter_branch = expected
         literal(
             self.content_policy_version,
             expected_version,
@@ -656,9 +676,14 @@ class ArtifactPolicyEntryV1:
         try:
             raw = exact_object(value, frozenset(cls.FIELDS), cls.__name__)
             kind = raw["artifact_kind"]
-            if not isinstance(kind, str) or kind not in _POLICY_KIND:
-                _policy_error(f"unknown artifact policy kind {kind!r}")
-            branch = _POLICY_KIND[kind][2]
+            layer = raw["layer"]
+            if (
+                not isinstance(kind, str)
+                or not isinstance(layer, str)
+                or (layer, kind) not in _POLICY_SLOT
+            ):
+                _policy_error(f"unknown artifact policy slot {(layer, kind)!r}")
+            branch = _POLICY_SLOT[(layer, kind)][1]
             decoder = {
                 "source_evidence": SourceEvidencePackPolicyParametersV1.from_json_dict,
                 "domain_evidence": DomainEvidencePackPolicyParametersV1.from_json_dict,
@@ -692,20 +717,28 @@ class ArtifactPolicyCatalogV1:
         keys = tuple((entry.layer, entry.artifact_kind) for entry in self.entries)
         if keys != tuple(sorted(set(keys))):
             _policy_error("ArtifactPolicyCatalogV1.entries must be sorted and unique")
-        if set(keys) != EXPECTED_POLICY_SLOTS:
+        if frozenset(keys) not in {EXPECTED_POLICY_SLOTS, DEEPENING_POLICY_SLOTS}:
             _policy_error("ArtifactPolicyCatalogV1.entries must equal the exact graph slots")
-        by_kind = {entry.artifact_kind: entry for entry in self.entries}
-        for context_kind, target_kind in (
-            ("domain-context-bundle", "domain-baseline"),
-            ("source-overview-context-bundle", "source-overview"),
-        ):
-            parameters = by_kind[context_kind].policy_parameters
-            assert isinstance(parameters, ContextBundlePolicyParametersV1)
-            expected_hash = content_digest(by_kind[target_kind].to_json_dict())
-            if parameters.target_policy_hash != expected_hash:
-                _policy_error(
-                    f"{context_kind} target_policy_hash does not resolve to {target_kind}"
+        by_slot = {
+            (entry.layer, entry.artifact_kind): entry for entry in self.entries
+        }
+        for layer in ("L1", "L2"):
+            for context_kind, target_kind in (
+                ("domain-context-bundle", "domain-baseline"),
+                ("source-overview-context-bundle", "source-overview"),
+            ):
+                context_entry = by_slot.get((layer, context_kind))
+                if context_entry is None:
+                    continue
+                parameters = context_entry.policy_parameters
+                assert isinstance(parameters, ContextBundlePolicyParametersV1)
+                expected_hash = content_digest(
+                    by_slot[(layer, target_kind)].to_json_dict()
                 )
+                if parameters.target_policy_hash != expected_hash:
+                    _policy_error(
+                        f"{context_kind} target_policy_hash does not resolve to {target_kind}"
+                    )
 
     @property
     def identity(self) -> str:
@@ -886,8 +919,15 @@ def _entry(
     evidence_rule_id: str,
     ownership_rule_id: str,
     minimum_utility_rule_id: str | None = None,
+    layer: str | None = None,
 ) -> ArtifactPolicyEntryV1:
-    layer, content_version, _branch = _POLICY_KIND[artifact_kind]
+    if layer is None:
+        matching = [slot for slot in _POLICY_SLOT if slot[1] == artifact_kind]
+        inherited = [slot for slot in matching if slot[0] in {"L0", "L1"}]
+        if len(inherited) != 1:
+            _policy_error(f"cannot infer policy layer for {artifact_kind!r}")
+        layer = inherited[0][0]
+    content_version, _branch = _POLICY_SLOT[(layer, artifact_kind)]
     return ArtifactPolicyEntryV1(
         artifact_kind=artifact_kind,
         layer=layer,
