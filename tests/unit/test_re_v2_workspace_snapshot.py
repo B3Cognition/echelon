@@ -234,6 +234,32 @@ def test_composite_capture_uses_declared_repositories_not_orchestration_root(
 
 
 @pytest.mark.unit
+def test_composite_capture_sorts_flat_paths_across_directory_siblings(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    repository = _clean_repo(
+        workspace / "repo",
+        {
+            "prefix/inside.py": "inside\n",
+            "prefix-sibling.py": "sibling\n",
+        },
+    )
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        _sources(workspace, repository),
+        tmp_path / "snapshots",
+    )
+    manifest = load_snapshot_manifest(snapshot)
+
+    assert [entry.path for entry in manifest.entries] == [
+        "repo/prefix-sibling.py",
+        "repo/prefix/inside.py",
+    ]
+
+
+@pytest.mark.unit
 def test_composite_capture_materializes_shared_repository_subtrees_once(
     tmp_path: Path,
 ) -> None:
