@@ -21,6 +21,7 @@ from harness.re_v2.protocol_24.adoption import (
 )
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+from harness.re_v2.protocol_24.controller import Protocol24Controller
 from harness.re_v2.protocol_24.graph import build_protocol_24_graph
 from harness.re_v2.protocol_24.inputs import (
     Protocol24InputSet,
@@ -207,12 +208,12 @@ def _registry(parent: ValidatedParentV1):
 
 
 @pytest.mark.integration
-def test_protocol_24_child_composes_with_unchanged_controller_recovery(
+def test_protocol_24_child_composes_with_inherited_controller_recovery(
     tmp_path: Path,
 ) -> None:
     context = _paused_child_context(tmp_path)
 
-    result = Protocol22Controller(context).run_until_stopped()
+    result = Protocol24Controller(context).run_until_stopped()
 
     assert result.status == "paused"
     assert result.ledger is not None
@@ -220,3 +221,14 @@ def test_protocol_24_child_composes_with_unchanged_controller_recovery(
         context.inputs.parent_authority_bundle.artifacts
     )
     assert any(event.type == "artifact_adopted" for event in result.events)
+
+
+@pytest.mark.integration
+def test_protocol_24_controller_is_a_narrow_frozen_controller_extension() -> None:
+    assert issubclass(Protocol24Controller, Protocol22Controller)
+    assert Protocol24Controller.run_until_stopped is Protocol22Controller.run_until_stopped
+    assert Protocol24Controller._execute_provider is Protocol22Controller._execute_provider
+    assert (
+        Protocol24Controller._certify_provider_candidate
+        is not Protocol22Controller._certify_provider_candidate
+    )

@@ -265,9 +265,13 @@ seams.
 Shared canonical value modules may gain schema-3 types or strictly additive L2
 branches only when protocol-2.0-through-2.3 canonical fixtures prove that every
 old input has identical bytes, validation outcome, identity, and behavior. L2
-must not copy the execution kernel into a second controller. If the existing
-registration seams cannot host L2 without changing a pinned protocol-2.3
-authority, implementation stops and this design is revisited.
+must not copy the execution kernel into a second controller. Protocol 2.4 uses
+a thin `Protocol24Controller` subclass because the frozen protocol-2.2
+controller directly invokes an L1-only parser before verifier dispatch. The
+subclass inherits the run loop, recovery, provider invocation, accounting,
+capture, retry, ledger, and terminal behavior unchanged and overrides only the
+provider-candidate parsing/certification transaction. The protocol-2.2
+controller source and installed digests remain byte-for-byte stable.
 
 ### Mandatory execution-seam proof
 
@@ -284,15 +288,15 @@ provider executor and durable candidate-capture path while using:
 - existing reservation and usage normalization;
 - existing capture, inventory, and commit stores;
 - `EventStore` and `DurableLedger`; and
-- no copied code from `Protocol22Controller`, protocol-2.2 recovery, or
-  protocol-2.2 execution.
+- no copied run-loop, provider invocation, recovery, or execution code from
+  `Protocol22Controller`, protocol-2.2 recovery, or protocol-2.2 execution.
 
 A thin protocol-2.4 orchestration state machine may own only new lineage,
-adoption, selected-scope, and L2 transition rules. It may not duplicate provider
-invocation, usage accounting, candidate durability, receipt append/replay, or
-at-most-once dispatch mechanics. If the seam proof cannot meet that boundary,
-implementation pauses for an explicit stable-kernel refactor design; it does
-not solve the problem by forking the protocol-2.2 controller.
+adoption, selected-scope, L2 parsing/certification, and L2 transition rules. It
+may not duplicate the run loop, provider invocation, usage accounting,
+candidate durability, recovery, or at-most-once dispatch mechanics. The narrow
+subclass is not a controller fork: every method except provider-candidate
+parsing/certification is inherited from the frozen controller.
 
 ## Public CLI
 

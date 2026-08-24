@@ -329,6 +329,7 @@ git commit -m "feat(re-v2): publish schema 3 child runs"
 
 **Files:**
 - Create: `src/harness/re_v2/protocol_24/events.py`
+- Create: `src/harness/re_v2/protocol_24/controller.py`
 - Create: `tests/unit/test_re_v2_protocol_24_events.py`
 - Create: `tests/integration/test_re_v2_protocol_24_controller.py`
 - Modify: `src/harness/re_v2/protocol_22/budget.py`
@@ -337,15 +338,15 @@ git commit -m "feat(re-v2): publish schema 3 child runs"
 **Interfaces:**
 - Produces: `PROTOCOL_24_EVENTS`, accepting `artifact_adopted` only after `run_created` and before provider dispatch for that imported work item.
 - Produces: protocol-selectable budget replay that ignores deterministic adoption events and preserves existing accounting.
-- Produces: a protocol-2.4 run context accepted by unchanged `Protocol22Controller` and unchanged `Protocol22ExecutionStore`.
+- Produces: a thin `Protocol24Controller(Protocol22Controller)` that inherits the complete shared run loop and overrides only the L2 provider-candidate parsing/certification transaction; `Protocol22Controller` and `Protocol22ExecutionStore` remain unchanged.
 
 - [x] **Step 1: Write failing adoption-event replay tests**
 
 Assert exact payload fields, canonical bytes, duplicate adoption rejection, adoption-after-dispatch rejection, terminal immutability, and protocol-2.2 rejection of protocol-2.4 event history.
 
-- [ ] **Step 2: Write a failing controller-composition test**
+- [x] **Step 2: Write a failing controller-composition test**
 
-Create a child with imported L0/L1 receipts and one L2 provider item, execute through unchanged `Protocol22Controller`, and assert the shared executor receives exactly one dispatch and the run reaches `run_completed`.
+Create a child with imported L0/L1 receipts and one L2 provider item, execute through `Protocol24Controller`, and assert the inherited shared executor receives exactly one dispatch and the run reaches `run_completed`.
 
 - [x] **Step 3: Run event/controller tests and confirm RED**
 
@@ -357,11 +358,11 @@ Expected: failure because protocol-2.4 replay/context routing is absent.
 
 Delegate common payload canonicalization and replay transitions to `PROTOCOL_22_EVENTS`; handle only `artifact_adopted` in the protocol-2.4 wrapper. Generalize budget/recovery functions to accept the context's selected event protocol while keeping protocol-2.2 defaults exact.
 
-- [ ] **Step 5: Compose the unchanged controller/execution path**
+- [x] **Step 5: Compose the frozen controller/execution path**
 
-Broaden non-pinned recovery/context nominal checks to the authenticated schema-3 inputs and mixed-goal graph. Do not edit `protocol_22/controller.py` or `protocol_22/execution.py`.
+Broaden non-pinned recovery/context nominal checks to the authenticated schema-3 inputs and mixed-goal graph. Add a thin protocol-2.4 subclass overriding only provider candidate parsing/certification. Do not edit `protocol_22/controller.py` or `protocol_22/execution.py`.
 
-- [ ] **Step 6: Run old/new event, budget, recovery, and controller tests**
+- [x] **Step 6: Run old/new event, budget, recovery, and controller tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_events.py tests/unit/test_re_v2_protocol_22_budget.py tests/unit/test_re_v2_protocol_22_recovery.py tests/unit/test_re_v2_protocol_24_events.py tests/integration/test_re_v2_protocol_22_controller.py tests/integration/test_re_v2_protocol_24_controller.py`
 
