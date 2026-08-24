@@ -18,6 +18,7 @@ from harness.re_v2.protocol_22.controller import (
 )
 from harness.re_v2.protocol_22.execution import Committed
 from harness.re_v2.protocol_22.model import WorkItemV2
+from harness.re_v2.protocol_22.materialization import materialize_accepted_l2
 from harness.re_v2.protocol_22.policies import policy_for
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 
@@ -28,8 +29,8 @@ class Protocol24Controller(Protocol22Controller):
     """Inherit the shared run loop; specialize only L2 candidate certification."""
 
     def _materialize_accepted_l1(self) -> None:
-        """Defer projections to the protocol-2.4 layer-aware materializer."""
-        return None
+        """Project only accepted L2 outputs; adopted L1 remains parent authority."""
+        materialize_accepted_l2(self.context, self.fault_hook)
 
     def _certify_provider_candidate(
         self,

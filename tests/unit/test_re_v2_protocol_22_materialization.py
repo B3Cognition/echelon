@@ -11,8 +11,12 @@ from harness.re_v2.protocol_22.controller import Protocol22Controller
 from harness.re_v2.protocol_22.materialization import (
     Protocol22MaterializationError,
     materialize_accepted_l1,
+    materialize_accepted_l2,
     validate_or_repair_materialization,
 )
+from harness.re_v2.protocol_24.artifacts import render_l2_baseline_markdown
+from harness.re_v2.protocol_24.controller import Protocol24Controller
+from tests.integration.test_re_v2_protocol_24_controller import _child_context
 from tests.unit.test_re_v2_protocol_22_controller import _baseline_context
 
 
@@ -36,6 +40,77 @@ def test_controller_materializes_accepted_l1_before_reporting_complete(
     assert tuple(materialized.joinpath("domains", "001-re-src").iterdir())
     assert tuple(materialized.joinpath("overview").iterdir())
     assert tuple(materialized.joinpath("root").iterdir())
+
+
+@pytest.mark.unit
+def test_protocol24_controller_materializes_only_generated_l2_projections(
+    tmp_path: Path,
+) -> None:
+    context, provider = _child_context(tmp_path, paused=False, provider_mode="cli")
+
+    result = Protocol24Controller(context).run_until_stopped()
+
+    assert result.status == "completed"
+    assert provider is not None
+    l2 = context.paths.root / "materialized" / "L2" / "sources" / "api"
+    assert tuple(l2.joinpath("domains", "001-re-src").iterdir())
+    assert tuple(l2.joinpath("overview").iterdir())
+    assert tuple(l2.joinpath("root").iterdir())
+    assert not (context.paths.root / "materialized" / "L1").exists()
+
+
+@pytest.mark.unit
+def test_l2_materialization_reuses_json_markdown_and_exact_root_framework(
+    tmp_path: Path,
+) -> None:
+    context, _provider = _child_context(tmp_path, paused=False, provider_mode="cli")
+    result = Protocol24Controller(context).run_until_stopped()
+    assert result.status == "completed"
+
+    report = materialize_accepted_l2(context)
+
+    assert report.reused_count == 3
+    assert report.rebuilt_count == 0
+    assert all("/materialized/L2/" in path.as_posix() for path in report.paths)
+    for path, artifact_hash in zip(report.paths, report.hashes, strict=True):
+        if path.suffix == ".json":
+            assert content_digest(path.read_bytes()) == artifact_hash
+            continue
+        payload = path.joinpath("baseline.json").read_bytes()
+        assert content_digest(payload) == artifact_hash
+        assert path.joinpath("baseline.md").read_bytes() == (
+            render_l2_baseline_markdown(payload)
+        )
+
+
+@pytest.mark.unit
+def test_corrupt_l2_projection_is_quarantined_and_rebuilt_exactly(
+    tmp_path: Path,
+) -> None:
+    context, _provider = _child_context(tmp_path, paused=False, provider_mode="cli")
+    result = Protocol24Controller(context).run_until_stopped()
+    assert result.status == "completed"
+    initial = materialize_accepted_l2(context)
+    domain, artifact_hash = _projection_by_fragment(initial, "/domains/")
+    markdown = domain / "baseline.md"
+    markdown.chmod(0o600)
+    markdown.write_text("altered\n", encoding="utf-8")
+
+    repaired = validate_or_repair_materialization(
+        context,
+        layers=frozenset({"L2"}),
+    )
+
+    assert repaired.quarantined_count == 1
+    assert repaired.rebuilt_count == 1
+    assert repaired.reused_count == 2
+    assert content_digest(domain.joinpath("baseline.json").read_bytes()) == artifact_hash
+    assert domain.joinpath("baseline.md").read_bytes() == render_l2_baseline_markdown(
+        domain.joinpath("baseline.json").read_bytes()
+    )
+    assert repaired.quarantine_paths[0].joinpath("baseline.md").read_text() == (
+        "altered\n"
+    )
 
 
 @pytest.mark.unit

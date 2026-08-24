@@ -1279,6 +1279,76 @@ def _duplicates_lower_layer_claim(
     )
 
 
+def render_l2_baseline_markdown(artifact_bytes: bytes) -> bytes:
+    """Render an L2 compact artifact without adding semantic authority."""
+    try:
+        artifact = load_canonical_object(
+            artifact_bytes,
+            L2CompactBaselineArtifactV1.from_json_dict,
+        )
+    except Protocol22SchemaError as exc:
+        raise Protocol22CertificationError(
+            f"invalid L2 compact artifact: {exc}"
+        ) from exc
+    title = (
+        "Domain L2 Deepening"
+        if artifact.artifact.artifact_kind == "domain-baseline"
+        else "Source L2 Overview"
+    )
+    lines = [f"# {title}", ""]
+    for name, surface in artifact.surfaces.items():
+        lines.extend((f"## {name.replace('_', ' ').title()}", ""))
+        if surface.status == "not_established":
+            lines.extend(
+                (
+                    f"Not established: `{surface.not_established_reason_code}`.",
+                    "",
+                )
+            )
+            continue
+        for claim in surface.items:
+            statement_lines = claim.statement.split("\n")
+            lines.append(f"- {statement_lines[0]}")
+            lines.extend(f"  {line}" for line in statement_lines[1:])
+            for reference in claim.evidence:
+                lines.append(
+                    "  - Evidence: "
+                    f"`{reference.path}:{reference.start_line}-{reference.end_line}` "
+                    f"(`{reference.evidence_authority_id}`)"
+                )
+        lines.append("")
+    lines.extend(("## Unknowns", ""))
+    if artifact.unknowns:
+        for unknown in artifact.unknowns:
+            question_lines = unknown.question.split("\n")
+            lines.append(f"- {question_lines[0]} (`{unknown.reason_code}`)")
+            lines.extend(f"  {line}" for line in question_lines[1:])
+    else:
+        lines.append("- None recorded.")
+    debt = artifact.depth_debt
+    lines.extend(
+        (
+            "",
+            "## Depth debt",
+            "",
+            f"- Inventory files: {debt.inventory_file_count}",
+            f"- Fully selected files: {debt.fully_selected_file_count}",
+            f"- Partially selected files: {debt.partially_selected_file_count}",
+            f"- Omitted files: {debt.omitted_file_count}",
+            f"- Omitted ranges: {debt.omitted_range_count}",
+            "",
+            "Semantic audit: not run.",
+            "",
+        )
+    )
+    rendered = "\n".join(lines).encode("utf-8")
+    if len(rendered) > 96 * 1024:
+        raise Protocol22CertificationError(
+            "rendered L2 compact baseline exceeds 96 KiB"
+        )
+    return rendered
+
+
 __all__ = (
     "DEEPENER_AGENT_ID",
     "DEEPENING_PRODUCER_FAMILY",
@@ -1298,4 +1368,5 @@ __all__ = (
     "build_l2_source_overview_context_bundle",
     "certify_l2_compact_candidate",
     "parse_l2_authorial_candidate",
+    "render_l2_baseline_markdown",
 )

@@ -508,25 +508,25 @@ git commit -m "feat(cli): add selective RE v2 deepening"
 - Produces: exact human banners `L2 SELECTED SCOPE COMPLETE`, `L2 PAUSED - CONTINUABLE`, and `L2 BLOCKED - REQUESTED OUTPUTS INCOMPLETE`.
 - Produces: additive L2 materialized paths below `materialized/L2` using existing locks/quarantine/publication.
 
-- [ ] **Step 1: Write failing status/materialization tests**
+- [x] **Step 1: Write failing status/materialization tests**
 
 Assert lineage, selection, adopted/generated/reused counts, per-domain state, intentionally unselected counts, selected-domain coverage, attempts/resources, trusted usage, exact next action, no full-quality claim, and byte-identical rebuild/quarantine behavior.
 
-- [ ] **Step 2: Run status/materialization tests and confirm RED**
+- [x] **Step 2: Run status/materialization tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_status.py tests/unit/test_re_v2_protocol_22_materialization.py`
 
 Expected: protocol-2.4 status is unsupported.
 
-- [ ] **Step 3: Extend materialization cases without a second framework**
+- [x] **Step 3: Extend materialization cases without a second framework**
 
 Parameterize registered layer/kind path specifications while retaining exact L1 paths/bytes. Materialize L2 deltas and selection-relative roots only from accepted objects/receipts.
 
-- [ ] **Step 4: Implement protocol-routed status and telemetry**
+- [x] **Step 4: Implement protocol-routed status and telemetry**
 
 Replay immutable manifest/inputs, protocol-2.4 events, ledger, budget, graph, and materialization. Derive all counts; do not persist a status cache.
 
-- [ ] **Step 5: Run old/new status/materialization suites**
+- [x] **Step 5: Run old/new status/materialization suites**
 
 Run: `pytest -q tests/unit/test_re_v2_status.py tests/unit/test_re_v2_protocol_22_status.py tests/unit/test_re_v2_protocol_22_materialization.py tests/unit/test_re_v2_protocol_24_status.py`
 

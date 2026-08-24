@@ -60,10 +60,12 @@ def _completed_parent(
     tmp_path: Path,
     *,
     provider_mode: str = "api",
+    source_domains: dict[str, tuple[str, ...]] | None = None,
 ) -> ValidatedParentV1:
     context, _provider = _baseline_context(
         tmp_path / "parent",
         provider_mode=provider_mode,
+        source_domains=source_domains,
     )
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "completed"
@@ -102,8 +104,13 @@ def _child_context(
     *,
     paused: bool,
     provider_mode: str = "api",
+    source_domains: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[Protocol22RunContext, _ScriptedProvider | None]:
-    parent = _completed_parent(tmp_path, provider_mode=provider_mode)
+    parent = _completed_parent(
+        tmp_path,
+        provider_mode=provider_mode,
+        source_domains=source_domains,
+    )
     bundle, authority_objects = build_parent_authority_bundle(parent)
     policy = build_deepening_v1_policy_catalog()
     deepener_bytes = canonical_prosaic_agent_bytes(_role_artifact())
@@ -206,11 +213,19 @@ def _child_context(
         )
     registry = _registry(parent)
     provider = None if paused else _NovelL2Provider()
-    snapshot_payloads = {
-        (source.source_id, record.source_relative_path): b"print('ok')\n"
-        for source in inputs.workspace_partition.sources
-        for record in source.files
-    }
+    snapshot_payloads = {}
+    for source in inputs.workspace_partition.sources:
+        for record in source.files:
+            fixture_payload = (
+                f"{source.source_id}:{record.source_relative_path.split('/', 1)[0]}\n"
+            ).encode()
+            payload = (
+                fixture_payload
+                if content_digest(fixture_payload) == record.content_hash
+                else b"print('ok')\n"
+            )
+            assert content_digest(payload) == record.content_hash
+            snapshot_payloads[(source.source_id, record.source_relative_path)] = payload
     adopted_payloads = {
         (
             template.scope.source_id,

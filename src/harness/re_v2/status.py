@@ -12,7 +12,7 @@ from .canonical import content_digest
 from .budget import BudgetDecision, evaluate_budget
 from .events import EventRecord, EventStore
 from .ledger import Ledger, LedgerView, ObjectStore
-from .model import RE_V2_SCHEMA_2_PROTOCOLS
+from .model import RE_V2_SCHEMA_2_PROTOCOLS, RE_V2_SCHEMA_3_PROTOCOLS
 from .planner import PlanDecision, WorkGraph, build_initial_inventory_graph, plan_next
 from .projection import rebuild_projection
 from . import publication as publication_store
@@ -63,6 +63,10 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
         if detect_re_engine(run_path) != "v2":
             raise ReV2StatusError(f"RE run is not pinned to v2: {run_path.name}")
         manifest = load_run_manifest(run_path)
+        if getattr(manifest, "engine_protocol_version", None) in RE_V2_SCHEMA_3_PROTOCOLS:
+            from .protocol_24.status import render_protocol_24_status
+
+            return render_protocol_24_status(run_path, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) in RE_V2_SCHEMA_2_PROTOCOLS:
             from .protocol_22.status import render_protocol_22_status
 

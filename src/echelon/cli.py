@@ -12728,6 +12728,9 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         ProviderExecutionDependenciesV1,
     )
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_22.materialization import (
+        validate_or_repair_materialization,
+    )
     from harness.re_v2.protocol_22.model import (
         DeterministicInvocationInputV1,
         DeterministicInvocationV1,
@@ -12921,6 +12924,10 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         producers=MappingProxyType(producers),
         verifiers=MappingProxyType(verifiers),
         snapshot_validator=lambda: validate_source_snapshot(snapshot),
+        materialization_validator=lambda: validate_or_repair_materialization(
+            context_ref["context"],
+            layers=frozenset({"L2"}),
+        ),
     )
     context_ref["context"] = context
     return context
@@ -13271,10 +13278,16 @@ def _run_re_v2_live(context: object) -> None:
         manifest = load_run_manifest(context.paths.root.parent)
         if isinstance(manifest, RunManifestV3):
             from harness.re_v2.protocol_24.controller import Protocol24Controller
+            from harness.re_v2.protocol_24.status import render_protocol_24_status
 
-            result = Protocol24Controller(context).run_until_stopped()
-            print("RE V2 — PROTOCOL 2.4")
-            print(f"state: {result.status}")
+            Protocol24Controller(context).run_until_stopped()
+            print(
+                render_protocol_24_status(
+                    context.paths.root.parent,
+                    context=context,
+                ),
+                end="",
+            )
         else:
             from harness.re_v2.protocol_22.controller import Protocol22Controller
             from harness.re_v2.protocol_22.status import render_protocol_22_status

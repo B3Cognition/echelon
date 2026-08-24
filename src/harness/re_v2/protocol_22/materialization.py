@@ -28,7 +28,10 @@ _DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DIRECTORY_FLAGS = os.O_RDONLY | _DIRECTORY | _CLOEXEC | _NOFOLLOW
-_L1_KINDS = frozenset({"domain-baseline", "source-overview", "source-baseline-root"})
+_PROJECTION_KINDS = frozenset(
+    {"domain-baseline", "source-overview", "source-baseline-root"}
+)
+_PROJECTION_LAYERS = frozenset({"L1", "L2"})
 _KIND_ORDER = {
     "domain-baseline": 0,
     "source-overview": 1,
@@ -84,15 +87,25 @@ def materialize_accepted_l1(
     fault_hook: FaultHook | None = None,
 ) -> MaterializationReportV1:
     """Verify or create every accepted L1 projection from object authority."""
-    return _validate_or_materialize(context, fault_hook)
+    return _validate_or_materialize(context, fault_hook, frozenset({"L1"}))
+
+
+def materialize_accepted_l2(
+    context: Protocol22RunContext,
+    fault_hook: FaultHook | None = None,
+) -> MaterializationReportV1:
+    """Verify or create every accepted L2 projection from object authority."""
+    return _validate_or_materialize(context, fault_hook, frozenset({"L2"}))
 
 
 def validate_or_repair_materialization(
     context: Protocol22RunContext,
     fault_hook: FaultHook | None = None,
+    *,
+    layers: frozenset[str] = frozenset({"L1"}),
 ) -> MaterializationReportV1:
     """Quarantine altered safe projections and rebuild exact accepted bytes."""
-    return _validate_or_materialize(context, fault_hook)
+    return _validate_or_materialize(context, fault_hook, layers)
 
 
 def materialized_path_for(
@@ -101,7 +114,7 @@ def materialized_path_for(
     artifact_key: ArtifactKeyV2,
     artifact_hash: str,
 ) -> Path:
-    """Return the closed run-local path for one accepted L1 projection."""
+    """Return the closed run-local path for one accepted layered projection."""
     if not isinstance(paths, ReV2Paths):
         raise Protocol22MaterializationError("materialized path requires ReV2Paths")
     if not isinstance(partition, WorkspacePartitionCatalogV1):
@@ -111,13 +124,13 @@ def materialized_path_for(
     if not isinstance(artifact_key, ArtifactKeyV2):
         raise Protocol22MaterializationError("materialized path requires ArtifactKeyV2")
     kind = artifact_key.artifact_kind
-    if kind not in _L1_KINDS or artifact_key.layer != "L1":
+    if kind not in _PROJECTION_KINDS or artifact_key.layer not in _PROJECTION_LAYERS:
         raise Protocol22MaterializationError(
-            "only accepted protocol-2.2 L1 artifacts are materialized"
+            "only accepted protocol-2.2/2.4 L1/L2 artifacts are materialized"
         )
     suffix = _digest_hex(artifact_hash)
     source_id = _path_component(artifact_key.scope.source_id, "source ID")
-    root = paths.root / "materialized" / "L1" / "sources" / source_id
+    root = paths.root / "materialized" / artifact_key.layer / "sources" / source_id
     if kind == "source-overview":
         return root / "overview" / suffix
     if kind == "source-baseline-root":
@@ -150,6 +163,7 @@ def materialized_path_for(
 def _validate_or_materialize(
     context: Protocol22RunContext,
     fault_hook: FaultHook | None,
+    layers: frozenset[str],
 ) -> MaterializationReportV1:
     if not isinstance(context, Protocol22RunContext):
         raise Protocol22MaterializationError(
@@ -159,7 +173,11 @@ def _validate_or_materialize(
         raise Protocol22MaterializationError(
             "materialization fault hook must be callable or null"
         )
-    specs = _accepted_projection_specs(context)
+    if not isinstance(layers, frozenset) or not layers or not layers <= _PROJECTION_LAYERS:
+        raise Protocol22MaterializationError(
+            "materialization layers must be a nonempty registered frozenset"
+        )
+    specs = _accepted_projection_specs(context, layers)
     reused = 0
     rebuilt = 0
     quarantined: list[Path] = []
@@ -222,12 +240,13 @@ def _validate_or_materialize(
 
 def _accepted_projection_specs(
     context: Protocol22RunContext,
+    layers: frozenset[str],
 ) -> tuple[_ProjectionSpec, ...]:
     ledger = context.ledger.replay()
     specs: list[_ProjectionSpec] = []
     for receipt in ledger.accepted_artifacts.values():
         key = receipt.artifact_key
-        if key.artifact_kind not in _L1_KINDS:
+        if key.artifact_kind not in _PROJECTION_KINDS or key.layer not in layers:
             continue
         work_item = ledger.certification_work_items.get(
             receipt.certification_receipt_id
@@ -265,14 +284,18 @@ def _accepted_projection_specs(
             artifact_key_id=key.identity,
             path=path,
         )
-        projection_payloads = (
-            ((path.name, payload),)
-            if key.artifact_kind == "source-baseline-root"
-            else (
-                ("baseline.json", payload),
-                ("baseline.md", render_baseline_markdown(payload)),
+        if key.artifact_kind == "source-baseline-root":
+            projection_payloads = ((path.name, payload),)
+        else:
+            markdown = (
+                render_baseline_markdown(payload)
+                if key.layer == "L1"
+                else _render_l2_baseline_markdown(payload)
             )
-        )
+            projection_payloads = (
+                ("baseline.json", payload),
+                ("baseline.md", markdown),
+            )
         specs.append(_ProjectionSpec(projection, parts, projection_payloads))
     return tuple(
         sorted(
@@ -288,7 +311,21 @@ def _accepted_projection_specs(
 
 def _validate_projection_payload(key: ArtifactKeyV2, payload: bytes) -> None:
     try:
-        if key.artifact_kind == "source-baseline-root":
+        if key.layer == "L2":
+            from harness.re_v2.protocol_24.artifacts import (
+                L2CompactBaselineArtifactV1,
+                L2SourceBaselineRootV1,
+            )
+
+            value = load_canonical_object(
+                payload,
+                (
+                    L2SourceBaselineRootV1.from_json_dict
+                    if key.artifact_kind == "source-baseline-root"
+                    else L2CompactBaselineArtifactV1.from_json_dict
+                ),
+            )
+        elif key.artifact_kind == "source-baseline-root":
             value = load_canonical_object(payload, SourceBaselineRootV1.from_json_dict)
         else:
             value = load_canonical_object(
@@ -320,6 +357,12 @@ def _validate_projection_payload(key: ArtifactKeyV2, payload: bytes) -> None:
         raise Protocol22MaterializationError(
             "accepted projection envelope differs from artifact-key authority"
         )
+
+
+def _render_l2_baseline_markdown(payload: bytes) -> bytes:
+    from harness.re_v2.protocol_24.artifacts import render_l2_baseline_markdown
+
+    return render_l2_baseline_markdown(payload)
 
 
 @contextmanager
@@ -939,6 +982,7 @@ __all__ = (
     "MaterializedProjectionV1",
     "Protocol22MaterializationError",
     "materialize_accepted_l1",
+    "materialize_accepted_l2",
     "materialized_path_for",
     "validate_or_repair_materialization",
 )
