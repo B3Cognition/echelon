@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 from dataclasses import replace
 from pathlib import Path
@@ -4220,13 +4221,158 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
         backend.run_prompt(request)
 
     command = captured["command"]
+    assert command[0].endswith("codex")
+    assert "/usr/bin/sandbox-exec" not in command
+    assert "--sandbox" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--strict-config" in command
+    assert command[command.index("--ask-for-approval") + 1] == "never"
+
+    config_overrides = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-c"
+    ]
+    assert 'default_permissions="echelon_product_plane"' in config_overrides
+    profile = next(
+        value
+        for value in config_overrides
+        if value.startswith("permissions.echelon_product_plane=")
+    )
+    parsed_profile = tomllib.loads(
+        f"profile={profile.split('=', 1)[1]}"
+    )["profile"]
+    assert 'extends=":workspace"' in profile
+    assert parsed_profile["network"] == {"enabled": True}
+    assert f'{json.dumps(str(forbidden_root))}="deny"' in profile
+    assert f'{json.dumps(str(run_root))}="read"' in profile
+    assert f'{json.dumps(str(write_path))}="write"' in profile
+
+
+def test_codex_native_boundary_preserves_authenticated_operational_scopes(
+    tmp_path,
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    forbidden_root = (tmp_path / '.echelon "control"').resolve()
+    operational_root = (forbidden_root / "runtime" / "scripts").resolve()
+    operational_read_path = (forbidden_root / "config.yml").resolve()
+    denied_child = (forbidden_root / "prosaic").resolve()
+    operational_root.mkdir(parents=True)
+    operational_read_path.write_text("selected_stack: demo\n", encoding="utf-8")
+    denied_child.mkdir()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Run the named helper.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(forbidden_root)],
+                "tool_operational_roots": [str(operational_root)],
+                "tool_operational_read_paths": [str(operational_read_path)],
+                "tool_operational_metadata_paths": [str(forbidden_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    profile = next(
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-c"
+        and command[index + 1].startswith("permissions.echelon_product_plane=")
+    )
+    assert f'{json.dumps(str(forbidden_root))}="read"' in profile
+    assert f'{json.dumps(str(forbidden_root / "runtime"))}="deny"' in profile
+    assert f'{json.dumps(str(denied_child))}="deny"' in profile
+    assert f'{json.dumps(str(operational_root))}="read"' in profile
+    assert f'{json.dumps(str(operational_read_path))}="read"' in profile
+
+
+def test_codex_approved_unsafe_boundary_keeps_single_outer_sandbox(tmp_path) -> None:
+    config = _config("codex")
+    backend = CodexCliBackend(
+        replace(
+            config,
+            llm=replace(
+                config.llm,
+                tool_policy=LlmToolPolicy(
+                    allow_unsafe_host_execution=True,
+                    approval_reason="Operator approved the disposable test workspace.",
+                ),
+            ),
+        )
+    )
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    forbidden_root = (tmp_path / ".echelon").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do approved work.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(forbidden_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
     assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
-    profile = command[2]
-    assert f'(literal "{forbidden_root}")' in profile
-    assert f'(subpath "{forbidden_root}")' in profile
-    assert f'(allow file-read* (subpath "{run_root}"))' in profile
-    assert f'(allow file-write* (literal "{write_path}"))' in profile
-    assert "codex" in command[3]
+    assert command.count("/usr/bin/sandbox-exec") == 1
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "default_permissions" not in " ".join(command)
 
 
 def test_codex_backend_fails_closed_without_workspace_boundary(tmp_path) -> None:

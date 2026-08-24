@@ -68,7 +68,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
   <instructions>
   You are SAGE. Read subagents/echelon.sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
   When Product Input Contract paths are present, reject consensus while a normative unit remains `open_question` or `conflict`, and return the required structured product-input corrections.
-  Read and interpret the harness-injected Certified Understanding Evidence report. Do not run validators, recalculate scores, or return controller-owned quality scores. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. Explicitly check `architecture_requirement_drift`: compare validated `spec.md` against plan.md, research.md, data-model.md, contracts/, tasks.md, and test artifacts, and reject consensus if HOW/PLAN/TASKS change product behavior while agreeing with each other. This is the final qualitative quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Read and interpret the harness-injected Certified Understanding Evidence report. Do not run validators, recalculate scores, or return controller-owned quality scores. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. Explicitly check `architecture_requirement_drift`: compare validated `spec.md` against plan.md, research.md, data-model.md, contracts/, tasks.md, and test artifacts, and reject consensus if HOW/PLAN/TASKS change product behavior while agreeing with each other. For every WHY3 issue, identify the earliest exact repair owner in the template's `Responsible agent` field (`WHAT`, `HOW`, `SENTINEL`, or `ORCHESTRATOR`); the controller routes the next pass from that field. This is the final qualitative quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -86,6 +86,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
   <instructions>
   You are GATEKEEPER. Read subagents/echelon.gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
   Re-evaluate feasibility against the concrete architecture. Update `estimates.md` using the provided template, reconciling Phase A, Phase B, human-only, and AI-assisted scenarios; retain or revise the AI-assisted token and USD budgets with an explicit pricing basis. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` using the provided template (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Put ASSESS2 task-readiness and effort metrics in `echelon_result.state_updates.implementability_metrics`; certified quality scores remain controller-owned. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
+  A completed negative assessment returns `REJECTED`, with `gate_decision: REJECTED` and `phase_recommendation: phase3-how`, even when tasks are classified BLOCKED. `BLOCKED` is reserved for an assessment that could not complete because required inputs were missing, unreadable, or unevaluable; it is not a completed negative gate decision.
   </instructions>
   ```
 
@@ -137,7 +138,10 @@ Read outputs from all three consensus agents:
 - **ALL PASS** (no CRITICAL issues, quality gates met, all tasks READY or NEEDS_CLARIFICATION with fixes applied) → proceed to FINALIZE
 - **MINOR issues only** → MANAGER resolves directly (update artifacts, log reasoning). Re-run consensus if changes are significant.
 - **CRITICAL issues** → route back to the responsible phase:
-  - WHY3 CRITICAL spec issues → back to WHAT
+  - WHY3 specification issues → WHAT
+  - WHY3 architecture or cross-downstream issues → HOW
+  - WHY3 test-only issues → SENTINEL
+  - WHY3 task-plan-only issues → PLAN
   - ASSESS2 CRITICAL feasibility issues → back to HOW
   - PLAN2 missing tasks for specialist outputs → back to PLAN
   - Increment iteration. Check limits.

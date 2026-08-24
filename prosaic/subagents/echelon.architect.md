@@ -308,18 +308,18 @@ These are architectural decisions, not feature add-ons. Address each as a design
 
 ### 4. Constitution Integration
 
-**The constitution is provided as a read-only `constitution.md` snapshot in the spec directory.** CHIEF owns the canonical `.echelon/constitution.md`; ARCHITECT only consumes the published snapshot supplied by COMMANDER.
+**The controller injects the canonical `.echelon/constitution.md` content into the prompt as read-only governance context.** CHIEF owns the canonical file; ARCHITECT consumes the injected section and must not require or search for a copy in the spec directory.
 
 **Your role with constitution:**
-1. **READ** the dispatcher-provided `constitution.md` snapshot.
+1. **READ** the dispatcher-injected `.echelon/constitution.md` context section.
 2. **RESPECT** all human-defined principles — they are IMMUTABLE during HOW.
 3. **APPLY** the principles to architecture choices, ADRs, contracts, and cross-cutting concerns.
 4. **PROPOSE** technical ADR-level governance additions in `constitution-amendment-candidates.md` when architecture work reveals a durable principle.
 
-ALWAYS treat `constitution.md` as read-only governance context.
-NEVER create a constitution, edit `.echelon/constitution.md`, or append directly to `constitution.md`.
+ALWAYS treat the injected constitution section as read-only governance context.
+NEVER create a constitution, edit or append to `.echelon/constitution.md`, or require a spec-local `constitution.md` copy.
 
-**If constitution is missing or contains template markers (should not happen in normal flow):**
+**If the injected constitution section is missing or contains template markers (should not happen in normal flow):**
 
 - HARD STOP and escalate to echelon-commander (COMMANDER).
 - Do not synthesize, copy, repair, or regenerate a constitution from HOW. Squad flow requires a verified CHIEF-authored constitution before echelon-architect (ARCHITECT) runs.

@@ -38,6 +38,7 @@ import harness.proportional_quality_effects as quality_effects_module
 from harness.human_input import (
     HumanInputPolicyError,
     HumanInputPolicy,
+    HumanInputOption,
     HumanInputPolicyRegistry,
     HumanInputResolution,
 )
@@ -46,7 +47,11 @@ from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_checkpoints import PhaseCheckpointError, load_checkpoint_ledger
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
-from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
+from harness.recovery_instruction import (
+    RecoveryInstruction,
+    RecoveryKind,
+    retry_phase_recovery,
+)
 from harness.squad import (
     ControllerEnrichment,
     SquadController,
@@ -2483,6 +2488,80 @@ class TestConsensusCannotBeSkipped:
         assert ev.evaluate("always", {}) is True
         # 'always' can never trigger COMMANDER dispatch (would require None return)
         assert ev.evaluate("always", {}) is not None
+
+    def test_assess2_completed_rejection_is_not_treated_as_executor_block(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-consensus",
+            max_iterations=5,
+        )
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+
+        def consensus_result(_project_root: str, prompt: str, **_kwargs):
+            if "Operate in **WHY3** mode" in prompt:
+                return SquadAgentResult(
+                    0,
+                    {"verdict": "PASS", "state_updates": {}},
+                    "",
+                    1,
+                    False,
+                )
+            if "Operate in **ASSESS2** mode" in prompt:
+                (spec_dir / "implementability-report.md").write_text(
+                    "# Implementability\n",
+                    encoding="utf-8",
+                )
+                return SquadAgentResult(
+                    0,
+                    {
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "gate_decision": "REJECTED",
+                            "phase_recommendation": "phase3-how",
+                            "implementability_metrics": {},
+                        },
+                    },
+                    "Assessment completed with a critical feasibility rejection.",
+                    1,
+                    False,
+                )
+            if "Operate in **PLAN2** mode" in prompt:
+                return SquadAgentResult(
+                    0,
+                    {"verdict": "COMPLETE", "state_updates": {}},
+                    "",
+                    1,
+                    False,
+                )
+            raise AssertionError("unexpected consensus prompt")
+
+        provider.exec_agent.side_effect = consensus_result
+        result = ctrl._executors["staged_parallel"].execute(
+            ctrl._graph.get("phase3-consensus"),
+            store,
+        )
+
+        assert result.verdict == "FAIL"
+        persisted = store.load()
+        assert persisted["assess2_verdict"] == "REJECTED"
+        assert persisted["gate_decision"] == "REJECTED"
+        assert persisted["phase_recommendation"] == "phase3-how"
+        assert any(
+            "Operate in **PLAN2** mode" in call.args[1]
+            for call in provider.exec_agent.call_args_list
+        )
 
 
 class TestSolutionPhaseOrdering:
@@ -6237,6 +6316,98 @@ class TestSquadControllerBasics:
         refreshed = store.load()
         assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == "repaired"
         assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
+
+    def test_selected_phase3_issue_is_repaired_by_its_sealed_owner(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase3-sentinel", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "selected",
+                        "repair_phase": "phase3-sentinel",
+                    },
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase3-sentinel",
+                    "recorded_at": "2026-08-24T00:00:00+00:00",
+                },
+                "issue_resolution_recovery": {"issue_id": "ISS-001"},
+            }
+        )
+        store.save(state)
+
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase3-sentinel"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        refreshed = store.load()
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == (
+            "repaired"
+        )
+        assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
+
+    def test_passing_why3_validates_repaired_phase3_issue(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "why3_verdict": "PASS",
+                "assess2_verdict": "PASS",
+                "gate_decision": "PASS",
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                        "repair_phase": "phase3-sentinel",
+                    },
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase3-sentinel",
+                    "recorded_at": "2026-08-24T00:00:00+00:00",
+                },
+                "issue_resolution_recovery": {
+                    "issue_id": "ISS-001",
+                    "status": "consumed",
+                },
+            }
+        )
+        store.save(state)
+
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase3-consensus"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "PASS", "state_updates": {}},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        refreshed = store.load()
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == (
+            "validated"
+        )
+        assert refreshed["selected_issue_resolution"] is None
+        assert refreshed["issue_resolution_repair_baseline"] is None
+        assert refreshed["issue_resolution_recovery"]["status"] == "validated"
 
     def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -13921,6 +14092,108 @@ class TestProductInputMappingRepair:
         assert "recovery_instruction" not in blocked
         assert "missing_outputs" not in blocked
         assert "phase_output_recovery" not in blocked
+
+    def test_executor_retry_retires_unrelated_resolved_decision_audit(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-how",
+            max_iterations=5,
+        )
+        policy = HumanInputPolicy(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            reason_code="test_approval_required",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="gate_outcome",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase3-how"}),
+            allowed_target_phases=frozenset(
+                {"phase3-how", "terminal-blocked"}
+            ),
+            context_state_keys=("phase",),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="approve",
+                    label="Approve",
+                    description="Continue.",
+                    recommended=True,
+                    risk_level="low",
+                    next_phase="phase3-how",
+                    outcome="approved",
+                ),
+                HumanInputOption(
+                    id="reject",
+                    label="Reject",
+                    description="Stop.",
+                    recommended=False,
+                    risk_level="medium",
+                    next_phase="terminal-blocked",
+                    outcome="rejected",
+                ),
+            ),
+            recommendation_mode="static",
+        )
+        request = HumanInputPolicyRegistry((policy,)).prepare(
+            source_kind="human_gate",
+            producer_id="test-checkpoint",
+            phase_id="phase3-how",
+            reason_code="test_approval_required",
+            question="Continue?",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="COMMANDER",
+                rationale="The checkpoint is current.",
+                confidence="high",
+            ),
+            state_updates={"status": "running", "phase": "phase3-how"},
+            state_removals=(),
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-how"
+        )
+
+        assert ctrl._block_after_executor_failure(
+            "phase3-how",
+            "agent_blocked",
+            SquadAgentResult(0, None, "", 0, False),
+            snapshot=snapshot,
+            recovery_instruction=retry_phase_recovery(
+                "phase3-how",
+                "agent_blocked",
+            ),
+        )
+
+        blocked = store.load()
+        assert blocked["status"] == "blocked"
+        assert blocked["phase"] == "terminal-blocked"
+        assert blocked["recovery_instruction"] == {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "agent_blocked",
+            "phase": "phase3-how",
+            "requires_human_input": False,
+        }
+        assert "blocked_decision" not in blocked
+        assert blocked["state_revision"] == resolved["state_revision"] + 1
 
     def test_stale_executor_failure_cannot_erase_winning_phase_or_dispatch(
         self,

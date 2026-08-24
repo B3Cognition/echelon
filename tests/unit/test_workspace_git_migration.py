@@ -415,6 +415,173 @@ def test_workspace_doctor_accepts_configured_source_root(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+def test_workspace_doctor_accepts_force_tracked_run_local_checkpoint_artifacts(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    active_spec = tmp_path / "runs" / "spec-run" / "specs" / "001-demo"
+    active_spec.mkdir(parents=True)
+    (active_spec / "spec.md").write_text("# Active demo\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "add", ".gitignore", ".echelon/config.yml", "specs"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "add", "-f", "runs/spec-run/specs/001-demo/spec.md"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "checkpoint active spec"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    result = doctor_workspace(tmp_path)
+
+    run_errors = {
+        finding.code
+        for finding in result.findings
+        if finding.path == "runs"
+    }
+    assert run_errors == set()
+
+
+@pytest.mark.unit
+def test_workspace_doctor_still_rejects_tracked_run_controller_state(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "runs" / "spec-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "add", ".gitignore", ".echelon/config.yml", "specs"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "add", "-f", "runs/spec-run/state.json"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "track invalid runtime state"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    result = doctor_workspace(tmp_path)
+
+    assert any(
+        finding.code == "runtime_tracked" and finding.path == "runs"
+        for finding in result.findings
+    )
+
+
+@pytest.mark.unit
+def test_migration_untracks_runtime_state_but_preserves_checkpoint_artifacts(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "runs" / "spec-run"
+    active_spec = run_dir / "specs" / "001-demo"
+    active_spec.mkdir(parents=True)
+    (active_spec / "spec.md").write_text("# Active demo\n", encoding="utf-8")
+    (run_dir / "state.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "add", ".gitignore", ".echelon/config.yml", "specs"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "-f",
+            "runs/spec-run/specs/001-demo/spec.md",
+            "runs/spec-run/state.json",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "track mixed run paths"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    result = migrate_workspace(tmp_path, write=True, commit=False)
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "runs"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert tracked == ["runs/spec-run/specs/001-demo/spec.md"]
+    assert result.untracked_runtime_paths == ("runs/spec-run/state.json",)
+
+
+@pytest.mark.unit
 def test_workspace_doctor_reports_ignored_canonical_config(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     (tmp_path / ".gitignore").write_text("/.specify/\n/runs/\n/.echelon/\n", encoding="utf-8")

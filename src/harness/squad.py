@@ -254,6 +254,30 @@ WHY2_METRIC_STAGNATION_LIMIT = 2
 WHY2_METRIC_MIN_DELTA = 0.01
 COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
 DISPATCH_CAP_ISSUES_MAX_BYTES = 65_536
+_DISPATCH_CAP_REPAIR_PHASES = frozenset(
+    {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+)
+_PHASE1_ISSUE_REPAIR_CORRIDOR = frozenset(
+    {
+        "phase1-what",
+        "phase1-understanding",
+        "phase1-why2",
+        "phase1-lexicon-derive",
+        "phase1-lexicon",
+        "checkpoint-assess",
+    }
+)
+_PHASE3_ISSUE_REPAIR_CORRIDOR = frozenset(
+    {
+        "phase3-how",
+        "phase3-sentinel",
+        "phase3-plan",
+        "phase3-tasks-lexicon",
+        "phase3-understanding",
+        "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
+    }
+)
 _BOUNDED_TEXT_CHUNK_CHARS = 1_024
 _CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
 _CONTEXT_FILE_MIN_EXCERPT_BYTES = 256
@@ -2737,11 +2761,26 @@ class SquadController:
         if set(payload) == legacy_fields:
             cls._dispatch_cap_candidate_from_option(option)
             return
-        reference_fields = {
-            "evidence_sha256",
-            "issue_id",
-            "schema_version",
-        }
+        schema_version = payload.get("schema_version")
+        if schema_version == 1:
+            reference_fields = {
+                "evidence_sha256",
+                "issue_id",
+                "schema_version",
+            }
+            repair_phase = "phase1-what"
+        elif schema_version == 2:
+            reference_fields = {
+                "evidence_sha256",
+                "issue_id",
+                "repair_phase",
+                "schema_version",
+            }
+            repair_phase = payload.get("repair_phase")
+        else:
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
         issue_id = payload.get("issue_id")
         digest = payload.get("evidence_sha256")
         prefix = f"{issue_id}: "
@@ -2752,17 +2791,17 @@ class SquadController:
         )
         if (
             set(payload) != reference_fields
-            or payload.get("schema_version") != 1
             or not isinstance(issue_id, str)
             or not issue_id.strip()
             or not isinstance(digest, str)
             or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or repair_phase not in _DISPATCH_CAP_REPAIR_PHASES
             or option.id != issue_id
             or not option.label.startswith(prefix)
             or len(option.label) <= len(prefix)
             or option.description != canonical
             or option.risk_level != "medium"
-            or option.next_phase != "phase1-what"
+            or option.next_phase != repair_phase
             or option.outcome is not None
         ):
             raise HumanInputPolicyError(
@@ -2792,14 +2831,44 @@ class SquadController:
             for candidate in candidates
             if candidate["issue_id"] == issue_id
         ]
-        if len(matches) != 1 or not hmac.compare_digest(
-            self._dispatch_cap_candidate_digest(matches[0]),
+        if len(matches) != 1:
+            raise HumanInputPolicyError(
+                "dispatch-cap evidence changed after decision sealing"
+            )
+        candidate = matches[0]
+        if payload["schema_version"] == 1:
+            legacy_candidate = {
+                key: candidate[key]
+                for key in (
+                    "issue_id",
+                    "title",
+                    "decision_required",
+                    "suggested_option",
+                    "evidence_basis",
+                )
+            }
+            expected_digest = self._dispatch_cap_candidate_digest(
+                legacy_candidate
+            )
+            resolved_candidate = {
+                **candidate,
+                "repair_phase": "phase1-what",
+            }
+        else:
+            expected_digest = self._dispatch_cap_candidate_digest(candidate)
+            resolved_candidate = candidate
+        if not hmac.compare_digest(
+            expected_digest,
             str(payload["evidence_sha256"]),
         ):
             raise HumanInputPolicyError(
                 "dispatch-cap evidence changed after decision sealing"
             )
-        return matches[0]
+        if option.next_phase != resolved_candidate["repair_phase"]:
+            raise HumanInputPolicyError(
+                "dispatch-cap evidence changed after decision sealing"
+            )
+        return resolved_candidate
 
     @staticmethod
     def _canonical_dispatch_cap_candidate(
@@ -2850,13 +2919,25 @@ class SquadController:
         cls,
         candidate: Mapping[str, str],
     ) -> str:
+        repair_phase = str(
+            candidate.get("repair_phase") or "phase1-what"
+        ).strip()
+        if repair_phase not in _DISPATCH_CAP_REPAIR_PHASES:
+            raise HumanInputPolicyError(
+                "dispatch-cap repair phase is invalid"
+            )
+        canonical_candidate = {
+            **dict(candidate),
+            "repair_phase": repair_phase,
+        }
         return json.dumps(
             {
                 "evidence_sha256": cls._dispatch_cap_candidate_digest(
-                    candidate
+                    canonical_candidate
                 ),
                 "issue_id": candidate["issue_id"],
-                "schema_version": 1,
+                "repair_phase": repair_phase,
+                "schema_version": 2,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -2885,7 +2966,9 @@ class SquadController:
                 description=cls._dispatch_cap_option_reference(candidate),
                 recommended=False,
                 risk_level="medium",
-                next_phase="phase1-what",
+                next_phase=str(
+                    candidate.get("repair_phase") or "phase1-what"
+                ).strip(),
                 outcome=None,
             )
             for candidate in candidates
@@ -4171,6 +4254,16 @@ class SquadController:
             raise HumanInputPolicyError(
                 "dispatch-cap resolution is not evidence-backed"
             )
+        repair_phase = str(
+            selection.get("repair_phase") or "phase1-what"
+        ).strip()
+        if (
+            repair_phase not in _DISPATCH_CAP_REPAIR_PHASES
+            or selected.next_phase != repair_phase
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap repair route is not sealed by issue authority"
+            )
         capped_phase = str(decision["source_phase"])
         legacy_phase = state.get("phase_dispatch_limit_phase")
         if legacy_phase is not None and (
@@ -4193,7 +4286,16 @@ class SquadController:
             )
         counts = state.get("phase_dispatch_counts")
         next_counts = dict(counts) if isinstance(counts, dict) else {}
-        next_counts.pop(capped_phase, None)
+        reset_phases = (
+            _PHASE1_ISSUE_REPAIR_CORRIDOR
+            if repair_phase == "phase1-what"
+            else _PHASE3_ISSUE_REPAIR_CORRIDOR
+        ) | {capped_phase}
+        next_counts = {
+            phase: count
+            for phase, count in next_counts.items()
+            if phase not in reset_phases
+        }
         route = self._validate_human_input_route(
             selected.next_phase,
             policy,
@@ -4201,6 +4303,7 @@ class SquadController:
         updates = self._issue_resolution_state_updates(
             dict(state),
             selection,
+            source_phase=capped_phase,
         )
         updates.update(
             {
@@ -4936,9 +5039,13 @@ class SquadController:
             f"{DECISION_RESOLUTION_RATIONALE_MAX_CHARS:,} characters>\"\n"
             "    confidence: high\n\n"
             "For free text, selected_option_id must be null and answer_text "
-            "must be a non-empty string. Set exactly one of selected_option_id "
-            "or answer_text; the other must be null. Rationale is required and "
-            "confidence must be exactly high, medium, or low. Do not add "
+            "must be a non-empty string. When following a free-text "
+            "recommended_answer, copy its exact value into answer_text, "
+            "character for character. Any different answer_text is an "
+            "override; explain that difference in rationale. Set exactly one "
+            "of selected_option_id or answer_text; the other must be null. "
+            "Rationale is required and confidence must be exactly high, "
+            "medium, or low. Do not add "
             "fields, state updates, journal entries, files, or another "
             "envelope. Do not ask another question. Do not write files or "
             "mutate state, counters, recovery, or routing.\n\n"
@@ -11552,31 +11659,6 @@ class SquadController:
             updates[
                 "proportional_quality_candidate_evidence"
             ] = next_evidence
-        selected = str(state.get("selected_issue_resolution") or "").strip()
-        ledger = state.get("issue_resolution_ledger")
-        baseline = state.get("issue_resolution_repair_baseline")
-        if (
-            selected
-            and isinstance(ledger, dict)
-            and isinstance(baseline, dict)
-            and baseline.get("issue_id") == selected
-            and isinstance(ledger.get(selected), dict)
-            and ledger[selected].get("status") == "selected"
-            and prepared.verdict.upper() == "DONE"
-        ):
-            # The selected resolution may already have been incorporated by an
-            # earlier amendment. Requiring another byte-level spec.md change
-            # turns that valid confirmation into an endless repair loop.
-            repaired_ledger = dict(ledger)
-            repaired_entry = dict(ledger[selected])
-            repaired_entry["status"] = "repaired"
-            repaired_ledger[selected] = repaired_entry
-            recovery = state.get("issue_resolution_recovery")
-            consumed_recovery = dict(recovery) if isinstance(recovery, dict) else {}
-            consumed_recovery["issue_id"] = selected
-            consumed_recovery["status"] = "consumed"
-            updates["issue_resolution_ledger"] = repaired_ledger
-            updates["issue_resolution_recovery"] = consumed_recovery
         try:
             if int(state.get("why_fail_count") or 0) <= 0:
                 return updates
@@ -11599,6 +11681,80 @@ class SquadController:
             }
         )
         return updates
+
+    def _coordinate_selected_issue_repair_updates(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+    ) -> dict[str, object]:
+        """Advance one sealed issue repair through its capable owner and review."""
+        state = snapshot.state
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        ledger = state.get("issue_resolution_ledger")
+        baseline = state.get("issue_resolution_repair_baseline")
+        if (
+            not selected
+            or not isinstance(ledger, dict)
+            or not isinstance(baseline, dict)
+            or baseline.get("issue_id") != selected
+            or not isinstance(ledger.get(selected), dict)
+        ):
+            return {}
+        entry = ledger[selected]
+        repair_phase = str(baseline.get("repair_phase") or "").strip()
+        if (
+            repair_phase not in _DISPATCH_CAP_REPAIR_PHASES
+            or entry.get("repair_phase", repair_phase) != repair_phase
+        ):
+            return {}
+        verdict = prepared.verdict.upper()
+        successful = verdict in {"DONE", "COMPLETE", "PASS"}
+        if (
+            entry.get("status") == "selected"
+            and node.id == repair_phase
+            and successful
+        ):
+            repaired_ledger = dict(ledger)
+            repaired_entry = dict(entry)
+            repaired_entry["status"] = "repaired"
+            repaired_ledger[selected] = repaired_entry
+            recovery = state.get("issue_resolution_recovery")
+            consumed_recovery = (
+                dict(recovery) if isinstance(recovery, dict) else {}
+            )
+            consumed_recovery.update(
+                {"issue_id": selected, "status": "consumed"}
+            )
+            return {
+                "issue_resolution_ledger": repaired_ledger,
+                "issue_resolution_recovery": consumed_recovery,
+            }
+        if (
+            entry.get("status") == "repaired"
+            and repair_phase in _PHASE3_ISSUE_REPAIR_CORRIDOR
+            and node.id == "phase3-consensus"
+            and successful
+            and snapshot.state.get("why3_verdict") == "PASS"
+        ):
+            validated_ledger = dict(ledger)
+            validated_entry = dict(entry)
+            validated_entry["status"] = "validated"
+            validated_ledger[selected] = validated_entry
+            recovery = state.get("issue_resolution_recovery")
+            validated_recovery = (
+                dict(recovery) if isinstance(recovery, dict) else {}
+            )
+            validated_recovery.update(
+                {"issue_id": selected, "status": "validated"}
+            )
+            return {
+                "issue_resolution_ledger": validated_ledger,
+                "selected_issue_resolution": None,
+                "issue_resolution_repair_baseline": None,
+                "issue_resolution_recovery": validated_recovery,
+            }
+        return {}
 
     def _coordinate_why_transition_state(
         self,
@@ -12237,6 +12393,14 @@ class SquadController:
                 )
 
         merge_effects(dict(additional_state_updates or {}))
+        selected_issue_updates = (
+            self._coordinate_selected_issue_repair_updates(
+                node,
+                prepared,
+                snapshot,
+            )
+        )
+        merge_effects(selected_issue_updates)
         what_cycle_updates = self._coordinate_what_repair_cycle_updates(
             node,
             prepared,
@@ -12811,10 +12975,14 @@ class SquadController:
                 )
             if eligibility[0].lower() == "no":
                 continue
+            repair_phase = (
+                StagedParallelExecutor._why3_repair_phase_from_issues(body)
+            )
             candidates.append(
                 {
                     "issue_id": issue_id,
                     "title": issue_match.group(2),
+                    "repair_phase": repair_phase,
                     **fields,
                 }
             )
@@ -12855,11 +13023,20 @@ class SquadController:
     def _issue_resolution_state_updates(
         state: dict,
         selection: dict[str, str],
+        *,
+        source_phase: str,
     ) -> dict[str, object]:
         """Apply the existing selected-issue repair lifecycle in memory."""
         from datetime import datetime, timezone
 
         issue_id = selection["issue_id"]
+        repair_phase = str(
+            selection.get("repair_phase") or "phase1-what"
+        ).strip()
+        if repair_phase not in _DISPATCH_CAP_REPAIR_PHASES:
+            raise HumanInputPolicyError(
+                "dispatch-cap repair phase is invalid"
+            )
         ledger = state.get("issue_resolution_ledger")
         selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
         selected_ledger[issue_id] = {
@@ -12869,7 +13046,7 @@ class SquadController:
             "guidance": selection["decision_required"],
             "status": "selected",
             "decision": selection["decision"],
-            "repair_phase": "phase1-what",
+            "repair_phase": repair_phase,
             "rationale": selection["rationale"],
             "confidence": selection["confidence"],
             "evidence_backed": selection["evidence_backed"],
@@ -12879,13 +13056,17 @@ class SquadController:
             "selected_issue_resolution": issue_id,
             "issue_resolution_repair_baseline": {
                 "issue_id": issue_id,
-                "repair_phase": "phase1-what",
+                "repair_phase": repair_phase,
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
             },
             "issue_resolution_recovery": {
                 "issue_id": issue_id,
-                "from_phase": "phase1-why2",
-                "to_phase": "phase1-what",
+                "from_phase": (
+                    "phase1-why2"
+                    if repair_phase == "phase1-what"
+                    else source_phase
+                ),
+                "to_phase": repair_phase,
                 "reason": "issue_resolution",
             },
         }

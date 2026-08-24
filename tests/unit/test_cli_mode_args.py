@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -457,9 +458,49 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
 ) -> None:
     (tmp_path / ".echelon").mkdir()
     config_path = tmp_path / ".echelon" / "config.yml"
-    config_path.write_text(
-        "workspace:\n  git_role: orchestration\nsources: []\n",
+    original_config = (
+        "# Preserve operator-authored formatting and comments.\n"
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "analysis:\n"
+        "  model: \"codex-custom\"\n"
+        "  guidance: >-\n"
+        "    Keep this folded scalar byte-for-byte.\n"
+        "sources: []\n"
+        "harness:\n"
+        "  verify_command: 'npm test'\n"
+    )
+    config_path.write_text(original_config, encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(
+        "/runs/\n/sources/*\n!/sources/README.md\n",
         encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "add", ".echelon/config.yml", ".gitignore"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "initial workspace",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     squad_dir = tmp_path / "runs" / "spec-20260711-120000-000001"
     captured: dict[str, object] = {}
@@ -501,12 +542,40 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
 
     target = tmp_path / "sources" / "optasearch-pro"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    rendered_config = config_path.read_text(encoding="utf-8")
     assert captured["implementation_targets"] == ["sources/optasearch-pro"]
     assert captured["user_message"] == "build notes"
     assert (target / ".git").exists()
     assert config["sources"] == [
         {"id": "optasearch-pro", "path": "sources/optasearch-pro"}
     ]
+    assert rendered_config == original_config.replace(
+        "sources: []\n",
+        "sources:\n"
+        "- id: optasearch-pro\n"
+        "  path: sources/optasearch-pro\n",
+    )
+    assert subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+    assert subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() == "chore: register workspace sources"
+    assert subprocess.run(
+        ["git", "show", "--format=", "--name-only", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines() == [".echelon/config.yml"]
 
 
 def test_cmd_run_target_init_requires_target(

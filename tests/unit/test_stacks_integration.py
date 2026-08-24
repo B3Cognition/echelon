@@ -42,12 +42,30 @@ def test_bundled_statsperform_stacks_include_detection_hints() -> None:
 
 @pytest.mark.unit
 def test_playbook_preflight_probe_checks_cli_availability_without_source_tree() -> None:
-    commands = _definitions()["statsperform-playbook"].tools["playbook_cli"].commands
+    tool = _definitions()["statsperform-playbook"].tools["playbook_cli"]
+    commands = tool.commands
 
+    assert tool.args == [
+        "-y",
+        "--registry=https://nexus.statsperform.tools/repository/public-npm/",
+        "@statsperform/playbook-cli",
+    ]
     assert commands["availability"].args == ["--version"]
     assert commands["availability"].gate is True
     assert commands["compliance_scan"].args == ["compliance", "scan"]
     assert commands["compliance_scan"].gate is False
+
+
+@pytest.mark.unit
+def test_playbook_guidance_uses_the_declared_private_registry() -> None:
+    context = (
+        ROOT / "runtime" / "stacks" / "statsperform-playbook" / "context.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "npx -y --registry=https://nexus.statsperform.tools/repository/public-npm/ "
+        "@statsperform/playbook-cli"
+    ) in context
 
 
 @pytest.mark.unit

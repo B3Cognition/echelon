@@ -11,7 +11,7 @@ Read and include in the subagent prompt:
 
 - `plan.md` + `research.md` + `data-model.md`
 - `spec.md` (canonical rich feature specification and requirement IDs)
-- `constitution.md` (read-only published Phase A governance snapshot)
+- `.echelon/constitution.md` (controller-injected, read-only Phase A governance)
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
 - `.echelon/runtime/templates/tasks-template.md`
@@ -30,14 +30,14 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include spec.md, read-only constitution.md, plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
+  [include spec.md, controller-injected read-only .echelon/constitution.md context, plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read subagents/echelon.orchestrator.md for your complete protocol.
   Treat IMPLEMENTATION_TARGETS from the squad context as authoritative. Every canonical task row must include exactly one `target=<declared-target>` value, and every file path must be valid for that target. Split cross-target work into dependency-linked tasks. Never infer or declare a target from generated file paths.
   When Product Input Contract paths are present, map every included `IN-REQ-*` unit to canonical `req=` task rows and their declared `target=` values. Every listed task ID must directly intersect that unit's `spec_ids` through its canonical `req=` value; do not list a phase-neighbouring or merely related task. Do not mark a contextual or illustrative unit `included` with empty `spec_ids` or `task_ids`: map it to a concrete requirement and task, or use `excluded`/`duplicate` with an evidence-backed rationale. Return those task IDs and targets in `echelon_result.product_input_updates`, preserving the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`; the controller writes the canonical ledger.
-  Treat `constitution.md` as read-only governance context. Every task decomposition and risk/dependency decision must respect its non-negotiable principles. Do not edit, rewrite, append to, or output `constitution.md`.
+  Treat the injected `.echelon/constitution.md` section as read-only governance context. Every task decomposition and risk/dependency decision must respect its non-negotiable principles. Do not search for a spec-local copy and do not edit, rewrite, append to, or output the canonical constitution.
   Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

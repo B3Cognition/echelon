@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from harness.workflow_validator import (
+    CONTROLLER_RUNTIME_COMPATIBILITY_VERSION,
     validate_condition_expression,
     validate_deployed_phase_runtime,
     validate_workflow_definition,
@@ -73,7 +74,9 @@ def test_deployed_runtime_rejects_previous_controller_compatibility_version(
     tmp_path: Path,
 ) -> None:
     definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
-    definition["controller_runtime_compatibility_version"] = 1
+    definition["controller_runtime_compatibility_version"] = (
+        CONTROLLER_RUNTIME_COMPATIBILITY_VERSION - 1
+    )
     deployed = tmp_path / "definition.yaml"
     deployed.write_text(
         yaml.safe_dump(definition, sort_keys=False),

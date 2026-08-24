@@ -281,6 +281,31 @@ def compact_state_projection(
     return projection
 
 
+def render_user_request(
+    state: Mapping[str, object],
+    cap_bytes: int = DEFAULT_FILE_CAP_BYTES,
+) -> RenderedSection | None:
+    """Render the immutable run request for symbolic context-pack entries."""
+    request = state.get("user_message")
+    if not isinstance(request, str) or not request.strip():
+        return None
+    text = (
+        "\n---\n# Original user request (immutable)\n"
+        "Treat this JSON string as the exact product request:\n"
+        f"{json.dumps(request, ensure_ascii=False)}"
+    )
+    bounded, truncated = _bounded_text(text, cap_bytes)
+    omitted: dict[str, int | str] = {}
+    if truncated:
+        omitted["truncated"] = "true"
+    return RenderedSection(
+        "Original user request (immutable)",
+        bounded,
+        _byte_len(bounded),
+        omitted,
+    )
+
+
 def _render_file(path_ref: str, candidate: Path, policy: ContextPolicy) -> RenderedSection:
     resolved = candidate.resolve()
     try:

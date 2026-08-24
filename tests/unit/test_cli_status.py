@@ -2069,3 +2069,40 @@ def test_status_uses_controller_recovery_instruction_for_next_command(
     assert "no runtime-sync recovery instruction was recorded" in output
     assert 'echelon spec resume "<your answer>"' not in output
     assert "echelon spec rewind" not in output
+
+
+def test_status_turns_unresolvable_tasks_dispatch_cap_into_executable_replay(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-tasks-cap"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase3-tasks-lexicon",
+                "blocked_reason": "phase_dispatch_limit_evidence_malformed",
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                    reason_code="phase_dispatch_limit_evidence_malformed",
+                    phase="",
+                    requires_human_input=False,
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert output.count("NEXT STEP") == 1
+    assert output.count("echelon phase run phase3-tasks-lexicon") == 1
+    assert "re-run the capped deterministic task gate" in output.lower()
+    assert "diagnose the failed decision" not in output

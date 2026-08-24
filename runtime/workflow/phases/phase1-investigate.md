@@ -185,7 +185,7 @@ echelon_result:
     status: blocked
     blocked_reason: "<human_clarification_required | investigation_access_required>"
     escalation_question: "<one concrete decision or access request>"
-    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_recommended_answer: "<exact answer value>"
     escalation_risk_level: "<low | medium | high | critical>"
 ```
 
@@ -199,5 +199,11 @@ Include `escalation_recommended_answer` and `escalation_risk_level` together
 only when evidence supports a recommendation; otherwise omit both. Never retry
 the same evidence request without new evidence. The controller owns
 clarification writes and state cleanup.
+`escalation_recommended_answer` must contain the exact answer value that can be
+copied verbatim into `answer_text`; do not write an instruction, rationale, or
+recommendation preamble in that field.
+In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
+that explicit input, the selected stack, reachable evidence, or a conventional
+default can resolve; record the assumption and continue.
 
 **Transition:** `phases[phase1-investigate]` in `workflow/definition.yaml`.

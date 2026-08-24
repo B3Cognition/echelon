@@ -596,6 +596,7 @@ def _seal_dispatch_cap_decision(
     *,
     initial_status: str = "awaiting_human",
     legacy: bool = False,
+    phase_id: str = "phase1-what",
 ) -> tuple[str, int]:
     option_contract = (
         tuple(_dispatch_cap_option(item) for item in candidates)
@@ -605,7 +606,7 @@ def _seal_dispatch_cap_decision(
     request = controller._human_input_registry.prepare_controller(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
-        phase_id="phase1-what",
+        phase_id=phase_id,
         reason_code=policy.reason_code,
         question="Select one sealed evidence-backed issue resolution.",
         source_state_revision=store.load()["state_revision"],
@@ -712,7 +713,7 @@ def _provider_routing_decision(
 def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     tmp_path: Path,
 ) -> None:
-    answer = "Use the attested public contract."
+    answer = "Hello, World!"
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
@@ -768,6 +769,8 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     assert resolved["id"] == sealed_ids[0]
     assert resolved["status"] == "resolved"
     assert resolved["answer_text"] == answer
+    assert resolved["recommendation_followed"] is True
+    assert resolved["override_reason"] is None
     provider.exec_agent.assert_called_once()
 
 
@@ -3859,6 +3862,88 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
 
 
+def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corridor(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase3-tasks-lexicon",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset(
+            {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+        ),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Coverage handoff is stale
+
+- **Responsible agent:** SENTINEL
+- **Action Required:** Amend coverage-map.md from the current task plan.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Align coverage evidence with T-009, T-012, and T-013.
+- **Evidence basis:** Current tasks.md and dependencies.md.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase"] = "phase3-tasks-lexicon"
+    state["phase_dispatch_counts"] = {
+        "phase1-tracker": 2,
+        "phase3-how": 4,
+        "phase3-sentinel": 5,
+        "phase3-plan": 6,
+        "phase3-tasks-lexicon": 6,
+        "phase3-understanding": 4,
+        "phase3-consensus": 4,
+        "phase3-consensus-tasks-lexicon": 4,
+    }
+    store.save(state)
+
+    candidates = controller._banzai_issue_resolution_candidates(store.load())
+    assert candidates[0]["repair_phase"] == "phase3-sentinel"
+    options = controller._dispatch_cap_options(candidates)
+    assert options[0].next_phase == "phase3-sentinel"
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        tuple(candidates),
+        phase_id="phase3-tasks-lexicon",
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    resolved = store.load()
+    assert resolved["phase"] == "phase3-sentinel"
+    assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 2}
+    assert resolved["issue_resolution_ledger"]["ISS-001"]["repair_phase"] == (
+        "phase3-sentinel"
+    )
+    assert resolved["issue_resolution_recovery"]["to_phase"] == "phase3-sentinel"
+    assert resolved["phase_dispatch_limit_recovery"]["phase"] == (
+        "phase3-tasks-lexicon"
+    )
+
+
 def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     tmp_path: Path,
 ) -> None:
@@ -3984,6 +4069,89 @@ def test_dispatch_cap_accepts_legacy_candidate_description(
         ),
     )
     assert store.load()["selected_issue_resolution"] == "ISS-001"
+
+
+def test_dispatch_cap_accepts_pending_schema1_reference_without_route_rewrite(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase3-tasks-lexicon",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset(
+            {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+        ),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+- **Responsible agent:** SENTINEL
+- **Action Required:** Repair the test handoff.
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase"] = "phase3-tasks-lexicon"
+    store.save(state)
+    candidate = _dispatch_cap_candidate()
+    legacy_reference = json.dumps(
+        {
+            "evidence_sha256": controller._dispatch_cap_candidate_digest(
+                candidate
+            ),
+            "issue_id": candidate["issue_id"],
+            "schema_version": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    option = HumanInputOption(
+        id=candidate["issue_id"],
+        label=f"{candidate['issue_id']}: {candidate['title']}",
+        description=legacy_reference,
+        recommended=False,
+        risk_level="medium",
+        next_phase="phase1-what",
+        outcome=None,
+    )
+    request = controller._human_input_registry.prepare_controller(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase3-tasks-lexicon",
+        reason_code=policy.reason_code,
+        question="Select one sealed evidence-backed issue resolution.",
+        source_state_revision=store.load()["state_revision"],
+        option_contract=(option,),
+    )
+    store.set_human_input_decision(request, initial_status="awaiting_human")
+    sealed = store.load()
+
+    assert controller.apply_human_input_resolution(
+        sealed["blocked_decision"]["id"],
+        expected_state_revision=sealed["state_revision"],
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    assert store.load()["phase"] == "phase1-what"
 
 
 def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
@@ -4299,10 +4467,12 @@ def test_dispatch_cap_options_reference_large_evidence() -> None:
     assert set(reference) == {
         "evidence_sha256",
         "issue_id",
+        "repair_phase",
         "schema_version",
     }
-    assert reference["schema_version"] == 1
+    assert reference["schema_version"] == 2
     assert reference["issue_id"] == "ISS-001"
+    assert reference["repair_phase"] == "phase1-what"
     assert len(reference["evidence_sha256"]) == 64
 
 
@@ -5338,6 +5508,40 @@ def test_commander_runtime_prompt_contains_the_complete_strict_contract(
     assert "exactly one of selected_option_id or answer_text" in prompt
     assert "Do not ask another question" in prompt
     assert "Do not write files or mutate state" in prompt
+
+
+def test_commander_free_text_prompt_requires_exact_recommendation_copy(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer="Hello, World!",
+    )
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+
+    prompt = controller._render_commander_decision_prompt(
+        state["blocked_decision"],
+        policy,
+        state,
+    )
+
+    assert (
+        "When following a free-text recommended_answer, copy its exact value "
+        "into answer_text, character for character."
+    ) in prompt
+    assert (
+        "Any different answer_text is an override; explain that difference "
+        "in rationale."
+    ) in prompt
 
 
 def test_commander_invalid_result_retries_once_after_a_fresh_claim(
