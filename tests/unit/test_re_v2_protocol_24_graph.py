@@ -14,7 +14,10 @@ from harness.re_v2.protocol_22.graph import (
 from harness.re_v2.protocol_22.inputs import ValidatedProtocol22Inputs
 from harness.re_v2.protocol_22.model import CatalogReferenceV1, WorkTemplateV2
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError
-from harness.re_v2.protocol_24.graph import build_protocol_24_graph
+from harness.re_v2.protocol_24.graph import (
+    build_protocol_24_graph,
+    validate_protocol_24_graph_authority,
+)
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_protocol_22_graph import _Authority, _Budget, _fixture
@@ -108,6 +111,47 @@ def test_domain_selection_plans_only_selected_l2_delta() -> None:
     assert {item.output_key.scope.domain_key for item in decision.ready} == {
         orders_key
     }
+
+
+def test_protocol_22_planner_facade_accepts_closed_protocol_24_graph() -> None:
+    graph, _inputs, authority, _accepted_parent, _parent_work = _deepening_fixture()
+
+    assert plan_next_v22(graph, authority, _Budget()) == plan_next_v2(
+        graph, authority, _Budget()
+    )
+
+
+def test_protocol_24_graph_authority_binds_manifest_selection_and_inputs() -> None:
+    graph, inputs, _authority, _accepted_parent, _parent_work = _deepening_fixture()
+    manifest = replace(
+        manifest_v3(),
+        source_snapshot_id=inputs.workspace_partition.snapshot_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            inputs.workspace_partition.identity, "workspace-partition.json"
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            inputs.artifact_policy.identity, "artifact-policy.json"
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            inputs.executor_contract.identity, "executor-contract.json"
+        ),
+        selection=replace(
+            manifest_v3().selection,
+            source_ids=graph.selected_source_ids,
+            domain_keys=graph.selected_domain_keys,
+        ),
+    )
+
+    assert validate_protocol_24_graph_authority(manifest, inputs, graph) is graph
+    with pytest.raises(Protocol22SchemaError, match="selection"):
+        validate_protocol_24_graph_authority(
+            replace(
+                manifest,
+                selection=replace(manifest.selection, domain_keys=()),
+            ),
+            inputs,
+            graph,
+        )
 
 
 def test_graph_preserves_parent_templates_and_limits_l2_to_selection() -> None:

@@ -63,6 +63,7 @@ from .graph import (
     Protocol22GraphError,
     build_protocol_22_graph,
     instantiate_ready_item,
+    is_shared_planning_graph_v2,
     plan_next_v22,
 )
 from .inputs import (
@@ -182,13 +183,13 @@ class Protocol22RunContext:
             raise Protocol22RecoveryError("run context paths are not canonical")
         if not isinstance(self.inputs, ValidatedProtocol22Inputs):
             raise Protocol22RecoveryError("run context inputs are not authenticated")
-        if not isinstance(self.graph, Protocol22Graph):
+        if not is_shared_planning_graph_v2(self.graph):
             raise Protocol22RecoveryError("run context graph is invalid")
         if not isinstance(self.event_store, EventStore) or (
             self.event_store.path.absolute() != self.paths.events.absolute()
-            or self.event_store.protocol is not PROTOCOL_22_EVENTS
+            or not _is_supported_event_protocol(self.event_store.protocol)
         ):
-            raise Protocol22RecoveryError("run context event store is not protocol 2.2")
+            raise Protocol22RecoveryError("run context event store protocol is invalid")
         if not isinstance(self.object_store, ObjectStore) or (
             self.object_store.root.absolute() != self.paths.objects.absolute()
         ):
@@ -453,6 +454,7 @@ def _recover_locked(
             events,
             open_dispatches,
             context.clock(),
+            event_protocol=context.event_store.protocol,
         )
         # Recovery finishes the interrupted transaction and yields.  Only a run
         # with no historical dispatch needs a prepared first action here; the
@@ -531,23 +533,56 @@ def _validate_immutable_authority(
     context: Protocol22RunContext,
 ) -> tuple[RunManifestV2, ValidatedProtocol22Inputs, Protocol22Graph]:
     manifest = load_run_manifest(context.paths.root.parent)
-    if not isinstance(manifest, RunManifestV2):
-        raise Protocol22RecoveryError(
-            "protocol-2.2 recovery requires a schema-2 manifest"
+    if isinstance(manifest, RunManifestV2):
+        inputs = load_protocol_22_inputs(context.paths, manifest)
+        if inputs != context.inputs:
+            raise Protocol22RecoveryError(
+                "context inputs differ from immutable catalog authority"
+            )
+        graph = build_protocol_22_graph(manifest, inputs)
+        if graph != context.graph:
+            raise Protocol22RecoveryError(
+                "context graph differs from immutable protocol-2.2 graph"
+            )
+    else:
+        from harness.re_v2.protocol_24.graph import (
+            Protocol24Graph,
+            validate_protocol_24_graph_authority,
         )
-    inputs = load_protocol_22_inputs(context.paths, manifest)
-    if inputs != context.inputs:
-        raise Protocol22RecoveryError(
-            "context inputs differ from immutable catalog authority"
+        from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
+        from harness.re_v2.protocol_24.model import RunManifestV3
+
+        if not isinstance(manifest, RunManifestV3):
+            raise Protocol22RecoveryError(
+                "shared recovery requires a schema-2 or schema-3 manifest"
+            )
+        if not isinstance(context.graph, Protocol24Graph):
+            raise Protocol22RecoveryError(
+                "schema-3 recovery requires a protocol-2.4 graph"
+            )
+        inputs = load_protocol_24_inputs(context.paths, manifest)
+        if inputs != context.inputs:
+            raise Protocol22RecoveryError(
+                "context inputs differ from immutable catalog authority"
+            )
+        graph = validate_protocol_24_graph_authority(
+            manifest,
+            inputs,
+            context.graph,
         )
     if context.snapshot_validator is not None:
         context.snapshot_validator()
-    graph = build_protocol_22_graph(manifest, inputs)
-    if graph != context.graph:
-        raise Protocol22RecoveryError(
-            "context graph differs from immutable protocol-2.2 graph"
-        )
     return manifest, inputs, graph
+
+
+def _is_supported_event_protocol(protocol: object) -> bool:
+    if protocol is PROTOCOL_22_EVENTS:
+        return True
+    try:
+        from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    except ImportError:
+        return False
+    return protocol is PROTOCOL_24_EVENTS
 
 
 def _installed_mismatches(
@@ -1201,12 +1236,16 @@ def _reconcile_orphan_receipts(
     known_items: Mapping[str, WorkItemV2],
     fault_hook: FaultHook | None,
 ) -> None:
-    _validate_existing_receipt_events(events, ledger)
+    adopted_assessments, adopted_acceptances = _validate_existing_receipt_events(
+        context,
+        events,
+        ledger,
+    )
     event_assessments = {
         str(event.payload["candidate_assessment_id"])
         for event in events
         if event.type in {"candidate_certified", "candidate_rejected"}
-    }
+    } | adopted_assessments
     for receipt_id, receipt in sorted(ledger.candidate_assessments.items()):
         if receipt_id in event_assessments:
             continue
@@ -1233,7 +1272,7 @@ def _reconcile_orphan_receipts(
         str(event.payload["artifact_acceptance_receipt_id"])
         for event in events
         if event.type == "artifact_accepted"
-    }
+    } | adopted_acceptances
     for receipt in sorted(
         ledger.accepted_artifacts.values(), key=lambda value: value.identity
     ):
@@ -1311,12 +1350,66 @@ def _reconcile_orphan_receipts(
 
 
 def _validate_existing_receipt_events(
+    context: Protocol22RunContext,
     events: tuple[EventRecord, ...],
     ledger: Protocol22LedgerView,
-) -> None:
+) -> tuple[set[str], set[str]]:
+    adopted_assessments: set[str] = set()
+    adopted_acceptances: set[str] = set()
     for event in events:
         payload = event.payload
-        if event.type in {"candidate_certified", "candidate_rejected"}:
+        if event.type == "artifact_adopted":
+            from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+
+            authority = AdoptedArtifactAuthorityV1.from_json_dict(
+                payload["adopted_artifact_authority"]
+            )
+            bundle = getattr(context.inputs, "parent_authority_bundle", None)
+            if (
+                bundle is None
+                or payload["parent_authority_bundle_hash"] != bundle.identity
+                or authority not in bundle.artifacts
+            ):
+                raise Protocol22RecoveryError(
+                    "artifact_adopted is outside immutable parent authority"
+                )
+            receipt = ledger.accepted_artifacts.get(authority.artifact_key_id)
+            certification = ledger.certifications.get(
+                authority.certification_receipt_id
+            )
+            work_item = ledger.certification_work_items.get(
+                authority.certification_receipt_id
+            )
+            assessment = (
+                None
+                if authority.candidate_assessment_id is None
+                else ledger.candidate_assessments.get(
+                    authority.candidate_assessment_id
+                )
+            )
+            if (
+                receipt is None
+                or receipt.identity != authority.artifact_acceptance_receipt_id
+                or receipt.artifact_hash != authority.artifact_hash
+                or receipt.certification_receipt_id
+                != authority.certification_receipt_id
+                or certification is None
+                or work_item is None
+                or work_item.work_item_id != payload["work_item_id"]
+                or work_item.output_key.dependency_hashes
+                != authority.dependency_hashes
+                or (
+                    authority.candidate_assessment_id is not None
+                    and assessment is None
+                )
+            ):
+                raise Protocol22RecoveryError(
+                    "artifact_adopted disagrees with imported receipt authority"
+                )
+            adopted_acceptances.add(receipt.identity)
+            if assessment is not None:
+                adopted_assessments.add(assessment.identity)
+        elif event.type in {"candidate_certified", "candidate_rejected"}:
             receipt = ledger.candidate_assessments.get(
                 str(payload["candidate_assessment_id"])
             )
@@ -1381,6 +1474,7 @@ def _validate_existing_receipt_events(
                 raise Protocol22RecoveryError(
                     "executor_failed has no exact executor-failure receipt"
                 )
+    return adopted_assessments, adopted_acceptances
 
 
 def _validate_orphan_candidate_assessment(

@@ -134,6 +134,7 @@ class BudgetPolicyV2(_CanonicalIdentity):
     GOAL_ATTEMPTS: ClassVar[Mapping[str, tuple[int, ...]]] = {
         "baseline": (2, 2, 0, 1, 1, 1),
         "inventory": (0, 1, 0, 0, 0, 0),
+        "selective-deepening": (2, 2, 0, 1, 1, 1),
     }
 
     def __post_init__(self) -> None:

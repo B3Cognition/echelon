@@ -314,6 +314,45 @@ def build_protocol_24_graph(
     return graph
 
 
+def validate_protocol_24_graph_authority(
+    manifest: RunManifestV3,
+    inputs: ValidatedProtocol22Inputs | Protocol22InputSet,
+    graph: Protocol24Graph,
+) -> Protocol24Graph:
+    """Bind an already-closed child graph to its immutable manifest and inputs."""
+    if not isinstance(manifest, RunManifestV3):
+        raise Protocol24GraphError("graph validation requires RunManifestV3")
+    if not isinstance(graph, Protocol24Graph):
+        raise Protocol24GraphError("graph validation requires Protocol24Graph")
+    _validate_manifest_inputs(manifest, inputs)
+    if graph.inputs != inputs:
+        raise Protocol24GraphError(
+            "protocol-2.4 graph inputs differ from immutable input authority"
+        )
+    expected_catalogs = {
+        "workspace_partition_catalog": manifest.workspace_partition_catalog.object_hash,
+        "artifact_policy_catalog": manifest.artifact_policy_catalog.object_hash,
+        "executor_contract_catalog": manifest.executor_contract_catalog.object_hash,
+    }
+    if dict(graph.catalog_hashes) != expected_catalogs:
+        raise Protocol24GraphError(
+            "protocol-2.4 graph catalogs differ from immutable manifest authority"
+        )
+    selected = _resolve_selection(manifest, inputs)
+    source_ids = tuple(sorted(source.source_id for source, _domains in selected))
+    domain_keys = tuple(
+        sorted(domain.domain_key for _source, domains in selected for domain in domains)
+    )
+    if (
+        graph.selected_source_ids != source_ids
+        or graph.selected_domain_keys != domain_keys
+    ):
+        raise Protocol24GraphError(
+            "protocol-2.4 graph selection differs from immutable manifest authority"
+        )
+    return graph
+
+
 def _validate_manifest_inputs(
     manifest: RunManifestV3,
     inputs: ValidatedProtocol22Inputs | Protocol22InputSet,
@@ -508,4 +547,5 @@ __all__ = (
     "Protocol24Graph",
     "Protocol24GraphError",
     "build_protocol_24_graph",
+    "validate_protocol_24_graph_authority",
 )

@@ -550,9 +550,20 @@ def plan_next_v22(
     budget: PlanningBudgetV2,
 ) -> PlanDecisionV2:
     """Compatibility facade retaining protocol-2.2 nominal validation."""
-    if not isinstance(graph, Protocol22Graph):
+    if not is_shared_planning_graph_v2(graph):
         raise Protocol22GraphError("planning requires Protocol22Graph")
     return plan_next_v2(graph, authority, budget)
+
+
+def is_shared_planning_graph_v2(graph: object) -> bool:
+    """Recognize only the two closed graphs that use the shared v2 planner."""
+    if isinstance(graph, Protocol22Graph):
+        return True
+    try:
+        from harness.re_v2.protocol_24.graph import Protocol24Graph
+    except ImportError:
+        return False
+    return isinstance(graph, Protocol24Graph)
 
 
 def plan_next_v2(
@@ -1075,6 +1086,7 @@ __all__ = (
     "PlanningGraphV2",
     "Protocol22Graph",
     "Protocol22GraphError",
+    "is_shared_planning_graph_v2",
     "WorkFailureStateV2",
     "build_protocol_22_graph",
     "build_work_template_v2",

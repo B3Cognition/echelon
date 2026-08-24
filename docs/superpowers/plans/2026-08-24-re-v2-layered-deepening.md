@@ -339,7 +339,7 @@ git commit -m "feat(re-v2): publish schema 3 child runs"
 - Produces: protocol-selectable budget replay that ignores deterministic adoption events and preserves existing accounting.
 - Produces: a protocol-2.4 run context accepted by unchanged `Protocol22Controller` and unchanged `Protocol22ExecutionStore`.
 
-- [ ] **Step 1: Write failing adoption-event replay tests**
+- [x] **Step 1: Write failing adoption-event replay tests**
 
 Assert exact payload fields, canonical bytes, duplicate adoption rejection, adoption-after-dispatch rejection, terminal immutability, and protocol-2.2 rejection of protocol-2.4 event history.
 
@@ -347,13 +347,13 @@ Assert exact payload fields, canonical bytes, duplicate adoption rejection, adop
 
 Create a child with imported L0/L1 receipts and one L2 provider item, execute through unchanged `Protocol22Controller`, and assert the shared executor receives exactly one dispatch and the run reaches `run_completed`.
 
-- [ ] **Step 3: Run event/controller tests and confirm RED**
+- [x] **Step 3: Run event/controller tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_events.py tests/integration/test_re_v2_protocol_24_controller.py`
 
 Expected: failure because protocol-2.4 replay/context routing is absent.
 
-- [ ] **Step 4: Implement event delegation without copying schemas**
+- [x] **Step 4: Implement event delegation without copying schemas**
 
 Delegate common payload canonicalization and replay transitions to `PROTOCOL_22_EVENTS`; handle only `artifact_adopted` in the protocol-2.4 wrapper. Generalize budget/recovery functions to accept the context's selected event protocol while keeping protocol-2.2 defaults exact.
 

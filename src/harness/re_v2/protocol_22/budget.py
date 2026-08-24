@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Iterable, Literal, Mapping
 
-from harness.re_v2.events import EventRecord, ReV2EventError, validate_event_history
+from harness.re_v2.events import (
+    EventProtocol,
+    EventRecord,
+    ReV2EventError,
+    validate_event_history,
+)
 
 from .events import PROTOCOL_22_EVENTS, Protocol22ReplayState
 from .model import BudgetPolicyV2, WorkItemV2
@@ -171,13 +176,17 @@ def evaluate_budget_v22(
     events: Iterable[EventRecord],
     open_dispatches: Iterable[str] | Mapping[str, object],
     now: str,
+    *,
+    event_protocol: EventProtocol | None = None,
 ) -> BudgetDecisionV2:
-    """Replay validated 2.2 events into conservative resource and attempt state."""
+    """Replay shared execution events into conservative resource and attempt state."""
     if not isinstance(policy, BudgetPolicyV2):
         raise ReV2BudgetV22Error("policy must be BudgetPolicyV2")
     current_time = _timestamp(now, "now")
+    event_history = tuple(events)
+    selected_protocol = event_protocol or _infer_event_protocol(event_history)
     try:
-        history = validate_event_history(events, protocol=PROTOCOL_22_EVENTS)
+        history = validate_event_history(event_history, protocol=selected_protocol)
     except ReV2EventError as exc:
         raise ReV2BudgetV22Error(
             f"validated protocol-2.2 EventRecord history required: {exc}"
@@ -435,8 +444,19 @@ def evaluate_budget_v22(
 def _protocol_state(history: tuple[EventRecord, ...]) -> Protocol22ReplayState:
     state = Protocol22ReplayState()
     for event in history:
+        if event.type == "artifact_adopted":
+            state.accepted_work_items.add(str(event.payload["work_item_id"]))
+            continue
         state.consume(event)
     return state
+
+
+def _infer_event_protocol(history: tuple[EventRecord, ...]) -> EventProtocol:
+    if any(event.type == "artifact_adopted" for event in history):
+        from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+
+        return PROTOCOL_24_EVENTS
+    return PROTOCOL_22_EVENTS
 
 
 def _apply_authorization(
