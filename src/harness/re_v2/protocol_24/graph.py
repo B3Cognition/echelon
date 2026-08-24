@@ -49,6 +49,11 @@ _SOURCE_PARENT_KINDS = (
     "source-overview",
     "source-baseline-root",
 )
+_SOURCE_CONTEXT_INPUT_KINDS = (
+    "source-inventory",
+    "source-partition",
+    "source-evidence-pack",
+)
 
 
 class Protocol24GraphError(Protocol22GraphError):
@@ -212,28 +217,20 @@ def build_protocol_24_graph(
     for source, domains in selected:
         l2_domains: list[WorkTemplateV2] = []
         for domain in domains:
-            parent_ids = tuple(
-                _parent_template(
-                    parent_by_slot,
-                    source.source_id,
-                    domain.domain_key,
-                    layer,
-                    kind,
-                ).template_id
-                for layer, kind in (
-                    ("L0", "domain-inventory"),
-                    ("L0", "domain-evidence-pack"),
-                    ("L1", "domain-context-bundle"),
-                    ("L1", "domain-baseline"),
-                )
-            )
+            inventory_id = _parent_template(
+                parent_by_slot,
+                source.source_id,
+                domain.domain_key,
+                "L0",
+                "domain-inventory",
+            ).template_id
             evidence = _l2_template(
                 manifest,
                 inputs,
                 source,
                 domain,
                 "domain-evidence-pack",
-                parent_ids,
+                (inventory_id,),
             )
             context = _l2_template(
                 manifest,
@@ -241,7 +238,7 @@ def build_protocol_24_graph(
                 source,
                 domain,
                 "domain-context-bundle",
-                (evidence.template_id,),
+                (inventory_id, evidence.template_id),
             )
             baseline = _l2_template(
                 manifest,
@@ -254,9 +251,9 @@ def build_protocol_24_graph(
             templates.extend((evidence, context, baseline))
             l2_domains.append(baseline)
 
-        source_parent_ids = tuple(
-            _parent_template(parent_by_slot, source.source_id, None, "L1", kind).template_id
-            for kind in _SOURCE_PARENT_KINDS
+        source_context_input_ids = tuple(
+            _parent_template(parent_by_slot, source.source_id, None, "L0", kind).template_id
+            for kind in _SOURCE_CONTEXT_INPUT_KINDS
         )
         selected_domain_ids = tuple(item.template_id for item in l2_domains)
         source_context = _l2_template(
@@ -265,7 +262,7 @@ def build_protocol_24_graph(
             source,
             None,
             "source-overview-context-bundle",
-            (*source_parent_ids, *selected_domain_ids),
+            (*source_context_input_ids, *selected_domain_ids),
         )
         source_overview = _l2_template(
             manifest,

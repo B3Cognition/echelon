@@ -27,6 +27,10 @@ from .artifacts import parse_l2_authorial_candidate
 class Protocol24Controller(Protocol22Controller):
     """Inherit the shared run loop; specialize only L2 candidate certification."""
 
+    def _materialize_accepted_l1(self) -> None:
+        """Defer projections to the protocol-2.4 layer-aware materializer."""
+        return None
+
     def _certify_provider_candidate(
         self,
         item: WorkItemV2,

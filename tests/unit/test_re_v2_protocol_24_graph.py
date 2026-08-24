@@ -230,6 +230,34 @@ def test_l2_source_root_is_selection_relative_and_dependencies_are_unique() -> N
         )
 
 
+def test_l2_source_context_uses_supported_layered_dependency_roles() -> None:
+    graph, _inputs, _authority, _accepted_parent, _parent_work = _deepening_fixture()
+    context = next(
+        item
+        for item in graph.templates
+        if item.layer == "L2"
+        and item.artifact_kind == "source-overview-context-bundle"
+    )
+    by_id = {item.template_id: item for item in graph.templates}
+    dependencies = tuple(by_id[item] for item in context.required_template_ids)
+
+    assert {
+        (item.layer, item.artifact_kind)
+        for item in dependencies
+        if item.scope.domain_key is None
+    } == {
+        ("L0", "source-inventory"),
+        ("L0", "source-partition"),
+        ("L0", "source-evidence-pack"),
+    }
+    assert {
+        (item.layer, item.artifact_kind)
+        for item in dependencies
+        if item.scope.domain_key is not None
+    } == {("L2", "domain-baseline")}
+    assert all(item.artifact_kind != "source-baseline-root" for item in dependencies)
+
+
 def test_shared_values_reject_unregistered_future_layers() -> None:
     graph, _inputs, _authority, _accepted_parent, _parent_work = _deepening_fixture()
     l2 = next(item for item in graph.templates if item.layer == "L2")

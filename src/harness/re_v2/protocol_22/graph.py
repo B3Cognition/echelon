@@ -958,7 +958,10 @@ def _validate_template_contract(
     executor: ExecutorContractEntryV1,
 ) -> None:
     expected = {
-        "producer_family": _PRODUCER_FAMILY.get(template.artifact_kind),
+        "producer_family": _producer_family(
+            template.layer,
+            template.artifact_kind,
+        ),
         "producer_protocol_version": policy.producer_protocol_version,
         "layer_policy_hash": layer_policy_hash(policy),
         "executor_contract_hash": executor.executor_contract_hash,

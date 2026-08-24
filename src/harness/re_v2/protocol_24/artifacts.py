@@ -6,7 +6,16 @@ from dataclasses import dataclass, replace
 from typing import ClassVar, Literal, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
-from harness.re_v2.protocol_22.artifacts import ContextBundleV1, DepthDebtV1
+from harness.re_v2.protocol_22.artifacts import (
+    AcceptedDependencySetV2,
+    ArtifactDependencyV1,
+    ContextBundleV1,
+    DepthDebtV1,
+    EvidenceExcerptV1,
+    EvidencePackV1,
+    OmittedEvidenceDescriptorV1,
+    SourceBaselineDomainV1,
+)
 from harness.re_v2.protocol_22.baseline import (
     CandidateAssessmentReceiptV1,
     CertificationReceiptV2,
@@ -32,12 +41,32 @@ from harness.re_v2.protocol_22.executors import (
     ExecutorContractCatalogV1,
     Protocol22ExecutorError,
 )
+from harness.re_v2.protocol_22.evidence import (
+    EvidenceAuthorityDescriptorV1,
+    _classify_path,
+    _verify_payload,
+    evidence_authority_id,
+)
+from harness.re_v2.protocol_22.inventory import InventoryArtifactV1, InventoryFileV1
+from harness.re_v2.protocol_22.inventory import SourcePartitionArtifactV1
 from harness.re_v2.protocol_22.model import ArtifactScope, WorkItemV2
-from harness.re_v2.protocol_22.policies import layer_policy_hash
+from harness.re_v2.protocol_22.partition import (
+    FileRecordV1,
+    WorkspacePartitionCatalogV1,
+)
+from harness.re_v2.protocol_22.policies import (
+    ArtifactPolicyCatalogV1,
+    ContextBundlePolicyParametersV1,
+    DomainEvidencePackPolicyParametersV1,
+    ProjectionPolicyV1,
+    layer_policy_hash,
+    policy_for,
+)
 from harness.re_v2.protocol_22.schema import (
     Protocol22SchemaError,
     digest_value,
     exact_object,
+    load_canonical_object,
     sorted_unique_digests,
 )
 
@@ -45,6 +74,129 @@ from harness.re_v2.protocol_22.schema import (
 DEEPENER_AGENT_ID = "echelon.re-deepener"
 DEEPENING_PRODUCER_FAMILY = "compact-deepening"
 _BASELINE_KINDS = frozenset({"domain-baseline", "source-overview"})
+
+
+@dataclass(frozen=True, slots=True)
+class L2SourceRootEnvelopeV1:
+    artifact_kind: Literal["source-baseline-root"]
+    layer: Literal["L2"]
+    scope: ArtifactScope
+    partition_id: str
+    layer_policy_hash: str
+    dependency_hashes: tuple[str, ...]
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "artifact_kind",
+        "layer",
+        "scope",
+        "partition_id",
+        "layer_policy_hash",
+        "dependency_hashes",
+    )
+
+    def __post_init__(self) -> None:
+        if self.artifact_kind != "source-baseline-root" or self.layer != "L2":
+            raise Protocol22SchemaError("L2 source root envelope is invalid")
+        if not isinstance(self.scope, ArtifactScope) or self.scope.is_domain:
+            raise Protocol22SchemaError("L2 source root requires source scope")
+        digest_value(self.partition_id, "L2 source root partition_id")
+        digest_value(self.layer_policy_hash, "L2 source root policy hash")
+        object.__setattr__(
+            self,
+            "dependency_hashes",
+            sorted_unique_digests(
+                self.dependency_hashes,
+                "L2 source root dependency hashes",
+            ),
+        )
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "artifact_kind": self.artifact_kind,
+            "layer": self.layer,
+            "scope": self.scope.to_json_dict(),
+            "partition_id": self.partition_id,
+            "layer_policy_hash": self.layer_policy_hash,
+            "dependency_hashes": list(self.dependency_hashes),
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "L2SourceRootEnvelopeV1":
+        raw = exact_object(value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(
+            artifact_kind=raw["artifact_kind"],
+            layer=raw["layer"],
+            scope=ArtifactScope.from_json_dict(raw["scope"]),
+            partition_id=raw["partition_id"],
+            layer_policy_hash=raw["layer_policy_hash"],
+            dependency_hashes=raw["dependency_hashes"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class L2SourceBaselineRootV1:
+    schema_version: int
+    artifact: L2SourceRootEnvelopeV1
+    overview_artifact_hash: str
+    domains: tuple[SourceBaselineDomainV1, ...]
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "artifact",
+        "overview_artifact_hash",
+        "domains",
+    )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1 or isinstance(self.schema_version, bool):
+            raise Protocol22SchemaError("L2 source root schema_version must be 1")
+        if not isinstance(self.artifact, L2SourceRootEnvelopeV1):
+            raise Protocol22SchemaError("L2 source root envelope is invalid")
+        digest_value(self.overview_artifact_hash, "L2 source root overview hash")
+        if not isinstance(self.domains, (list, tuple)) or any(
+            not isinstance(item, SourceBaselineDomainV1) for item in self.domains
+        ):
+            raise Protocol22SchemaError("L2 source root domains are invalid")
+        domains = tuple(self.domains)
+        keys = tuple(item.domain_key for item in domains)
+        if keys != tuple(sorted(set(keys))) or not domains:
+            raise Protocol22SchemaError(
+                "L2 source root domains must be nonempty, sorted, and unique"
+            )
+        expected = tuple(
+            sorted(
+                (
+                    self.overview_artifact_hash,
+                    *(item.baseline_artifact_hash for item in domains),
+                )
+            )
+        )
+        if self.artifact.dependency_hashes != expected:
+            raise Protocol22SchemaError(
+                "L2 source root dependency hashes do not equal selected outputs"
+            )
+        object.__setattr__(self, "domains", domains)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "artifact": self.artifact.to_json_dict(),
+            "overview_artifact_hash": self.overview_artifact_hash,
+            "domains": [item.to_json_dict() for item in self.domains],
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "L2SourceBaselineRootV1":
+        raw = exact_object(value, frozenset(cls.FIELDS), cls.__name__)
+        domains = raw["domains"]
+        if not isinstance(domains, (list, tuple)):
+            raise Protocol22SchemaError("L2 source root domains must be an array")
+        return cls(
+            schema_version=raw["schema_version"],
+            artifact=L2SourceRootEnvelopeV1.from_json_dict(raw["artifact"]),
+            overview_artifact_hash=raw["overview_artifact_hash"],
+            domains=tuple(SourceBaselineDomainV1.from_json_dict(item) for item in domains),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +358,677 @@ def build_deepening_executor_catalog(
             )
         ),
     )
+
+
+def build_l2_domain_evidence_pack(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+    policies: ArtifactPolicyCatalogV1,
+    snapshot: object,
+    adopted_authority: Mapping[tuple[str, str | None, str, str], bytes],
+) -> bytes:
+    """Select the deterministic complement of adopted L0 domain evidence."""
+    _validate_l2_deterministic_item(
+        work_item,
+        accepted_inputs,
+        policies,
+        "domain-evidence-pack",
+        frozenset({"domain_inventory"}),
+    )
+    policy = policy_for(policies, "L2", "domain-evidence-pack")
+    parameters = policy.policy_parameters
+    if not isinstance(parameters, DomainEvidencePackPolicyParametersV1):
+        raise Protocol22CertificationError(
+            "L2 domain evidence policy parameters are invalid"
+        )
+    inventory_bytes = accepted_inputs.payload_for_role("domain_inventory")
+    authority_prefix = (
+        work_item.output_key.scope.source_id,
+        work_item.output_key.scope.domain_key,
+    )
+    try:
+        l0_bytes = adopted_authority[(*authority_prefix, "L0", "domain-evidence-pack")]
+        context_bytes = adopted_authority[
+            (*authority_prefix, "L1", "domain-context-bundle")
+        ]
+        baseline_bytes = adopted_authority[
+            (*authority_prefix, "L1", "domain-baseline")
+        ]
+    except KeyError as exc:
+        raise Protocol22CertificationError(
+            "adopted parent authority lacks the L2 domain selection closure"
+        ) from exc
+    inventory = load_canonical_object(
+        inventory_bytes,
+        InventoryArtifactV1.from_json_dict,
+    )
+    l0 = load_canonical_object(l0_bytes, EvidencePackV1.from_json_dict)
+    l1_context = load_canonical_object(context_bytes, ContextBundleV1.from_json_dict)
+    l1_baseline = load_canonical_object(
+        baseline_bytes,
+        CompactBaselineArtifactV1.from_json_dict,
+    )
+    l0_policy = policy_for(policies, "L0", "domain-evidence-pack")
+    if (
+        inventory.artifact_kind != "domain-inventory"
+        or inventory.scope != work_item.output_key.scope
+        or inventory.partition_id != work_item.output_key.partition_id
+        or l0.artifact_kind != "domain-evidence-pack"
+        or l0.scope != work_item.output_key.scope
+        or l0.inventory_artifact_hash != content_digest(inventory_bytes)
+        or l0.layer_policy_hash != layer_policy_hash(l0_policy)
+        or l1_context.artifact_kind != "domain-context-bundle"
+        or l1_context.scope != work_item.output_key.scope
+        or l1_baseline.artifact.scope != work_item.output_key.scope
+        or l1_baseline.artifact.context_bundle_hash != content_digest(context_bytes)
+    ):
+        raise Protocol22CertificationError(
+            "adopted domain authority does not match L2 evidence scope"
+        )
+    cited_paths = {
+        reference.path
+        for surface in l1_baseline.surfaces.values()
+        for claim in surface.items
+        for reference in claim.evidence
+    }
+    cited_paths.update(
+        reference.path
+        for unknown in l1_baseline.unknowns
+        for reference in unknown.inspected_evidence
+    )
+    covered_end: dict[str, int] = {}
+    for excerpt in l0.excerpts:
+        covered_end[excerpt.source_relative_path] = max(
+            covered_end.get(excerpt.source_relative_path, 0),
+            excerpt.end_line,
+        )
+    candidates: list[tuple[InventoryFileV1, tuple[bytes, ...], int]] = []
+    ineligible: list[OmittedEvidenceDescriptorV1] = []
+    for row in inventory.files:
+        if (
+            row.object_kind != "regular"
+            or row.text_status != "eligible_utf8"
+            or _classify_path(row.source_relative_path, parameters.path_classifiers)
+            is None
+        ):
+            ineligible.append(_l2_file_omission(row, work_item, "policy_ineligible"))
+            continue
+        payload = snapshot.read_file(
+            work_item.output_key.scope.source_id,
+            row.source_relative_path,
+            _inventory_record(row),
+        )
+        _verify_payload(_inventory_record(row), payload)
+        lines = _raw_lines(payload)
+        start = min(len(lines), covered_end.get(row.source_relative_path, 0))
+        candidates.append((row, lines, start))
+    candidates.sort(
+        key=lambda value: (
+            value[0].source_relative_path not in cited_paths,
+            value[0].sort_key,
+        )
+    )
+    selected = {row.source_relative_path: 0 for row, _lines, _start in candidates}
+    while True:
+        progressed = False
+        for row, lines, start in candidates:
+            chosen = selected[row.source_relative_path]
+            if start + chosen >= len(lines):
+                continue
+            proposal = dict(selected)
+            proposal[row.source_relative_path] = chosen + 1
+            candidate = _l2_evidence_value(
+                work_item,
+                policy,
+                inventory,
+                candidates,
+                proposal,
+                tuple(ineligible),
+            )
+            if len(canonical_json_bytes(candidate)) <= _policy_cap(policy):
+                selected = proposal
+                progressed = True
+        if not progressed:
+            break
+    value = _l2_evidence_value(
+        work_item,
+        policy,
+        inventory,
+        candidates,
+        selected,
+        tuple(ineligible),
+    )
+    return canonical_json_bytes(EvidencePackV1.from_json_dict(value).to_json_dict())
+
+
+def build_l2_domain_context_bundle(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+    policies: ArtifactPolicyCatalogV1,
+) -> bytes:
+    """Bind one targeted L2 evidence pack to the shared context schema."""
+    context_policy = _validate_l2_deterministic_item(
+        work_item,
+        accepted_inputs,
+        policies,
+        "domain-context-bundle",
+        frozenset({"domain_inventory", "domain_evidence_pack"}),
+    )
+    target_policy = policy_for(policies, "L2", "domain-baseline")
+    evidence_bytes = accepted_inputs.payload_for_role("domain_evidence_pack")
+    inventory_bytes = accepted_inputs.payload_for_role("domain_inventory")
+    evidence = load_canonical_object(evidence_bytes, EvidencePackV1.from_json_dict)
+    evidence_hash = content_digest(evidence_bytes)
+    if (
+        evidence.artifact_kind != "domain-evidence-pack"
+        or evidence.scope != work_item.output_key.scope
+        or evidence.inventory_artifact_hash != content_digest(inventory_bytes)
+        or evidence.layer_policy_hash
+        != layer_policy_hash(policy_for(policies, "L2", "domain-evidence-pack"))
+    ):
+        raise Protocol22CertificationError(
+            "targeted evidence does not match L2 domain context"
+        )
+    bundle = ContextBundleV1(
+        schema_version=1,
+        artifact_kind="domain-context-bundle",
+        target_artifact_kind="domain-baseline",
+        scope=work_item.output_key.scope,
+        context_policy_hash=work_item.output_key.layer_policy_hash,
+        target_policy_hash=layer_policy_hash(target_policy),
+        target_artifact_policy=target_policy,
+        dependencies=tuple(
+            sorted(
+                (
+                    ArtifactDependencyV1(
+                        "domain-evidence-pack",
+                        evidence_hash,
+                    ),
+                    ArtifactDependencyV1(
+                        "domain-inventory",
+                        content_digest(inventory_bytes),
+                    ),
+                ),
+                key=lambda value: (value.artifact_kind, value.artifact_hash),
+            )
+        ),
+        evidence_pack_hash=evidence_hash,
+        evidence=evidence.excerpts,
+        domain_projections=(),
+        depth_debt=evidence.depth_debt,
+    )
+    return _bounded_payload(bundle.to_json_dict(), context_policy)
+
+
+def build_l2_source_overview_context_bundle(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+    policies: ArtifactPolicyCatalogV1,
+) -> bytes:
+    """Compose source evidence with projections from only selected L2 domains."""
+    from harness.re_v2.protocol_22.context import (
+        _DomainBaselineView,
+        _SurfaceView,
+        _allocate_domain_projection,
+        _projection_claims,
+        _source_depth_debt,
+    )
+
+    domain_roles = tuple(
+        sorted(role for role in accepted_inputs.by_role if role.startswith("domain:"))
+    )
+    expected_roles = frozenset(
+        {
+            "source_inventory",
+            "source_partition",
+            "source_evidence_pack",
+            *domain_roles,
+        }
+    )
+    context_policy = _validate_l2_deterministic_item(
+        work_item,
+        accepted_inputs,
+        policies,
+        "source-overview-context-bundle",
+        expected_roles,
+    )
+    if not domain_roles:
+        raise Protocol22CertificationError(
+            "L2 source context requires at least one selected domain"
+        )
+    parameters = context_policy.policy_parameters
+    if not isinstance(parameters, ContextBundlePolicyParametersV1) or not isinstance(
+        parameters.projection,
+        ProjectionPolicyV1,
+    ):
+        raise Protocol22CertificationError(
+            "L2 source context has no projection policy"
+        )
+    target_policy = policy_for(policies, "L2", "source-overview")
+    inventory_bytes = accepted_inputs.payload_for_role("source_inventory")
+    partition_bytes = accepted_inputs.payload_for_role("source_partition")
+    evidence_bytes = accepted_inputs.payload_for_role("source_evidence_pack")
+    inventory = load_canonical_object(
+        inventory_bytes,
+        InventoryArtifactV1.from_json_dict,
+    )
+    partition = load_canonical_object(
+        partition_bytes,
+        SourcePartitionArtifactV1.from_json_dict,
+    )
+    evidence = load_canonical_object(evidence_bytes, EvidencePackV1.from_json_dict)
+    source_id = work_item.output_key.scope.source_id
+    if (
+        inventory.artifact_kind != "source-inventory"
+        or inventory.scope.source_id != source_id
+        or inventory.scope.domain_key is not None
+        or partition.source_scope.source_id != source_id
+        or partition.source_partition_id != work_item.output_key.partition_id
+        or evidence.artifact_kind != "source-evidence-pack"
+        or evidence.scope != inventory.scope
+        or evidence.inventory_artifact_hash != content_digest(inventory_bytes)
+        or evidence.layer_policy_hash
+        != layer_policy_hash(policy_for(policies, "L0", "source-evidence-pack"))
+    ):
+        raise Protocol22CertificationError(
+            "adopted source authority does not match L2 source context"
+        )
+    descriptors = {domain.domain_key: domain for domain in partition.domains}
+    target_domain_policy = policy_for(policies, "L2", "domain-baseline")
+    projections = []
+    domain_debt = []
+    omitted_domains = []
+    omitted_claims = []
+    total_projection_claims = 0
+    dependency_rows = [
+        ("source-inventory", content_digest(inventory_bytes)),
+        ("source-partition", content_digest(partition_bytes)),
+        ("source-evidence-pack", content_digest(evidence_bytes)),
+    ]
+    for role in domain_roles:
+        domain_key = role.removeprefix("domain:")
+        descriptor = descriptors.get(domain_key)
+        if descriptor is None:
+            raise Protocol22CertificationError(
+                "selected L2 domain is outside the source partition"
+            )
+        baseline_bytes = accepted_inputs.payload_for_role(role)
+        baseline = load_canonical_object(
+            baseline_bytes,
+            L2CompactBaselineArtifactV1.from_json_dict,
+        )
+        domain_context = load_canonical_object(
+            accepted_inputs.payload_for_hash(baseline.artifact.context_bundle_hash),
+            ContextBundleV1.from_json_dict,
+        )
+        if (
+            baseline.artifact.artifact_kind != "domain-baseline"
+            or baseline.artifact.scope.source_id != source_id
+            or baseline.artifact.scope.domain_key != domain_key
+            or baseline.artifact.partition_id != descriptor.domain_partition_id
+            or baseline.artifact.layer_policy_hash
+            != layer_policy_hash(target_domain_policy)
+            or domain_context.target_artifact_policy != target_domain_policy
+            or domain_context.scope != baseline.artifact.scope
+            or domain_context.depth_debt != baseline.depth_debt
+        ):
+            raise Protocol22CertificationError(
+                "selected L2 domain closure is inconsistent"
+            )
+        view = _DomainBaselineView(
+            schema_version=1,
+            scope=baseline.artifact.scope,
+            partition_id=baseline.artifact.partition_id,
+            layer_policy_hash=baseline.artifact.layer_policy_hash,
+            dependency_hashes=baseline.artifact.dependency_hashes,
+            context_bundle_hash=baseline.artifact.context_bundle_hash,
+            surfaces={
+                name: _SurfaceView(
+                    value.status,
+                    value.items,
+                    value.not_established_reason_code,
+                )
+                for name, value in baseline.surfaces.items()
+            },
+            unknowns=baseline.unknowns,
+            depth_debt=baseline.depth_debt,
+        )
+        baseline_hash = content_digest(baseline_bytes)
+        debt_hash = content_digest(baseline.depth_debt.to_json_dict())
+        domain_debt.append((domain_key, baseline.depth_debt, debt_hash))
+        candidates = _projection_claims(
+            view,
+            domain_context,
+            domain_key,
+            parameters.projection,
+        )
+        total_projection_claims += len(candidates)
+        projection, omitted = _allocate_domain_projection(
+            domain_key,
+            descriptor.presentation_domain_id,
+            baseline_hash,
+            baseline.depth_debt,
+            debt_hash,
+            candidates,
+            tuple(projections),
+            parameters.projection,
+        )
+        dependency_rows.append(("domain-baseline", baseline_hash))
+        if projection is None:
+            from harness.re_v2.protocol_22.artifacts import OmittedDomainDescriptorV1
+
+            omitted_domains.append(
+                OmittedDomainDescriptorV1(
+                    domain_key=domain_key,
+                    baseline_artifact_hash=baseline_hash,
+                    reason_code="capacity_exhausted",
+                )
+            )
+            omitted_claims.extend(value.omission for value in candidates)
+        else:
+            projections.append(projection)
+            omitted_claims.extend(omitted)
+    debt = _source_depth_debt(
+        evidence.depth_debt,
+        tuple(domain_debt),
+        tuple(omitted_domains),
+        tuple(omitted_claims),
+        retained_claim_count=sum(value.retained_claim_count for value in projections),
+        total_projection_claims=total_projection_claims,
+    )
+    bundle = ContextBundleV1(
+        schema_version=1,
+        artifact_kind="source-overview-context-bundle",
+        target_artifact_kind="source-overview",
+        scope=work_item.output_key.scope,
+        context_policy_hash=work_item.output_key.layer_policy_hash,
+        target_policy_hash=layer_policy_hash(target_policy),
+        target_artifact_policy=target_policy,
+        dependencies=tuple(
+            sorted(
+                (
+                    ArtifactDependencyV1(kind, artifact_hash)
+                    for kind, artifact_hash in dependency_rows
+                ),
+                key=lambda value: (value.artifact_kind, value.artifact_hash),
+            )
+        ),
+        evidence_pack_hash=content_digest(evidence_bytes),
+        evidence=evidence.excerpts,
+        domain_projections=tuple(projections),
+        depth_debt=debt,
+    )
+    return _bounded_payload(bundle.to_json_dict(), context_policy)
+
+
+def build_l2_source_baseline_root(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+    partition: WorkspacePartitionCatalogV1,
+) -> bytes:
+    """Bind the L2 overview and exactly the selected L2 domain outputs."""
+    if (
+        not isinstance(work_item, WorkItemV2)
+        or work_item.output_key.artifact_kind != "source-baseline-root"
+        or work_item.output_key.layer != "L2"
+        or work_item.goal_id != "selective-deepening"
+        or work_item.producer_family != "source-baseline-root"
+        or not isinstance(accepted_inputs, AcceptedDependencySetV2)
+        or not isinstance(partition, WorkspacePartitionCatalogV1)
+    ):
+        raise Protocol22CertificationError("L2 source root invocation is invalid")
+    source = next(
+        (
+            value
+            for value in partition.sources
+            if value.source_id == work_item.output_key.scope.source_id
+        ),
+        None,
+    )
+    if source is None or work_item.output_key.partition_id != source.source_partition_id:
+        raise Protocol22CertificationError("L2 source root scope is not partitioned")
+    domain_roles = tuple(sorted(role for role in accepted_inputs.by_role if role.startswith("domain:")))
+    if frozenset(accepted_inputs.by_role) != frozenset(
+        {"source_overview", *domain_roles}
+    ) or not domain_roles:
+        raise Protocol22CertificationError("L2 source root dependency roles are invalid")
+    _validate_dependency_hashes(work_item, accepted_inputs)
+    by_domain = {domain.domain_key: domain for domain in source.domains}
+    domains: list[SourceBaselineDomainV1] = []
+    for role in domain_roles:
+        domain_key = role.removeprefix("domain:")
+        descriptor = by_domain.get(domain_key)
+        if descriptor is None:
+            raise Protocol22CertificationError(
+                "L2 source root contains an unpartitioned domain"
+            )
+        domains.append(
+            SourceBaselineDomainV1(
+                domain_key=domain_key,
+                presentation_domain_id=descriptor.presentation_domain_id,
+                baseline_artifact_hash=accepted_inputs.by_role[role].artifact_hash,
+            )
+        )
+    root = L2SourceBaselineRootV1(
+        schema_version=1,
+        artifact=L2SourceRootEnvelopeV1(
+            artifact_kind="source-baseline-root",
+            layer="L2",
+            scope=work_item.output_key.scope,
+            partition_id=work_item.output_key.partition_id,
+            layer_policy_hash=work_item.output_key.layer_policy_hash,
+            dependency_hashes=work_item.output_key.dependency_hashes,
+        ),
+        overview_artifact_hash=accepted_inputs.by_role["source_overview"].artifact_hash,
+        domains=tuple(sorted(domains, key=lambda value: value.domain_key)),
+    )
+    return canonical_json_bytes(root.to_json_dict())
+
+
+def _validate_l2_deterministic_item(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+    policies: ArtifactPolicyCatalogV1,
+    artifact_kind: str,
+    expected_roles: frozenset[str],
+):
+    if (
+        not isinstance(work_item, WorkItemV2)
+        or not isinstance(accepted_inputs, AcceptedDependencySetV2)
+        or not isinstance(policies, ArtifactPolicyCatalogV1)
+        or work_item.goal_id != "selective-deepening"
+        or work_item.output_key.layer != "L2"
+        or work_item.output_key.artifact_kind != artifact_kind
+    ):
+        raise Protocol22CertificationError("L2 deterministic invocation is invalid")
+    policy = policy_for(policies, "L2", artifact_kind)
+    expected_family = {
+        "domain-evidence-pack": "evidence-pack",
+        "domain-context-bundle": "context-bundle",
+        "source-overview-context-bundle": "context-bundle",
+    }[artifact_kind]
+    if (
+        work_item.producer_family != expected_family
+        or work_item.output_key.layer_policy_hash != layer_policy_hash(policy)
+        or work_item.producer_protocol_version != policy.producer_protocol_version
+        or work_item.result_contract_id != policy.result_contract_id
+        or frozenset(accepted_inputs.by_role) != expected_roles
+    ):
+        raise Protocol22CertificationError("L2 deterministic authority mismatch")
+    _validate_dependency_hashes(work_item, accepted_inputs)
+    return policy
+
+
+def _validate_dependency_hashes(
+    work_item: WorkItemV2,
+    accepted_inputs: AcceptedDependencySetV2,
+) -> None:
+    hashes = tuple(
+        sorted(value.artifact_hash for value in accepted_inputs.by_role.values())
+    )
+    if (
+        len(hashes) != len(set(hashes))
+        or hashes != work_item.required_artifact_hashes
+        or hashes != work_item.output_key.dependency_hashes
+    ):
+        raise Protocol22CertificationError(
+            "L2 accepted dependency hashes do not equal work item closure"
+        )
+
+
+def _inventory_record(row: InventoryFileV1) -> FileRecordV1:
+    return FileRecordV1(
+        **{field: getattr(row, field) for field in FileRecordV1.FIELDS}
+    )
+
+
+def _raw_lines(payload: bytes) -> tuple[bytes, ...]:
+    if not payload:
+        return ()
+    return tuple(payload.splitlines(keepends=True))
+
+
+def _l2_file_omission(
+    row: InventoryFileV1,
+    work_item: WorkItemV2,
+    reason: Literal["policy_ineligible", "capacity_exhausted", "non_text"],
+) -> OmittedEvidenceDescriptorV1:
+    return OmittedEvidenceDescriptorV1(
+        descriptor_kind="file",
+        source_relative_path=row.source_relative_path,
+        ownership=row.ownership,
+        origin_domain_key=work_item.output_key.scope.domain_key,
+        start_line=None,
+        end_line=None,
+        reason_code=reason,
+    )
+
+
+def _l2_evidence_value(
+    work_item: WorkItemV2,
+    policy: object,
+    inventory: InventoryArtifactV1,
+    candidates: list[tuple[InventoryFileV1, tuple[bytes, ...], int]],
+    selected: Mapping[str, int],
+    ineligible: tuple[OmittedEvidenceDescriptorV1, ...],
+) -> dict[str, object]:
+    excerpts: list[EvidenceExcerptV1] = []
+    omissions = list(ineligible)
+    fully_selected = 0
+    partially_selected = 0
+    omitted_files = len(ineligible)
+    omitted_ranges = 0
+    for row, lines, covered in candidates:
+        count = selected[row.source_relative_path]
+        combined = covered + count
+        if combined:
+            start_line = 1
+            end_line = combined
+            raw = b"".join(lines[:combined])
+            descriptor = EvidenceAuthorityDescriptorV1(
+                source_id=work_item.output_key.scope.source_id,
+                source_relative_path=row.source_relative_path,
+                authority_kind="direct",
+                origin_domain_key=work_item.output_key.scope.domain_key,
+            )
+            excerpts.append(
+                EvidenceExcerptV1(
+                    evidence_authority_id=evidence_authority_id(descriptor),
+                    source_relative_path=row.source_relative_path,
+                    ownership=row.ownership,
+                    origin_domain_key=work_item.output_key.scope.domain_key,
+                    mode=row.mode,
+                    source_blob_hash=row.content_hash,
+                    start_line=start_line,
+                    end_line=end_line,
+                    raw_excerpt_hash=content_digest(raw),
+                    text_lf=raw.decode("utf-8", errors="strict").replace("\r\n", "\n"),
+                    complete_file=start_line == 1 and end_line == len(lines),
+                )
+            )
+        if combined >= len(lines):
+            fully_selected += 1
+        elif combined == 0:
+            omitted_files += 1
+            omissions.append(_l2_file_omission(row, work_item, "capacity_exhausted"))
+        else:
+            partially_selected += 1
+            omitted_ranges += 1
+            omissions.append(
+                OmittedEvidenceDescriptorV1(
+                    descriptor_kind="line_range",
+                    source_relative_path=row.source_relative_path,
+                    ownership=row.ownership,
+                    origin_domain_key=work_item.output_key.scope.domain_key,
+                    start_line=combined + 1,
+                    end_line=len(lines),
+                    reason_code="capacity_exhausted",
+                )
+            )
+    omissions.sort(
+        key=lambda value: (
+            value.source_relative_path.encode("utf-8"),
+            value.ownership,
+            "" if value.origin_domain_key is None else value.origin_domain_key,
+            value.descriptor_kind,
+            0 if value.start_line is None else value.start_line,
+            0 if value.end_line is None else value.end_line,
+            value.reason_code,
+        )
+    )
+    debt = DepthDebtV1(
+        inventory_file_count=len(inventory.files),
+        fully_selected_file_count=fully_selected,
+        partially_selected_file_count=partially_selected,
+        omitted_file_count=omitted_files,
+        omitted_range_count=omitted_ranges,
+        omitted_descriptor_hash=(
+            None
+            if not omissions
+            else content_digest([value.to_json_dict() for value in omissions])
+        ),
+        domain_depth_debt_rollup=None,
+        omitted_domain_summary_count=0,
+        omitted_domain_descriptor_hash=None,
+        retained_projected_claim_count=0,
+        omitted_projected_claim_count=0,
+        omitted_projected_claim_descriptor_hash=None,
+    )
+    return {
+        "schema_version": 1,
+        "artifact_kind": "domain-evidence-pack",
+        "scope": work_item.output_key.scope.to_json_dict(),
+        "layer_policy_hash": work_item.output_key.layer_policy_hash,
+        "inventory_artifact_hash": content_digest(inventory.to_json_dict()),
+        "byte_estimator_id": policy.byte_estimator_id,
+        "max_canonical_json_bytes": policy.max_canonical_json_bytes,
+        "max_conservative_input_tokens": policy.max_conservative_input_tokens,
+        "excerpts": [
+            value.to_json_dict()
+            for value in sorted(excerpts, key=lambda value: value.sort_key)
+        ],
+        "depth_debt": debt.to_json_dict(),
+    }
+
+
+def _policy_cap(policy: object) -> int:
+    token_cap = getattr(policy, "max_conservative_input_tokens", None)
+    json_cap = getattr(policy, "max_canonical_json_bytes", None)
+    if not isinstance(token_cap, int) or not isinstance(json_cap, int):
+        raise Protocol22CertificationError("L2 policy has no closed byte cap")
+    return min(token_cap, json_cap)
+
+
+def _bounded_payload(value: object, policy: object) -> bytes:
+    payload = canonical_json_bytes(value)
+    caps = [getattr(policy, "max_canonical_json_bytes")]
+    for field in ("max_context_bundle_bytes", "max_conservative_input_tokens"):
+        candidate = getattr(policy, field)
+        if candidate is not None:
+            caps.append(candidate)
+    if len(payload) > min(caps):
+        raise Protocol22CertificationError("L2 deterministic payload exceeds policy")
+    return payload
 
 
 def certify_l2_compact_candidate(
@@ -429,7 +1252,13 @@ __all__ = (
     "DEEPENING_PRODUCER_FAMILY",
     "L2CompactArtifactEnvelopeV1",
     "L2CompactBaselineArtifactV1",
+    "L2SourceBaselineRootV1",
+    "L2SourceRootEnvelopeV1",
     "build_deepening_executor_catalog",
+    "build_l2_domain_context_bundle",
+    "build_l2_domain_evidence_pack",
+    "build_l2_source_baseline_root",
+    "build_l2_source_overview_context_bundle",
     "certify_l2_compact_candidate",
     "parse_l2_authorial_candidate",
 )

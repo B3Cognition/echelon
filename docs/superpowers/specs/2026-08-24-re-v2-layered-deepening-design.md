@@ -269,9 +269,11 @@ must not copy the execution kernel into a second controller. Protocol 2.4 uses
 a thin `Protocol24Controller` subclass because the frozen protocol-2.2
 controller directly invokes an L1-only parser before verifier dispatch. The
 subclass inherits the run loop, recovery, provider invocation, accounting,
-capture, retry, ledger, and terminal behavior unchanged and overrides only the
-provider-candidate parsing/certification transaction. The protocol-2.2
-controller source and installed digests remain byte-for-byte stable.
+capture, retry, ledger, and terminal behavior unchanged. It overrides the
+provider-candidate parsing/certification transaction and routes projection to
+the layer-aware materializer, because the inherited method is deliberately
+L1-only. The protocol-2.2 controller source and installed digests remain
+byte-for-byte stable.
 
 ### Mandatory execution-seam proof
 
@@ -292,11 +294,24 @@ provider executor and durable candidate-capture path while using:
   `Protocol22Controller`, protocol-2.2 recovery, or protocol-2.2 execution.
 
 A thin protocol-2.4 orchestration state machine may own only new lineage,
-adoption, selected-scope, L2 parsing/certification, and L2 transition rules. It
-may not duplicate the run loop, provider invocation, usage accounting,
+adoption, selected-scope, L2 parsing/certification, projection routing, and L2
+transition rules. It may not duplicate the run loop, provider invocation, usage accounting,
 candidate durability, recovery, or at-most-once dispatch mechanics. The narrow
-subclass is not a controller fork: every method except provider-candidate
-parsing/certification is inherited from the frozen controller.
+subclass is not a controller fork: the run loop and execution methods are
+inherited from the frozen controller; only provider-candidate certification and
+the layer-specific projection hook differ.
+
+The frozen deterministic invocation validator also retains its exact L0/L1
+role sets. Protocol 2.4 therefore keeps direct deterministic graph edges within
+those supported roles. Selection-only L0/L1 inputs that inform targeted L2
+evidence are resolved from the authenticated, self-contained
+`ParentAuthorityBundleV1` held by the protocol-2.4 runtime registration. The
+schema-3 manifest commits that bundle, and adoption validates every referenced
+artifact and receipt before any L2 dispatch. L2 evidence still directly binds
+the adopted L0 inventory hash; L2 context directly binds inventory plus the
+generated evidence; source context directly binds L0 source inputs plus the
+selected L2 domain artifacts. This preserves frozen execution bytes without
+making lower-layer authority ambient or live-workspace state.
 
 ## Public CLI
 

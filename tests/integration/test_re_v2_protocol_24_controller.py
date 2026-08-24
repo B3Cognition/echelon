@@ -1,19 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.controller import Protocol22Controller
-from harness.re_v2.protocol_22.execution import Protocol22ExecutionStore
+from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+from harness.re_v2.protocol_22.execution import (
+    DeterministicExecutionDependenciesV1,
+    Protocol22ExecutionStore,
+    ProviderExecutionDependenciesV1,
+)
 from harness.re_v2.protocol_22.graph import AcceptedArtifactV2
 from harness.re_v2.protocol_22.ledger import Protocol22Ledger
-from harness.re_v2.protocol_22.model import CatalogReferenceV1
+from harness.re_v2.protocol_22.model import (
+    CatalogReferenceV1,
+    DeterministicInvocationInputV1,
+    DeterministicInvocationV1,
+)
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
 from harness.re_v2.protocol_24.adoption import (
     ValidatedParentV1,
     build_parent_authority_bundle,
@@ -29,16 +41,30 @@ from harness.re_v2.protocol_24.inputs import (
     load_protocol_24_inputs,
 )
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
+from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
 from harness.re_v2.run_store import load_run_manifest
 from tests.re_v2_protocol_24_fixtures import manifest_v3
-from tests.unit.test_re_v2_protocol_22_controller import _baseline_context
+from tests.unit.test_re_v2_protocol_22_controller import (
+    _ScriptedProvider,
+    _SnapshotReader,
+    _baseline_context,
+)
+from tests.unit.test_re_v2_protocol_22_provider import _tokenizer
+from tests.unit.test_re_v2_protocol_24_prosaic import _role_artifact
 
 
 CHILD_NOW = "2026-08-24T13:00:00Z"
 
 
-def _completed_parent(tmp_path: Path) -> ValidatedParentV1:
-    context, _provider = _baseline_context(tmp_path / "parent")
+def _completed_parent(
+    tmp_path: Path,
+    *,
+    provider_mode: str = "api",
+) -> ValidatedParentV1:
+    context, _provider = _baseline_context(
+        tmp_path / "parent",
+        provider_mode=provider_mode,
+    )
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "completed"
     assert result.ledger is not None
@@ -71,11 +97,16 @@ def _completed_parent(tmp_path: Path) -> ValidatedParentV1:
     )
 
 
-def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
-    parent = _completed_parent(tmp_path)
+def _child_context(
+    tmp_path: Path,
+    *,
+    paused: bool,
+    provider_mode: str = "api",
+) -> tuple[Protocol22RunContext, _ScriptedProvider | None]:
+    parent = _completed_parent(tmp_path, provider_mode=provider_mode)
     bundle, authority_objects = build_parent_authority_bundle(parent)
     policy = build_deepening_v1_policy_catalog()
-    deepener_bytes = b"pinned test deepener authority\n"
+    deepener_bytes = canonical_prosaic_agent_bytes(_role_artifact())
     deepener_hash = content_digest(deepener_bytes)
     executors = build_deepening_executor_catalog(
         parent.inputs.executor_contract,
@@ -161,17 +192,84 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
             },
             occurred_at=CHILD_NOW,
         )
-    events.append(
-        "operator_pause_requested",
-        {"reason": "composition boundary", "requested_by": "test"},
-        occurred_at=CHILD_NOW,
+    if paused:
+        events.append(
+            "operator_pause_requested",
+            {"reason": "composition boundary", "requested_by": "test"},
+            occurred_at=CHILD_NOW,
+        )
+        events.append(
+            "run_paused",
+            {"reason": "composition boundary", "reason_code": "operator_pause"},
+            occurred_at=CHILD_NOW,
+        )
+    registry = _registry(parent)
+    provider = None if paused else _NovelL2Provider()
+    snapshot_payloads = {
+        (source.source_id, record.source_relative_path): b"print('ok')\n"
+        for source in inputs.workspace_partition.sources
+        for record in source.files
+    }
+    adopted_payloads = {
+        (
+            template.scope.source_id,
+            template.scope.domain_key,
+            template.layer,
+            template.artifact_kind,
+        ): objects.read_blob(artifact.artifact_hash)
+        for template, artifact in parent.accepted_parent.values()
+    }
+    runtime = Protocol24DeterministicRuntime(
+        inputs,
+        _SnapshotReader(inputs.workspace_partition, snapshot_payloads),
+        adopted_payloads,
     )
-    events.append(
-        "run_paused",
-        {"reason": "composition boundary", "reason_code": "operator_pause"},
-        occurred_at=CHILD_NOW,
-    )
-    return Protocol22RunContext(
+    context_ref: dict[str, Protocol22RunContext] = {}
+
+    def dependencies_for(item: object, _attempt_kind: str) -> object:
+        accepted = accepted_dependencies_for(context_ref["context"], item)
+        executor = inputs.executor_contract.entry_for(item.producer_family)
+        if executor.execution_mode in {"api", "cli"}:
+            renderer = executor.request_renderer
+            assert renderer is not None
+            schema_hash = next(
+                reference.schema_hash
+                for reference in renderer.response_schemas
+                if reference.artifact_kind == item.output_key.artifact_kind
+            )
+            return ProviderExecutionDependenciesV1(
+                executor=executor,
+                registry=registry,
+                agent_bytes=objects.read_blob(renderer.agent_contract_hash),
+                context_bytes=accepted.payload_for_role("context_bundle"),
+                response_schema_bytes=objects.read_blob(schema_hash),
+                tokenizer=(
+                    _tokenizer(executor, 100)
+                    if executor.execution_mode == "api"
+                    else None
+                ),
+            )
+        return DeterministicExecutionDependenciesV1(
+            executor=executor,
+            registry=registry,
+            invocation=DeterministicInvocationV1(
+                schema_version=1,
+                producer_family=item.producer_family,
+                output_key=item.output_key,
+                artifact_policy_hash=item.output_key.layer_policy_hash,
+                inputs=tuple(
+                    DeterministicInvocationInputV1(
+                        role=role,
+                        object_hash=value.artifact_hash,
+                    )
+                    for role, value in accepted.by_role.items()
+                ),
+            ),
+            workspace_partition_hash=None,
+            referenced_objects=dict(accepted.payloads_by_hash),
+        )
+
+    context = Protocol22RunContext(
         paths=paths,
         inputs=inputs,
         graph=graph,
@@ -179,15 +277,51 @@ def _paused_child_context(tmp_path: Path) -> Protocol22RunContext:
         object_store=objects,
         ledger=ledger,
         execution_store=Protocol22ExecutionStore(paths, objects),
-        installed_authorities=_registry(parent),
-        dependencies_for=lambda _item, _attempt: (_ for _ in ()).throw(
-            AssertionError("paused composition must not prepare execution")
+        installed_authorities=registry,
+        dependencies_for=(
+            (lambda _item, _attempt: (_ for _ in ()).throw(
+                AssertionError("paused composition must not prepare execution")
+            ))
+            if paused
+            else dependencies_for
         ),
-        executors={},
-        producers={},
-        verifiers={},
+        executors=MappingProxyType(
+            {}
+            if provider is None
+            else {
+                inputs.executor_contract.entry_for("compact-deepening").adapter_id: provider
+            }
+        ),
+        producers=MappingProxyType(
+            {
+                entry.producer_family: runtime
+                for entry in inputs.executor_contract.entries
+                if entry.execution_mode == "in_process"
+            }
+        ),
+        verifiers=MappingProxyType(
+            {
+                entry.verifier.verifier_id: runtime
+                for entry in inputs.executor_contract.entries
+            }
+        ),
         clock=lambda: CHILD_NOW,
     )
+    context_ref["context"] = context
+    return context, provider
+
+
+class _NovelL2Provider(_ScriptedProvider):
+    def execute(self, *args: object, **kwargs: object):
+        result = super().execute(*args, **kwargs)
+        candidate_root = args[-2]
+        candidate_path = candidate_root / "baseline.json"
+        raw = json.loads(candidate_path.read_bytes())
+        for surface in raw["surfaces"].values():
+            for claim in surface["items"]:
+                claim["statement"] = f"L2 deepening: {claim['statement']}"
+        candidate_path.write_bytes(canonical_json_bytes(raw))
+        return result
 
 
 def _registry(parent: ValidatedParentV1):
@@ -201,7 +335,7 @@ def _registry(parent: ValidatedParentV1):
         agent_contracts={
             **dict(registry.agent_contracts),
             "echelon.re-deepener": content_digest(
-                b"pinned test deepener authority\n"
+                canonical_prosaic_agent_bytes(_role_artifact())
             ),
         },
     )
@@ -211,10 +345,11 @@ def _registry(parent: ValidatedParentV1):
 def test_protocol_24_child_composes_with_inherited_controller_recovery(
     tmp_path: Path,
 ) -> None:
-    context = _paused_child_context(tmp_path)
+    context, provider = _child_context(tmp_path, paused=True)
 
     result = Protocol24Controller(context).run_until_stopped()
 
+    assert provider is None
     assert result.status == "paused"
     assert result.ledger is not None
     assert len(result.ledger.accepted_artifacts) == len(
@@ -224,10 +359,47 @@ def test_protocol_24_child_composes_with_inherited_controller_recovery(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("provider_mode", ("api", "cli"))
+def test_protocol_24_child_completes_selected_l2_through_shared_execution(
+    tmp_path: Path,
+    provider_mode: str,
+) -> None:
+    context, provider = _child_context(
+        tmp_path,
+        paused=False,
+        provider_mode=provider_mode,
+    )
+    assert provider is not None
+
+    result = Protocol24Controller(context).run_until_stopped()
+
+    assert result.status == "completed"
+    assert result.ledger is not None
+    l2_templates = [item for item in context.graph.templates if item.layer == "L2"]
+    assert provider.calls == 2
+    assert len(result.ledger.accepted_artifacts) == len(context.graph.templates)
+    assert all(
+        result.ledger.artifact_for_key(
+            next(
+                work.output_key.identity
+                for work in result.ledger.certification_work_items.values()
+                if work.template_id == template.template_id
+            )
+        )
+        is not None
+        for template in l2_templates
+    )
+
+
+@pytest.mark.integration
 def test_protocol_24_controller_is_a_narrow_frozen_controller_extension() -> None:
     assert issubclass(Protocol24Controller, Protocol22Controller)
     assert Protocol24Controller.run_until_stopped is Protocol22Controller.run_until_stopped
     assert Protocol24Controller._execute_provider is Protocol22Controller._execute_provider
+    assert (
+        Protocol24Controller._materialize_accepted_l1
+        is not Protocol22Controller._materialize_accepted_l1
+    )
     assert (
         Protocol24Controller._certify_provider_candidate
         is not Protocol22Controller._certify_provider_candidate

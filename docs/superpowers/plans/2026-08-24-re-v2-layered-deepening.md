@@ -338,7 +338,7 @@ git commit -m "feat(re-v2): publish schema 3 child runs"
 **Interfaces:**
 - Produces: `PROTOCOL_24_EVENTS`, accepting `artifact_adopted` only after `run_created` and before provider dispatch for that imported work item.
 - Produces: protocol-selectable budget replay that ignores deterministic adoption events and preserves existing accounting.
-- Produces: a thin `Protocol24Controller(Protocol22Controller)` that inherits the complete shared run loop and overrides only the L2 provider-candidate parsing/certification transaction; `Protocol22Controller` and `Protocol22ExecutionStore` remain unchanged.
+- Produces: a thin `Protocol24Controller(Protocol22Controller)` that inherits the complete shared run loop and overrides only L2 provider-candidate parsing/certification plus layer-aware materialization routing; `Protocol22Controller` and `Protocol22ExecutionStore` remain unchanged.
 
 - [x] **Step 1: Write failing adoption-event replay tests**
 
@@ -360,7 +360,7 @@ Delegate common payload canonicalization and replay transitions to `PROTOCOL_22_
 
 - [x] **Step 5: Compose the frozen controller/execution path**
 
-Broaden non-pinned recovery/context nominal checks to the authenticated schema-3 inputs and mixed-goal graph. Add a thin protocol-2.4 subclass overriding only provider candidate parsing/certification. Do not edit `protocol_22/controller.py` or `protocol_22/execution.py`.
+Broaden non-pinned recovery/context nominal checks to the authenticated schema-3 inputs and mixed-goal graph. Add a thin protocol-2.4 subclass overriding provider candidate parsing/certification and routing layer-aware projection. Do not edit `protocol_22/controller.py` or `protocol_22/execution.py`.
 
 - [x] **Step 6: Run old/new event, budget, recovery, and controller tests**
 
@@ -368,7 +368,7 @@ Run: `pytest -q tests/unit/test_re_v2_protocol_22_events.py tests/unit/test_re_v
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_24/events.py \
@@ -386,6 +386,7 @@ git commit -m "feat(re-v2): compose L2 with shared controller"
 **Files:**
 - Create: `prosaic/subagents/echelon.re-deepener.md`
 - Create: `src/harness/re_v2/protocol_24/artifacts.py`
+- Create: `src/harness/re_v2/protocol_24/runtime.py`
 - Create: `tests/unit/test_re_v2_protocol_24_artifacts.py`
 - Create: `tests/unit/test_re_v2_protocol_24_prosaic.py`
 - Modify: `src/echelon/cli.py`
@@ -397,7 +398,7 @@ git commit -m "feat(re-v2): compose L2 with shared controller"
 - Produces: installed authority entry for `echelon.re-deepener` loaded by `ProsaicPromptLoader.load_subagent` and canonicalized by `canonical_prosaic_agent_bytes`.
 - Reuses: existing compact response schema, candidate parser, certification receipts, renderer, CLI adapter, reservation calculator, and usage normalizer.
 
-- [ ] **Step 1: Write failing L2 artifact/policy tests**
+- [x] **Step 1: Write failing L2 artifact/policy tests**
 
 Assert selected evidence comes only from the immutable snapshot; omitted/debt descriptors are exact; domain/source context bounds are enforced; source roots bind exact selected domains; exact L1 claim/evidence duplicates are rejected; insufficient evidence becomes unknown; accepted L2 remains unaudited.
 
@@ -411,7 +412,7 @@ Run: `pytest -q tests/unit/test_re_v2_protocol_24_artifacts.py tests/unit/test_r
 
 Expected: failures for missing L2 policy/role integration.
 
-- [ ] **Step 4: Implement L2 using existing producers and certifier contracts**
+- [x] **Step 4: Implement L2 using existing producers and certifier contracts**
 
 Add additive layer-policy branches and producer registry entries outside pinned authority files. Supply L2 context/policy to the unchanged provider executor. Reuse `CompactCertificationAssessmentV2`, `CertificationReceiptV2`, `CandidateAssessmentReceiptV1`, and `ArtifactAcceptanceReceiptV2`.
 
@@ -419,13 +420,13 @@ Add additive layer-policy branches and producer registry entries outside pinned 
 
 The prose accepts only the pinned context and writes only `baseline.json`; it never discovers source files, invokes tools outside the candidate workspace, emits provider-specific controls, performs semantic audit, or requests repair.
 
-- [ ] **Step 6: Run old/new artifact, baseline, provider, and Prosaic tests**
+- [x] **Step 6: Run old/new artifact, baseline, provider, and Prosaic tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_context.py tests/unit/test_re_v2_protocol_22_baseline.py tests/unit/test_re_v2_protocol_22_cli_provider.py tests/unit/test_re_v2_protocol_24_artifacts.py tests/unit/test_re_v2_protocol_24_prosaic.py`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add prosaic/subagents/echelon.re-deepener.md \
