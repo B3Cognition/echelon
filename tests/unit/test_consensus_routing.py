@@ -166,6 +166,81 @@ def test_why3_issue_ownership_selects_earliest_capable_repair_phase(
 
 
 @pytest.mark.unit
+def test_why3_responsible_agent_is_not_overridden_by_action_prose():
+    issues = (
+        "### ISS-001: Plan repair\n"
+        "- **Responsible agent:** ORCHESTRATOR\n"
+        "- **Action Required:** Update the plan so it implements what the "
+        "validated specification requires.\n"
+    )
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase3-plan"
+    )
+
+
+@pytest.mark.unit
+def test_why3_action_prose_does_not_invent_an_owner_from_phase_words():
+    issues = (
+        "### ISS-001: Unclassified repair\n"
+        "- **Action Required:** Update the plan so the artifacts explain how "
+        "the requirements are met.\n"
+    )
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase1-what"
+    )
+
+
+@pytest.mark.unit
+def test_why3_legacy_action_fallback_requires_an_explicit_agent_identifier():
+    issues = (
+        "### ISS-001: Legacy architecture repair\n"
+        "- **Action Required:** ARCHITECT must update the plan to explain what "
+        "the validated specification requires.\n"
+    )
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase3-how"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "issues",
+    [
+        (
+            "### ISS-001: Unknown owner\n"
+            "- **Responsible agent:** USER\n"
+            "- **Action Required:** ARCHITECT must repair the plan.\n"
+        ),
+        (
+            "### ISS-001: Empty owner\n"
+            "- **Responsible agent:**\n"
+            "- **Action Required:** ARCHITECT must repair the plan.\n"
+        ),
+        (
+            "### ISS-001: Valid plan owner\n"
+            "- **Responsible agent:** ORCHESTRATOR\n"
+            "- **Action Required:** ORCHESTRATOR must repair tasks.md.\n"
+            "\n"
+            "### ISS-002: Unknown owner\n"
+            "- **Responsible agent:** USER\n"
+            "- **Action Required:** Resolve the remaining issue.\n"
+        ),
+    ],
+)
+def test_why3_unknown_responsible_agent_fails_closed(issues):
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase1-what"
+    )
+
+
+@pytest.mark.unit
 def test_iteration_cap_fallback_preserved():
     # The force-convergence escape at the cap must remain.
     node = _consensus_node()

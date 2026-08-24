@@ -2590,25 +2590,61 @@ class StagedParallelExecutor(PhaseExecutor):
 
         WHY3 reviews specification, architecture, test, and plan artifacts, so
         ``FAIL`` alone does not identify CARTOGRAPHER as the owner.  SAGE's
-        canonical issue records already name the responsible agent and action;
-        route from those exact fields and fail closed to WHAT when they are
-        absent or unknown.
+        canonical issue records already name the responsible agent; route from
+        that exact field and fail closed to WHAT when authority is absent or
+        unknown.  Action prose is only a legacy fallback, and only explicit
+        agent identifiers in that prose may establish ownership.
         """
-        authority_fields = re.findall(
-            r"^- \*\*(?:Responsible agent|Action Required):\*\*[ \t]*(.+?)\s*$",
+        phase_order = (
+            "phase1-what",
+            "phase3-how",
+            "phase3-sentinel",
+            "phase3-plan",
+        )
+        owner_phases = {
+            "DISCOVER": "phase1-what",
+            "WHAT": "phase1-what",
+            "CARTOGRAPHER": "phase1-what",
+            "HOW": "phase3-how",
+            "ARCHITECT": "phase3-how",
+            "SENTINEL": "phase3-sentinel",
+            "PLAN": "phase3-plan",
+            "ORCHESTRATOR": "phase3-plan",
+        }
+        responsible_agents = re.findall(
+            r"^- \*\*Responsible agent:\*\*[ \t]*(.*?)[ \t]*$",
             issues_text,
             re.MULTILINE | re.IGNORECASE,
         )
-        authority = "\n".join(authority_fields).upper()
-        for phase, owners in (
-            ("phase1-what", ("CARTOGRAPHER", "WHAT")),
-            ("phase3-how", ("ARCHITECT", "HOW")),
+        normalized_agents = tuple(
+            agent.strip().upper() for agent in responsible_agents
+        )
+        if normalized_agents:
+            if any(agent not in owner_phases for agent in normalized_agents):
+                return "phase1-what"
+            responsible_phases = {
+                owner_phases[agent] for agent in normalized_agents
+            }
+            for phase in phase_order:
+                if phase in responsible_phases:
+                    return phase
+            return "phase1-what"
+
+        action_fields = re.findall(
+            r"^- \*\*Action Required:\*\*[ \t]*(.+?)\s*$",
+            issues_text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        action_text = "\n".join(action_fields).upper()
+        for phase, agents in (
+            ("phase1-what", ("CARTOGRAPHER",)),
+            ("phase3-how", ("ARCHITECT",)),
             ("phase3-sentinel", ("SENTINEL",)),
-            ("phase3-plan", ("ORCHESTRATOR", "PLAN")),
+            ("phase3-plan", ("ORCHESTRATOR",)),
         ):
             if any(
-                re.search(rf"\b{re.escape(owner)}\b", authority)
-                for owner in owners
+                re.search(rf"\b{re.escape(agent)}\b", action_text)
+                for agent in agents
             ):
                 return phase
         return "phase1-what"
