@@ -251,7 +251,7 @@ Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py`
 
 Expected: collection fails because the adopter is absent.
 
-- [ ] **Step 3: Implement stable parent reads and bundle construction**
+- [x] **Step 3: Implement stable parent reads and bundle construction**
 
 Resolve beneath `runs/`, load exact manifest/events/ledger, require exactly one `run_completed`, verify current clean-Git composite commits against the snapshot, copy direct parent manifest/event/ledger bytes once, and recursively copy schema-3 ancestor bundle objects. Use stable-stat/no-follow helpers already used by snapshot and object stores.
 
@@ -265,7 +265,7 @@ Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py tests/unit/test_re
 
 Expected: all pass and nested receipt identities match the parent.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_24/adoption.py \
@@ -455,35 +455,35 @@ git commit -m "feat(re-v2): add Prosaic L2 deepening artifacts"
 - Produces: `semantic_request_id_for(lineage_root, snapshot, selection, target, policy_hash) -> str`.
 - Reuses: `resolve_current_re_run`, `_new_re_v2_run_id`, `_activate_re_v2_run`, workspace configuration, and partition descriptors.
 
-- [ ] **Step 1: Write failing parser/validation tests**
+- [x] **Step 1: Write failing parser/validation tests**
 
 Cover required target/selection; mutual exclusions; duplicate selectors; unknown source/domain; multi-source domain rejection; `presentation_domain_id` resolution; `--all`; unregistered L3/L4; V1 flag rejection; positive resource values; explicit/current parent resolution.
 
-- [ ] **Step 2: Write failing creation/idempotency tests**
+- [x] **Step 2: Write failing creation/idempotency tests**
 
 Assert preflight creates no run/pointer on dirty/changed/nonterminal parents; same semantic request returns complete/running/paused child; token/time changes authorize the same child; concurrent creation yields one child; active pointer updates last.
 
-- [ ] **Step 3: Run CLI tests and confirm RED**
+- [x] **Step 3: Run CLI tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_cli_re_v2_protocol_24.py tests/integration/test_re_v2_protocol_24_cli.py`
 
 Expected: parser rejects unknown `deepen` command.
 
-- [ ] **Step 4: Implement parser and deterministic selection**
+- [x] **Step 4: Implement parser and deterministic selection**
 
 Resolve source/domain values solely through `WorkspacePartitionCatalogV1`. Use one no-follow `flock` creation lock around semantic-child scan, ID allocation, child publication, and pointer activation.
 
-- [ ] **Step 5: Implement child creation and execution routing**
+- [x] **Step 5: Implement child creation and execution routing**
 
 Validate/adopt parent, build immutable inputs/manifest, publish manifest last, append `run_created` and adoption events/imported receipts, validate projection, activate last, then invoke the shared controller.
 
-- [ ] **Step 6: Run old/new lifecycle and CLI tests**
+- [x] **Step 6: Run old/new lifecycle and CLI tests**
 
 Run: `pytest -q tests/unit/test_cli_re_lifecycle.py tests/unit/test_cli_re_v2_protocol_22.py tests/unit/test_cli_re_v2_protocol_24.py tests/integration/test_re_v2_protocol_24_cli.py`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/echelon/cli.py src/echelon/cli_app.py \

@@ -24,7 +24,7 @@ from harness.re_v2.protocol_22.partition import (
 )
 from harness.re_v2.protocol_22.schema import digest_value
 
-from .model import RunManifestV3
+from .model import ParentAuthorityBundleV1, RunManifestV3
 
 
 AcceptedParentClosureV2: TypeAlias = Mapping[
@@ -311,6 +311,102 @@ def build_protocol_24_graph(
     return graph
 
 
+def reconstruct_adopted_parent_closure(
+    bundle: ParentAuthorityBundleV1,
+    ledger: object,
+) -> Mapping[str, tuple[WorkTemplateV2, AcceptedArtifactV2]]:
+    """Recover exact parent templates from the child's imported typed receipts."""
+    if not isinstance(bundle, ParentAuthorityBundleV1):
+        raise Protocol24GraphError(
+            "parent reconstruction requires ParentAuthorityBundleV1"
+        )
+    work_items = getattr(ledger, "certification_work_items", None)
+    if not isinstance(work_items, Mapping):
+        raise Protocol24GraphError(
+            "parent reconstruction requires imported certification work items"
+        )
+    indexed: list[tuple[object, AcceptedArtifactV2]] = []
+    template_id_by_artifact_hash: dict[str, str] = {}
+    for authority in bundle.artifacts:
+        item = work_items.get(authority.certification_receipt_id)
+        if item is None or getattr(item, "output_key", None) is None:
+            raise Protocol24GraphError(
+                "parent bundle references a missing certification work item"
+            )
+        if (
+            item.output_key.identity != authority.artifact_key_id
+            or tuple(item.required_artifact_hashes) != authority.dependency_hashes
+        ):
+            raise Protocol24GraphError(
+                "parent bundle and imported work-item authority disagree"
+            )
+        previous = template_id_by_artifact_hash.get(authority.artifact_hash)
+        if previous is not None and previous != item.template_id:
+            raise Protocol24GraphError(
+                "parent artifact hashes cannot resolve exact dependency templates"
+            )
+        template_id_by_artifact_hash[authority.artifact_hash] = item.template_id
+        indexed.append(
+            (
+                item,
+                AcceptedArtifactV2(
+                    artifact_key_id=authority.artifact_key_id,
+                    artifact_hash=authority.artifact_hash,
+                ),
+            )
+        )
+
+    result: dict[str, tuple[WorkTemplateV2, AcceptedArtifactV2]] = {}
+    for item, artifact in indexed:
+        try:
+            required_template_ids = tuple(
+                sorted(
+                    template_id_by_artifact_hash[artifact_hash]
+                    for artifact_hash in item.required_artifact_hashes
+                )
+            )
+        except KeyError as exc:
+            raise Protocol24GraphError(
+                "parent work item references an artifact outside the adopted closure"
+            ) from exc
+        template = WorkTemplateV2(
+            identity_schema_version=item.identity_schema_version,
+            goal_id=item.goal_id,
+            scope=item.output_key.scope,
+            artifact_kind=item.output_key.artifact_kind,
+            layer=item.output_key.layer,
+            producer_id=item.producer_id,
+            producer_family=item.producer_family,
+            producer_protocol_version=item.producer_protocol_version,
+            layer_policy_hash=item.output_key.layer_policy_hash,
+            required_template_ids=required_template_ids,
+            executor_contract_hash=item.executor_contract_hash,
+            verifier_id=item.verifier_id,
+            verifier_version=item.verifier_version,
+            verifier_implementation_digest=item.verifier_implementation_digest,
+            result_contract_id=item.result_contract_id,
+            max_provider_attempts=item.max_provider_attempts,
+            max_generation_attempts=item.max_generation_attempts,
+            max_semantic_rounds=item.max_semantic_rounds,
+            max_result_contract_retries=item.max_result_contract_retries,
+            max_shared_retries=item.max_shared_retries,
+            max_artifact_contract_retries=item.max_artifact_contract_retries,
+        )
+        if template.template_id != item.template_id:
+            raise Protocol24GraphError(
+                "imported work item cannot reconstruct its exact parent template"
+            )
+        result[template.template_id] = (template, artifact)
+    try:
+        normalize_graph_templates_v2(
+            tuple(template for template, _artifact in result.values()),
+            label="reconstructed parent closure",
+        )
+    except Protocol22GraphError as exc:
+        raise Protocol24GraphError(str(exc)) from exc
+    return MappingProxyType(dict(sorted(result.items())))
+
+
 def validate_protocol_24_graph_authority(
     manifest: RunManifestV3,
     inputs: ValidatedProtocol22Inputs | Protocol22InputSet,
@@ -544,5 +640,6 @@ __all__ = (
     "Protocol24Graph",
     "Protocol24GraphError",
     "build_protocol_24_graph",
+    "reconstruct_adopted_parent_closure",
     "validate_protocol_24_graph_authority",
 )

@@ -22,9 +22,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import fcntl
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -12707,6 +12709,223 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     return context
 
 
+def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> object:
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    import harness.re_v2.protocol_24.artifacts as artifacts_module
+    import harness.re_v2.protocol_24.controller as controller_module
+    import harness.re_v2.protocol_24.runtime as runtime_module
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+    from harness.re_v2.protocol_22.cli_provider import SquadCliBaselineExecutor
+    from harness.re_v2.protocol_22.evidence import PinnedSnapshotReaderV1
+    from harness.re_v2.protocol_22.execution import (
+        DeterministicExecutionDependenciesV1,
+        Protocol22ExecutionStore,
+        ProviderExecutionDependenciesV1,
+    )
+    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_22.model import (
+        DeterministicInvocationInputV1,
+        DeterministicInvocationV1,
+    )
+    from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+    from harness.re_v2.protocol_22.runtime import DeterministicRuntimeV1
+    from harness.re_v2.protocol_24.artifacts import (
+        DEEPENER_AGENT_ID,
+        DEEPENING_IN_PROCESS_ADAPTER_ID,
+        DEEPENING_VERIFIER_ID,
+    )
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    from harness.re_v2.protocol_24.graph import (
+        build_protocol_24_graph,
+        reconstruct_adopted_parent_closure,
+    )
+    from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
+    from harness.re_v2.protocol_24.model import RunManifestV3
+    from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
+    from harness.re_v2.run_store import ReV2Paths
+    from harness.re_v2.snapshot import validate_source_snapshot
+
+    if not isinstance(manifest, RunManifestV3):
+        raise ValueError("protocol-2.4 context requires a schema-3 manifest")
+    paths = ReV2Paths.for_run(run_dir)
+    inputs = load_protocol_24_inputs(paths, manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol22Ledger(paths, objects)
+    ledger_view = ledger.replay()
+    accepted_parent = reconstruct_adopted_parent_closure(
+        inputs.parent_authority_bundle,
+        ledger_view,
+    )
+    graph = build_protocol_24_graph(manifest, inputs, accepted_parent)
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot_reader = PinnedSnapshotReaderV1(
+        snapshot,
+        inputs.workspace_partition,
+    )
+    adopted_payloads = {
+        (
+            template.scope.source_id,
+            template.scope.domain_key,
+            template.layer,
+            template.artifact_kind,
+        ): objects.read_blob(artifact.artifact_hash)
+        for template, artifact in accepted_parent.values()
+    }
+    inherited_runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
+    deepening_runtime = Protocol24DeterministicRuntime(
+        inputs,
+        snapshot_reader,
+        adopted_payloads,
+    )
+    baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
+    baseline_renderer = baseline_entry.request_renderer
+    if baseline_renderer is None:
+        raise ValueError("protocol-2.4 parent provider renderer is missing")
+    baseline_agent = objects.read_blob(baseline_renderer.agent_contract_hash)
+    registry, _agent, _schemas = _re_schema2_installed_registry(
+        baseline_agent,
+        provider_mode="cli",
+    )
+    deepening_entry = inputs.executor_contract.entry_for("compact-deepening")
+    deepening_renderer = deepening_entry.request_renderer
+    if deepening_renderer is None:
+        raise ValueError("protocol-2.4 deepening provider renderer is missing")
+    deepener_hash = deepening_renderer.agent_contract_hash
+    objects.read_blob(deepener_hash)
+    implementation_digest = _re_v22_implementation_digest(
+        artifacts_module,
+        runtime_module,
+        controller_module,
+    )
+    registry = replace(
+        registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            DEEPENING_VERIFIER_ID: implementation_digest,
+        },
+        agent_contracts={
+            **dict(registry.agent_contracts),
+            DEEPENER_AGENT_ID: deepener_hash,
+        },
+    )
+    context_ref: dict[str, object] = {}
+    workspace_bytes = canonical_json_bytes(inputs.workspace_partition.to_json_dict())
+    workspace_hash = inputs.workspace_partition.identity
+
+    def dependencies_for(item: object, _attempt_kind: str) -> object:
+        executor = inputs.executor_contract.entry_for(
+            getattr(item, "producer_family")
+        )
+        accepted = accepted_dependencies_for(context_ref["context"], item)
+        if executor.execution_mode in {"api", "cli"}:
+            renderer = executor.request_renderer
+            if renderer is None:
+                raise ValueError("protocol-2.4 provider executor has no renderer")
+            schema_hash = next(
+                (
+                    reference.schema_hash
+                    for reference in renderer.response_schemas
+                    if reference.artifact_kind
+                    == getattr(getattr(item, "output_key"), "artifact_kind")
+                ),
+                None,
+            )
+            if schema_hash is None:
+                raise ValueError("protocol-2.4 provider item has no response schema")
+            return ProviderExecutionDependenciesV1(
+                executor=executor,
+                registry=registry,
+                agent_bytes=objects.read_blob(renderer.agent_contract_hash),
+                context_bytes=accepted.payload_for_role("context_bundle"),
+                response_schema_bytes=objects.read_blob(schema_hash),
+                tokenizer=None,
+            )
+        invocation_inputs = tuple(
+            DeterministicInvocationInputV1(
+                role=role,
+                object_hash=accepted_artifact.artifact_hash,
+            )
+            for role, accepted_artifact in accepted.by_role.items()
+        )
+        uses_workspace_partition = set(accepted.by_role) == {"workspace_partition"}
+        return DeterministicExecutionDependenciesV1(
+            executor=executor,
+            registry=registry,
+            invocation=DeterministicInvocationV1(
+                schema_version=1,
+                producer_family=getattr(item, "producer_family"),
+                output_key=getattr(item, "output_key"),
+                artifact_policy_hash=getattr(
+                    getattr(item, "output_key"), "layer_policy_hash"
+                ),
+                inputs=invocation_inputs,
+            ),
+            workspace_partition_hash=(
+                workspace_hash if uses_workspace_partition else None
+            ),
+            referenced_objects=(
+                {workspace_hash: workspace_bytes}
+                if uses_workspace_partition
+                else dict(accepted.payloads_by_hash)
+            ),
+        )
+
+    l2_families = {
+        "targeted-evidence-pack",
+        "deepening-context-bundle",
+        "deepening-source-root",
+    }
+    producers = {
+        entry.producer_family: (
+            deepening_runtime
+            if entry.producer_family in l2_families
+            else inherited_runtime
+        )
+        for entry in inputs.executor_contract.entries
+        if entry.execution_mode == "in_process"
+    }
+    from harness.squad_provider import SquadCliProvider
+
+    provider = SquadCliBaselineExecutor(
+        deepening_entry,
+        provider_factory=lambda: SquadCliProvider(_load_cli_config(project_root)),
+    )
+    verifiers = {
+        entry.verifier.verifier_id: (
+            deepening_runtime
+            if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
+            else inherited_runtime
+        )
+        for entry in inputs.executor_contract.entries
+    }
+    context = Protocol22RunContext(
+        paths=paths,
+        inputs=inputs,
+        graph=graph,
+        event_store=EventStore(paths, protocol=PROTOCOL_24_EVENTS),
+        object_store=objects,
+        ledger=ledger,
+        execution_store=Protocol22ExecutionStore(paths, objects),
+        installed_authorities=registry,
+        dependencies_for=dependencies_for,
+        executors=MappingProxyType({deepening_entry.adapter_id: provider}),
+        producers=MappingProxyType(producers),
+        verifiers=MappingProxyType(verifiers),
+        snapshot_validator=lambda: validate_source_snapshot(snapshot),
+    )
+    context_ref["context"] = context
+    return context
+
+
 def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.candidates import CandidateStore
     from harness.re_v2.events import EventStore
@@ -12718,9 +12937,12 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
 
     manifest = load_run_manifest(run_dir)
     from harness.re_v2.protocol_22.model import RunManifestV2
+    from harness.re_v2.protocol_24.model import RunManifestV3
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
+    if isinstance(manifest, RunManifestV3):
+        return _re_v24_context(project_root, run_dir, manifest)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -13043,17 +13265,28 @@ def _run_re_v2_live(context: object) -> None:
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 
     if isinstance(context, Protocol22RunContext):
-        from harness.re_v2.protocol_22.controller import Protocol22Controller
-        from harness.re_v2.protocol_22.status import render_protocol_22_status
+        from harness.re_v2.protocol_24.model import RunManifestV3
+        from harness.re_v2.run_store import load_run_manifest
 
-        Protocol22Controller(context).run_until_stopped()
-        print(
-            render_protocol_22_status(
-                context.paths.root.parent,
-                context=context,
-            ),
-            end="",
-        )
+        manifest = load_run_manifest(context.paths.root.parent)
+        if isinstance(manifest, RunManifestV3):
+            from harness.re_v2.protocol_24.controller import Protocol24Controller
+
+            result = Protocol24Controller(context).run_until_stopped()
+            print("RE V2 — PROTOCOL 2.4")
+            print(f"state: {result.status}")
+        else:
+            from harness.re_v2.protocol_22.controller import Protocol22Controller
+            from harness.re_v2.protocol_22.status import render_protocol_22_status
+
+            Protocol22Controller(context).run_until_stopped()
+            print(
+                render_protocol_22_status(
+                    context.paths.root.parent,
+                    context=context,
+                ),
+                end="",
+            )
         return
     from harness.re_v2.controller import ReV2Controller
     from harness.re_v2.status import render_v2_status
@@ -13208,6 +13441,7 @@ def _run_re_v22_continue(
     *,
     token_limit: int | None,
     time_limit_minutes: int | None,
+    active_ms_limit: int | None = None,
 ) -> None:
     from harness.re_v2.protocol_22.recovery import (
         protocol_22_run_lock,
@@ -13218,7 +13452,9 @@ def _run_re_v22_continue(
     requested = {
         "tokens": token_limit,
         "active_ms": (
-            time_limit_minutes * 60_000
+            active_ms_limit
+            if active_ms_limit is not None
+            else time_limit_minutes * 60_000
             if time_limit_minutes is not None
             else None
         ),
@@ -13402,6 +13638,595 @@ def _cmd_re_refresh(args: list[str]) -> None:
     if bool(getattr(result, "no_work", False)) or not run_id:
         raise SystemExit("echelon re refresh: targeted refresh produced no publishable run")
     _cmd_re_publish([run_id])
+
+
+@dataclass(frozen=True, slots=True)
+class _ReDeepenOptions:
+    target_layer: str
+    all_sources: bool
+    source_ids: tuple[str, ...]
+    domain_ids: tuple[str, ...]
+    from_run: str | None
+    token_limit: int | None
+    active_ms_limit: int | None
+
+
+def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
+    values: dict[str, object] = {
+        "target_layer": None,
+        "all_sources": False,
+        "source_ids": [],
+        "domain_ids": [],
+        "from_run": None,
+        "token_limit": None,
+        "active_ms_limit": None,
+    }
+    scalar = {
+        "--to": "target_layer",
+        "--from-run": "from_run",
+        "--token-limit": "token_limit",
+        "--active-ms-limit": "active_ms_limit",
+    }
+    repeatable = {"--source": "source_ids", "--domain": "domain_ids"}
+    index = 0
+    while index < len(args):
+        option = args[index]
+        if option == "--all":
+            if values["all_sources"]:
+                raise ValueError("--all may be supplied only once")
+            values["all_sources"] = True
+            index += 1
+            continue
+        name = option
+        inline: str | None = None
+        if "=" in option:
+            name, inline = option.split("=", 1)
+        if name not in scalar and name not in repeatable:
+            raise ValueError(f"unknown option {option!r}")
+        if inline is None:
+            if index + 1 >= len(args):
+                raise ValueError(f"{name} requires a value")
+            inline = args[index + 1]
+            index += 2
+        else:
+            index += 1
+        value = inline.strip()
+        if not value:
+            raise ValueError(f"{name} requires a nonempty value")
+        if name in repeatable:
+            collection = values[repeatable[name]]
+            assert isinstance(collection, list)
+            if value in collection:
+                raise ValueError(f"duplicate {name} selector {value!r}")
+            collection.append(value)
+            continue
+        field = scalar[name]
+        if values[field] is not None:
+            raise ValueError(f"{name} may be supplied only once")
+        if name in {"--token-limit", "--active-ms-limit"}:
+            try:
+                parsed = int(value)
+            except ValueError as exc:
+                raise ValueError(f"{name} must be a positive integer") from exc
+            if parsed <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+            values[field] = parsed
+        else:
+            values[field] = value
+    target = values["target_layer"]
+    if target != "L2":
+        raise ValueError("--to L2 is required; L3/L4 are not registered")
+    sources = tuple(values["source_ids"])
+    domains = tuple(values["domain_ids"])
+    all_sources = bool(values["all_sources"])
+    if all_sources and (sources or domains):
+        raise ValueError("--all cannot be combined with --source or --domain")
+    if not all_sources and not sources:
+        raise ValueError("exactly one selector form is required: --all or --source")
+    if domains and len(sources) != 1:
+        raise ValueError("--domain requires exactly one --source")
+    return _ReDeepenOptions(
+        target_layer="L2",
+        all_sources=all_sources,
+        source_ids=tuple(sorted(sources)),
+        domain_ids=tuple(sorted(domains)),
+        from_run=values["from_run"] if isinstance(values["from_run"], str) else None,
+        token_limit=values["token_limit"] if isinstance(values["token_limit"], int) else None,
+        active_ms_limit=(
+            values["active_ms_limit"]
+            if isinstance(values["active_ms_limit"], int)
+            else None
+        ),
+    )
+
+
+def _resolve_re_v24_selection(
+    workspace_partition: object,
+    options: _ReDeepenOptions,
+) -> object:
+    from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
+    from harness.re_v2.protocol_24.model import SelectionScopeV1
+
+    if not isinstance(workspace_partition, WorkspacePartitionCatalogV1):
+        raise ValueError("deepening requires an authenticated workspace partition")
+    if not isinstance(options, _ReDeepenOptions):
+        raise ValueError("deepening selection options are invalid")
+    by_source = {
+        source.source_id: source for source in workspace_partition.sources
+    }
+    if options.all_sources:
+        if not by_source:
+            raise ValueError("workspace partition contains no sources")
+        return SelectionScopeV1(1, True, (), ())
+    unknown_sources = tuple(
+        source_id for source_id in options.source_ids if source_id not in by_source
+    )
+    if unknown_sources:
+        raise ValueError(
+            "unknown source selector(s): " + ", ".join(unknown_sources)
+        )
+    resolved_domains: list[str] = []
+    if options.domain_ids:
+        source = by_source[options.source_ids[0]]
+        for selector in options.domain_ids:
+            matches = tuple(
+                domain
+                for domain in source.domains
+                if selector in {domain.domain_key, domain.presentation_domain_id}
+            )
+            if not matches:
+                raise ValueError(
+                    f"unknown domain selector {selector!r} for source {source.source_id!r}"
+                )
+            if len(matches) != 1:
+                raise ValueError(
+                    f"ambiguous domain selector {selector!r} for source {source.source_id!r}"
+                )
+            resolved_domains.append(matches[0].domain_key)
+    if len(resolved_domains) != len(set(resolved_domains)):
+        raise ValueError("domain selectors resolve to duplicate domains")
+    return SelectionScopeV1(
+        schema_version=1,
+        all_sources=False,
+        source_ids=tuple(sorted(options.source_ids)),
+        domain_keys=tuple(sorted(resolved_domains)),
+    )
+
+
+def semantic_request_id_for(
+    lineage_root_run_id: str,
+    lineage_root_manifest_hash: str,
+    source_snapshot_id: str,
+    selection: object,
+    target_layer: str,
+    artifact_policy_hash: str,
+) -> str:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.schema import digest_value, safe_id
+    from harness.re_v2.protocol_24.model import SelectionScopeV1
+
+    if not isinstance(selection, SelectionScopeV1):
+        raise ValueError("semantic request requires SelectionScopeV1")
+    safe_id(lineage_root_run_id, "lineage_root_run_id")
+    digest_value(lineage_root_manifest_hash, "lineage_root_manifest_hash")
+    digest_value(source_snapshot_id, "source_snapshot_id")
+    digest_value(artifact_policy_hash, "artifact_policy_hash")
+    if target_layer != "L2":
+        raise ValueError("semantic request target must be L2")
+    return content_digest(
+        {
+            "artifact_policy_hash": artifact_policy_hash,
+            "lineage_root_manifest_hash": lineage_root_manifest_hash,
+            "lineage_root_run_id": lineage_root_run_id,
+            "selection": selection.to_json_dict(),
+            "source_snapshot_id": source_snapshot_id,
+            "target_layer": target_layer,
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Protocol24Creation:
+    parent: object
+    manifest: object
+    inputs: object
+    graph: object
+
+
+def _prepare_re_v24_creation(
+    workspace_root: Path,
+    parent: object,
+    options: _ReDeepenOptions,
+) -> _Protocol24Creation:
+    from dataclasses import replace
+
+    import harness.re_v2.protocol_24.artifacts as artifacts_module
+    import harness.re_v2.protocol_24.controller as controller_module
+    import harness.re_v2.protocol_24.runtime as runtime_module
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_22.authorities import validate_installed_authorities
+    from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
+    from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
+    from harness.re_v2.protocol_24.adoption import (
+        ValidatedParentV1,
+        build_parent_authority_bundle,
+    )
+    from harness.re_v2.protocol_24.artifacts import (
+        DEEPENER_AGENT_ID,
+        DEEPENING_IN_PROCESS_ADAPTER_ID,
+        DEEPENING_VERIFIER_ID,
+        build_deepening_executor_catalog,
+    )
+    from harness.re_v2.protocol_24.graph import build_protocol_24_graph
+    from harness.re_v2.protocol_24.inputs import Protocol24InputSet
+    from harness.re_v2.protocol_24.model import ParentLineageV1, RunManifestV3
+    from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
+
+    if not isinstance(parent, ValidatedParentV1):
+        raise ValueError("deepening parent validation returned no closed authority")
+    selection = _resolve_re_v24_selection(
+        parent.inputs.workspace_partition,
+        options,
+    )
+    try:
+        artifact = ProsaicPromptLoader(workspace_root).load_subagent(
+            DEEPENER_AGENT_ID
+        )
+    except ProsaicPromptLoadError as exc:
+        raise ValueError(str(exc)) from exc
+    if artifact is None:
+        raise ValueError(
+            "installed Prosaic agent echelon.re-deepener is missing; run "
+            "`echelon workspace migrate-to-prosaic` before deepening RE"
+        )
+    deepener_bytes = canonical_prosaic_agent_bytes(artifact)
+    deepener_hash = content_digest(deepener_bytes)
+    implementation_digest = _re_v22_implementation_digest(
+        artifacts_module,
+        runtime_module,
+        controller_module,
+    )
+    policy = build_deepening_v1_policy_catalog()
+    executors = build_deepening_executor_catalog(
+        parent.inputs.executor_contract,
+        deepener_hash,
+        implementation_digest,
+    )
+    compact = parent.inputs.executor_contract.entry_for("compact-baseline")
+    renderer = compact.request_renderer
+    if renderer is None:
+        raise ValueError("completed parent has no pinned shared provider renderer")
+    baseline_agent = parent.inputs.immutable_objects.get(renderer.agent_contract_hash)
+    if baseline_agent is None:
+        raise ValueError("completed parent has no pinned Prosaic baseliner authority")
+    registry, _agent, _schemas = _re_schema2_installed_registry(
+        baseline_agent,
+        provider_mode="cli",
+    )
+    registry = replace(
+        registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            DEEPENING_VERIFIER_ID: implementation_digest,
+        },
+        agent_contracts={
+            **dict(registry.agent_contracts),
+            DEEPENER_AGENT_ID: deepener_hash,
+        },
+    )
+    mismatches = validate_installed_authorities(executors, registry)
+    if mismatches:
+        details = ", ".join(
+            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
+        )
+        raise ValueError(f"protocol-2.4 installed authority mismatch: {details}")
+
+    bundle, authority_objects = build_parent_authority_bundle(parent)
+    parent_manifest_hash = content_digest(parent.manifest_bytes)
+    lineage = ParentLineageV1(
+        schema_version=1,
+        direct_parent_run_id=parent.manifest.run_id,
+        direct_parent_manifest_hash=parent_manifest_hash,
+        direct_parent_terminal_event_hash=parent.events[-1].event_hash,
+        lineage_root_run_id=parent.manifest.run_id,
+        lineage_root_manifest_hash=parent_manifest_hash,
+    )
+    semantic_id = semantic_request_id_for(
+        lineage.lineage_root_run_id,
+        lineage.lineage_root_manifest_hash,
+        parent.manifest.source_snapshot_id,
+        selection,
+        "L2",
+        policy.identity,
+    )
+    manifest = RunManifestV3(
+        schema_version=3,
+        engine="re-v2",
+        engine_protocol_version="2.4",
+        # Allocation happens only while holding the workspace creation lock.
+        run_id="re-pending-deepening",
+        created_at=_re_v2_now(),
+        source_snapshot_id=parent.manifest.source_snapshot_id,
+        source_snapshot_kind="workspace-git-composite",
+        partition_manifest_id=parent.manifest.partition_manifest_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            parent.inputs.workspace_partition.identity,
+            "workspace-partition.json",
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            policy.identity,
+            "artifact-policy.json",
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            executors.identity,
+            "executor-contract.json",
+        ),
+        parent_authority_bundle=CatalogReferenceV1(
+            bundle.identity,
+            "parent-authority.json",
+        ),
+        parent_lineage=lineage,
+        requested_goals=("selective-deepening",),
+        target_layer="L2",
+        selection=selection,
+        semantic_request_id=semantic_id,
+        initial_budget_policy=BudgetPolicyV2(
+            token_limit=options.token_limit or 5_000_000,
+            active_ms_limit=options.active_ms_limit or 180 * 60_000,
+            provider_attempt_limit=2,
+            artifact_generation_attempt_limit=2,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=1,
+            shared_retry_limit=1,
+            artifact_contract_retry_limit=1,
+        ),
+    )
+    immutable_objects = {
+        **dict(parent.inputs.immutable_objects),
+        **dict(authority_objects),
+        deepener_hash: deepener_bytes,
+    }
+    inputs = Protocol24InputSet(
+        workspace_partition=parent.inputs.workspace_partition,
+        artifact_policy=policy,
+        executor_contract=executors,
+        immutable_objects=immutable_objects,
+        parent_authority_bundle=bundle,
+    )
+    graph = build_protocol_24_graph(manifest, inputs, parent.accepted_parent)
+    # Canonical construction here catches accidental non-JSON metadata before
+    # the manifest-last publisher creates any child path.
+    canonical_json_bytes(manifest.to_json_dict())
+    return _Protocol24Creation(parent, manifest, inputs, graph)
+
+
+@contextmanager
+def _re_v24_creation_lock(workspace_root: Path):
+    runs = workspace_root.resolve() / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(runs, flags)
+    lock_fd: int | None = None
+    try:
+        lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        lock_flags |= getattr(os, "O_NOFOLLOW", 0)
+        for attempt in range(3):
+            try:
+                lock_fd = os.open(
+                    ".re-v24-create.lock",
+                    lock_flags,
+                    0o600,
+                    dir_fd=root_fd,
+                )
+                break
+            except FileNotFoundError:
+                if attempt == 2:
+                    raise
+        if lock_fd is None:
+            raise ValueError("cannot open RE deepening creation lock")
+        metadata = os.fstat(lock_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("RE deepening creation lock is not a regular file")
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+        os.close(root_fd)
+
+
+def _find_re_v24_semantic_child(
+    workspace_root: Path,
+    semantic_request_id: str,
+) -> Path | None:
+    from harness.re_v2.protocol_24.model import RunManifestV3
+    from harness.re_v2.run_store import load_run_manifest
+
+    runs = workspace_root.resolve() / "runs"
+    for candidate in sorted(runs.iterdir(), key=lambda path: path.name):
+        if (
+            not candidate.name.startswith("re-")
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+            or not (candidate / "v2" / "run.json").is_file()
+        ):
+            continue
+        manifest = load_run_manifest(candidate)
+        if (
+            isinstance(manifest, RunManifestV3)
+            and manifest.semantic_request_id == semantic_request_id
+        ):
+            return candidate
+    return None
+
+
+def _resolve_re_v24_parent_path(
+    workspace_root: Path,
+    from_run: str | None,
+) -> Path:
+    from harness.re_lifecycle import resolve_current_re_run
+    from harness.re_v2.protocol_22.schema import safe_id
+
+    if from_run is not None:
+        safe_id(from_run, "from_run")
+        return workspace_root.resolve() / "runs" / from_run
+    current = resolve_current_re_run(workspace_root)
+    if current is None:
+        raise ValueError("no active RE parent; use --from-run RUN_ID")
+    return current
+
+
+def _run_re_v24_deepen(
+    workspace_root: Path,
+    options: _ReDeepenOptions,
+) -> Path:
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_24.adoption import (
+        import_parent_acceptance_closure,
+        validate_parent_for_deepening,
+    )
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    from harness.re_v2.protocol_24.inputs import create_protocol_24_run_store
+
+    workspace = workspace_root.resolve()
+    parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
+    # Clean/exact-source validation deliberately precedes every child mutation.
+    parent = validate_parent_for_deepening(parent_path, workspace)
+    prepared = _prepare_re_v24_creation(workspace, parent, options)
+    created = False
+    with _re_v24_creation_lock(workspace):
+        existing = _find_re_v24_semantic_child(
+            workspace,
+            prepared.manifest.semantic_request_id,
+        )
+        if existing is None:
+            from dataclasses import replace
+
+            manifest = replace(
+                prepared.manifest,
+                run_id=_new_re_v2_run_id(workspace),
+                created_at=_re_v2_now(),
+            )
+            run_dir = workspace / "runs" / manifest.run_id
+            paths = create_protocol_24_run_store(
+                run_dir,
+                manifest,
+                prepared.inputs,
+            )
+            objects = ObjectStore(paths.objects)
+            ledger = Protocol22Ledger(paths, objects)
+            import_parent_acceptance_closure(parent, objects, ledger)
+            events = EventStore(paths, protocol=PROTOCOL_24_EVENTS)
+            events.append(
+                "run_created",
+                {"run_manifest_id": manifest.run_manifest_id},
+                occurred_at=manifest.created_at,
+            )
+            by_certification = {
+                value.certification_receipt_id: value
+                for value in prepared.inputs.parent_authority_bundle.artifacts
+            }
+            for certification_id, work_item in sorted(
+                ledger.replay().certification_work_items.items()
+            ):
+                authority = by_certification.get(certification_id)
+                if authority is None:
+                    raise ValueError(
+                        "imported parent work item has no adoption authority"
+                    )
+                events.append(
+                    "artifact_adopted",
+                    {
+                        "adopted_artifact_authority": authority.to_json_dict(),
+                        "parent_authority_bundle_hash": (
+                            prepared.inputs.parent_authority_bundle.identity
+                        ),
+                        "work_item_id": work_item.work_item_id,
+                    },
+                    occurred_at=_re_v2_now(),
+                )
+            created = True
+        else:
+            run_dir = existing
+        _activate_re_v2_run(workspace, run_dir.name)
+    context = _re_v2_context(workspace, run_dir)
+    if created:
+        _run_re_v2_live(context)
+    else:
+        _continue_re_v24_semantic_child(context, options)
+    return run_dir
+
+
+def _continue_re_v24_semantic_child(
+    context: object,
+    options: _ReDeepenOptions,
+) -> None:
+    from harness.re_v2.protocol_22.budget import evaluate_budget_v22
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    from harness.re_v2.run_store import load_run_manifest
+
+    if options.token_limit is None and options.active_ms_limit is None:
+        _run_re_v2_live(context)
+        return
+    events = context.event_store.replay()
+    if events and events[-1].type in {"run_completed", "run_failed"}:
+        _run_re_v2_live(context)
+        return
+    if not _re_v2_is_paused(events):
+        # A concurrent or crash-recovered child keeps its existing authority;
+        # the shared controller will either progress it or expose a pause.
+        _run_re_v2_live(context)
+        return
+    manifest = load_run_manifest(context.paths.root.parent)
+    budget = evaluate_budget_v22(
+        manifest.initial_budget_policy,
+        events,
+        (),
+        _re_v2_now(),
+        event_protocol=PROTOCOL_24_EVENTS,
+    )
+    token_limit = (
+        options.token_limit
+        if options.token_limit is not None
+        and budget.token_limit is not None
+        and options.token_limit > budget.token_limit
+        else None
+    )
+    active_ms_limit = (
+        options.active_ms_limit
+        if options.active_ms_limit is not None
+        and budget.active_ms_limit is not None
+        and options.active_ms_limit > budget.active_ms_limit
+        else None
+    )
+    if token_limit is None and active_ms_limit is None:
+        _run_re_v2_live(context)
+        return
+    _run_re_v22_continue(
+        context,
+        token_limit=token_limit,
+        time_limit_minutes=None,
+        active_ms_limit=active_ms_limit,
+    )
+
+
+def _cmd_re_deepen(args: list[str]) -> None:
+    try:
+        options = _parse_re_deepen_options(args)
+        _run_re_v24_deepen(Path.cwd(), options)
+    except (RuntimeError, ValueError) as exc:
+        print(f"echelon re deepen: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 def _cmd_re_continue(args: list[str]) -> None:

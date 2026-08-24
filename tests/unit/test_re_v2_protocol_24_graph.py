@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,8 +18,14 @@ from harness.re_v2.protocol_22.schema import Protocol22SchemaError
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
 from harness.re_v2.protocol_24.graph import (
     build_protocol_24_graph,
+    reconstruct_adopted_parent_closure,
     validate_protocol_24_graph_authority,
 )
+from harness.re_v2.protocol_24.model import (
+    AdoptedArtifactAuthorityV1,
+    ParentAuthorityBundleV1,
+)
+from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_protocol_22_graph import _Authority, _Budget, _fixture
@@ -99,6 +106,49 @@ def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
     )
     graph = build_protocol_24_graph(manifest, inputs, accepted_parent)
     return graph, inputs, authority, accepted_parent, parent_work
+
+
+def test_imported_ledger_reconstructs_parent_templates_without_parent_run() -> None:
+    _inputs, accepted_parent, _authority, work_by_template = _accepted_parent_fixture()
+    authorities = []
+    certification_work_items = {}
+    for index, (template_id, (template, artifact)) in enumerate(
+        sorted(accepted_parent.items())
+    ):
+        work_item = work_by_template[template_id]
+        certification_id = digest(f"certification-{index}")
+        certification_work_items[certification_id] = work_item
+        authorities.append(
+            AdoptedArtifactAuthorityV1(
+                schema_version=1,
+                artifact_key_id=artifact.artifact_key_id,
+                artifact_hash=artifact.artifact_hash,
+                dependency_hashes=work_item.required_artifact_hashes,
+                certification_receipt_id=certification_id,
+                candidate_assessment_id=None,
+                artifact_acceptance_receipt_id=digest(f"acceptance-{index}"),
+                source_run_id="re-parent",
+                source_ledger_entry_hash=digest(f"ledger-{index}"),
+            )
+        )
+    bundle = ParentAuthorityBundleV1(
+        schema_version=1,
+        direct_parent_run_id="re-parent",
+        source_manifest_hash=digest("manifest"),
+        source_event_chain_hash=digest("events"),
+        source_terminal_event_hash=digest("terminal"),
+        source_ledger_chain_hash=digest("ledger"),
+        lineage_root_run_id="re-parent",
+        ancestor_bundle_hashes=(),
+        artifacts=tuple(sorted(authorities, key=lambda value: value.artifact_key_id)),
+    )
+
+    reconstructed = reconstruct_adopted_parent_closure(
+        bundle,
+        SimpleNamespace(certification_work_items=certification_work_items),
+    )
+
+    assert reconstructed == accepted_parent
 
 
 def test_domain_selection_plans_only_selected_l2_delta() -> None:

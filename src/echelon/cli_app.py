@@ -155,6 +155,10 @@ class ReGoal(str, Enum):
     INVENTORY = "inventory"
 
 
+class ReDeepeningLayer(str, Enum):
+    L2 = "L2"
+
+
 re_memory_app = typer.Typer(
     add_completion=False,
     help="Mine workspace reverse-engineering memory in MemPalace.",
@@ -904,6 +908,76 @@ def re_refresh(
 ) -> None:
     """Refresh and publish semantic RE and topology for one source."""
     _legacy_cli()._cmd_re_refresh(["--source", source])
+
+
+@re_app.command("deepen")
+def re_deepen(
+    target_layer: ReDeepeningLayer = typer.Option(
+        ...,
+        "--to",
+        case_sensitive=True,
+        help="Registered deeper layer to generate; currently L2.",
+    ),
+    all_sources: bool = typer.Option(
+        False,
+        "--all",
+        help="Deepen every source and domain from the completed parent.",
+    ),
+    source: list[str] = typer.Option(
+        [],
+        "--source",
+        help="Repeat for each source ID to deepen.",
+    ),
+    domain: list[str] = typer.Option(
+        [],
+        "--domain",
+        help="Repeat for a domain ID within exactly one selected source.",
+    ),
+    from_run: Optional[str] = typer.Option(
+        None,
+        "--from-run",
+        help="Completed RE v2 parent run; defaults to the active RE run.",
+    ),
+    token_limit: Optional[int] = typer.Option(
+        None,
+        "--token-limit",
+        min=1,
+        help="Authorize the child run's token ceiling.",
+    ),
+    active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--active-ms-limit",
+        min=1,
+        help="Authorize the child run's active-time ceiling in milliseconds.",
+    ),
+) -> None:
+    """Create or reuse a self-contained selected-scope RE v2 child run."""
+    if all_sources and (source or domain):
+        raise typer.BadParameter(
+            "--all cannot be combined with --source or --domain",
+            param_hint="--all",
+        )
+    if not all_sources and not source:
+        raise typer.BadParameter(
+            "exactly one selector form is required: --all or --source",
+            param_hint="--source",
+        )
+    if domain and len(source) != 1:
+        raise typer.BadParameter(
+            "--domain requires exactly one --source",
+            param_hint="--domain",
+        )
+    args = ["--to", target_layer.value]
+    if all_sources:
+        args.append("--all")
+    for source_id in source:
+        args.extend(["--source", source_id])
+    for domain_id in domain:
+        args.extend(["--domain", domain_id])
+    _extend_option(args, "--from-run", from_run)
+    _extend_option(args, "--token-limit", token_limit)
+    _extend_option(args, "--active-ms-limit", active_ms_limit)
+    _legacy_cli()._cmd_re_deepen(args)
 
 
 @re_app.command("status")
