@@ -217,21 +217,22 @@ def build_and_commit_fixture(
         ),
     )
     if scenario != "live-codex":
-        agent_source = (
-            Path(__file__).resolve().parents[2]
-            / "prosaic"
-            / "subagents"
-            / "echelon.re-baseliner.md"
-        )
-        agent_target = (
-            root
-            / ".echelon"
-            / "prosaic"
-            / "subagents"
-            / "echelon.re-baseliner.md"
-        )
-        agent_target.parent.mkdir(parents=True, exist_ok=True)
-        agent_target.write_bytes(agent_source.read_bytes())
+        for agent_name in ("echelon.re-baseliner.md", "echelon.re-deepener.md"):
+            agent_source = (
+                Path(__file__).resolve().parents[2]
+                / "prosaic"
+                / "subagents"
+                / agent_name
+            )
+            agent_target = (
+                root
+                / ".echelon"
+                / "prosaic"
+                / "subagents"
+                / agent_name
+            )
+            agent_target.parent.mkdir(parents=True, exist_ok=True)
+            agent_target.write_bytes(agent_source.read_bytes())
     return LayeredWorkspaceFixture(root, source_domains, provider)
 
 
@@ -307,27 +308,33 @@ def _candidate(context: Mapping[str, object], *, useful: bool) -> dict[str, obje
         if not excerpts:
             raise ValueError("bounded fixture context has no citable evidence")
         reference = _reference(excerpts[0])
+        policy = context.get("target_artifact_policy", {})
+        prefix = (
+            "L2 deepening: "
+            if isinstance(policy, Mapping) and policy.get("layer") == "L2"
+            else ""
+        )
         if kind == "domain-baseline":
             surfaces["responsibilities"] = _observed(
-                "Owns the bounded domain behavior",
+                prefix + "Owns the bounded domain behavior",
                 reference,
             )
             surfaces["entry_points"] = _observed(
-                "Exposes the bounded domain entry point",
+                prefix + "Exposes the bounded domain entry point",
                 reference,
             )
         else:
             surfaces["purpose"] = _observed(
-                "Coordinates the bounded source runtime",
+                prefix + "Coordinates the bounded source runtime",
                 reference,
             )
             surfaces["runtime_shape"] = _observed(
-                "Runs through the bounded source entry point",
+                prefix + "Runs through the bounded source entry point",
                 reference,
             )
             if len(context.get("domain_projections", [])) > 1:
                 surfaces["domain_relationships"] = _observed(
-                    "Relates the bounded source domains",
+                    prefix + "Relates the bounded source domains",
                     reference,
                 )
     return {"schema_version": 1, "surfaces": surfaces, "unknowns": []}

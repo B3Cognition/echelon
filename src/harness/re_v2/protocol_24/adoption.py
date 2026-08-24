@@ -53,6 +53,13 @@ from .model import (
     ParentAuthorityBundleV1,
     RunManifestV3,
 )
+from .events import PROTOCOL_24_EVENTS
+from .graph import (
+    Protocol24Graph,
+    build_protocol_24_graph,
+    reconstruct_adopted_parent_closure,
+)
+from .inputs import ValidatedProtocol24Inputs, load_protocol_24_inputs
 
 
 class Protocol24AdoptionError(RuntimeError):
@@ -63,9 +70,9 @@ class Protocol24AdoptionError(RuntimeError):
 class ValidatedParentV1:
     run_dir: Path
     paths: ReV2Paths
-    manifest: RunManifestV2
-    inputs: ValidatedProtocol22Inputs
-    graph: Protocol22Graph
+    manifest: RunManifestV2 | RunManifestV3
+    inputs: ValidatedProtocol22Inputs | ValidatedProtocol24Inputs
+    graph: Protocol22Graph | Protocol24Graph
     events: tuple[EventRecord, ...]
     ledger: Protocol22LedgerView
     ledger_history: tuple[LedgerRecord, ...]
@@ -112,15 +119,17 @@ def validate_parent_for_deepening(
     parent_run: Path,
     workspace: Path,
 ) -> ValidatedParentV1:
-    """Authenticate a completed schema-2 parent and its current clean sources."""
+    """Authenticate a completed schema-2/3 parent and its current clean sources."""
     run_dir, workspace_root = _validated_run_path(parent_run, workspace)
     try:
         paths = ReV2Paths.for_run(run_dir)
         manifest = load_run_manifest(run_dir)
         if isinstance(manifest, RunManifestV3):
-            _validate_schema3_lineage(paths, manifest)
-            raise Protocol24AdoptionError(
-                "schema-3 parent adoption requires protocol-2.4 event/input replay"
+            return _validate_schema3_parent(
+                run_dir,
+                workspace_root,
+                paths,
+                manifest,
             )
         if not isinstance(manifest, RunManifestV2):
             raise Protocol24AdoptionError(
@@ -175,6 +184,65 @@ def validate_parent_for_deepening(
         ReV2SnapshotError,
     ) as exc:
         raise Protocol24AdoptionError(f"cannot validate parent authority: {exc}") from exc
+
+
+def _validate_schema3_parent(
+    run_dir: Path,
+    workspace_root: Path,
+    paths: ReV2Paths,
+    manifest: RunManifestV3,
+) -> ValidatedParentV1:
+    manifest_bytes = _stable_read(paths.manifest, "parent manifest")
+    if manifest_bytes != canonical_json_bytes(manifest.to_json_dict()):
+        raise Protocol24AdoptionError("parent manifest changed during validation")
+    inputs = load_protocol_24_inputs(paths, manifest)
+    ancestor_objects = _validate_schema3_lineage(paths, manifest, inputs)
+
+    event_before = _stable_optional_read(paths.events, "parent event chain")
+    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS).replay()
+    event_after = _stable_optional_read(paths.events, "parent event chain")
+    if event_before != event_after:
+        raise Protocol24AdoptionError("parent event chain changed during validation")
+    _validate_terminal_events(events, manifest)
+
+    objects = ObjectStore(paths.objects)
+    ledger_before = _stable_read(paths.ledger, "parent ledger chain")
+    ledger_history, ledger = Protocol22Ledger(
+        paths,
+        objects,
+    ).replay_with_history()
+    ledger_after = _stable_read(paths.ledger, "parent ledger chain")
+    if ledger_before != ledger_after:
+        raise Protocol24AdoptionError("parent ledger chain changed during validation")
+    adopted = reconstruct_adopted_parent_closure(
+        inputs.parent_authority_bundle,
+        ledger,
+    )
+    graph = build_protocol_24_graph(manifest, inputs, adopted)
+    current = _validate_complete_authority(graph, ledger, events)
+    accepted_parent = dict(adopted)
+    accepted_parent.update(current)
+    accepted_keys = {item.artifact_key_id for _template, item in accepted_parent.values()}
+    if accepted_keys != set(ledger.accepted_artifacts):
+        raise Protocol24AdoptionError(
+            "schema-3 parent accepted closure does not cover its complete ledger"
+        )
+    _validate_workspace_sources(workspace_root, manifest)
+    return ValidatedParentV1(
+        run_dir=run_dir,
+        paths=paths,
+        manifest=manifest,
+        inputs=inputs,
+        graph=graph,
+        events=events,
+        ledger=ledger,
+        ledger_history=ledger_history,
+        manifest_bytes=manifest_bytes,
+        event_chain_bytes=event_after,
+        ledger_chain_bytes=ledger_after,
+        accepted_parent=accepted_parent,
+        ancestor_objects=ancestor_objects,
+    )
 
 
 def build_parent_authority_bundle(
@@ -239,7 +307,11 @@ def build_parent_authority_bundle(
         source_event_chain_hash=event_chain_hash,
         source_terminal_event_hash=parent.events[-1].event_hash,
         source_ledger_chain_hash=ledger_chain_hash,
-        lineage_root_run_id=parent.manifest.run_id,
+        lineage_root_run_id=(
+            parent.manifest.parent_lineage.lineage_root_run_id
+            if isinstance(parent.manifest, RunManifestV3)
+            else parent.manifest.run_id
+        ),
         ancestor_bundle_hashes=tuple(sorted(parent.ancestor_objects)),
         artifacts=tuple(artifacts),
     )
@@ -361,7 +433,7 @@ def _validated_run_path(parent_run: Path, workspace: Path) -> tuple[Path, Path]:
 
 def _validate_terminal_events(
     events: tuple[EventRecord, ...],
-    manifest: RunManifestV2,
+    manifest: RunManifestV2 | RunManifestV3,
 ) -> None:
     if not events or events[0].type != "run_created":
         raise Protocol24AdoptionError(
@@ -379,7 +451,7 @@ def _validate_terminal_events(
 
 
 def _validate_complete_authority(
-    graph: Protocol22Graph,
+    graph: Protocol22Graph | Protocol24Graph,
     ledger: Protocol22LedgerView,
     events: tuple[EventRecord, ...],
 ) -> Mapping[str, tuple[WorkTemplateV2, AcceptedArtifactV2]]:
@@ -395,11 +467,15 @@ def _validate_complete_authority(
         raise Protocol24AdoptionError(
             "parent completion is partial or does not cover its exact graph"
         )
-    acceptance_events = {
-        str(event.payload["artifact_key_id"]): event
-        for event in events
-        if event.type == "artifact_accepted"
-    }
+    acceptance_events: dict[str, EventRecord] = {}
+    for event in events:
+        if event.type == "artifact_accepted":
+            acceptance_events[str(event.payload["artifact_key_id"])] = event
+        elif event.type == "artifact_adopted":
+            authority = AdoptedArtifactAuthorityV1.from_json_dict(
+                event.payload["adopted_artifact_authority"]
+            )
+            acceptance_events[authority.artifact_key_id] = event
     if set(acceptance_events) != set(ledger.accepted_artifacts):
         raise Protocol24AdoptionError(
             "parent events and accepted ledger artifacts disagree"
@@ -426,12 +502,24 @@ def _validate_complete_authority(
             raise Protocol24AdoptionError("accepted parent artifact is missing")
         event = acceptance_events[artifact.artifact_key_id]
         acceptance = ledger.accepted_artifacts[artifact.artifact_key_id]
-        if (
-            event.payload.get("artifact_hash") != artifact.artifact_hash
-            or event.payload.get("certification_receipt_id")
-            != acceptance.certification_receipt_id
-            or event.payload.get("work_item_id") != work_item.work_item_id
-        ):
+        if event.type == "artifact_adopted":
+            authority = AdoptedArtifactAuthorityV1.from_json_dict(
+                event.payload["adopted_artifact_authority"]
+            )
+            event_matches = (
+                authority.artifact_hash == artifact.artifact_hash
+                and authority.certification_receipt_id
+                == acceptance.certification_receipt_id
+                and event.payload.get("work_item_id") == work_item.work_item_id
+            )
+        else:
+            event_matches = (
+                event.payload.get("artifact_hash") == artifact.artifact_hash
+                and event.payload.get("certification_receipt_id")
+                == acceptance.certification_receipt_id
+                and event.payload.get("work_item_id") == work_item.work_item_id
+            )
+        if not event_matches:
             raise Protocol24AdoptionError(
                 "parent artifact event does not match ledger authority"
             )
@@ -439,7 +527,10 @@ def _validate_complete_authority(
     return MappingProxyType(dict(sorted(closure.items())))
 
 
-def _validate_workspace_sources(workspace: Path, manifest: RunManifestV2) -> None:
+def _validate_workspace_sources(
+    workspace: Path,
+    manifest: RunManifestV2 | RunManifestV3,
+) -> None:
     configured = os.environ.get("ECHELON_HOME")
     base = Path(configured).expanduser() if configured else Path.home() / ".echelon"
     bundle = (base / "re-v2" / "snapshots" / manifest.source_snapshot_id).resolve(
@@ -493,16 +584,26 @@ def _validate_workspace_sources(workspace: Path, manifest: RunManifestV2) -> Non
         )
 
 
-def _validate_schema3_lineage(paths: ReV2Paths, manifest: RunManifestV3) -> None:
+def _validate_schema3_lineage(
+    paths: ReV2Paths,
+    manifest: RunManifestV3,
+    inputs: ValidatedProtocol24Inputs | None = None,
+) -> Mapping[str, bytes]:
     objects = ObjectStore(paths.objects)
     active: set[str] = set()
+    retained: dict[str, bytes] = {}
 
-    def visit(object_hash: str, *, require_bundle: bool) -> None:
+    def visit_payload(
+        object_hash: str,
+        payload: bytes,
+        *,
+        require_bundle: bool,
+    ) -> None:
         if object_hash in active:
             raise Protocol24AdoptionError("schema-3 parent lineage contains a cycle")
         active.add(object_hash)
+        retained[object_hash] = payload
         try:
-            payload = objects.read_blob(object_hash)
             try:
                 value = json.loads(payload)
             except Exception:
@@ -525,12 +626,36 @@ def _validate_schema3_lineage(paths: ReV2Paths, manifest: RunManifestV3) -> None
                 raise Protocol24AdoptionError(
                     "schema-3 parent authority bundle is invalid"
                 ) from exc
+            if inputs is not None:
+                for chain_hash in (
+                    bundle.source_manifest_hash,
+                    bundle.source_event_chain_hash,
+                    bundle.source_ledger_chain_hash,
+                ):
+                    retained[chain_hash] = objects.read_blob(chain_hash)
             for ancestor in bundle.ancestor_bundle_hashes:
                 visit(ancestor, require_bundle=False)
         finally:
             active.remove(object_hash)
 
-    visit(manifest.parent_authority_bundle.object_hash, require_bundle=True)
+    def visit(object_hash: str, *, require_bundle: bool) -> None:
+        visit_payload(
+            object_hash,
+            objects.read_blob(object_hash),
+            require_bundle=require_bundle,
+        )
+
+    if inputs is None:
+        visit(manifest.parent_authority_bundle.object_hash, require_bundle=True)
+        return MappingProxyType(dict(sorted(retained.items())))
+    root = inputs.parent_authority_bundle
+    root_payload = canonical_json_bytes(root.to_json_dict())
+    if content_digest(root_payload) != manifest.parent_authority_bundle.object_hash:
+        raise Protocol24AdoptionError(
+            "schema-3 parent authority bundle differs from its manifest"
+        )
+    visit_payload(root.identity, root_payload, require_bundle=True)
+    return MappingProxyType(dict(sorted(retained.items())))
 
 
 def _copy_blob(source: ObjectStore, destination: ObjectStore, object_hash: str) -> None:

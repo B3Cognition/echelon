@@ -13,7 +13,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
@@ -13940,13 +13940,21 @@ def _prepare_re_v24_creation(
 
     bundle, authority_objects = build_parent_authority_bundle(parent)
     parent_manifest_hash = content_digest(parent.manifest_bytes)
+    if isinstance(parent.manifest, RunManifestV3):
+        lineage_root_run_id = parent.manifest.parent_lineage.lineage_root_run_id
+        lineage_root_manifest_hash = (
+            parent.manifest.parent_lineage.lineage_root_manifest_hash
+        )
+    else:
+        lineage_root_run_id = parent.manifest.run_id
+        lineage_root_manifest_hash = parent_manifest_hash
     lineage = ParentLineageV1(
         schema_version=1,
         direct_parent_run_id=parent.manifest.run_id,
         direct_parent_manifest_hash=parent_manifest_hash,
         direct_parent_terminal_event_hash=parent.events[-1].event_hash,
-        lineage_root_run_id=parent.manifest.run_id,
-        lineage_root_manifest_hash=parent_manifest_hash,
+        lineage_root_run_id=lineage_root_run_id,
+        lineage_root_manifest_hash=lineage_root_manifest_hash,
     )
     semantic_id = semantic_request_id_for(
         lineage.lineage_root_run_id,
@@ -14100,15 +14108,12 @@ def _resolve_re_v24_parent_path(
 def _run_re_v24_deepen(
     workspace_root: Path,
     options: _ReDeepenOptions,
+    *,
+    creation_fault_hook: Callable[[str], None] | None = None,
 ) -> Path:
-    from harness.re_v2.events import EventStore
-    from harness.re_v2.ledger import ObjectStore
-    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_24.adoption import (
-        import_parent_acceptance_closure,
         validate_parent_for_deepening,
     )
-    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
     from harness.re_v2.protocol_24.inputs import create_protocol_24_run_store
 
     workspace = workspace_root.resolve()
@@ -14135,49 +14140,217 @@ def _run_re_v24_deepen(
                 run_dir,
                 manifest,
                 prepared.inputs,
+                fault_hook=creation_fault_hook,
             )
-            objects = ObjectStore(paths.objects)
-            ledger = Protocol22Ledger(paths, objects)
-            import_parent_acceptance_closure(parent, objects, ledger)
-            events = EventStore(paths, protocol=PROTOCOL_24_EVENTS)
-            events.append(
-                "run_created",
-                {"run_manifest_id": manifest.run_manifest_id},
-                occurred_at=manifest.created_at,
+            _initialize_re_v24_child(
+                run_dir,
+                parent,
+                creation_fault_hook=creation_fault_hook,
             )
-            by_certification = {
-                value.certification_receipt_id: value
-                for value in prepared.inputs.parent_authority_bundle.artifacts
-            }
-            for certification_id, work_item in sorted(
-                ledger.replay().certification_work_items.items()
-            ):
-                authority = by_certification.get(certification_id)
-                if authority is None:
-                    raise ValueError(
-                        "imported parent work item has no adoption authority"
-                    )
-                events.append(
-                    "artifact_adopted",
-                    {
-                        "adopted_artifact_authority": authority.to_json_dict(),
-                        "parent_authority_bundle_hash": (
-                            prepared.inputs.parent_authority_bundle.identity
-                        ),
-                        "work_item_id": work_item.work_item_id,
-                    },
-                    occurred_at=_re_v2_now(),
-                )
             created = True
         else:
             run_dir = existing
+            _initialize_re_v24_child(
+                run_dir,
+                parent,
+                creation_fault_hook=creation_fault_hook,
+            )
         _activate_re_v2_run(workspace, run_dir.name)
+        _re_v24_creation_fault(creation_fault_hook, "active_pointer_published")
     context = _re_v2_context(workspace, run_dir)
     if created:
         _run_re_v2_live(context)
     else:
         _continue_re_v24_semantic_child(context, options)
     return run_dir
+
+
+def _initialize_re_v24_child(
+    run_dir: Path,
+    parent: object,
+    *,
+    creation_fault_hook: Callable[[str], None] | None = None,
+) -> None:
+    """Idempotently bridge manifest publication to complete adoption authority."""
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_24.adoption import (
+        ValidatedParentV1,
+        build_parent_authority_bundle,
+        import_parent_acceptance_closure,
+    )
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
+    from harness.re_v2.protocol_24.model import (
+        AdoptedArtifactAuthorityV1,
+        RunManifestV3,
+    )
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    if not isinstance(parent, ValidatedParentV1):
+        raise ValueError("deepening child initialization requires validated parent")
+    manifest = load_run_manifest(run_dir)
+    if not isinstance(manifest, RunManifestV3):
+        raise ValueError("deepening child initialization requires schema-3 manifest")
+    paths = ReV2Paths.for_run(run_dir)
+    inputs = load_protocol_24_inputs(paths, manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol22Ledger(paths, objects)
+    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS)
+    if _re_v24_child_adoption_complete(manifest, inputs, objects, ledger, events):
+        return
+    if manifest.parent_lineage.direct_parent_run_id != parent.manifest.run_id:
+        raise ValueError(
+            "incomplete deepening child requires its exact direct parent"
+        )
+    expected_bundle, _objects = build_parent_authority_bundle(parent)
+    if inputs.parent_authority_bundle != expected_bundle:
+        raise ValueError("existing deepening child parent authority does not match")
+
+    import_parent_acceptance_closure(parent, objects, ledger)
+    _re_v24_creation_fault(creation_fault_hook, "parent_closure_imported")
+
+    replayed_events = events.replay()
+    if not replayed_events:
+        events.append(
+            "run_created",
+            {"run_manifest_id": manifest.run_manifest_id},
+            occurred_at=manifest.created_at,
+        )
+        _re_v24_creation_fault(creation_fault_hook, "run_created")
+        replayed_events = events.replay()
+    elif (
+        replayed_events[0].type != "run_created"
+        or replayed_events[0].payload.get("run_manifest_id")
+        != manifest.run_manifest_id
+    ):
+        raise ValueError("existing deepening child has invalid creation authority")
+
+    adopted_by_key: dict[str, object] = {}
+    for event in replayed_events:
+        if event.type != "artifact_adopted":
+            continue
+        authority = AdoptedArtifactAuthorityV1.from_json_dict(
+            event.payload["adopted_artifact_authority"]
+        )
+        adopted_by_key[authority.artifact_key_id] = event
+    replayed_ledger = ledger.replay()
+    by_certification = {
+        value.certification_receipt_id: value
+        for value in inputs.parent_authority_bundle.artifacts
+    }
+    for certification_id, authority in sorted(by_certification.items()):
+        work_item = replayed_ledger.certification_work_items.get(certification_id)
+        if work_item is None:
+            raise ValueError("imported parent work item is missing")
+        existing = adopted_by_key.get(authority.artifact_key_id)
+        payload = {
+            "adopted_artifact_authority": authority.to_json_dict(),
+            "parent_authority_bundle_hash": inputs.parent_authority_bundle.identity,
+            "work_item_id": work_item.work_item_id,
+        }
+        if existing is not None:
+            existing_authority = AdoptedArtifactAuthorityV1.from_json_dict(
+                existing.payload["adopted_artifact_authority"]
+            )
+            if (
+                existing_authority != authority
+                or existing.payload.get("parent_authority_bundle_hash")
+                != inputs.parent_authority_bundle.identity
+                or existing.payload.get("work_item_id") != work_item.work_item_id
+            ):
+                raise ValueError("existing adoption event conflicts with parent authority")
+            continue
+        events.append("artifact_adopted", payload, occurred_at=_re_v2_now())
+        _re_v24_creation_fault(
+            creation_fault_hook,
+            f"artifact_adopted:{authority.artifact_key_id}",
+        )
+    if not _re_v24_child_adoption_complete(
+        manifest,
+        inputs,
+        objects,
+        ledger,
+        events,
+    ):
+        raise ValueError("deepening child adoption initialization is incomplete")
+
+
+def _re_v24_child_adoption_complete(
+    manifest: object,
+    inputs: object,
+    objects: object,
+    ledger: object,
+    events: object,
+) -> bool:
+    """Validate the complete imported authority without consulting the parent."""
+    from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+
+    replayed_events = events.replay()
+    if not replayed_events:
+        return False
+    if (
+        replayed_events[0].type != "run_created"
+        or replayed_events[0].payload.get("run_manifest_id")
+        != manifest.run_manifest_id
+    ):
+        raise ValueError("existing deepening child has invalid creation authority")
+    adopted: dict[str, tuple[object, object]] = {}
+    for event in replayed_events:
+        if event.type != "artifact_adopted":
+            continue
+        authority = AdoptedArtifactAuthorityV1.from_json_dict(
+            event.payload["adopted_artifact_authority"]
+        )
+        adopted[authority.artifact_key_id] = (authority, event)
+    expected = {
+        authority.artifact_key_id: authority
+        for authority in inputs.parent_authority_bundle.artifacts
+    }
+    if set(adopted) != set(expected):
+        return False
+
+    replayed_ledger = ledger.replay()
+    for artifact_key_id, authority in expected.items():
+        adopted_authority, event = adopted[artifact_key_id]
+        if adopted_authority != authority:
+            raise ValueError("existing adoption event conflicts with parent authority")
+        acceptance = replayed_ledger.accepted_artifacts.get(artifact_key_id)
+        certification = replayed_ledger.certifications.get(
+            authority.certification_receipt_id
+        )
+        work_item = replayed_ledger.certification_work_items.get(
+            authority.certification_receipt_id
+        )
+        if acceptance is None or certification is None or work_item is None:
+            return False
+        if (
+            acceptance.identity != authority.artifact_acceptance_receipt_id
+            or acceptance.artifact_hash != authority.artifact_hash
+            or certification.identity != authority.certification_receipt_id
+            or work_item.output_key.identity != artifact_key_id
+            or event.payload.get("parent_authority_bundle_hash")
+            != inputs.parent_authority_bundle.identity
+            or event.payload.get("work_item_id") != work_item.work_item_id
+        ):
+            raise ValueError("imported child authority conflicts with parent bundle")
+        if authority.candidate_assessment_id is not None and (
+            authority.candidate_assessment_id
+            not in replayed_ledger.candidate_assessments
+        ):
+            return False
+        objects.read_blob(authority.artifact_hash)
+    return True
+
+
+def _re_v24_creation_fault(
+    hook: Callable[[str], None] | None,
+    boundary: str,
+) -> None:
+    if hook is None:
+        return
+    hook(boundary)
 
 
 def _continue_re_v24_semantic_child(

@@ -381,11 +381,22 @@ def build_deepening_executor_catalog(
                 verifier=verifier,
             )
         )
+    replaced_families = {
+        DEEPENING_PRODUCER_FAMILY,
+        L2_EVIDENCE_PRODUCER_FAMILY,
+        L2_CONTEXT_PRODUCER_FAMILY,
+        L2_ROOT_PRODUCER_FAMILY,
+    }
+    retained = tuple(
+        entry
+        for entry in inherited.entries
+        if entry.producer_family not in replaced_families
+    )
     return ExecutorContractCatalogV1(
         schema_version=1,
         entries=tuple(
             sorted(
-                (*inherited.entries, *deterministic, deepening),
+                (*retained, *deterministic, deepening),
                 key=lambda entry: entry.producer_family,
             )
         ),

@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.11** — 58 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 20 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.11** — 59 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 21 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -155,6 +155,24 @@ latest published generation under `re/`; active RE work is isolated under
 `runs/re-*/re/` and selected by `runs/.current-re`. Spec runs never execute or
 freshness-check RE. By default they take one immutable run-local snapshot of the
 latest publication; use `echelon spec run ... --ignore-re` to omit it.
+
+The default RE engine remains v1. Opt-in RE v2 first produces a reusable L0/L1
+baseline, then protocol 2.4 can deepen only selected clean source repositories
+or domains to L2. A deepening run is a self-contained child: it adopts the
+authenticated lower-layer authority and generates only its selected missing L2
+work through the same neutral Prosaic/shared-provider path used elsewhere.
+Repeating the same semantic request reuses its existing child with zero provider
+calls. `L2 SELECTED SCOPE COMPLETE` means the requested unaudited L2 outputs are
+complete; it is not a claim of semantic audit, workspace synthesis, exhaustive
+depth, publication, or full RE quality.
+
+```bash
+echelon re run --engine v2
+echelon re deepen --to L2 --all
+echelon re deepen --to L2 --source api --domain 001-api
+echelon re status
+echelon re status --json
+```
 
 New RE runs use the bounded `balanced` execution goal by default. It targets
 completion within 60 active minutes and has hard ceilings of 180 active minutes
@@ -1112,6 +1130,9 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon workspace init [--allow-unsafe-host-execution]` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
 | `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--perfectionist] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
 | `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
+| `echelon re run --engine v2 [--goal <baseline\|inventory>]` | Create or reuse an opt-in reusable L0/L1 RE v2 baseline |
+| `echelon re deepen --to L2 (--all \| --source <id>...) [--domain <id>...] [--from-run <id>] [--token-limit <n>] [--active-ms-limit <n>]` | Create or reuse a self-contained protocol-2.4 child that generates only selected missing L2 work |
+| `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
 | `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
 | `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
 | `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |

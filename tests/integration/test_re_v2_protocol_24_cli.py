@@ -92,6 +92,90 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    "boundary",
+    (
+        "inputs_fsynced",
+        "parent_closure_imported",
+        "run_created",
+        "artifact_adopted:",
+        "active_pointer_published",
+    ),
+)
+def test_deepen_creation_faults_recover_the_same_authoritative_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
+    workspace = tmp_path / "workspace"
+    (workspace / "runs").mkdir(parents=True)
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
+        lambda _run, _workspace: parent,
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "ProsaicPromptLoader",
+        lambda _workspace: SimpleNamespace(
+            load_subagent=lambda _agent_id: _role_artifact()
+        ),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_schema2_installed_registry",
+        lambda agent, *, provider_mode: (_registry(parent), agent, {}),
+    )
+    contexts: list[Path] = []
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v2_context",
+        lambda _workspace, run_dir: SimpleNamespace(run_dir=run_dir),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_run_re_v2_live",
+        lambda context: contexts.append(context.run_dir),
+    )
+    options = legacy_cli._parse_re_deepen_options(
+        ["--to", "L2", "--source", "api", "--from-run", "re-parent"]
+    )
+    crashed = False
+
+    def fail_once(point: str) -> None:
+        nonlocal crashed
+        if not crashed and point.startswith(boundary):
+            crashed = True
+            raise RuntimeError(f"fault at {point}")
+
+    with pytest.raises(RuntimeError, match="fault at"):
+        legacy_cli._run_re_v24_deepen(
+            workspace,
+            options,
+            creation_fault_hook=fail_once,
+        )
+    assert crashed
+
+    recovered = legacy_cli._run_re_v24_deepen(workspace, options)
+    manifest = load_run_manifest(recovered)
+    assert isinstance(manifest, RunManifestV3)
+    paths = ReV2Paths.for_run(recovered)
+    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS).replay()
+    ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
+
+    assert (workspace / "runs" / ".current-re").read_text() == recovered.name + "\n"
+    assert events[0].type == "run_created"
+    assert sum(event.type == "run_created" for event in events) == 1
+    assert sum(event.type == "artifact_adopted" for event in events) == len(
+        parent.ledger.accepted_artifacts
+    )
+    assert ledger.accepted_artifacts == parent.ledger.accepted_artifacts
+    assert contexts == [recovered]
+
+
+@pytest.mark.integration
 def test_deepen_preflight_failure_creates_no_child_or_active_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

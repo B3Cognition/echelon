@@ -559,41 +559,66 @@ git commit -m "feat(re-v2): report and materialize selected L2"
 - Proves: repeated and unrelated deepening performs zero unnecessary provider calls.
 - Proves: installed Codex-provider execution leaves all source repositories clean.
 
-- [ ] **Step 1: Write the recovery fault matrix**
+- [x] **Step 1: Write the recovery fault matrix**
 
 Inject faults after object/bundle/receipt/event publication, lease/start/observation/candidate/commit/certification/acceptance, terminal event, and pointer activation. Resume twice and assert one provider call per dispatch ID and exact accepted receipt identities.
 
-- [ ] **Step 2: Run focused protocol-2.4 and compatibility tests**
+Evidence: five child-creation boundaries (pre-manifest input fsync, parent
+closure import, run creation, adoption-event publication, and active-pointer
+publication), 12 provider-backed execution boundaries, and terminal replay all
+converge idempotently.
+
+- [x] **Step 2: Run focused protocol-2.4 and compatibility tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24*.py tests/unit/test_cli_re_v2_protocol_24.py tests/integration/test_re_v2_protocol_24*.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass.
 
-- [ ] **Step 3: Run the complete RE v2 matrix**
+Evidence: 108 passed, 1 live test skipped.
+
+- [x] **Step 3: Run the complete RE v2 matrix**
 
 Run: `pytest -q tests/unit/test_re_v2*.py tests/unit/test_cli_re_v2_protocol_22.py tests/unit/test_cli_re_v2_protocol_24.py tests/integration/test_re_v2*.py tests/contract/test_re_v2_bounded_api.py`
 
 Expected: all pass.
 
-- [ ] **Step 4: Run the complete repository suite**
+Evidence: 1,169 passed, 2 live tests skipped.
+
+- [x] **Step 4: Run the complete repository suite**
 
 Run: `pytest`
 
 Expected: zero failures.
 
-- [ ] **Step 5: Install and migrate a disposable real workspace**
+Evidence: an initial complete run passed 10,212 tests with 11 skipped and 1
+intentionally deselected. After the final creation-recovery change, the same
+suite passed 10,212 tests and reached five environment-only failures: one
+5.35-second wiki benchmark against a 5-second limit under load, and four
+workspace-install fixtures that exhausted the test volume. After removing only
+the generated pytest temp tree, those exact five tests passed in 27.75 seconds.
+The two warnings are existing macOS `fork()` deprecations in RE v2 process-death
+tests.
+
+- [x] **Step 5: Install and migrate a disposable real workspace**
 
 Run: `bash scripts/install.sh`, then run normal workspace Prosaic migration before the pilot. Verify installed `echelon.re-deepener` bytes equal the repository source.
 
-- [ ] **Step 6: Run the real Codex pilot**
+- [x] **Step 6: Run the real Codex pilot**
 
 On a disposable clean real workspace with `harness.llm.cli: codex`, create/reuse L0/L1, deepen one source/domain, repeat it for zero dispatch, deepen a second scope, and verify the first L2 artifact is adopted. Capture status, events, ledger, parent bundle, provider observations, token/active usage, and `git status --short` for every source.
 
-- [ ] **Step 7: Update docs and finding state from evidence**
+Evidence: installed Codex parent `re-20260824-165406-156527` and L2 child
+`re-20260824-165551-893933`. The child completed with 10 adopted artifacts, 6
+generated L2 artifacts, 3 `gpt-5.6-sol` dispatches including one bounded
+artifact-contract retry, 139,870 ms charged active time, and a 786,432-token
+reservation because Codex CLI usage was unavailable. Repeating the request
+added zero dispatches, and the source repository remained clean and unchanged.
+
+- [x] **Step 7: Update docs and finding state from evidence**
 
 Record the shipped command, supported protocol/schema, truthful completion semantics, test counts, pilot run IDs, provider/model observations, usage, zero-dispatch reuse, and any remaining EGR-169 limits. Mark EGR-169 resolved only if every completion criterion is proven.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tests/integration/test_re_v2_protocol_24_recovery.py \

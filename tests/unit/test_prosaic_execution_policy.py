@@ -42,6 +42,7 @@ SUBAGENT_POLICY = {
     "echelon.progress-tracker.md": ("fast", "low"),
     "echelon.re-analyzer.md": ("balanced", "medium"),
     "echelon.re-baseliner.md": ("strong", "high"),
+    "echelon.re-deepener.md": ("strong", "high"),
     "echelon.re-checklister.md": ("fast", "low"),
     "echelon.re-constituter.md": ("strong", "high"),
     "echelon.re-expander.md": ("strong", "high"),

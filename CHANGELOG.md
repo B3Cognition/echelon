@@ -162,6 +162,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Selective layered RE v2 deepening** — Protocol `2.4` adds opt-in
+  `echelon re deepen --to L2` child runs over completed L0/L1 baselines. The
+  controller adopts the authenticated parent receipt/object closure, schedules
+  only explicitly selected missing source/domain work, uses the normal neutral
+  `echelon.re-deepener` Prosaic role and shared provider path, and reuses an
+  existing semantic child with zero provider calls. Schema-3 children remain
+  self-contained across further deepening, preserve the original lineage root,
+  materialize only generated L2 projections, and report selected-scope coverage,
+  adopted/generated counts, budgets, telemetry, and exact terminal state.
+  Manifest-to-adoption initialization is idempotent across child creation,
+  receipt import, adoption events, and active-pointer publication.
+  Completion means only that the selected unaudited L2 scope is complete; it
+  does not claim semantic audit, workspace synthesis, exhaustive depth, or full
+  RE quality. Existing protocols and the default v1 engine remain unchanged.
+
 - **Prosaic shared-provider RE v2 baselines** — New opt-in v2 runs use protocol
   `2.3` and execute L1 compact baselines through the same Prosaic frontmatter
   and shared AI coding-provider path as specification and delivery workflows.

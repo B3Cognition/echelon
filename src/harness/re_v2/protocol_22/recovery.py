@@ -428,7 +428,7 @@ def _recover_locked(
             )
             events = context.event_store.replay()
         _validate_manifest_event(manifest, events)
-        known_items = _validate_graph_ledger(graph, inputs, ledger)
+        known_items = _validate_graph_ledger(graph, inputs, ledger, events)
         _validate_event_work_items(events, known_items)
         _validate_materialization(context)
         actions, owner_state = _reconcile_dispatches(
@@ -439,13 +439,13 @@ def _recover_locked(
         )
         events = context.event_store.replay()
         ledger = context.ledger.replay()
-        known_items = _validate_graph_ledger(graph, inputs, ledger)
+        known_items = _validate_graph_ledger(graph, inputs, ledger, events)
         _validate_event_work_items(events, known_items)
         _validate_candidate_events(context, events)
         _reconcile_orphan_receipts(context, events, ledger, known_items, fault_hook)
         events = context.event_store.replay()
         ledger = context.ledger.replay()
-        known_items = _validate_graph_ledger(graph, inputs, ledger)
+        known_items = _validate_graph_ledger(graph, inputs, ledger, events)
         _validate_event_work_items(events, known_items)
         _validate_candidate_events(context, events)
         open_dispatches = _open_dispatch_ids(events)
@@ -632,6 +632,7 @@ def _validate_graph_ledger(
     graph: Protocol22Graph,
     inputs: ValidatedProtocol22Inputs,
     ledger: Protocol22LedgerView,
+    events: tuple[EventRecord, ...],
 ) -> Mapping[str, WorkItemV2]:
     by_template = {value.template_id: value for value in graph.templates}
     accepted_by_template: dict[str, AcceptedArtifactV2] = {}
@@ -658,14 +659,18 @@ def _validate_graph_ledger(
                 accepted_by_template[template_id] = accepted
             remaining.remove(template_id)
             progressed = True
+    adopted_work, adopted_keys = _adopted_graph_exceptions(events)
     for receipt_id, work_item in ledger.certification_work_items.items():
         expected = items.get(work_item.work_item_id)
+        if expected is None and work_item.work_item_id in adopted_work:
+            items[work_item.work_item_id] = work_item
+            continue
         if expected != work_item:
             raise Protocol22RecoveryError(
                 f"certification {receipt_id} does not materialize the immutable graph"
             )
     known_keys = {item.output_key.identity for item in items.values()}
-    unknown_keys = set(ledger.accepted_artifacts) - known_keys
+    unknown_keys = set(ledger.accepted_artifacts) - known_keys - adopted_keys
     if unknown_keys:
         raise Protocol22RecoveryError(
             "ledger contains an artifact outside the immutable graph"
@@ -686,6 +691,25 @@ def _validate_graph_ledger(
                 "ledger executor failure does not match immutable work"
             )
     return MappingProxyType(dict(sorted(items.items())))
+
+
+def _adopted_graph_exceptions(
+    events: tuple[EventRecord, ...],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return only event-bound imported work allowed outside selected scope."""
+    work_ids: set[str] = set()
+    artifact_keys: set[str] = set()
+    for event in events:
+        if event.type != "artifact_adopted":
+            continue
+        from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+
+        authority = AdoptedArtifactAuthorityV1.from_json_dict(
+            event.payload["adopted_artifact_authority"]
+        )
+        work_ids.add(str(event.payload["work_item_id"]))
+        artifact_keys.add(authority.artifact_key_id)
+    return frozenset(work_ids), frozenset(artifact_keys)
 
 
 def _validate_event_work_items(
