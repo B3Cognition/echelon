@@ -108,7 +108,7 @@ Commit: `473a1b57 test(re-v2): prove L2 reuses shared execution seam`
 - Produces: exact manifest dispatch for `(schema_version=3, engine_protocol_version="2.4")` only.
 - Preserves: old schema/protocol pairs and frozen fixture identities.
 
-- [ ] **Step 1: Write failing closed-model tests**
+- [x] **Step 1: Write failing closed-model tests**
 
 ```python
 def test_schema_3_manifest_round_trips_canonically() -> None:
@@ -129,27 +129,27 @@ def test_manifest_loader_rejects_schema_3_protocol_23() -> None:
         load_run_manifest_bytes(canonical_json_bytes(raw))
 ```
 
-- [ ] **Step 2: Run the model tests and confirm missing protocol-2.4 types**
+- [x] **Step 2: Run the model tests and confirm missing protocol-2.4 types**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_model.py tests/unit/test_re_v2_run_store.py`
 
 Expected: collection fails because `harness.re_v2.protocol_24.model` does not exist.
 
-- [ ] **Step 3: Implement strict schema-3 values**
+- [x] **Step 3: Implement strict schema-3 values**
 
 Use protocol-2.2 scalar/canonical validators. `RunManifestV3` contains exact fields for the three inherited catalog references plus `parent_authority_bundle`, `parent_lineage`, `target_layer="L2"`, `selection`, `semantic_request_id`, and `initial_budget_policy`. `ParentAuthorityBundleV1.artifacts` is sorted uniquely by `artifact_key_id`; `ancestor_bundle_hashes` is sorted/unique; every hash is a lowercase SHA-256 digest.
 
-- [ ] **Step 4: Add exact root model/run-store dispatch**
+- [x] **Step 4: Add exact root model/run-store dispatch**
 
 Add `RE_V2_SCHEMA_3_PROTOCOLS = ("2.4",)` and include `2.4` in supported protocols without changing `RE_V2_SCHEMA_2_PROTOCOLS`. Route schema 3 only to `RunManifestV3.from_json_dict`.
 
-- [ ] **Step 5: Run model, run-store, and compatibility tests**
+- [x] **Step 5: Run model, run-store, and compatibility tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass and every pre-2.4 digest remains identical.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/model.py src/harness/re_v2/run_store.py \

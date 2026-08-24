@@ -10,12 +10,13 @@ from typing import Literal
 
 from . import RE_V2_ENGINE, RE_V2_SCHEMA_1_PROTOCOLS, ReV2ModelError
 from .canonical import canonical_json_bytes
-from .model import RE_V2_SCHEMA_2_PROTOCOLS, RunManifest
+from .model import RE_V2_SCHEMA_2_PROTOCOLS, RE_V2_SCHEMA_3_PROTOCOLS, RunManifest
 from .protocol_22.model import RunManifestV2
 from .protocol_22.schema import Protocol22SchemaError, load_canonical_object
+from .protocol_24.model import RunManifestV3
 
 
-Manifest = RunManifest | RunManifestV2
+Manifest = RunManifest | RunManifestV2 | RunManifestV3
 
 
 class ReV2RunStoreError(RuntimeError):
@@ -179,6 +180,8 @@ def _decode_manifest(raw: object) -> Manifest:
         return RunManifest.from_json_dict(raw)
     if pair[0] == 2 and pair[1] in RE_V2_SCHEMA_2_PROTOCOLS:
         return RunManifestV2.from_json_dict(raw)
+    if pair[0] == 3 and pair[1] in RE_V2_SCHEMA_3_PROTOCOLS:
+        return RunManifestV3.from_json_dict(raw)
     raise ReV2RunStoreError(
         f"unsupported pinned manifest schema/protocol {pair!r}"
     )
@@ -193,6 +196,10 @@ def _validate_supported_manifest(manifest: Manifest) -> None:
         isinstance(manifest, RunManifestV2)
         and manifest.engine == RE_V2_ENGINE
         and manifest.engine_protocol_version in RE_V2_SCHEMA_2_PROTOCOLS
+    ) or (
+        isinstance(manifest, RunManifestV3)
+        and manifest.engine == RE_V2_ENGINE
+        and manifest.engine_protocol_version in RE_V2_SCHEMA_3_PROTOCOLS
     )
     if not valid:
         raise ReV2RunStoreError(

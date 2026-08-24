@@ -5,6 +5,11 @@ import pytest
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.model import RunManifest
 from harness.re_v2.protocol_22 import PROTOCOL_VERSION, RUN_MANIFEST_SCHEMA_VERSION
+from tests.re_v2_protocol_22_fixtures import (
+    artifact_key_v2,
+    manifest_v2,
+    work_template_v2,
+)
 from tests.unit.test_re_v2_model import (
     valid_artifact_key,
     valid_run_manifest_dict,
@@ -53,3 +58,15 @@ def test_schema_1_work_identities_remain_frozen() -> None:
 def test_protocol_22_package_pins_its_manifest_identity() -> None:
     assert PROTOCOL_VERSION == "2.2"
     assert RUN_MANIFEST_SCHEMA_VERSION == 2
+
+
+def test_schema_2_manifest_and_work_identities_remain_frozen() -> None:
+    assert manifest_v2().run_manifest_id == (
+        "sha256:f5b5d58af8f348d4b6fdeb2ae2fffdcd8087a49eccab810df2837d8dc1d5833c"
+    )
+    assert artifact_key_v2().identity == (
+        "sha256:73d6ce8aa64c60d74a01c803ecbeca09691cf2028e2f8c62c6579fd1a79e95d1"
+    )
+    assert work_template_v2().identity == (
+        "sha256:ac14a69b78a0b807a078fe7576c4271a130c62ab6336fa115af0fabd223a0d23"
+    )
