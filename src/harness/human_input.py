@@ -1730,7 +1730,12 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
             reason_code="phase_dispatch_limit", classification="material",
             semi_policy="require_human", resolution_handler="phase_dispatch_limit",
             allow_free_text=False, allowed_phase_ids=phase_a_sources,
-            allowed_target_phases=frozenset({"phase1-what"}),
+            allowed_target_phases=frozenset({
+                "phase1-what",
+                "phase3-how",
+                "phase3-sentinel",
+                "phase3-plan",
+            }),
             context_state_keys=("phase", "phase_dispatch_limit_phase", "phase_dispatch_limit", "issue_resolution_ledger"),
             context_paths=(), options=(),
         ),

@@ -321,6 +321,11 @@ Must follow the structure in `agents/exploration/templates/sage-issues-template.
 For every issue, include `Action Required` and a `Resolution Guidance` subsection.
 This is a controller contract, not optional explanatory prose:
 
+- In WHY3, set `Responsible agent` to the earliest agent that can edit the
+  affected artifact: `WHAT` for validated specification content, `HOW` for
+  architecture or a repair spanning multiple downstream artifacts, `SENTINEL`
+  for test-strategy/coverage-only repair, or `ORCHESTRATOR` for task-plan-only
+  repair. Never label every WHY3 failure as `WHAT` or `HOW` by default.
 - State the one next action or decision that can advance this issue. Never write
   "retry" as an action.
 - State one suggested option only if it is grounded in cited project evidence.
@@ -344,6 +349,12 @@ return `verdict: STOP_AND_ASK` with `status: blocked`,
 recommendation is evidence-backed; otherwise omit both. Never attach a
 question to `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
 clarification writes and state cleanup.
+`escalation_recommended_answer` must contain the exact answer value that can be
+copied verbatim into `answer_text`; do not write an instruction, rationale, or
+recommendation preamble in that field.
+In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
+that explicit input, the selected stack, reachable evidence, or a conventional
+default can resolve; record the assumption and continue.
 
 ---
 
@@ -412,6 +423,12 @@ If `coverage-map.md` exists, read it and check every row:
 
 2. **Any row with `coverage_type: deferred-automation`** — raise a HIGH issue:
    > "Requirement {ID} is deferred-automation. Verify a task exists in `tasks.md` to implement this test before merge. If no task exists, this is effectively unverified."
+
+   An owned `deferred-automation` row with a concrete mapped automation task is
+   a delivery-time warning. It does not require a Phase A amendment and does
+   not by itself prevent WHY3 from returning PASS. If the row has no owning
+   task, the missing ownership is a required planning amendment and must be
+   reported as blocking.
 
 3. **Any row with `coverage_type: escalated`** — check `state.json` for an explicit `deferred_risky_accepted` entry. If the entry is absent, raise CRITICAL: "Requirement {ID} was escalated but no user acceptance is recorded in state.json."
 

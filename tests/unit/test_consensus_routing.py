@@ -22,6 +22,7 @@ import yaml
 
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
+from harness.squad_executors import StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
@@ -89,16 +90,15 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
 
 
 @pytest.mark.unit
-def test_why3_fail_routes_to_what_not_how():
+def test_unclassified_why3_fail_routes_to_what_not_how():
     node = _consensus_node()
     why3 = [
         t for t in node["transitions"]
         if "why3-verdict = FAIL" in t.get("condition", "")
     ]
     assert why3, "no transition keyed on 'why3-verdict = FAIL'"
-    assert all(t["to"] == "phase1-what" for t in why3), (
-        "WHY3 FAIL (spec quality) must re-dispatch CARTOGRAPHER via phase1-what, "
-        f"got {[t['to'] for t in why3]}"
+    assert any(t["to"] == "phase1-what" for t in why3), (
+        "an unclassified WHY3 FAIL must retain the fail-closed CARTOGRAPHER route"
     )
     # Bounded re-dispatch: increment + cap, like every other re-dispatch edge.
     assert all(t.get("action") == "increment_iteration" for t in why3)
@@ -119,15 +119,50 @@ def test_assess2_rejected_still_routes_to_how():
 
 
 @pytest.mark.unit
-def test_no_bare_why3_fail_routes_to_how():
+def test_only_how_owned_why3_fail_routes_to_how():
     # THE REGRESSION: the old single transition sent why3 FAIL to phase3-how.
     node = _consensus_node()
     for t in node["transitions"]:
-        if t["to"] == "phase3-how":
-            assert "why3-verdict = FAIL" not in t.get("condition", ""), (
-                "WHY3 FAIL must not route to phase3-how — that is the spec-side "
-                "non-convergence loop this guard exists to prevent"
-            )
+        condition = t.get("condition", "")
+        if t["to"] == "phase3-how" and "why3-verdict = FAIL" in condition:
+            assert "why3_repair_phase = phase3-how" in condition
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("issues", "expected"),
+    [
+        (
+            "### ISS-001: Specification wording\n"
+            "- **Responsible agent:** CARTOGRAPHER\n"
+            "- **Action Required:** CARTOGRAPHER must amend spec.md.\n",
+            "phase1-what",
+        ),
+        (
+            "### ISS-001: Architecture and test repair\n"
+            "- **Responsible agent:** HOW\n"
+            "- **Action Required:** SENTINEL must repair test-strategy.md.\n",
+            "phase3-how",
+        ),
+        (
+            "### ISS-001: Test repair\n"
+            "- **Responsible agent:** SENTINEL\n"
+            "- **Action Required:** SENTINEL must repair test-strategy.md.\n",
+            "phase3-sentinel",
+        ),
+        (
+            "### ISS-001: Plan repair\n"
+            "- **Responsible agent:** ORCHESTRATOR\n"
+            "- **Action Required:** ORCHESTRATOR must repair tasks.md.\n",
+            "phase3-plan",
+        ),
+    ],
+)
+def test_why3_issue_ownership_selects_earliest_capable_repair_phase(
+    issues,
+    expected,
+):
+    assert StagedParallelExecutor._why3_repair_phase_from_issues(issues) == expected
 
 
 @pytest.mark.unit
@@ -194,6 +229,31 @@ def test_runtime_why3_fail_routes_to_what_before_cap(tmp_path):
         {"why3_verdict": "FAIL", "assess2_verdict": "PASS"},
         iteration=4,
     ) == "phase1-what"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("repair_phase", "expected"),
+    [
+        ("phase3-how", "phase3-how"),
+        ("phase3-sentinel", "phase3-sentinel"),
+        ("phase3-plan", "phase3-plan"),
+    ],
+)
+def test_runtime_why3_fail_routes_to_its_evidence_owned_phase(
+    tmp_path,
+    repair_phase,
+    expected,
+):
+    assert _runtime_route(
+        tmp_path,
+        {
+            "why3_verdict": "FAIL",
+            "why3_repair_phase": repair_phase,
+            "assess2_verdict": "PASS",
+        },
+        iteration=4,
+    ) == expected
 
 
 @pytest.mark.unit

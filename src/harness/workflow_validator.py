@@ -41,7 +41,7 @@ RUNTIME_TERMINAL_TARGETS = frozenset({"terminal-blocked"})
 
 # Increment whenever the Phase A controller relies on deployed workflow
 # semantics that cannot be established from the graph alone.
-CONTROLLER_RUNTIME_COMPATIBILITY_VERSION = 2
+CONTROLLER_RUNTIME_COMPATIBILITY_VERSION = 3
 
 
 KNOWN_CONDITION_FIELDS = frozenset({
@@ -61,6 +61,8 @@ KNOWN_CONDITION_FIELDS = frozenset({
     "iteration",
     "max_iterations",
     "retry_count",
+    # Controller-derived ownership route from canonical WHY3 issue fields.
+    "why3_repair_phase",
     # Derived evaluator predicates.
     "CRITICAL_issues",
     "convergence_detected",

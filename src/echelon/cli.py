@@ -64,7 +64,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.10"
+CLI_VERSION = "4.0.11"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -4640,6 +4640,28 @@ def _classify_run_recovery(
                 ),
             )
 
+    phase = str(run_state.get("phase") or "").strip()
+    if (
+        reason.startswith("phase_dispatch_limit_evidence_")
+        and phase
+        in {
+            "phase3-tasks-lexicon",
+            "phase3-consensus-tasks-lexicon",
+        }
+    ):
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase=phase,
+            command=_command_display("echelon phase run", [phase]),
+            note=(
+                "Re-run the capped deterministic task gate after repairing "
+                "tasks.md from tasks-lexicon-report.json or updating the "
+                "validator. The gate will route any remaining findings back "
+                "to planning without another automatic dispatch-cap decision."
+            ),
+        )
+
     try:
         instruction = _persisted_or_legacy_recovery_instruction(run_state)
     except RecoveryInstructionError as exc:
@@ -7577,6 +7599,7 @@ def _cmd_run(
 
     if init_target:
         from echelon.workspace_sources import ensure_source_config_entry
+        added_sources: list[str] = []
         for implementation_target in implementation_targets:
             init_messages = _prepare_spec_target_repo(
                 project_root,
@@ -7587,6 +7610,14 @@ def _cmd_run(
             for init_message in init_messages:
                 print(init_message)
             if source_added:
+                added_sources.append(implementation_target)
+        if added_sources:
+            _commit_initialized_workspace_sources(
+                project_root,
+                run_id=squad_dir.name,
+                retry_command=_command_display("echelon spec run", args),
+            )
+            for implementation_target in added_sources:
                 print(f"Added workspace source: {implementation_target}")
 
     state_store = SquadStateStore(squad_dir)
@@ -13435,6 +13466,95 @@ def _prepare_spec_target_repo(workspace_root: Path, spec_dir: Path, repo: str) -
         sys.exit(1)
 
     return messages
+
+
+def _commit_initialized_workspace_sources(
+    workspace_root: Path,
+    *,
+    run_id: str,
+    retry_command: str,
+) -> str:
+    """Commit the exact source-registry mutation before squad dispatch."""
+    from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
+
+    config_path = ".echelon/config.yml"
+    message = build_echelon_commit_message(
+        "chore: register workspace sources",
+        EchelonCommitMetadata(
+            origin="workspace",
+            action="source-register",
+            run_id=run_id,
+        ),
+    )
+    try:
+        tracked_status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=workspace_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        changed_paths = {
+            line[3:].split(" -> ")[-1]
+            for line in tracked_status
+            if len(line) >= 4
+        }
+        if changed_paths != {config_path}:
+            observed = ", ".join(sorted(changed_paths)) or "none"
+            raise RuntimeError(
+                "source registration did not own the exact tracked change set; "
+                f"observed: {observed}"
+            )
+        subprocess.run(
+            ["git", "add", "--", config_path],
+            cwd=workspace_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Echelon",
+                "-c",
+                "user.email=echelon-workspace@example.invalid",
+                "commit",
+                "--only",
+                "-m",
+                message,
+                "--",
+                config_path,
+            ],
+            cwd=workspace_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=workspace_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError, RuntimeError) as exc:
+        if isinstance(exc, subprocess.CalledProcessError):
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        else:
+            detail = str(exc)
+        print(
+            "✗ Could not commit the initialized workspace source registry.\n"
+            f"  Error: {detail}\n"
+            "  Fix: git add .echelon/config.yml && "
+            "git commit -m 'chore: register workspace sources'\n"
+            f"  Then: {retry_command}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+    print(f"Committed workspace source registry: {commit[:12]}")
+    return commit
 
 
 def _cmd_spec_target(args: list[str]) -> None:

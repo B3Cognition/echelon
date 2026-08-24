@@ -3416,7 +3416,16 @@ class SquadStateStore:
                 != snapshot.previous_dispatch_sha256
             ):
                 return False
-            self._save_unlocked(next_state)
+            candidate = deepcopy(next_state)
+            authority_changed = (
+                _canonicalize_resolved_human_input_audit_for_diagnostic(
+                    candidate
+                )
+            )
+            self._save_unlocked(
+                candidate,
+                allow_human_input_authority_update=authority_changed,
+            )
             return True
 
     def prepare_routing_decision(

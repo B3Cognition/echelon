@@ -21,6 +21,11 @@ class TestSentinelTemplates:
                     "## Test Pyramid",
                     "## CI/CD Pipeline",
                     "## Flakiness Management",
+                    "### Detection Protocol",
+                    "### Quarantine Process",
+                    "### Root Cause Taxonomy",
+                    "### Stability Targets",
+                    "### Review Cadence",
                 ],
             ),
             (
@@ -86,3 +91,12 @@ class TestSentinelTemplates:
         assert "Produce outputs in `{spec_dir}/`" in text
         assert "three files in `specs/{NNN}-{feature}/`" not in text
         assert "three files in `{spec_dir}/`" in text
+
+    def test_phase3_sentinel_receives_why3_repair_evidence_when_available(self) -> None:
+        text = PHASE.read_text(encoding="utf-8")
+
+        assert "When re-dispatched from WHY3" in text
+        assert "`issues.md`" in text
+        assert "`tasks.md`" in text
+        assert "`dependencies.md`" in text
+        assert "repair authority" in text

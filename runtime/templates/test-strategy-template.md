@@ -61,10 +61,27 @@ Omit this section only when all testability sub-metrics are >= 0.70.
 
 ## Flakiness Management
 
-| Policy | Value |
-|--------|-------|
-| Repeat count for new tests | |
-| Quarantine marker | |
-| Flaky rate target | |
-| Critical journey pass target | |
-| Review cadence | |
+### Detection Protocol
+
+- Repeat policy for new tests:
+- Failure threshold and signal:
+
+### Quarantine Process
+
+- Quarantine marker and tracking requirement:
+- Merge/deploy consequence:
+
+### Root Cause Taxonomy
+
+- Allowed root-cause categories:
+- Required investigation evidence:
+
+### Stability Targets
+
+- Flaky-rate target:
+- Critical-journey pass target:
+
+### Review Cadence
+
+- Review frequency:
+- Escalation and release criteria:
