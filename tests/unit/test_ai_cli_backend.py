@@ -4487,6 +4487,150 @@ def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsy
     assert '"type": "item.completed"' not in captured.out
 
 
+def test_codex_backend_sanitizes_failed_command_event_in_normal_mode(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    monkeypatch.delenv("ECHELON_DEBUG_LLM", raising=False)
+    final_message = (
+        "echelon_result:\n"
+        "  verdict: COMPLETE\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n"
+    )
+    leaked_path = "/Users/example/private-workspace/specs"
+    leaked_output = f"{leaked_path}\ntotal 304\n-rw------- secret-plan.md\n"
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "id": "item_1",
+                            "type": "command_execution",
+                            "command": f"/bin/zsh -lc 'pwd && ls -la {leaked_path}'",
+                            "aggregated_output": leaked_output,
+                            "exit_code": 1,
+                            "status": "failed",
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": final_message,
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout=None) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=FakeProcess(),
+    ):
+        result = backend.run_agent(request)
+
+    captured = capsys.readouterr()
+    assert result.stdout == final_message
+    assert "[codex] command failed (exit 1)" in captured.out
+    assert leaked_path not in captured.out
+    assert "secret-plan.md" not in captured.out
+    assert "pwd && ls" not in captured.out
+
+
+def test_codex_backend_keeps_failed_command_details_console_only_in_debug_mode(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
+    final_message = (
+        "echelon_result:\n"
+        "  verdict: COMPLETE\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n"
+    )
+    command = "/bin/zsh -lc 'pwd && ls -la /workspace/private'"
+    command_output = "/workspace/private\ntotal 8\n-rw------- secret-plan.md\n"
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "id": "item_1",
+                            "type": "command_execution",
+                            "command": command,
+                            "aggregated_output": command_output,
+                            "exit_code": 1,
+                            "status": "failed",
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": final_message,
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout=None) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=FakeProcess(),
+    ):
+        result = backend.run_agent(request)
+
+    captured = capsys.readouterr()
+    assert result.stdout == final_message
+    assert command in captured.out
+    assert command_output in captured.out
+
+
 def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
 

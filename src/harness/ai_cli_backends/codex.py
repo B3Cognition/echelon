@@ -174,6 +174,8 @@ class CodexCliBackend:
                 if event.token_usage is not None:
                     token_usage = event.token_usage
                     token_usage_details = dict(event.token_usage_details)
+                if event.diagnostic:
+                    print(event.diagnostic, flush=True)
                 if event.text:
                     stdout_chunks.append(event.text)
                     print(event.text, flush=True)
@@ -313,6 +315,7 @@ class _CodexEvent:
     task_complete: bool = False
     token_usage: int | None = None
     token_usage_details: dict[str, int] = field(default_factory=dict)
+    diagnostic: str = ""
 
 
 def _codex_event(line: str) -> _CodexEvent:
@@ -323,7 +326,7 @@ def _codex_event(line: str) -> _CodexEvent:
 
     item = event.get("item")
     if isinstance(item, dict) and item.get("type") == "command_execution":
-        return _CodexEvent(_codex_command_event_text(event, item))
+        return _CodexEvent("", diagnostic=_codex_command_event_text(event, item))
 
     payload = event.get("payload")
     if isinstance(payload, dict):
@@ -435,6 +438,8 @@ def _codex_command_event_text(event: dict, item: dict) -> str:
         header = f"[codex] command completed"
     if exit_code is not None:
         header += f" (exit {exit_code})"
+    if failed and not debug:
+        return header
     header += f": {command}"
 
     if output and (failed or debug):
