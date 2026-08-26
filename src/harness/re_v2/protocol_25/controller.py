@@ -571,7 +571,11 @@ class Protocol25Controller(Protocol24Controller):
         committed: Committed,
         candidate_id: str,
     ) -> None:
-        if item.output_key.artifact_kind != "semantic-audit-findings":
+        semantic_kind = item.output_key.artifact_kind
+        if semantic_kind not in {
+            "semantic-audit-findings",
+            "semantic-resolution-overlay",
+        }:
             super()._certify_provider_candidate(item, committed, candidate_id)
             return
         inventory = committed.closure.candidate_inventory
@@ -582,7 +586,12 @@ class Protocol25Controller(Protocol24Controller):
         )
         if (
             entry is None
-            or entry.relative_path != "audit.json"
+            or entry.relative_path
+            != (
+                "audit.json"
+                if semantic_kind == "semantic-audit-findings"
+                else "resolution.json"
+            )
             or entry.object_kind != "regular"
             or entry.content_hash is None
         ):
@@ -609,11 +618,49 @@ class Protocol25Controller(Protocol24Controller):
                 inventory=inventory,
                 candidate_bytes=self.context.object_store.read_blob(entry.content_hash),
             )
-            result = self.context.semantic_runtime.certify_audit(  # type: ignore[attr-defined]
-                candidate,
-                artifact_key=item.output_key,
-                context=context,
-            )
+            if semantic_kind == "semantic-audit-findings":
+                result = self.context.semantic_runtime.certify_audit(  # type: ignore[attr-defined]
+                    candidate,
+                    artifact_key=item.output_key,
+                    context=context,
+                )
+            else:
+                ledger = self.context.ledger.replay()
+                epochs = tuple(ledger.audit_epochs.values())  # type: ignore[attr-defined]
+                if len(epochs) != 1:
+                    raise Protocol25RuntimeError(
+                        "resolution candidate has no unique frozen epoch"
+                    )
+                epoch = epochs[0]
+                manifest = self.context.semantic_graph.manifest  # type: ignore[attr-defined]
+                guidance_hash = (
+                    None
+                    if manifest.human_guidance is None
+                    else manifest.human_guidance.object_hash
+                )
+                excluded = {
+                    epoch.identity,
+                    context.audit_target.identity,
+                    *(
+                        (guidance_hash,)
+                        if guidance_hash is not None
+                        else ()
+                    ),
+                }
+                prior_overlay_hashes = tuple(
+                    value
+                    for value in item.output_key.dependency_hashes
+                    if value not in excluded
+                )
+                result = self.context.semantic_runtime.certify_resolution(  # type: ignore[attr-defined]
+                    candidate,
+                    artifact_key=item.output_key,
+                    context=context,
+                    epoch=epoch,
+                    semantic_round=len(prior_overlay_hashes) + 1,
+                    prior_overlay_hashes=prior_overlay_hashes,
+                    guidance_hash=guidance_hash,
+                )
         except (Protocol22SchemaError, Protocol25RuntimeError):
             self._reject_candidate_before_artifact(
                 item,

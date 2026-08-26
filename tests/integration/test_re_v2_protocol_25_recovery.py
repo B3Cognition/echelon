@@ -50,6 +50,7 @@ from harness.re_v2.protocol_25.controller import (
     Protocol25ControllerActionV1,
     Protocol25ControllerStateV1,
     SemanticTargetControllerStateV1,
+    plan_next_protocol_25,
 )
 from harness.re_v2.protocol_22.model import WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
@@ -782,6 +783,84 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
             audit_target_id=target_id,
         )
     )
+
+    assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_resolution_action_enters_inherited_single_dispatch_kernel(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    audit, epoch, semantic_context, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    finding_ids = tuple(
+        finding.finding_key_id for finding in audit.normalized_findings
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=epoch.identity,
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=audit.artifact.audit_target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=finding_ids,
+                unresolved_finding_ids=finding_ids,
+            ),
+        ),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "resolve_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "semantic-resolution"
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic resolver\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = object()
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_resolution_dispatch_authority",
+        lambda _context, _action: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: observed.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(action)
 
     assert observed == [(item, shared_recovery)]
 

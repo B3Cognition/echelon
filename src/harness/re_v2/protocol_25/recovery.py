@@ -29,6 +29,7 @@ from .controller import (
     Protocol25ControllerStateV1,
     SemanticSourceCycleStateV1,
     SemanticTargetControllerStateV1,
+    plan_next_protocol_25,
 )
 from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
 from .graph import Protocol25Graph, Protocol25GraphError
@@ -75,6 +76,8 @@ class Protocol25RunContext(Protocol22RunContext):
         if not isinstance(self.semantic_runtime, Protocol25DeterministicRuntime):
             raise Protocol25RecoveryError("semantic runtime is invalid")
         inherited_dependencies = self.dependencies_for
+        inherited_dispatch_hook = self.dispatch_started_hook
+        semantic_bindings: dict[str, Protocol25ControllerActionV1] = {}
         if not getattr(inherited_dependencies, "_protocol_25_specialized", False):
             def semantic_dependencies(
                 item: WorkItemV2,
@@ -82,22 +85,35 @@ class Protocol25RunContext(Protocol22RunContext):
             ) -> object:
                 if item.output_key.layer != "L3":
                     return inherited_dependencies(item, attempt_kind)
-                if item.output_key.artifact_kind != "semantic-audit-findings":
+                if item.output_key.artifact_kind == "semantic-audit-findings":
+                    if len(item.output_key.dependency_hashes) != 1:
+                        raise Protocol25RecoveryError(
+                            "semantic audit item has no unique target dependency"
+                        )
+                    authorized_item, semantic_context = build_audit_dispatch_authority(
+                        self,
+                        item.output_key.dependency_hashes[0],
+                    )
+                elif item.output_key.artifact_kind == "semantic-resolution-overlay":
+                    action = plan_next_protocol_25(
+                        recover_protocol_25_run(self).controller_state
+                    )
+                    if action is None or action.kind != "resolve_target":
+                        raise Protocol25RecoveryError(
+                            "resolution item has no current controller authority"
+                        )
+                    authorized_item, semantic_context = (
+                        build_resolution_dispatch_authority(self, action)
+                    )
+                    semantic_bindings[item.work_item_id] = action
+                else:
                     raise Protocol25RecoveryError(
                         "semantic dependency specialization is not implemented "
                         f"for {item.output_key.artifact_kind!r}"
                     )
-                if len(item.output_key.dependency_hashes) != 1:
-                    raise Protocol25RecoveryError(
-                        "semantic audit item has no unique target dependency"
-                    )
-                authorized_item, semantic_context = build_audit_dispatch_authority(
-                    self,
-                    item.output_key.dependency_hashes[0],
-                )
                 if authorized_item != item:
                     raise Protocol25RecoveryError(
-                        "semantic audit item differs from reconstructed authority"
+                        "semantic item differs from reconstructed authority"
                     )
                 return build_semantic_provider_dependencies(
                     self,
@@ -107,6 +123,21 @@ class Protocol25RunContext(Protocol22RunContext):
 
             setattr(semantic_dependencies, "_protocol_25_specialized", True)
             object.__setattr__(self, "dependencies_for", semantic_dependencies)
+
+            def semantic_dispatch_started(item: WorkItemV2, prepared: object) -> None:
+                if inherited_dispatch_hook is not None:
+                    inherited_dispatch_hook(item, prepared)
+                action = semantic_bindings.pop(item.work_item_id, None)
+                if action is None:
+                    return
+                dispatch_id = getattr(prepared, "dispatch_id", None)
+                if not isinstance(dispatch_id, str):
+                    raise Protocol25RecoveryError(
+                        "semantic dispatch has no prepared dispatch identity"
+                    )
+                _bind_semantic_dispatch(self, item, action, dispatch_id)
+
+            object.__setattr__(self, "dispatch_started_hook", semantic_dispatch_started)
 
     def recover_controller_state(self) -> Protocol25ControllerStateV1:
         return recover_protocol_25_run(self).controller_state
@@ -509,6 +540,187 @@ def build_audit_dispatch_authority(
     return item, semantic_context
 
 
+def build_resolution_dispatch_authority(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> tuple[WorkItemV2, SemanticContextV1]:
+    """Materialize one frozen-target resolution through existing L3 authority."""
+    from harness.re_v2.protocol_22.model import (
+        ArtifactKeyV2,
+        WorkTemplateV2,
+        instantiate_work_item_v2,
+    )
+
+    from .artifacts import SemanticResolutionOverlayV1
+    from .policies import SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT
+
+    if (
+        not isinstance(context, Protocol25RunContext)
+        or not isinstance(action, Protocol25ControllerActionV1)
+        or action.kind != "resolve_target"
+        or action.audit_target_id is None
+        or action.source_id is None
+        or action.semantic_round is None
+    ):
+        raise Protocol25RecoveryError(
+            "resolution dispatch requires exact controller action authority"
+        )
+    ledger = context.ledger.replay()
+    if not isinstance(ledger, Protocol25LedgerView) or len(ledger.audit_epochs) != 1:
+        raise Protocol25RecoveryError("resolution dispatch requires one frozen epoch")
+    epoch = next(iter(ledger.audit_epochs.values()))
+    frozen_reference = context.semantic_graph.manifest.frozen_audit_epoch
+    if frozen_reference is not None and epoch.identity != frozen_reference.object_hash:
+        raise Protocol25RecoveryError("resolution epoch differs from successor authority")
+    target_authority = next(
+        (
+            item
+            for item in epoch.target_candidate_authorities
+            if item.audit_target_id == action.audit_target_id
+        ),
+        None,
+    )
+    if target_authority is None:
+        raise Protocol25RecoveryError("resolution target is outside the frozen epoch")
+    candidate = load_canonical_object(
+        context.object_store.read_blob(target_authority.candidate_hash),
+        AuditCandidateV1.from_json_dict,
+    )
+    if candidate.audit_target.scope.source_id != action.source_id:
+        raise Protocol25RecoveryError("resolution action source differs from target")
+    unresolved = tuple(
+        finding
+        for finding in candidate.findings
+        if finding.finding_key_id not in ledger.latest_finding_closures
+        or ledger.latest_finding_closures[finding.finding_key_id].verdict != "closed"
+    )
+    if not unresolved:
+        raise Protocol25RecoveryError("resolution action has no unresolved findings")
+
+    prior: list[SemanticResolutionOverlayV1] = []
+    for acceptance in ledger.accepted_artifacts.values():
+        if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
+            continue
+        overlay = load_canonical_object(
+            context.object_store.read_blob(acceptance.artifact_hash),
+            SemanticResolutionOverlayV1.from_json_dict,
+        )
+        if overlay.audit_epoch_id == epoch.identity and overlay.audit_target_id == action.audit_target_id:
+            prior.append(overlay)
+    prior.sort(key=lambda item: (item.semantic_round, item.identity))
+    if tuple(item.semantic_round for item in prior) != tuple(range(1, action.semantic_round)):
+        raise Protocol25RecoveryError(
+            "resolution prior overlay chain is not consecutive"
+        )
+    prior_hashes = tuple(item.identity for item in prior)
+
+    audit_item, base_context = build_audit_dispatch_authority(
+        context,
+        action.audit_target_id,
+    )
+    authority_payloads = {
+        item.object_hash: item.payload_bytes for item in base_context.authority_objects
+    }
+    for overlay in prior:
+        authority_payloads[overlay.identity] = context.object_store.read_blob(
+            overlay.identity
+        )
+    semantic_context = context.semantic_runtime.build_context(
+        mode="SEMANTIC_RESOLUTION",
+        audit_target=candidate.audit_target,
+        vocabulary=base_context.vocabulary,
+        authorized_evidence=base_context.authorized_evidence,
+        authority_payloads=authority_payloads,
+        lower_authority_hashes=base_context.lower_authority_hashes,
+        unresolved_findings=unresolved,
+        overlay_hashes=prior_hashes,
+        target_assessment_hashes=(),
+        active_sibling_authority_hashes=(),
+    )
+    context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
+
+    manifest = context.semantic_graph.manifest
+    guidance_hash = (
+        None
+        if manifest.human_guidance is None
+        else manifest.human_guidance.object_hash
+    )
+    dependencies = tuple(
+        sorted(
+            (
+                epoch.identity,
+                action.audit_target_id,
+                *prior_hashes,
+                *((guidance_hash,) if guidance_hash is not None else ()),
+            )
+        )
+    )
+    policy = context.semantic_inputs.artifact_policy.entry_for(
+        "L3", "semantic-resolution-overlay"
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "semantic-resolution"
+    )
+    template = WorkTemplateV2(
+        identity_schema_version=2,
+        goal_id="semantic-audit-closure",
+        scope=candidate.audit_target.scope,
+        artifact_kind="semantic-resolution-overlay",
+        layer="L3",
+        producer_id="echelon.re-resolver",
+        producer_family="semantic-resolution",
+        producer_protocol_version=SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT[
+            "semantic-resolution-overlay"
+        ],
+        layer_policy_hash=policy.identity,
+        required_template_ids=(),
+        executor_contract_hash=executor.executor_contract_hash,
+        verifier_id=executor.verifier.verifier_id,
+        verifier_version=executor.verifier.verifier_version,
+        verifier_implementation_digest=executor.verifier.implementation_digest,
+        result_contract_id=executor.result_contract_id,
+        max_provider_attempts=manifest.semantic_closure_policy.provider_attempt_limit,
+        max_generation_attempts=manifest.semantic_closure_policy.provider_attempt_limit,
+        max_semantic_rounds=0,
+        max_result_contract_retries=manifest.semantic_closure_policy.contract_retry_limit,
+        max_shared_retries=manifest.initial_budget_policy.shared_retry_limit,
+        max_artifact_contract_retries=manifest.semantic_closure_policy.contract_retry_limit,
+    )
+    key = ArtifactKeyV2(
+        identity_schema_version=2,
+        scope=candidate.audit_target.scope,
+        partition_id=audit_item.output_key.partition_id,
+        artifact_kind="semantic-resolution-overlay",
+        layer="L3",
+        producer_protocol_version=template.producer_protocol_version,
+        layer_policy_hash=policy.identity,
+        dependency_hashes=dependencies,
+    )
+    return instantiate_work_item_v2(template, key, dependencies), semantic_context
+
+
+def _bind_semantic_dispatch(
+    context: Protocol25RunContext,
+    item: WorkItemV2,
+    action: Protocol25ControllerActionV1,
+    dispatch_id: str,
+) -> None:
+    if action.kind != "resolve_target" or action.audit_target_id is None:
+        raise Protocol25RecoveryError("semantic dispatch binding is unsupported")
+    context.event_store.append(
+        "semantic_resolution_started",
+        {
+            "audit_target_id": action.audit_target_id,
+            "dispatch_id": dispatch_id,
+            "semantic_round": action.semantic_round,
+            "source_cycle_id": action.source_cycle_id,
+            "source_id": action.source_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=context.clock(),
+    )
+
+
 def build_semantic_provider_dependencies(
     context: Protocol25RunContext,
     item: WorkItemV2,
@@ -852,6 +1064,34 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "recovered audit epoch differs from deterministic publication"
             )
+        return
+    if action.kind == "resolve_target":
+        recovered = recover_protocol_25_run(context)
+        if plan_next_protocol_25(recovered.controller_state) != action:
+            raise Protocol25RecoveryError(
+                "resolution action differs from fresh controller authority"
+            )
+        item, semantic_context = build_resolution_dispatch_authority(
+            context,
+            action,
+        )
+        dependencies = context.dependencies_for(item, "initial_generation")
+        if (
+            not isinstance(dependencies, ProviderExecutionDependenciesV1)
+            or dependencies.context_bytes
+            != canonical_json_bytes(semantic_context.to_json_dict())
+            or dependencies.executor
+            != context.semantic_inputs.executor_contract.entry_for(
+                "semantic-resolution"
+            )
+        ):
+            raise Protocol25RecoveryError(
+                "semantic dependency resolver differs from resolution authority"
+            )
+        Protocol25Controller(context)._execute_one(
+            item,
+            _shared_action_recovery(context, recovered),
+        )
         return
     terminal = {
         "terminal_complete": (
