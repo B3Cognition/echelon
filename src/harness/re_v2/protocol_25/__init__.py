@@ -60,8 +60,11 @@ __all__ = (
     "AuditTargetPlanV1",
     "AuditTargetCandidateAuthorityV1",
     "AuditTaxonomyV1",
+    "AuthorizedEvidenceRangeV1",
+    "BoundedAuthorityObjectV1",
     "AuditedArtifactAuthorityV1",
     "DeferredObservationV1",
+    "ComposedSemanticViewV1",
     "EvidenceAnchorAuthorityV1",
     "FINDING_CLASSES",
     "FindingAuthorityVocabularyV1",
@@ -78,6 +81,8 @@ __all__ = (
     "Protocol25LedgerProtocol",
     "Protocol25LedgerView",
     "Protocol25ReplayState",
+    "Protocol25DeterministicRuntime",
+    "Protocol25RuntimeError",
     "Protocol25SchemaError",
     "Protocol25Graph",
     "Protocol25GraphError",
@@ -89,6 +94,9 @@ __all__ = (
     "ResolutionEntryV1",
     "SUBJECT_KINDS",
     "SemanticFindingV1",
+    "SemanticCandidateInputV1",
+    "SemanticCertificationResultV1",
+    "SemanticContextV1",
     "SemanticCertificationReceiptV1",
     "SemanticArtifactPolicyCatalogV1",
     "SemanticArtifactPolicyEntryV1",
@@ -112,6 +120,7 @@ __all__ = (
     "evaluate_semantic_budget",
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
+    "semantic_response_schema",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
@@ -170,6 +179,19 @@ _LAZY_BUDGET_EXPORTS = frozenset(
         "replay_target_progress",
     }
 )
+_LAZY_RUNTIME_EXPORTS = frozenset(
+    {
+        "AuthorizedEvidenceRangeV1",
+        "BoundedAuthorityObjectV1",
+        "ComposedSemanticViewV1",
+        "Protocol25DeterministicRuntime",
+        "Protocol25RuntimeError",
+        "SemanticCandidateInputV1",
+        "SemanticCertificationResultV1",
+        "SemanticContextV1",
+        "semantic_response_schema",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -185,6 +207,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import events as module
     elif name in _LAZY_BUDGET_EXPORTS:
         from . import budget as module
+    elif name in _LAZY_RUNTIME_EXPORTS:
+        from . import runtime as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)

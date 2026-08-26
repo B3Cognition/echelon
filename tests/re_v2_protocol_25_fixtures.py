@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.model import (
     ArtifactKeyV2,
     ArtifactScope,
@@ -167,18 +168,32 @@ def audited_artifact_authority_v1(
 
 
 def audit_target_v1(*, target_kind: str = "domain") -> AuditTargetV1:
+    from harness.re_v2.protocol_25.runtime import semantic_response_schema
+
     domain_key = digest("orders-domain") if target_kind == "domain" else None
     return AuditTargetV1(
         schema_version=1,
         target_kind=target_kind,
         scope=ArtifactScope("api", domain_key, digest("selected-content")),
         audited_artifacts=(audited_artifact_authority_v1(),),
-        lower_dependency_hashes=(digest("lower-closure"),),
+        lower_dependency_hashes=tuple(
+            sorted(
+                digest(seed)
+                for seed in (
+                    "baseline",
+                    "lower-closure",
+                    "audit-context",
+                    "evidence-pack",
+                )
+            )
+        ),
         context_object_hashes=(digest("audit-context"),),
         evidence_object_hashes=(digest("evidence-pack"),),
         audit_policy_hash=digest("audit-policy"),
         auditor_authority_hash=digest("validator-agent"),
-        response_schema_hash=digest("audit-schema"),
+        response_schema_hash=content_digest(
+            semantic_response_schema("semantic-audit-findings")
+        ),
     )
 
 

@@ -1128,6 +1128,15 @@ class AuditClosureRootV1(_Authority):
             ],
         }
 
+    @property
+    def state(self) -> str:
+        """Derive closure state without storing mutable routing authority."""
+        if self.unresolved_finding_ids:
+            return "open"
+        if self.deferred_observations:
+            return "next_epoch_required"
+        return "closed"
+
     @classmethod
     def from_json_dict(cls, value: object) -> "AuditClosureRootV1":
         raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
