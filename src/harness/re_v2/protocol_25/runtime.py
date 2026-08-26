@@ -17,7 +17,7 @@ from harness.re_v2.protocol_22.baseline import (
 from harness.re_v2.protocol_22.artifacts import ContextBundleV1
 from harness.re_v2.protocol_22.execution import CandidateInventoryV1
 from harness.re_v2.protocol_22.evidence import SnapshotReaderV1
-from harness.re_v2.protocol_22.model import ArtifactKeyV2
+from harness.re_v2.protocol_22.model import ArtifactKeyV2, ArtifactScope
 from harness.re_v2.protocol_22.partition import (
     FileRecordV1,
     WorkspacePartitionCatalogV1,
@@ -870,6 +870,15 @@ class ComposedSemanticViewV1:
             ],
         }
 
+def _scope_is_within_audit_target(
+    candidate: ArtifactScope,
+    target: ArtifactScope,
+) -> bool:
+    """Allow selected same-source domains only within a source-scope audit."""
+    if target.domain_key is not None:
+        return candidate == target
+    return candidate.source_id == target.source_id
+
 
 @dataclass(frozen=True, slots=True)
 class Protocol25DeterministicRuntime:
@@ -959,7 +968,10 @@ class Protocol25DeterministicRuntime:
 
         for authority, artifact in audited:
             if (
-                artifact.artifact.scope != audit_target.scope
+                not _scope_is_within_audit_target(
+                    artifact.artifact.scope,
+                    audit_target.scope,
+                )
                 or artifact.artifact.context_bundle_hash
                 not in audit_target.context_object_hashes
                 or artifact.artifact.dependency_hashes
@@ -970,13 +982,15 @@ class Protocol25DeterministicRuntime:
                 )
         for context in contexts:
             if (
-                context.scope != audit_target.scope
+                not _scope_is_within_audit_target(
+                    context.scope,
+                    audit_target.scope,
+                )
                 or context.evidence_pack_hash not in audit_target.evidence_object_hashes
             ):
                 raise Protocol25RuntimeError(
                     "L2 context bundle does not match its audit target"
                 )
-
         subject_refs = {f"source:{audit_target.scope.source_id}"}
         if audit_target.scope.domain_key is not None:
             subject_refs.add(

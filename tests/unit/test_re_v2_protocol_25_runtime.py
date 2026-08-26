@@ -10,7 +10,7 @@ from harness.re_v2.protocol_22.execution import (
     CandidateInventoryEntryV1,
     CandidateInventoryV1,
 )
-from harness.re_v2.protocol_22.model import ArtifactKeyV2
+from harness.re_v2.protocol_22.model import ArtifactKeyV2, ArtifactScope
 from harness.re_v2.protocol_22.partition import FileRecordV1
 from harness.re_v2.protocol_24.artifacts import certify_l2_compact_candidate
 from harness.re_v2.protocol_25.findings import (
@@ -23,6 +23,7 @@ from harness.re_v2.protocol_25.runtime import (
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
     SemanticContextV1,
+    _scope_is_within_audit_target,
     semantic_response_schema,
 )
 from harness.re_v2.protocol_25.policies import (
@@ -41,6 +42,18 @@ TARGET = audit_target_v1()
 VOCABULARY = finding_vocabulary_v1()
 VERIFIER_AUTHORITY = digest("semantic-verifier")
 EVIDENCE_PAYLOAD = b"search branch\n" * 20
+
+
+@pytest.mark.unit
+def test_source_audit_scope_contains_selected_domain_authority() -> None:
+    source_scope = ArtifactScope("api", None, digest("source-content"))
+    selected_domain = ArtifactScope("api", digest("orders"), digest("domain-content"))
+    other_source = ArtifactScope("worker", digest("jobs"), digest("other-content"))
+
+    assert _scope_is_within_audit_target(selected_domain, source_scope)
+    assert _scope_is_within_audit_target(source_scope, source_scope)
+    assert not _scope_is_within_audit_target(other_source, source_scope)
+    assert not _scope_is_within_audit_target(source_scope, selected_domain)
 
 
 class _FixtureSnapshotReader:
