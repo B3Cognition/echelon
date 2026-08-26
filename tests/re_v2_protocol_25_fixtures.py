@@ -7,6 +7,14 @@ from harness.re_v2.protocol_22.model import (
     CatalogReferenceV1,
 )
 from harness.re_v2.protocol_24.model import ParentLineageV1, SelectionScopeV1
+from harness.re_v2.protocol_24.model import (
+    AdoptedArtifactAuthorityV1,
+    ParentAuthorityBundleV1,
+)
+from harness.re_v2.protocol_25.adoption import (
+    ParentSemanticAuthorityV1,
+    Protocol25ParentCandidateV1,
+)
 from harness.re_v2.protocol_25.findings import (
     AuditTargetV1,
     AuditedArtifactAuthorityV1,
@@ -52,6 +60,98 @@ def semantic_policy_v1() -> SemanticClosurePolicyV1:
         provider_attempt_limit=2,
         contract_retry_limit=1,
         unknown_usage_policy="shared-conservative-reservation-v1",
+    )
+
+
+def lower_parent_authority_bundle_v1() -> ParentAuthorityBundleV1:
+    artifact = AdoptedArtifactAuthorityV1(
+        schema_version=1,
+        artifact_key_id=digest("lower-key"),
+        artifact_hash=digest("lower-artifact"),
+        dependency_hashes=(digest("lower-dependency"),),
+        certification_receipt_id=digest("lower-certification"),
+        candidate_assessment_id=digest("lower-candidate"),
+        artifact_acceptance_receipt_id=digest("lower-acceptance"),
+        source_run_id="re-parent",
+        source_ledger_entry_hash=digest("lower-ledger-entry"),
+    )
+    return ParentAuthorityBundleV1(
+        schema_version=1,
+        direct_parent_run_id="re-parent",
+        source_manifest_hash=digest("parent-manifest"),
+        source_event_chain_hash=digest("parent-events"),
+        source_terminal_event_hash=digest("parent-terminal"),
+        source_ledger_chain_hash=digest("parent-ledger"),
+        lineage_root_run_id="re-root",
+        ancestor_bundle_hashes=(digest("ancestor-bundle"),),
+        artifacts=(artifact,),
+    )
+
+
+def parent_semantic_authority_v1(
+    *,
+    epoch: bool = False,
+    unresolved_targets: bool = False,
+    unresolved_findings: bool = False,
+    deferred: bool = False,
+) -> ParentSemanticAuthorityV1:
+    return ParentSemanticAuthorityV1(
+        schema_version=1,
+        accepted_audit_target_ids=(digest("accepted-target"),),
+        accepted_audit_candidate_hashes=(digest("accepted-candidate"),),
+        unresolved_audit_target_ids=(
+            (digest("missing-target"),) if unresolved_targets else ()
+        ),
+        audit_epoch_id=(digest("audit-epoch") if epoch else None),
+        resolution_overlay_hashes=((digest("overlay"),) if epoch else ()),
+        target_assessment_hashes=(
+            (digest("target-assessment"),) if epoch else ()
+        ),
+        source_assessment_hashes=(
+            (digest("source-assessment"),) if epoch else ()
+        ),
+        closure_receipt_ids=((digest("closure-receipt"),) if epoch else ()),
+        closure_root_hash=(digest("closure-root") if epoch else None),
+        unresolved_finding_ids=(
+            (digest("open-finding"),) if unresolved_findings else ()
+        ),
+        deferred_observation_ids=(
+            (digest("deferred-observation"),) if deferred else ()
+        ),
+        l3_source_root_hashes=((digest("l3-source-root"),) if epoch else ()),
+    )
+
+
+def protocol_25_parent_candidate_v1(
+    parent_state: str,
+    *,
+    layer: str = "L3",
+    semantic_authority: ParentSemanticAuthorityV1 | None = None,
+    authentication_state: str = "authenticated",
+    workspace_state: str = "clean_exact_commits",
+    lineage_state: str = "acyclic",
+    terminal: bool = True,
+) -> Protocol25ParentCandidateV1:
+    return Protocol25ParentCandidateV1(
+        schema_version=1,
+        parent_layer=layer,
+        parent_state=parent_state,
+        source_snapshot_id=digest("workspace-snapshot"),
+        selection_id=digest("selection"),
+        terminal_event_hash=(digest("parent-terminal") if terminal else None),
+        authentication_state=authentication_state,
+        workspace_state=workspace_state,
+        lineage_state=lineage_state,
+        lower_authority_bundle=lower_parent_authority_bundle_v1(),
+        semantic_authority=(
+            semantic_authority
+            if semantic_authority is not None
+            else (
+                ParentSemanticAuthorityV1.empty()
+                if layer in {"L1", "L2"}
+                else parent_semantic_authority_v1()
+            )
+        ),
     )
 
 
@@ -435,7 +535,10 @@ __all__ = (
     "finding_vocabulary_v1",
     "l3_artifact_key_v2",
     "l3_source_root_v1",
+    "lower_parent_authority_bundle_v1",
     "manifest_v4",
+    "parent_semantic_authority_v1",
+    "protocol_25_parent_candidate_v1",
     "resolution_entry_v1",
     "semantic_certification_receipt_v1",
     "semantic_finding_v1",

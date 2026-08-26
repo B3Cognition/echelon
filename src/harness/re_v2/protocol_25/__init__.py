@@ -69,10 +69,14 @@ __all__ = (
     "FindingClosureReceiptV1",
     "FindingKeyV1",
     "L3SourceRootV1",
+    "ParentAuthorityBundleV2",
+    "ParentSemanticAuthorityV1",
     "Protocol25SchemaError",
     "Protocol25Graph",
     "Protocol25GraphError",
     "Protocol25GraphInputsV1",
+    "Protocol25AdoptionError",
+    "Protocol25ParentCandidateV1",
     "RunManifestV4",
     "RunModeV1",
     "ResolutionEntryV1",
@@ -90,12 +94,15 @@ __all__ = (
     "SourceCompositionAssessmentV1",
     "TargetClosureAssessmentV1",
     "build_finding_closure_receipt",
+    "build_parent_authority_bundle_v2",
     "build_protocol_25_graph",
     "build_semantic_resolution_overlay",
     "build_source_composition_assessment",
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
     "normalize_finding_key",
+    "import_protocol_25_parent_closure",
+    "validate_protocol_25_parent",
 )
 
 
@@ -108,13 +115,26 @@ _LAZY_GRAPH_EXPORTS = frozenset(
         "build_protocol_25_graph",
     }
 )
+_LAZY_ADOPTION_EXPORTS = frozenset(
+    {
+        "ParentAuthorityBundleV2",
+        "ParentSemanticAuthorityV1",
+        "Protocol25AdoptionError",
+        "Protocol25ParentCandidateV1",
+        "build_parent_authority_bundle_v2",
+        "import_protocol_25_parent_closure",
+        "validate_protocol_25_parent",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
-    if name not in _LAZY_GRAPH_EXPORTS:
+    if name in _LAZY_GRAPH_EXPORTS:
+        from . import graph as module
+    elif name in _LAZY_ADOPTION_EXPORTS:
+        from . import adoption as module
+    else:
         raise AttributeError(name)
-    from . import graph
-
-    value = getattr(graph, name)
+    value = getattr(module, name)
     globals()[name] = value
     return value
