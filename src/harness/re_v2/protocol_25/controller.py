@@ -898,6 +898,10 @@ class Protocol25Controller(Protocol24Controller):
                     raise Protocol25ControllerError(
                         "target assessment differs from active semantic operation"
                     )
+                for observation in artifact.deferred_observations:
+                    self.context.object_store.put_blob(
+                        canonical_json_bytes(observation.to_json_dict())
+                    )
                 self.context.ledger.record_target_closure_assessment(artifact)
                 event_type = "target_closure_assessed"
                 payload = {
@@ -909,6 +913,10 @@ class Protocol25Controller(Protocol24Controller):
                 if operation.event_type != "source_composition_guard_started":
                     raise Protocol25ControllerError(
                         "source assessment differs from active semantic operation"
+                    )
+                for observation in artifact.deferred_observations:
+                    self.context.object_store.put_blob(
+                        canonical_json_bytes(observation.to_json_dict())
                     )
                 self.context.ledger.record_source_composition_assessment(artifact)
                 event_type = "source_composition_assessed"
