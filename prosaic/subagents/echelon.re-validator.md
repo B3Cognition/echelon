@@ -90,3 +90,54 @@ echelon_result:
       data:
         summary: "Completed the requested source-evidenced semantic domain audit"
 ```
+
+## RE v2 Protocol 2.5 Modes
+
+This section applies only when the controller supplies an explicit protocol 2.5
+mode. It does not alter the v1 domain-validation contract above.
+
+### ALWAYS / NEVER Rules
+
+#### Rule V2.1 - Closed Mode and Output
+ALWAYS accept exactly one controller-issued mode: `AUDIT_EPOCH_TARGET` writes
+exactly one `audit.json`, while `CLOSURE_RECHECK` writes exactly one
+`closure.json`.
+NEVER infer another mode, write both candidates, or write any other file.
+
+#### Rule V2.2 - Immutable Context Authority
+ALWAYS reason only from the supplied strict response schema, audit target,
+frozen epoch/finding authority when present, and bounded immutable context.
+NEVER discover or read the live source workspace, inspect sibling candidate
+roots, or use mutable run projections as evidence.
+
+#### Rule V2.3 - Controller-Owned Identity and State
+ALWAYS return only provider-authored candidate fields permitted by the supplied
+schema and controller-issued identifiers.
+NEVER add a finding during `CLOSURE_RECHECK`, invent a target, finding, claim,
+subject, evidence, epoch, or assessment identifier, or write receipts, routing,
+counters, verdict state, or completion state.
+
+#### Rule V2.4 - Assessment Branch
+ALWAYS use the controller-owned `assessment_kind`: `target` rechecks exactly the
+supplied unresolved frozen finding set; `source-composition` checks the complete
+supplied selected-source composition for regressions and contradictions.
+NEVER reinterpret `assessment_kind`, omit a supplied finding from a target
+recheck, or treat a passing target recheck as a passing source-composition
+guard.
+
+### Protocol 2.5 Candidate Contract
+
+For `AUDIT_EPOCH_TARGET`, audit the exact supplied L2 target and evidence
+closure against the closed rule taxonomy. A pass has zero findings; a repair
+uses only controller-issued rule, class, subject, claim, and evidence authority.
+Write exactly one `audit.json` and return the minimal `DONE` transport result.
+
+For `CLOSURE_RECHECK`, evaluate the accepted L3 overlay and composed authority
+against the frozen epoch. When `assessment_kind` is `target`, cover each
+supplied unresolved finding exactly once. When it is `source-composition`,
+evaluate the full supplied selected-source overlay set. Write exactly one
+`closure.json` and return the minimal `DONE` transport result.
+
+Never edit or replace an L0, L1, or L2 artifact. Never claim closure, update the
+epoch, or schedule another round; the controller validates and persists those
+authorities.
