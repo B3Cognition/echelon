@@ -71,11 +71,13 @@ __all__ = (
     "L3SourceRootV1",
     "ParentAuthorityBundleV2",
     "ParentSemanticAuthorityV1",
+    "PROTOCOL_25_EVENTS",
     "Protocol25InputSet",
     "Protocol25InputStoreError",
     "Protocol25Ledger",
     "Protocol25LedgerProtocol",
     "Protocol25LedgerView",
+    "Protocol25ReplayState",
     "Protocol25SchemaError",
     "Protocol25Graph",
     "Protocol25GraphError",
@@ -90,6 +92,7 @@ __all__ = (
     "SemanticCertificationReceiptV1",
     "SemanticArtifactPolicyCatalogV1",
     "SemanticArtifactPolicyEntryV1",
+    "SemanticBudgetDecisionV1",
     "SemanticClosurePolicyV1",
     "SemanticResolutionOverlayV1",
     "SemanticExecutorAuthorityV1",
@@ -98,6 +101,7 @@ __all__ = (
     "SemanticResponseSchemaReferenceV1",
     "SourceCompositionAssessmentV1",
     "TargetClosureAssessmentV1",
+    "TargetProgressReplayV1",
     "build_finding_closure_receipt",
     "build_parent_authority_bundle_v2",
     "build_protocol_25_graph",
@@ -105,10 +109,13 @@ __all__ = (
     "build_source_composition_assessment",
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
+    "evaluate_semantic_budget",
+    "initial_semantic_pool_reservation",
     "normalize_finding_key",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
+    "replay_target_progress",
     "validate_protocol_25_parent",
 )
 
@@ -148,6 +155,21 @@ _LAZY_LEDGER_EXPORTS = frozenset(
         "Protocol25LedgerView",
     }
 )
+_LAZY_EVENT_EXPORTS = frozenset(
+    {
+        "PROTOCOL_25_EVENTS",
+        "Protocol25ReplayState",
+    }
+)
+_LAZY_BUDGET_EXPORTS = frozenset(
+    {
+        "SemanticBudgetDecisionV1",
+        "TargetProgressReplayV1",
+        "evaluate_semantic_budget",
+        "initial_semantic_pool_reservation",
+        "replay_target_progress",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -159,6 +181,10 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import inputs as module
     elif name in _LAZY_LEDGER_EXPORTS:
         from . import ledger as module
+    elif name in _LAZY_EVENT_EXPORTS:
+        from . import events as module
+    elif name in _LAZY_BUDGET_EXPORTS:
+        from . import budget as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)
