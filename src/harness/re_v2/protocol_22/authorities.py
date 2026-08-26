@@ -273,10 +273,17 @@ def validate_installed_authorities(
 
 
 def _agent_contract_id(producer_family: str) -> str:
-    if producer_family == "compact-baseline":
-        return "echelon.re-baseliner"
-    if producer_family == "compact-deepening":
-        return "echelon.re-deepener"
+    role_by_family = {
+        "closure-recheck": "echelon.re-validator",
+        "compact-baseline": "echelon.re-baseliner",
+        "compact-deepening": "echelon.re-deepener",
+        "semantic-audit": "echelon.re-validator",
+        "semantic-resolution": "echelon.re-resolver",
+        "source-composition-guard": "echelon.re-validator",
+    }
+    role = role_by_family.get(producer_family)
+    if role is not None:
+        return role
     raise Protocol22AuthorityError(
         f"provider-backed producer has no agent authority: {producer_family}"
     )

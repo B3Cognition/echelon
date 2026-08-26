@@ -202,3 +202,24 @@ def test_semantic_executor_rejects_missing_or_duplicate_family() -> None:
             inherited,
             authorities[:-1] + (authorities[0],),
         )
+
+
+def test_shared_authority_registry_maps_semantic_families_to_existing_roles() -> None:
+    from harness.re_v2.protocol_22.authorities import _agent_contract_id
+
+    assert _agent_contract_id("semantic-audit") == "echelon.re-validator"
+    assert _agent_contract_id("semantic-resolution") == "echelon.re-resolver"
+    assert _agent_contract_id("closure-recheck") == "echelon.re-validator"
+    assert _agent_contract_id("source-composition-guard") == "echelon.re-validator"
+
+
+def test_semantic_catalog_exposes_all_entries_to_shared_authority_validation() -> None:
+    catalog = _policies().build_semantic_executor_catalog(
+        _parent_executor_catalog(),
+        _authorities(),
+    )
+
+    assert {entry.producer_family for entry in catalog.entries} == {
+        "compact-baseline",
+        *SEMANTIC_FAMILIES,
+    }

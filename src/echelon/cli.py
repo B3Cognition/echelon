@@ -14206,8 +14206,211 @@ def _run_re_v25_deepen(
     options: _ReDeepenOptions,
 ) -> Path:
     """Create or reuse an authenticated protocol-2.5 semantic child."""
-    del workspace_root, options
-    raise ValueError("protocol-2.5 lifecycle creation is not initialized")
+    from dataclasses import replace
+
+    from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from harness.re_v2.protocol_25.lifecycle import (
+        find_exact_protocol_25_child,
+        initialize_protocol_25_child,
+    )
+
+    workspace = workspace_root.resolve()
+    parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
+    parent = validate_parent_for_deepening(parent_path, workspace)
+    prepared = _prepare_re_v25_creation(workspace, parent, options)
+    created = False
+    with _re_v24_creation_lock(workspace):
+        existing = find_exact_protocol_25_child(
+            workspace,
+            prepared.manifest.semantic_request_id,
+        )
+        if existing is None:
+            manifest = replace(
+                prepared.manifest,
+                run_id=_new_re_v2_run_id(workspace),
+                created_at=_re_v2_now(),
+            )
+            run_dir = workspace / "runs" / manifest.run_id
+            create_protocol_25_run_store(run_dir, manifest, prepared.inputs)
+            initialize_protocol_25_child(run_dir, parent)
+            created = True
+        else:
+            run_dir = existing
+            initialize_protocol_25_child(run_dir, parent)
+        _activate_re_v2_run(workspace, run_dir.name)
+    if created:
+        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    return run_dir
+
+
+def _prepare_re_v25_creation(
+    workspace_root: Path,
+    parent: object,
+    options: _ReDeepenOptions,
+) -> object:
+    """Compose installed Prosaic authority, then delegate schema-4 preparation."""
+    from dataclasses import replace
+
+    import harness.re_v2.protocol_24.artifacts as l2_artifacts_module
+    import harness.re_v2.protocol_24.controller as l2_controller_module
+    import harness.re_v2.protocol_24.runtime as l2_runtime_module
+    import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
+    import harness.re_v2.protocol_25.controller as l3_controller_module
+    import harness.re_v2.protocol_25.runtime as l3_runtime_module
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_22.authorities import validate_installed_authorities
+    from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
+    from harness.re_v2.protocol_24.artifacts import (
+        DEEPENER_AGENT_ID,
+        DEEPENING_IN_PROCESS_ADAPTER_ID,
+        DEEPENING_VERIFIER_ID,
+        build_deepening_executor_catalog,
+    )
+    from harness.re_v2.protocol_25.lifecycle import prepare_new_audit_epoch
+    from harness.re_v2.protocol_25.policies import (
+        SEMANTIC_EXECUTOR_FAMILIES,
+        SemanticExecutorAuthorityV1,
+        build_semantic_executor_catalog,
+        build_semantic_v1_policy_catalog,
+    )
+    from harness.re_v2.protocol_25.runtime import semantic_response_schema
+
+    if options.target_layer != "L3":
+        raise ValueError("protocol-2.5 preparation requires --to L3")
+    selection = _resolve_re_v24_selection(parent.inputs.workspace_partition, options)
+    role_ids = (
+        DEEPENER_AGENT_ID,
+        "echelon.re-validator",
+        "echelon.re-resolver",
+    )
+    role_bytes: dict[str, bytes] = {}
+    loader = ProsaicPromptLoader(workspace_root)
+    for role_id in role_ids:
+        try:
+            artifact = loader.load_subagent(role_id)
+        except ProsaicPromptLoadError as exc:
+            raise ValueError(str(exc)) from exc
+        if artifact is None:
+            raise ValueError(
+                f"installed Prosaic agent {role_id} is missing; run "
+                "`echelon workspace migrate-to-prosaic` before deepening RE"
+            )
+        role_bytes[role_id] = canonical_prosaic_agent_bytes(artifact)
+
+    l2_implementation = _re_v22_implementation_digest(
+        l2_artifacts_module,
+        l2_runtime_module,
+        l2_controller_module,
+    )
+    l2_executors = build_deepening_executor_catalog(
+        parent.inputs.executor_contract,
+        content_digest(role_bytes[DEEPENER_AGENT_ID]),
+        l2_implementation,
+    )
+    l3_implementation = _re_v22_implementation_digest(
+        l3_artifacts_module,
+        l3_runtime_module,
+        l3_controller_module,
+    )
+    schema_kind_by_family = {
+        "closure-recheck": "semantic-closure-assessment",
+        "semantic-audit": "semantic-audit-findings",
+        "semantic-resolution": "semantic-resolution-overlay",
+        "source-composition-guard": "semantic-closure-assessment",
+    }
+    role_by_family = {
+        "closure-recheck": "echelon.re-validator",
+        "semantic-audit": "echelon.re-validator",
+        "semantic-resolution": "echelon.re-resolver",
+        "source-composition-guard": "echelon.re-validator",
+    }
+    schema_bytes = {
+        kind: canonical_json_bytes(semantic_response_schema(kind))
+        for kind in sorted(set(schema_kind_by_family.values()))
+    }
+    authorities = tuple(
+        SemanticExecutorAuthorityV1(
+            schema_version=1,
+            producer_family=family,
+            agent_contract_hash=content_digest(role_bytes[role_by_family[family]]),
+            response_schema_kind=schema_kind_by_family[family],
+            response_schema_hash=content_digest(schema_bytes[schema_kind_by_family[family]]),
+            verifier_id=f"{family}-verifier-v1",
+            verifier_implementation_digest=l3_implementation,
+            result_contract_id=f"{family}-candidate-ready-v1",
+        )
+        for family in SEMANTIC_EXECUTOR_FAMILIES
+    )
+    executors = build_semantic_executor_catalog(l2_executors, authorities)
+    baseline = parent.inputs.executor_contract.entry_for("compact-baseline")
+    renderer = baseline.request_renderer
+    if renderer is None:
+        raise ValueError("completed parent has no pinned shared provider renderer")
+    baseline_agent = parent.inputs.immutable_objects.get(renderer.agent_contract_hash)
+    if baseline_agent is None:
+        raise ValueError("completed parent has no pinned Prosaic baseliner authority")
+    registry, _agent, _schemas = _re_schema2_installed_registry(
+        baseline_agent,
+        provider_mode="cli",
+    )
+    registry = replace(
+        registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            DEEPENING_VERIFIER_ID: l2_implementation,
+            **{
+                authority.verifier_id: l3_implementation
+                for authority in authorities
+            },
+        },
+        agent_contracts={
+            **dict(registry.agent_contracts),
+            **{
+                role_id: content_digest(payload)
+                for role_id, payload in role_bytes.items()
+            },
+        },
+        response_schemas={
+            **dict(registry.response_schemas),
+            **{
+                kind: content_digest(payload)
+                for kind, payload in schema_bytes.items()
+            },
+        },
+    )
+    mismatches = validate_installed_authorities(executors, registry)
+    if mismatches:
+        details = ", ".join(
+            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
+        )
+        raise ValueError(f"protocol-2.5 installed authority mismatch: {details}")
+    semantic_objects = {
+        **{
+            content_digest(payload): payload for payload in role_bytes.values()
+        },
+        **{
+            content_digest(payload): payload for payload in schema_bytes.values()
+        },
+    }
+    return prepare_new_audit_epoch(
+        parent=parent,
+        selection=selection,
+        artifact_policy=build_semantic_v1_policy_catalog(),
+        executor_contract=executors,
+        semantic_objects=semantic_objects,
+        created_at=_re_v2_now(),
+        token_limit=options.token_limit or 5_000_000,
+        active_ms_limit=options.active_ms_limit or 180 * 60_000,
+        semantic_token_limit=options.semantic_token_limit or 1_000_000,
+        semantic_active_ms_limit=(
+            options.semantic_active_ms_limit or 30 * 60_000
+        ),
+    )
 
 
 def _initialize_re_v24_child(

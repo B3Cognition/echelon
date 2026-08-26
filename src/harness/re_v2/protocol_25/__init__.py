@@ -98,6 +98,7 @@ __all__ = (
     "Protocol25GraphInputsV1",
     "Protocol25AdoptionError",
     "Protocol25ParentCandidateV1",
+    "PreparedProtocol25Creation",
     "RunManifestV4",
     "RunModeV1",
     "ResolutionEntryV1",
@@ -131,10 +132,12 @@ __all__ = (
     "evaluate_semantic_budget",
     "find_exact_protocol_25_child",
     "guidance_id_for",
+    "initialize_protocol_25_child",
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
     "normalize_guidance_answer",
     "plan_next_protocol_25",
+    "prepare_new_audit_epoch",
     "publish_audit_epoch",
     "reconstruct_accepted_audit_results",
     "semantic_response_schema",
@@ -238,7 +241,10 @@ _LAZY_LIFECYCLE_EXPORTS = frozenset(
     {
         "find_exact_protocol_25_child",
         "guidance_id_for",
+        "initialize_protocol_25_child",
         "normalize_guidance_answer",
+        "prepare_new_audit_epoch",
+        "PreparedProtocol25Creation",
         "semantic_request_id_v2",
     }
 )

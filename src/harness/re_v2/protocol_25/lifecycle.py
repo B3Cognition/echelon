@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 from typing import Literal
 import unicodedata
 
@@ -24,6 +27,16 @@ RunModeV1 = Literal[
 _RUN_MODES = frozenset(
     {"new-audit-epoch", "audit-successor", "closure-successor"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedProtocol25Creation:
+    """Immutable schema-4 child authority prepared before workspace mutation."""
+
+    parent: object
+    manifest: object
+    inputs: object
+    graph: object
 
 
 def normalize_guidance_answer(answer: object) -> str:
@@ -237,9 +250,313 @@ def find_exact_protocol_25_child(
     return None
 
 
+def prepare_new_audit_epoch(
+    *,
+    parent: object,
+    selection: SelectionScopeV1,
+    artifact_policy: object,
+    executor_contract: object,
+    semantic_objects: Mapping[str, bytes],
+    created_at: str,
+    token_limit: int,
+    active_ms_limit: int,
+    semantic_token_limit: int,
+    semantic_active_ms_limit: int,
+) -> PreparedProtocol25Creation:
+    """Prepare an L3 child from an already authenticated L1/L2 authority."""
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
+    from harness.re_v2.protocol_24.adoption import (
+        ValidatedParentV1,
+        build_parent_authority_bundle,
+    )
+    from harness.re_v2.protocol_24.model import ParentLineageV1, RunManifestV3
+
+    from .adoption import (
+        ParentSemanticAuthorityV1,
+        Protocol25ParentCandidateV1,
+        build_parent_authority_bundle_v2,
+        validate_protocol_25_parent,
+    )
+    from .graph import Protocol25GraphInputsV1, build_protocol_25_graph
+    from .inputs import Protocol25InputSet
+    from .model import RunManifestV4, SemanticClosurePolicyV1
+    from .policies import (
+        SemanticArtifactPolicyCatalogV1,
+        SemanticExecutorContractCatalogV1,
+    )
+
+    if not isinstance(parent, ValidatedParentV1):
+        raise ValueError("new audit epoch requires authenticated L1/L2 parent")
+    if not isinstance(selection, SelectionScopeV1):
+        raise ValueError("new audit epoch requires SelectionScopeV1")
+    if not isinstance(artifact_policy, SemanticArtifactPolicyCatalogV1):
+        raise ValueError("new audit epoch requires semantic artifact policy")
+    if not isinstance(executor_contract, SemanticExecutorContractCatalogV1):
+        raise ValueError("new audit epoch requires semantic executor contract")
+
+    lower_bundle, lower_objects = build_parent_authority_bundle(parent)
+    parent_layer = "L2" if isinstance(parent.manifest, RunManifestV3) else "L1"
+    candidate = Protocol25ParentCandidateV1(
+        schema_version=1,
+        parent_layer=parent_layer,
+        parent_state="complete",
+        source_snapshot_id=parent.manifest.source_snapshot_id,
+        selection_id=selection.identity,
+        terminal_event_hash=parent.events[-1].event_hash,
+        authentication_state="authenticated",
+        workspace_state="clean_exact_commits",
+        lineage_state="acyclic",
+        lower_authority_bundle=lower_bundle,
+        semantic_authority=ParentSemanticAuthorityV1.empty(),
+    )
+    validated_parent = validate_protocol_25_parent(
+        candidate,
+        mode="new-audit-epoch",
+        expected_source_snapshot_id=parent.manifest.source_snapshot_id,
+        expected_selection_id=selection.identity,
+    )
+    bundle = build_parent_authority_bundle_v2(validated_parent)
+    parent_manifest_hash = content_digest(parent.manifest_bytes)
+    if isinstance(parent.manifest, RunManifestV3):
+        lineage_root_run_id = parent.manifest.parent_lineage.lineage_root_run_id
+        lineage_root_manifest_hash = (
+            parent.manifest.parent_lineage.lineage_root_manifest_hash
+        )
+    else:
+        lineage_root_run_id = parent.manifest.run_id
+        lineage_root_manifest_hash = parent_manifest_hash
+    lineage = ParentLineageV1(
+        schema_version=1,
+        direct_parent_run_id=parent.manifest.run_id,
+        direct_parent_manifest_hash=parent_manifest_hash,
+        direct_parent_terminal_event_hash=parent.events[-1].event_hash,
+        lineage_root_run_id=lineage_root_run_id,
+        lineage_root_manifest_hash=lineage_root_manifest_hash,
+    )
+    semantic_id = semantic_request_id_v2(
+        lineage_root_run_id=lineage.lineage_root_run_id,
+        lineage_root_manifest_hash=lineage.lineage_root_manifest_hash,
+        direct_parent_run_id=lineage.direct_parent_run_id,
+        direct_parent_manifest_hash=lineage.direct_parent_manifest_hash,
+        direct_parent_terminal_event_hash=lineage.direct_parent_terminal_event_hash,
+        source_snapshot_id=parent.manifest.source_snapshot_id,
+        partition_manifest_id=parent.manifest.partition_manifest_id,
+        selection=selection,
+        run_mode="new-audit-epoch",
+        artifact_policy_hash=artifact_policy.identity,
+        executor_contract_hash=executor_contract.identity,
+        audit_policy_hash=artifact_policy.audit_taxonomy.identity,
+        accepted_audit_target_ids=(),
+        frozen_audit_epoch_id=None,
+        closure_root_hash=None,
+        guidance_hash=None,
+    )
+    manifest = RunManifestV4(
+        schema_version=4,
+        engine="re-v2",
+        engine_protocol_version="2.5",
+        run_id="re-pending-semantic-audit",
+        created_at=created_at,
+        source_snapshot_id=parent.manifest.source_snapshot_id,
+        source_snapshot_kind="workspace-git-composite",
+        partition_manifest_id=parent.manifest.partition_manifest_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            parent.inputs.workspace_partition.identity,
+            "workspace-partition.json",
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            artifact_policy.identity,
+            "artifact-policy.json",
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            executor_contract.identity,
+            "executor-contract.json",
+        ),
+        audit_policy_catalog=CatalogReferenceV1(
+            artifact_policy.audit_taxonomy.identity,
+            "audit-policy.json",
+        ),
+        parent_authority_bundle=CatalogReferenceV1(
+            bundle.identity,
+            "parent-authority-v2.json",
+        ),
+        parent_lineage=lineage,
+        requested_goals=("semantic-audit-closure",),
+        target_layer="L3",
+        selection=selection,
+        run_mode="new-audit-epoch",
+        frozen_audit_epoch=None,
+        human_guidance=None,
+        semantic_request_id=semantic_id,
+        initial_budget_policy=BudgetPolicyV2(
+            token_limit=token_limit,
+            active_ms_limit=active_ms_limit,
+            provider_attempt_limit=2,
+            artifact_generation_attempt_limit=2,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=1,
+            shared_retry_limit=1,
+            artifact_contract_retry_limit=1,
+        ),
+        semantic_closure_policy=SemanticClosurePolicyV1(
+            schema_version=1,
+            token_limit=semantic_token_limit,
+            active_ms_limit=semantic_active_ms_limit,
+            max_rounds_per_target=3,
+            consecutive_no_reduction_limit=2,
+            provider_attempt_limit=2,
+            contract_retry_limit=1,
+            unknown_usage_policy="shared-conservative-reservation-v1",
+        ),
+    )
+    immutable_objects = MappingProxyType(
+        dict(
+            sorted(
+                {
+                    **dict(parent.inputs.immutable_objects),
+                    **dict(lower_objects),
+                    **dict(semantic_objects),
+                }.items()
+            )
+        )
+    )
+    inputs = Protocol25InputSet(
+        workspace_partition=parent.inputs.workspace_partition,
+        artifact_policy=artifact_policy,
+        executor_contract=executor_contract,
+        audit_policy=artifact_policy.audit_taxonomy,
+        parent_authority_bundle=bundle,
+        immutable_objects=immutable_objects,
+        frozen_audit_epoch=None,
+        human_guidance=None,
+    )
+    graph_inputs = Protocol25GraphInputsV1(
+        workspace_partition=inputs.workspace_partition,
+        artifact_policy=inputs.artifact_policy,
+        executor_contract=inputs.executor_contract,
+        audit_policy=inputs.audit_policy,
+        immutable_objects=inputs.immutable_objects,
+    )
+    graph = build_protocol_25_graph(manifest, graph_inputs, parent.accepted_parent)
+    canonical_json_bytes(manifest.to_json_dict())
+    return PreparedProtocol25Creation(validated_parent, manifest, inputs, graph)
+
+
+def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
+    """Idempotently import lower-layer authority into a published schema-4 run."""
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_24.adoption import (
+        ValidatedParentV1,
+        build_parent_authority_bundle,
+        import_parent_acceptance_closure,
+    )
+    from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    from .events import PROTOCOL_25_EVENTS
+    from .inputs import load_protocol_25_inputs
+    from .ledger import Protocol25Ledger
+    from .model import RunManifestV4
+
+    if not isinstance(parent, ValidatedParentV1):
+        raise ValueError("schema-4 initialization requires authenticated parent")
+    manifest = load_run_manifest(run_dir)
+    if not isinstance(manifest, RunManifestV4):
+        raise ValueError("schema-4 initialization requires RunManifestV4")
+    if manifest.run_mode != "new-audit-epoch":
+        raise ValueError("lower-parent initialization requires new-audit-epoch mode")
+    paths = ReV2Paths.for_run(run_dir)
+    inputs = load_protocol_25_inputs(paths, manifest)
+    expected_lower, _objects = build_parent_authority_bundle(parent)
+    if inputs.parent_authority_bundle.lower_authority_bundle != expected_lower:
+        raise ValueError("existing schema-4 child parent authority does not match")
+    if not inputs.parent_authority_bundle.semantic_authority.is_empty:
+        raise ValueError("new lower-layer audit parent must have empty semantic authority")
+
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol25Ledger(paths, objects)
+    events = EventStore(paths, protocol=PROTOCOL_25_EVENTS)
+    import_parent_acceptance_closure(parent, objects, ledger)
+    replayed = events.replay()
+    if not replayed:
+        events.append(
+            "run_created",
+            {"run_manifest_id": manifest.run_manifest_id},
+            occurred_at=manifest.created_at,
+        )
+        replayed = events.replay()
+    elif (
+        replayed[0].type != "run_created"
+        or replayed[0].payload.get("run_manifest_id") != manifest.run_manifest_id
+    ):
+        raise ValueError("existing schema-4 child has invalid creation authority")
+
+    adopted: dict[str, object] = {}
+    for event in replayed:
+        if event.type != "artifact_adopted":
+            continue
+        authority = AdoptedArtifactAuthorityV1.from_json_dict(
+            event.payload["adopted_artifact_authority"]
+        )
+        adopted[authority.artifact_key_id] = event
+    replayed_ledger = ledger.replay()
+    for authority in inputs.parent_authority_bundle.lower_authority_bundle.artifacts:
+        work_item = replayed_ledger.certification_work_items.get(
+            authority.certification_receipt_id
+        )
+        if work_item is None:
+            raise ValueError("imported parent work item is missing")
+        payload = {
+            "adopted_artifact_authority": authority.to_json_dict(),
+            "parent_authority_bundle_hash": inputs.parent_authority_bundle.identity,
+            "work_item_id": work_item.work_item_id,
+        }
+        existing = adopted.get(authority.artifact_key_id)
+        if existing is not None:
+            existing_authority = AdoptedArtifactAuthorityV1.from_json_dict(
+                existing.payload["adopted_artifact_authority"]
+            )
+            if (
+                existing_authority != authority
+                or existing.payload.get("parent_authority_bundle_hash")
+                != inputs.parent_authority_bundle.identity
+                or existing.payload.get("work_item_id") != work_item.work_item_id
+            ):
+                raise ValueError("existing schema-4 adoption conflicts with parent")
+            continue
+        events.append(
+            "artifact_adopted",
+            payload,
+            occurred_at=manifest.created_at,
+        )
+
+    final_events = events.replay()
+    final_ledger = ledger.replay()
+    expected_keys = {
+        authority.artifact_key_id
+        for authority in inputs.parent_authority_bundle.lower_authority_bundle.artifacts
+    }
+    adopted_keys = {
+        AdoptedArtifactAuthorityV1.from_json_dict(
+            event.payload["adopted_artifact_authority"]
+        ).artifact_key_id
+        for event in final_events
+        if event.type == "artifact_adopted"
+    }
+    if adopted_keys != expected_keys or not expected_keys.issubset(
+        final_ledger.accepted_artifacts
+    ):
+        raise ValueError("schema-4 child adoption initialization is incomplete")
+
+
 __all__ = (
     "find_exact_protocol_25_child",
     "guidance_id_for",
+    "initialize_protocol_25_child",
     "normalize_guidance_answer",
+    "prepare_new_audit_epoch",
+    "PreparedProtocol25Creation",
     "semantic_request_id_v2",
 )

@@ -470,6 +470,16 @@ class SemanticExecutorContractCatalogV1:
     def identity(self) -> str:
         return content_digest(self.to_json_dict())
 
+    @property
+    def entries(self) -> tuple[ExecutorContractEntryV1, ...]:
+        """Expose the layered catalog through the shared authority interface."""
+        return tuple(
+            sorted(
+                (*self.inherited_catalog.entries, *self.semantic_entries),
+                key=lambda entry: entry.producer_family,
+            )
+        )
+
     def entry_for(self, producer_family: str) -> ExecutorContractEntryV1:
         for entry in self.semantic_entries:
             if entry.producer_family == producer_family:
