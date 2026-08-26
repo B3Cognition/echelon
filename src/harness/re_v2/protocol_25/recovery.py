@@ -1779,17 +1779,28 @@ def _accept_semantic_roots(
     elif ledger.audit_closure_roots != {closure_root.identity: closure_root}:
         raise Protocol25RecoveryError("existing audit closure root conflicts")
 
-    source_targets = tuple(
+    source_plans = tuple(
         item
         for item in context.semantic_graph.audit_target_plans
         if item.scope.source_id == action.source_id
     )
     source_plan = next(
-        (item for item in source_targets if item.target_kind == "source"),
+        (item for item in source_plans if item.target_kind == "source"),
         None,
     )
     if source_plan is None:
         raise Protocol25RecoveryError("L3 root has no source audit plan")
+    source_targets_list = []
+    for authority in epoch.target_candidate_authorities:
+        candidate = load_canonical_object(
+            context.object_store.read_blob(authority.candidate_hash),
+            AuditCandidateV1.from_json_dict,
+        )
+        if candidate.audit_target.scope.source_id == action.source_id:
+            source_targets_list.append(candidate.audit_target)
+    source_targets = tuple(source_targets_list)
+    if not source_targets:
+        raise Protocol25RecoveryError("L3 root has no frozen source targets")
     root_hashes = _accepted_l2_root_hash_by_source(context, ledger)
     source_root = context.semantic_runtime.build_source_root(
         source_id=action.source_id,
@@ -1801,7 +1812,7 @@ def _accept_semantic_roots(
             )
         ),
         full_source_coverage=not source_plan.not_requested_domain_keys,
-        audit_target_ids=tuple(sorted(item.audit_target_id for item in source_targets)),
+        audit_target_ids=tuple(sorted(item.identity for item in source_targets)),
         closure_roots=(closure_root,),
         adopted_l2_root_hash=root_hashes[action.source_id],
     )
