@@ -12,6 +12,11 @@ from harness.re_v2.protocol_22.execution import (
 )
 from harness.re_v2.protocol_22.model import ArtifactKeyV2
 from harness.re_v2.protocol_22.partition import FileRecordV1
+from harness.re_v2.protocol_24.artifacts import certify_l2_compact_candidate
+from harness.re_v2.protocol_25.findings import (
+    AuditTargetV1,
+    AuditedArtifactAuthorityV1,
+)
 from harness.re_v2.protocol_25.runtime import (
     AuthorizedEvidenceRangeV1,
     Protocol25DeterministicRuntime,
@@ -28,6 +33,7 @@ from tests.re_v2_protocol_25_fixtures import (
     finding_vocabulary_v1,
     l3_artifact_key_v2,
 )
+from tests.unit.test_re_v2_protocol_24_artifacts import _l2_fixture
 
 
 TARGET = audit_target_v1()
@@ -175,6 +181,84 @@ def _certified_audit(*, verdict: str = "REPAIR", findings=None):  # type: ignore
         ),
         context=_context(),
     )
+
+
+def _derived_audit_context_fixture():  # type: ignore[no-untyped-def]
+    (
+        fixture,
+        _l1_item,
+        _l1_context,
+        item,
+        lower_context,
+        candidate,
+        snapshot,
+        verifier,
+    ) = _l2_fixture()
+    certified = certify_l2_compact_candidate(
+        candidate,
+        item,
+        lower_context,
+        snapshot,
+        verifier,
+    )
+    baseline_hash = content_digest(certified.artifact_bytes)
+    context_bytes = canonical_json_bytes(lower_context.to_json_dict())
+    context_hash = content_digest(context_bytes)
+    evidence_hash = content_digest(fixture.evidence_bytes)
+    runtime = Protocol25DeterministicRuntime(
+        verifier_authority_hash=VERIFIER_AUTHORITY,
+        snapshot_reader=snapshot,
+    )
+    target = AuditTargetV1(
+        schema_version=1,
+        target_kind="domain",
+        scope=item.output_key.scope,
+        audited_artifacts=(
+            AuditedArtifactAuthorityV1(
+                schema_version=1,
+                artifact_key_id=item.output_key.identity,
+                artifact_hash=baseline_hash,
+                dependency_hashes=(context_hash,),
+            ),
+        ),
+        lower_dependency_hashes=tuple(
+            sorted((baseline_hash, context_hash, evidence_hash))
+        ),
+        context_object_hashes=(context_hash,),
+        evidence_object_hashes=(evidence_hash,),
+        audit_policy_hash=runtime.artifact_policy.audit_taxonomy.identity,
+        auditor_authority_hash=digest("semantic-auditor"),
+        response_schema_hash=content_digest(
+            semantic_response_schema("semantic-audit-findings")
+        ),
+    )
+    payloads = {
+        baseline_hash: certified.artifact_bytes,
+        context_hash: context_bytes,
+        evidence_hash: fixture.evidence_bytes,
+    }
+    return runtime, target, fixture.inputs.workspace_partition, payloads
+
+
+@pytest.mark.unit
+def test_audit_context_derives_closed_authority_from_accepted_l2_objects() -> None:
+    runtime, target, partition, payloads = _derived_audit_context_fixture()
+
+    context = runtime.build_audit_context(
+        audit_target=target,
+        workspace_partition=partition,
+        authority_payloads=payloads,
+    )
+
+    assert context.mode == "AUDIT_EPOCH_TARGET"
+    assert context.audit_target == target
+    assert context.lower_authority_hashes == tuple(sorted(payloads))
+    assert context.vocabulary.rule_ids == runtime.artifact_policy.audit_taxonomy.rule_ids
+    assert any(item.startswith("surface:") for item in context.vocabulary.subject_refs)
+    assert context.vocabulary.claim_anchor_ids
+    assert tuple(
+        item.aliases[0] for item in context.vocabulary.evidence_anchors
+    ) == tuple(item.aliases[0] for item in context.authorized_evidence)
 
 
 @pytest.mark.unit

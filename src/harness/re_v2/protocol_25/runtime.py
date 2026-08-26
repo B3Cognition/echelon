@@ -14,18 +14,24 @@ from harness.re_v2.protocol_22.baseline import (
     ArtifactAcceptanceReceiptV2,
     CandidateAssessmentReceiptV1,
 )
+from harness.re_v2.protocol_22.artifacts import ContextBundleV1
 from harness.re_v2.protocol_22.execution import CandidateInventoryV1
 from harness.re_v2.protocol_22.evidence import SnapshotReaderV1
 from harness.re_v2.protocol_22.model import ArtifactKeyV2
-from harness.re_v2.protocol_22.partition import FileRecordV1
+from harness.re_v2.protocol_22.partition import (
+    FileRecordV1,
+    WorkspacePartitionCatalogV1,
+)
 from harness.re_v2.protocol_22.schema import (
     Protocol22SchemaError,
     digest_value,
+    load_canonical_object,
     positive_int,
     safe_id,
     safe_relative_path,
     sorted_unique_digests,
 )
+from harness.re_v2.protocol_24.artifacts import L2CompactBaselineArtifactV1
 
 from .artifacts import (
     AuditCandidateV1,
@@ -46,6 +52,7 @@ from .artifacts import (
 from .findings import (
     AuditTargetV1,
     DeferredObservationV1,
+    EvidenceAnchorAuthorityV1,
     FindingAuthorityVocabularyV1,
     SemanticFindingV1,
     normalize_finding_key,
@@ -764,6 +771,179 @@ class Protocol25DeterministicRuntime:
             raise Protocol25RuntimeError("semantic artifact policy is invalid")
         if not callable(getattr(self.snapshot_reader, "read_file", None)):
             raise Protocol25RuntimeError("snapshot reader lacks the shared read_file seam")
+
+    def build_audit_context(
+        self,
+        *,
+        audit_target: AuditTargetV1,
+        workspace_partition: WorkspacePartitionCatalogV1,
+        authority_payloads: Mapping[str, bytes],
+    ) -> SemanticContextV1:
+        """Derive one closed audit vocabulary from accepted L2 authority."""
+        if not isinstance(audit_target, AuditTargetV1):
+            raise Protocol25RuntimeError("audit context target is invalid")
+        if not isinstance(workspace_partition, WorkspacePartitionCatalogV1):
+            raise Protocol25RuntimeError("audit context workspace partition is invalid")
+        expected_hashes = tuple(
+            sorted(
+                {
+                    *(item.artifact_hash for item in audit_target.audited_artifacts),
+                    *audit_target.lower_dependency_hashes,
+                    *audit_target.context_object_hashes,
+                    *audit_target.evidence_object_hashes,
+                }
+            )
+        )
+        if set(authority_payloads) != set(expected_hashes):
+            raise Protocol25RuntimeError(
+                "audit context payloads do not equal the target authority closure"
+            )
+        for object_hash, payload in authority_payloads.items():
+            if not isinstance(payload, bytes) or content_digest(payload) != object_hash:
+                raise Protocol25RuntimeError(
+                    "audit context payload differs from its content address"
+                )
+
+        source = next(
+            (
+                item
+                for item in workspace_partition.sources
+                if item.source_id == audit_target.scope.source_id
+            ),
+            None,
+        )
+        if source is None:
+            raise Protocol25RuntimeError(
+                "audit context source is absent from the workspace partition"
+            )
+        files = {item.source_relative_path: item for item in source.files}
+
+        try:
+            contexts = tuple(
+                load_canonical_object(
+                    authority_payloads[object_hash], ContextBundleV1.from_json_dict
+                )
+                for object_hash in audit_target.context_object_hashes
+            )
+            audited = tuple(
+                (
+                    authority,
+                    load_canonical_object(
+                        authority_payloads[authority.artifact_hash],
+                        L2CompactBaselineArtifactV1.from_json_dict,
+                    ),
+                )
+                for authority in audit_target.audited_artifacts
+            )
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(
+                "audit context lower authority is not a closed L2 object"
+            ) from exc
+
+        for authority, artifact in audited:
+            if (
+                artifact.artifact.scope != audit_target.scope
+                or artifact.artifact.context_bundle_hash
+                not in audit_target.context_object_hashes
+                or artifact.artifact.dependency_hashes
+                != authority.dependency_hashes
+            ):
+                raise Protocol25RuntimeError(
+                    "audited L2 artifact does not match its target authority"
+                )
+        for context in contexts:
+            if (
+                context.scope != audit_target.scope
+                or context.evidence_pack_hash not in audit_target.evidence_object_hashes
+            ):
+                raise Protocol25RuntimeError(
+                    "L2 context bundle does not match its audit target"
+                )
+
+        subject_refs = {f"source:{audit_target.scope.source_id}"}
+        if audit_target.scope.domain_key is not None:
+            subject_refs.add(
+                f"domain:{audit_target.scope.domain_key.removeprefix('sha256:')}"
+            )
+        claim_anchor_ids: set[str] = set()
+        for authority, artifact in sorted(
+            audited, key=lambda item: item[0].artifact_hash
+        ):
+            artifact_id = authority.artifact_hash.removeprefix("sha256:")
+            for surface_name, surface in artifact.surfaces.items():
+                subject_refs.add(f"surface:{artifact_id}:{surface_name}")
+                for index, _claim in enumerate(surface.items):
+                    claim_id = f"claim:{artifact_id}:{surface_name}:{index}"
+                    subject_refs.add(claim_id)
+                    claim_anchor_ids.add(claim_id)
+
+        excerpts = {}
+        for context in contexts:
+            for excerpt in context.evidence:
+                existing = excerpts.get(excerpt.evidence_authority_id)
+                if existing is not None and existing != excerpt:
+                    raise Protocol25RuntimeError(
+                        "audit context evidence authority is ambiguous"
+                    )
+                excerpts[excerpt.evidence_authority_id] = excerpt
+
+        authorized_evidence = []
+        evidence_anchors = []
+        for evidence_id, excerpt in sorted(excerpts.items()):
+            record = files.get(excerpt.source_relative_path)
+            if record is None:
+                raise Protocol25RuntimeError(
+                    "audit context evidence is absent from the workspace partition"
+                )
+            canonical_anchor = f"evidence:{evidence_id.removeprefix('sha256:')}"
+            aliases = (evidence_id,)
+            authorized_evidence.append(
+                AuthorizedEvidenceRangeV1(
+                    schema_version=1,
+                    canonical_anchor_id=canonical_anchor,
+                    aliases=aliases,
+                    source_id=audit_target.scope.source_id,
+                    source_relative_path=excerpt.source_relative_path,
+                    start_line=excerpt.start_line,
+                    end_line=excerpt.end_line,
+                    source_blob_hash=excerpt.source_blob_hash,
+                    file_record=record,
+                )
+            )
+            evidence_anchors.append(
+                EvidenceAnchorAuthorityV1(
+                    schema_version=1,
+                    anchor_id=canonical_anchor,
+                    aliases=aliases,
+                )
+            )
+        vocabulary = FindingAuthorityVocabularyV1(
+            schema_version=1,
+            audit_target_id=audit_target.identity,
+            rule_ids=self.artifact_policy.audit_taxonomy.rule_ids,
+            subject_refs=tuple(sorted(subject_refs)),
+            claim_anchor_ids=tuple(sorted(claim_anchor_ids)),
+            evidence_anchors=tuple(
+                sorted(evidence_anchors, key=lambda item: item.anchor_id)
+            ),
+        )
+        return self.build_context(
+            mode="AUDIT_EPOCH_TARGET",
+            audit_target=audit_target,
+            vocabulary=vocabulary,
+            authorized_evidence=tuple(
+                sorted(
+                    authorized_evidence,
+                    key=lambda item: item.canonical_anchor_id,
+                )
+            ),
+            authority_payloads=authority_payloads,
+            lower_authority_hashes=expected_hashes,
+            unresolved_findings=(),
+            overlay_hashes=(),
+            target_assessment_hashes=(),
+            active_sibling_authority_hashes=(),
+        )
 
     def build_context(
         self,
