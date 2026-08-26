@@ -18,11 +18,14 @@ from harness.re_v2.protocol_22.controller import (
     Protocol22ControllerError,
     _fault,
 )
+from harness.re_v2.protocol_22.budget import evaluate_budget_v22
 from harness.re_v2.protocol_22.execution import Committed
+from harness.re_v2.protocol_22.ledger import WorkItemFailureReceiptV1
 from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.re_v2.protocol_24.controller import Protocol24Controller
+from harness.re_v2.run_store import load_run_manifest
 
 from .artifacts import (
     AuditCandidateV1,
@@ -30,7 +33,7 @@ from .artifacts import (
     SourceCompositionAssessmentV1,
     TargetClosureAssessmentV1,
 )
-from .events import Protocol25ReplayState
+from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
 from .runtime import (
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
@@ -948,6 +951,57 @@ class Protocol25Controller(Protocol24Controller):
             occurred_at=self.context.clock(),
         )
         _fault(self.fault_hook, f"{event_type}:{artifact.identity}")
+
+    def _retry_or_fail_work_item(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+        *,
+        candidate_id: str | None,
+        candidate_assessment_id: str | None,
+        failure_class: Literal[
+            "result_contract", "artifact_contract", "minimum_utility"
+        ],
+        reason_code: str,
+        diagnostics: tuple[str, ...],
+    ) -> None:
+        """Account a semantic retry against the protocol-2.5 event vocabulary."""
+        events = self.context.event_store.replay()
+        manifest = load_run_manifest(self.context.paths.root.parent)
+        budget = evaluate_budget_v22(
+            manifest.initial_budget_policy,
+            events,
+            (),
+            self.context.clock(),
+            event_protocol=PROTOCOL_25_EVENTS,
+        )
+        if budget.item_attempt_available(item):
+            return
+        receipt = WorkItemFailureReceiptV1(
+            schema_version=1,
+            work_item_id=item.work_item_id,
+            dispatch_id=committed.dispatch_id,
+            candidate_id=candidate_id,
+            candidate_assessment_id=candidate_assessment_id,
+            execution_capture_hash=committed.closure.capture.identity,
+            dispatch_abandonment_event_hash=None,
+            failure_class=failure_class,
+            reason_code=reason_code,
+            normalized_diagnostics=diagnostics,
+        )
+        self.context.ledger.record_work_item_failure(receipt)
+        _fault(self.fault_hook, f"work_item_failure_receipt:{receipt.identity}")
+        self.context.event_store.append(
+            "work_item_failed",
+            {
+                "failure_class": receipt.failure_class,
+                "failure_receipt_id": receipt.identity,
+                "reason_code": receipt.reason_code,
+                "work_item_id": receipt.work_item_id,
+            },
+            occurred_at=self.context.clock(),
+        )
+        _fault(self.fault_hook, f"work_item_failed:{receipt.identity}")
 
     def run_until_stopped(self) -> Protocol25ControllerResult:
         backend = self.context
