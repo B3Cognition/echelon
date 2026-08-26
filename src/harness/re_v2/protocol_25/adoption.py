@@ -133,10 +133,15 @@ class ParentSemanticAuthorityV1:
                 raise Protocol25AdoptionError(
                     "parent semantic closure authority requires an audit epoch"
                 )
-        elif self.closure_root_hash is None or not self.l3_source_root_hashes:
-            raise Protocol25AdoptionError(
-                "parent semantic audit epoch requires closure and L3 root authority"
-            )
+        else:
+            if self.unresolved_audit_target_ids:
+                raise Protocol25AdoptionError(
+                    "parent semantic audit epoch cannot retain an unresolved audit target"
+                )
+            if self.closure_root_hash is None or not self.l3_source_root_hashes:
+                raise Protocol25AdoptionError(
+                    "parent semantic audit epoch requires closure and L3 root authority"
+                )
         if self.unresolved_audit_target_ids and not self.accepted_audit_candidate_hashes:
             raise Protocol25AdoptionError(
                 "parent semantic incomplete audit requires retained candidate authority"

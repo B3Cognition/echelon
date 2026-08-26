@@ -296,6 +296,11 @@ def test_semantic_authority_rejects_partial_or_incoherent_closure() -> None:
         )
     with pytest.raises(module.Protocol25AdoptionError, match="epoch"):
         replace(_semantic(epoch=True), audit_epoch_id=None)
+    with pytest.raises(module.Protocol25AdoptionError, match="unresolved audit target"):
+        replace(
+            _semantic(epoch=True),
+            unresolved_audit_target_ids=(digest("late-target"),),
+        )
 
 
 def test_protocol_package_exports_adoption_contract() -> None:
