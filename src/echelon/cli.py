@@ -14712,6 +14712,11 @@ def _run_re_v24_deepen(
     return run_dir
 
 
+def _run_or_report_re_v25_child(workspace: Path, run_dir: Path) -> None:
+    """Resume an interrupted exact child or print its existing terminal banner."""
+    _run_re_v2_live(_re_v2_context(workspace, run_dir))
+
+
 def _run_re_v25_deepen(
     workspace_root: Path,
     options: _ReDeepenOptions,
@@ -14764,8 +14769,7 @@ def _run_re_v25_deepen(
             run_dir = existing
             initialize_protocol_25_child(run_dir, parent)
         _activate_re_v2_run(workspace, run_dir.name)
-    if created:
-        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    _run_or_report_re_v25_child(workspace, run_dir)
     return run_dir
 
 
@@ -14844,8 +14848,7 @@ def _run_re_v25_next_epoch(
             run_dir = existing
             initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
-    if created:
-        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    _run_or_report_re_v25_child(workspace, run_dir)
     return run_dir
 
 
@@ -14913,8 +14916,7 @@ def _run_re_v25_resume(
             run_dir = existing
             initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
-    if created:
-        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    _run_or_report_re_v25_child(workspace, run_dir)
     return run_dir
 
 

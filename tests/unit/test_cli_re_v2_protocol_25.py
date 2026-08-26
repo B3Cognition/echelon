@@ -156,6 +156,23 @@ def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
 
 
 @pytest.mark.unit
+def test_reused_protocol_25_child_is_run_to_a_visible_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli
+
+    context = object()
+    calls: list[object] = []
+    monkeypatch.setattr(cli, "_re_v2_context", lambda _workspace, _run: context)
+    monkeypatch.setattr(cli, "_run_re_v2_live", calls.append)
+
+    cli._run_or_report_re_v25_child(tmp_path, tmp_path / "runs" / "re-existing")
+
+    assert calls == [context]
+
+
+@pytest.mark.unit
 def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     tmp_path: Path,
 ) -> None:
