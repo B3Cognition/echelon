@@ -77,6 +77,12 @@ __all__ = (
     "PROTOCOL_25_EVENTS",
     "Protocol25InputSet",
     "Protocol25InputStoreError",
+    "Protocol25Controller",
+    "Protocol25ControllerActionV1",
+    "Protocol25ControllerBackend",
+    "Protocol25ControllerError",
+    "Protocol25ControllerResult",
+    "Protocol25ControllerStateV1",
     "Protocol25Ledger",
     "Protocol25LedgerProtocol",
     "Protocol25LedgerView",
@@ -110,6 +116,8 @@ __all__ = (
     "SourceCompositionAssessmentV1",
     "TargetClosureAssessmentV1",
     "TargetProgressReplayV1",
+    "SemanticSourceCycleStateV1",
+    "SemanticTargetControllerStateV1",
     "build_finding_closure_receipt",
     "build_parent_authority_bundle_v2",
     "build_protocol_25_graph",
@@ -120,6 +128,7 @@ __all__ = (
     "evaluate_semantic_budget",
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
+    "plan_next_protocol_25",
     "semantic_response_schema",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
@@ -192,6 +201,19 @@ _LAZY_RUNTIME_EXPORTS = frozenset(
         "semantic_response_schema",
     }
 )
+_LAZY_CONTROLLER_EXPORTS = frozenset(
+    {
+        "Protocol25Controller",
+        "Protocol25ControllerActionV1",
+        "Protocol25ControllerBackend",
+        "Protocol25ControllerError",
+        "Protocol25ControllerResult",
+        "Protocol25ControllerStateV1",
+        "SemanticSourceCycleStateV1",
+        "SemanticTargetControllerStateV1",
+        "plan_next_protocol_25",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -209,6 +231,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import budget as module
     elif name in _LAZY_RUNTIME_EXPORTS:
         from . import runtime as module
+    elif name in _LAZY_CONTROLLER_EXPORTS:
+        from . import controller as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)
