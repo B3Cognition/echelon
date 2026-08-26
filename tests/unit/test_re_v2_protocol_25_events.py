@@ -13,7 +13,7 @@ from tests.re_v2_protocol_22_fixtures import digest
 NOW = "2026-08-26T12:00:00Z"
 TARGET_A = digest("target:a")
 TARGET_B = digest("target:b")
-SOURCE = digest("source")
+SOURCE = "api"
 EPOCH = digest("epoch")
 
 

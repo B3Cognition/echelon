@@ -117,7 +117,7 @@ _TARGET_OPERATION_FIELDS = {
     "dispatch_id": _safe_id,
     "semantic_round": _positive,
     "source_cycle_id": _safe_id,
-    "source_id": _digest,
+    "source_id": _safe_id,
     "work_item_id": _digest,
 }
 _PAYLOAD_SCHEMAS = {
@@ -135,7 +135,7 @@ _PAYLOAD_SCHEMAS = {
         "resolution_overlay_id": _digest,
         "semantic_round": _positive,
         "source_cycle_id": _safe_id,
-        "source_id": _digest,
+        "source_id": _safe_id,
         "work_item_id": _digest,
     },
     "closure_recheck_started": _TARGET_OPERATION_FIELDS,
@@ -143,7 +143,7 @@ _PAYLOAD_SCHEMAS = {
         "audit_target_id": _digest,
         "semantic_round": _positive,
         "source_cycle_id": _safe_id,
-        "source_id": _digest,
+        "source_id": _safe_id,
         "target_closure_assessment_id": _digest,
         "work_item_id": _digest,
     },
@@ -152,7 +152,7 @@ _PAYLOAD_SCHEMAS = {
         "participating_target_ids": _digest_array,
         "semantic_round": _positive,
         "source_cycle_id": _safe_id,
-        "source_id": _digest,
+        "source_id": _safe_id,
         "work_item_id": _digest,
     },
     "source_composition_assessed": {
@@ -161,7 +161,7 @@ _PAYLOAD_SCHEMAS = {
         "semantic_round": _positive,
         "source_composition_assessment_id": _digest,
         "source_cycle_id": _safe_id,
-        "source_id": _digest,
+        "source_id": _safe_id,
         "work_item_id": _digest,
     },
     "finding_closure_recorded": {
@@ -194,7 +194,7 @@ _PAYLOAD_SCHEMAS = {
     "l3_source_root_accepted": {
         "l3_source_root_id": _digest,
         "scope_state": _choice("complete", "next_epoch_required"),
-        "source_id": _digest,
+        "source_id": _safe_id,
     },
     "semantic_budget_authorized": {
         "authorized_by": _safe_id,
