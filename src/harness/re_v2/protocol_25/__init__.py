@@ -138,6 +138,7 @@ __all__ = (
     "normalize_guidance_answer",
     "plan_next_protocol_25",
     "prepare_new_audit_epoch",
+    "prepare_guided_successor",
     "publish_audit_epoch",
     "reconstruct_accepted_audit_results",
     "semantic_response_schema",
@@ -244,6 +245,7 @@ _LAZY_LIFECYCLE_EXPORTS = frozenset(
         "initialize_protocol_25_child",
         "normalize_guidance_answer",
         "prepare_new_audit_epoch",
+        "prepare_guided_successor",
         "PreparedProtocol25Creation",
         "semantic_request_id_v2",
     }

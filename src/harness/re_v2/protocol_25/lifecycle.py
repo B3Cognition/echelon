@@ -71,6 +71,32 @@ def guidance_id_for(
     answer: str,
 ) -> str:
     """Hash guidance with the exact blocked authority it is allowed to affect."""
+    return content_digest(
+        _guidance_payload(
+            parent_manifest_hash=parent_manifest_hash,
+            parent_terminal_event_hash=parent_terminal_event_hash,
+            accepted_audit_candidate_hashes=accepted_audit_candidate_hashes,
+            unresolved_audit_target_ids=unresolved_audit_target_ids,
+            audit_epoch_id=audit_epoch_id,
+            closure_root_hash=closure_root_hash,
+            unresolved_finding_ids=unresolved_finding_ids,
+            answer=answer,
+        )
+    )
+
+
+def _guidance_payload(
+    *,
+    parent_manifest_hash: str,
+    parent_terminal_event_hash: str,
+    accepted_audit_candidate_hashes: tuple[str, ...],
+    unresolved_audit_target_ids: tuple[str, ...],
+    audit_epoch_id: str | None,
+    closure_root_hash: str | None,
+    unresolved_finding_ids: tuple[str, ...],
+    answer: str,
+) -> dict[str, object]:
+    """Return the canonical guidance authority before byte publication."""
     try:
         digest_value(parent_manifest_hash, "guidance parent manifest")
         digest_value(parent_terminal_event_hash, "guidance parent terminal event")
@@ -107,7 +133,7 @@ def guidance_id_for(
         raise ValueError(
             "closure guidance requires epoch, closure root, and unresolved findings"
         )
-    payload = {
+    return {
         "accepted_audit_candidate_hashes": list(candidates),
         "answer": normalize_guidance_answer(answer),
         "audit_epoch_id": audit_epoch_id,
@@ -118,7 +144,6 @@ def guidance_id_for(
         "unresolved_audit_target_ids": list(targets),
         "unresolved_finding_ids": list(findings),
     }
-    return content_digest(payload)
 
 
 def semantic_request_id_v2(
@@ -443,6 +468,198 @@ def prepare_new_audit_epoch(
     return PreparedProtocol25Creation(validated_parent, manifest, inputs, graph)
 
 
+def prepare_guided_successor(
+    *,
+    parent: object,
+    parent_manifest: object,
+    parent_inputs: object,
+    accepted_parent: Mapping[str, object],
+    parent_objects: Mapping[str, bytes],
+    answer: str,
+    created_at: str,
+    token_limit: int,
+    active_ms_limit: int,
+    semantic_token_limit: int,
+    semantic_active_ms_limit: int,
+) -> PreparedProtocol25Creation:
+    """Prepare one immutable guided child from authenticated schema-4 authority."""
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
+    from harness.re_v2.protocol_24.model import ParentLineageV1
+
+    from .adoption import (
+        ValidatedProtocol25ParentV1,
+        build_parent_authority_bundle_v2,
+    )
+    from .artifacts import AuditEpochV1
+    from .graph import Protocol25GraphInputsV1, build_protocol_25_graph
+    from .inputs import Protocol25InputSet, ValidatedProtocol25Inputs
+    from .model import RunManifestV4, SemanticClosurePolicyV1
+
+    if not isinstance(parent, ValidatedProtocol25ParentV1):
+        raise ValueError("guided successor requires authenticated schema-4 parent")
+    if parent.mode not in {"audit-successor", "closure-successor"}:
+        raise ValueError("guided successor parent mode is invalid")
+    if not isinstance(parent_manifest, RunManifestV4):
+        raise ValueError("guided successor requires RunManifestV4 parent")
+    if not isinstance(parent_inputs, ValidatedProtocol25Inputs):
+        raise ValueError("guided successor requires authenticated parent inputs")
+    candidate = parent.candidate
+    lower = candidate.lower_authority_bundle
+    parent_manifest_hash = content_digest(
+        canonical_json_bytes(parent_manifest.to_json_dict())
+    )
+    if (
+        lower.direct_parent_run_id != parent_manifest.run_id
+        or lower.source_manifest_hash != parent_manifest_hash
+        or candidate.source_snapshot_id != parent_manifest.source_snapshot_id
+        or candidate.selection_id != parent_manifest.selection.identity
+    ):
+        raise ValueError("guided successor direct-parent authority is inconsistent")
+
+    semantic = candidate.semantic_authority
+    guidance_payload = _guidance_payload(
+        parent_manifest_hash=parent_manifest_hash,
+        parent_terminal_event_hash=lower.source_terminal_event_hash,
+        accepted_audit_candidate_hashes=semantic.accepted_audit_candidate_hashes,
+        unresolved_audit_target_ids=semantic.unresolved_audit_target_ids,
+        audit_epoch_id=semantic.audit_epoch_id,
+        closure_root_hash=semantic.closure_root_hash,
+        unresolved_finding_ids=semantic.unresolved_finding_ids,
+        answer=answer,
+    )
+    guidance_bytes = canonical_json_bytes(guidance_payload)
+    guidance_hash = content_digest(guidance_bytes)
+    bundle = build_parent_authority_bundle_v2(parent)
+    lineage = ParentLineageV1(
+        schema_version=1,
+        direct_parent_run_id=parent_manifest.run_id,
+        direct_parent_manifest_hash=parent_manifest_hash,
+        direct_parent_terminal_event_hash=lower.source_terminal_event_hash,
+        lineage_root_run_id=parent_manifest.parent_lineage.lineage_root_run_id,
+        lineage_root_manifest_hash=(
+            parent_manifest.parent_lineage.lineage_root_manifest_hash
+        ),
+    )
+    frozen_epoch = None
+    if parent.mode == "closure-successor":
+        assert semantic.audit_epoch_id is not None
+        try:
+            epoch_bytes = parent_objects[semantic.audit_epoch_id]
+        except KeyError as exc:
+            raise ValueError("guided successor frozen epoch object is unavailable") from exc
+        from harness.re_v2.protocol_22.schema import load_canonical_object
+
+        frozen_epoch = load_canonical_object(
+            epoch_bytes,
+            AuditEpochV1.from_json_dict,
+        )
+        if frozen_epoch.identity != semantic.audit_epoch_id:
+            raise ValueError("guided successor frozen epoch authority is inconsistent")
+
+    semantic_id = semantic_request_id_v2(
+        lineage_root_run_id=lineage.lineage_root_run_id,
+        lineage_root_manifest_hash=lineage.lineage_root_manifest_hash,
+        direct_parent_run_id=lineage.direct_parent_run_id,
+        direct_parent_manifest_hash=lineage.direct_parent_manifest_hash,
+        direct_parent_terminal_event_hash=lineage.direct_parent_terminal_event_hash,
+        source_snapshot_id=parent_manifest.source_snapshot_id,
+        partition_manifest_id=parent_manifest.partition_manifest_id,
+        selection=parent_manifest.selection,
+        run_mode=parent.mode,  # type: ignore[arg-type]
+        artifact_policy_hash=parent_inputs.artifact_policy.identity,
+        executor_contract_hash=parent_inputs.executor_contract.identity,
+        audit_policy_hash=parent_inputs.audit_policy.identity,
+        accepted_audit_target_ids=semantic.accepted_audit_target_ids,
+        frozen_audit_epoch_id=semantic.audit_epoch_id,
+        closure_root_hash=semantic.closure_root_hash,
+        guidance_hash=guidance_hash,
+    )
+    manifest = RunManifestV4(
+        schema_version=4,
+        engine="re-v2",
+        engine_protocol_version="2.5",
+        run_id="re-pending-semantic-successor",
+        created_at=created_at,
+        source_snapshot_id=parent_manifest.source_snapshot_id,
+        source_snapshot_kind="workspace-git-composite",
+        partition_manifest_id=parent_manifest.partition_manifest_id,
+        workspace_partition_catalog=CatalogReferenceV1(
+            parent_inputs.workspace_partition.identity,
+            "workspace-partition.json",
+        ),
+        artifact_policy_catalog=CatalogReferenceV1(
+            parent_inputs.artifact_policy.identity,
+            "artifact-policy.json",
+        ),
+        executor_contract_catalog=CatalogReferenceV1(
+            parent_inputs.executor_contract.identity,
+            "executor-contract.json",
+        ),
+        audit_policy_catalog=CatalogReferenceV1(
+            parent_inputs.audit_policy.identity,
+            "audit-policy.json",
+        ),
+        parent_authority_bundle=CatalogReferenceV1(
+            bundle.identity,
+            "parent-authority-v2.json",
+        ),
+        parent_lineage=lineage,
+        requested_goals=("semantic-audit-closure",),
+        target_layer="L3",
+        selection=parent_manifest.selection,
+        run_mode=parent.mode,  # type: ignore[arg-type]
+        frozen_audit_epoch=(
+            None
+            if frozen_epoch is None
+            else CatalogReferenceV1(frozen_epoch.identity, "audit-epoch.json")
+        ),
+        human_guidance=CatalogReferenceV1(guidance_hash, "human-guidance.json"),
+        semantic_request_id=semantic_id,
+        initial_budget_policy=BudgetPolicyV2(
+            token_limit=token_limit,
+            active_ms_limit=active_ms_limit,
+            provider_attempt_limit=2,
+            artifact_generation_attempt_limit=2,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=1,
+            shared_retry_limit=1,
+            artifact_contract_retry_limit=1,
+        ),
+        semantic_closure_policy=SemanticClosurePolicyV1(
+            schema_version=1,
+            token_limit=semantic_token_limit,
+            active_ms_limit=semantic_active_ms_limit,
+            max_rounds_per_target=3,
+            consecutive_no_reduction_limit=2,
+            provider_attempt_limit=2,
+            contract_retry_limit=1,
+            unknown_usage_policy="shared-conservative-reservation-v1",
+        ),
+    )
+    immutable_objects = MappingProxyType(dict(sorted(parent_objects.items())))
+    inputs = Protocol25InputSet(
+        workspace_partition=parent_inputs.workspace_partition,
+        artifact_policy=parent_inputs.artifact_policy,
+        executor_contract=parent_inputs.executor_contract,
+        audit_policy=parent_inputs.audit_policy,
+        parent_authority_bundle=bundle,
+        immutable_objects=immutable_objects,
+        frozen_audit_epoch=frozen_epoch,
+        human_guidance=guidance_bytes,
+    )
+    graph_inputs = Protocol25GraphInputsV1(
+        workspace_partition=inputs.workspace_partition,
+        artifact_policy=inputs.artifact_policy,
+        executor_contract=inputs.executor_contract,
+        audit_policy=inputs.audit_policy,
+        immutable_objects=inputs.immutable_objects,
+    )
+    graph = build_protocol_25_graph(manifest, graph_inputs, accepted_parent)
+    canonical_json_bytes(manifest.to_json_dict())
+    return PreparedProtocol25Creation(parent, manifest, inputs, graph)
+
+
 def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
     """Idempotently import lower-layer authority into a published schema-4 run."""
     from harness.re_v2.events import EventStore
@@ -556,6 +773,7 @@ __all__ = (
     "guidance_id_for",
     "initialize_protocol_25_child",
     "normalize_guidance_answer",
+    "prepare_guided_successor",
     "prepare_new_audit_epoch",
     "PreparedProtocol25Creation",
     "semantic_request_id_v2",
