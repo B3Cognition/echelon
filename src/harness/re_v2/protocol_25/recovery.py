@@ -74,6 +74,39 @@ class Protocol25RunContext(Protocol22RunContext):
             )
         if not isinstance(self.semantic_runtime, Protocol25DeterministicRuntime):
             raise Protocol25RecoveryError("semantic runtime is invalid")
+        inherited_dependencies = self.dependencies_for
+        if not getattr(inherited_dependencies, "_protocol_25_specialized", False):
+            def semantic_dependencies(
+                item: WorkItemV2,
+                attempt_kind: str,
+            ) -> object:
+                if item.output_key.layer != "L3":
+                    return inherited_dependencies(item, attempt_kind)
+                if item.output_key.artifact_kind != "semantic-audit-findings":
+                    raise Protocol25RecoveryError(
+                        "semantic dependency specialization is not implemented "
+                        f"for {item.output_key.artifact_kind!r}"
+                    )
+                if len(item.output_key.dependency_hashes) != 1:
+                    raise Protocol25RecoveryError(
+                        "semantic audit item has no unique target dependency"
+                    )
+                authorized_item, semantic_context = build_audit_dispatch_authority(
+                    self,
+                    item.output_key.dependency_hashes[0],
+                )
+                if authorized_item != item:
+                    raise Protocol25RecoveryError(
+                        "semantic audit item differs from reconstructed authority"
+                    )
+                return build_semantic_provider_dependencies(
+                    self,
+                    item,
+                    semantic_context,
+                )
+
+            setattr(semantic_dependencies, "_protocol_25_specialized", True)
+            object.__setattr__(self, "dependencies_for", semantic_dependencies)
 
     def recover_controller_state(self) -> Protocol25ControllerStateV1:
         return recover_protocol_25_run(self).controller_state
@@ -474,6 +507,55 @@ def build_audit_dispatch_authority(
     context_bytes = canonical_json_bytes(semantic_context.to_json_dict())
     context.object_store.put_blob(context_bytes)
     return item, semantic_context
+
+
+def build_semantic_provider_dependencies(
+    context: Protocol25RunContext,
+    item: WorkItemV2,
+    semantic_context: SemanticContextV1,
+) -> ProviderExecutionDependenciesV1:
+    """Bind semantic authority to the inherited Prosaic provider contract."""
+    if not isinstance(context, Protocol25RunContext):
+        raise Protocol25RecoveryError(
+            "semantic provider dependencies require Protocol25RunContext"
+        )
+    if not isinstance(item, WorkItemV2) or item.output_key.layer != "L3":
+        raise Protocol25RecoveryError(
+            "semantic provider dependencies require an L3 work item"
+        )
+    if not isinstance(semantic_context, SemanticContextV1):
+        raise Protocol25RecoveryError("semantic provider context is invalid")
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    renderer = executor.request_renderer
+    if (
+        executor.execution_mode != "cli"
+        or renderer is None
+        or len(renderer.response_schemas) != 1
+        or renderer.response_schemas[0].artifact_kind
+        != item.output_key.artifact_kind
+    ):
+        raise Protocol25RecoveryError(
+            "semantic executor does not expose the shared Prosaic CLI contract"
+        )
+    try:
+        agent_bytes = context.object_store.read_blob(renderer.agent_contract_hash)
+        response_schema_bytes = context.object_store.read_blob(
+            renderer.response_schemas[0].schema_hash
+        )
+    except ReV2LedgerError as exc:
+        raise Protocol25RecoveryError(
+            "semantic Prosaic agent or response schema is unavailable"
+        ) from exc
+    return ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=agent_bytes,
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=response_schema_bytes,
+        tokenizer=None,
+    )
 
 
 def _shared_action_recovery(

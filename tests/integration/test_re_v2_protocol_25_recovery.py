@@ -608,6 +608,11 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
     )
     monkeypatch.setattr(
         recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
         "_shared_action_recovery",
         lambda _context, _recovered: shared_recovery,
     )
@@ -625,6 +630,61 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
     )
 
     assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_semantic_work_item_uses_protocol_25_dependency_specialization(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    result = _certified_audit(verdict="PASS")
+    item = _semantic_audit_work_item(context, result)
+    semantic_context = _semantic_context()
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    expected = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic agent\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_audit_dispatch_authority",
+        lambda _context, _target_id: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: expected,
+        raising=False,
+    )
+
+    assert context.dependencies_for(item, "initial_generation") is expected
+
+
+@pytest.mark.integration
+def test_semantic_dependencies_fail_closed_when_pinned_prosaic_bytes_are_absent(
+    tmp_path,
+) -> None:
+    context = _context(tmp_path)
+    result = _certified_audit(verdict="PASS")
+    item = _semantic_audit_work_item(context, result)
+    semantic_context = _semantic_context()
+
+    with pytest.raises(
+        recovery_module.Protocol25RecoveryError,
+        match="semantic Prosaic agent or response schema is unavailable",
+    ):
+        recovery_module.build_semantic_provider_dependencies(
+            context,
+            item,
+            semantic_context,
+        )
 
 
 @pytest.mark.integration
