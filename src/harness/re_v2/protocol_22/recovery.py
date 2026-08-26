@@ -92,6 +92,7 @@ from .schema import Protocol22SchemaError, load_canonical_object
 
 FaultHook = Callable[[str], None]
 DependenciesResolver = Callable[[WorkItemV2, str], PreparationDependenciesV1]
+DispatchStartedHook = Callable[[WorkItemV2, PreparedExecutionV1], None]
 OperationalState: TypeAlias = Literal[
     "ready",
     "pinned_authority_unavailable",
@@ -175,6 +176,7 @@ class Protocol22RunContext:
     clock: Callable[[], str] = field(default_factory=lambda: _utc_now)
     snapshot_validator: Callable[[], None] | None = None
     materialization_validator: Callable[[], None] | None = None
+    dispatch_started_hook: DispatchStartedHook | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.paths, ReV2Paths):
@@ -225,7 +227,11 @@ class Protocol22RunContext:
             raise Protocol22RecoveryError("run context process inspector is invalid")
         if not callable(self.clock):
             raise Protocol22RecoveryError("run context clock is invalid")
-        for callback_name in ("snapshot_validator", "materialization_validator"):
+        for callback_name in (
+            "snapshot_validator",
+            "materialization_validator",
+            "dispatch_started_hook",
+        ):
             callback = getattr(self, callback_name)
             if callback is not None and not callable(callback):
                 raise Protocol22RecoveryError(f"run context {callback_name} is invalid")
@@ -582,7 +588,13 @@ def _is_supported_event_protocol(protocol: object) -> bool:
         from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
     except ImportError:
         return False
-    return protocol is PROTOCOL_24_EVENTS
+    if protocol is PROTOCOL_24_EVENTS:
+        return True
+    try:
+        from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    except ImportError:
+        return False
+    return protocol is PROTOCOL_25_EVENTS
 
 
 def _installed_mismatches(

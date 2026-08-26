@@ -176,11 +176,15 @@ class Protocol25ControllerStateV1:
             raise Protocol25ControllerError(
                 "prerequisites cannot be complete and failed"
             )
-        if not self.targets or any(
+        if any(
             not isinstance(item, SemanticTargetControllerStateV1)
             for item in self.targets
         ):
-            raise Protocol25ControllerError("controller state requires semantic targets")
+            raise Protocol25ControllerError("controller state semantic targets are invalid")
+        if self.prerequisites_complete and not self.targets:
+            raise Protocol25ControllerError(
+                "completed prerequisites require materialized semantic targets"
+            )
         target_keys = tuple(item.audit_target_id for item in self.targets)
         if target_keys != tuple(sorted(set(target_keys))):
             raise Protocol25ControllerError("semantic targets must be sorted and unique")

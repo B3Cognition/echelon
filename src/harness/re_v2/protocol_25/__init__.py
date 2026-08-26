@@ -87,6 +87,9 @@ __all__ = (
     "Protocol25LedgerProtocol",
     "Protocol25LedgerView",
     "Protocol25ReplayState",
+    "Protocol25RecoveryError",
+    "Protocol25RecoveryResult",
+    "Protocol25RunContext",
     "Protocol25DeterministicRuntime",
     "Protocol25RuntimeError",
     "Protocol25SchemaError",
@@ -134,6 +137,7 @@ __all__ = (
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
     "replay_target_progress",
+    "recover_protocol_25_run",
     "validate_protocol_25_parent",
 )
 
@@ -214,6 +218,14 @@ _LAZY_CONTROLLER_EXPORTS = frozenset(
         "plan_next_protocol_25",
     }
 )
+_LAZY_RECOVERY_EXPORTS = frozenset(
+    {
+        "Protocol25RecoveryError",
+        "Protocol25RecoveryResult",
+        "Protocol25RunContext",
+        "recover_protocol_25_run",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -233,6 +245,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import runtime as module
     elif name in _LAZY_CONTROLLER_EXPORTS:
         from . import controller as module
+    elif name in _LAZY_RECOVERY_EXPORTS:
+        from . import recovery as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)

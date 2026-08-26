@@ -133,6 +133,21 @@ def test_protocol_25_controller_is_a_narrow_protocol_24_extension() -> None:
 
 
 @pytest.mark.integration
+def test_prerequisite_state_does_not_invent_unmaterialized_audit_target_ids() -> None:
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=False,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=None,
+        targets=(),
+    )
+
+    assert plan_next_protocol_25(state) == Protocol25ControllerActionV1(
+        kind="run_prerequisite"
+    )
+
+
+@pytest.mark.integration
 def test_controller_freezes_then_closes_one_source() -> None:
     pending = _state(
         _target(DOMAIN_TARGET, audit_state="pending"),
