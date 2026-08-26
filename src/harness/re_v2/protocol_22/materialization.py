@@ -76,10 +76,15 @@ class _ProjectionSpec:
     projection: MaterializedProjectionV1
     relative_parts: tuple[str, ...]
     payloads: tuple[tuple[str, bytes], ...]
+    directory: bool | None = None
 
     @property
     def is_directory(self) -> bool:
-        return self.projection.artifact_kind != "source-baseline-root"
+        return (
+            self.projection.artifact_kind != "source-baseline-root"
+            if self.directory is None
+            else self.directory
+        )
 
 
 def materialize_accepted_l1(

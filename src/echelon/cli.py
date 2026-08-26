@@ -13588,10 +13588,20 @@ def _run_re_v2_live(context: object) -> None:
         manifest = load_run_manifest(context.paths.root.parent)
         if isinstance(manifest, RunManifestV4):
             from harness.re_v2.protocol_25.controller import Protocol25Controller
+            from harness.re_v2.protocol_25.materialization import (
+                materialize_accepted_l3,
+            )
+            from harness.re_v2.protocol_25.status import render_protocol_25_status
 
-            result = Protocol25Controller(context).run_until_stopped()
-            print("RE V2 — PROTOCOL 2.5")
-            print(f"state: {result.status}")
+            Protocol25Controller(context).run_until_stopped()
+            materialize_accepted_l3(context)
+            print(
+                render_protocol_25_status(
+                    context.paths.root.parent,
+                    context=context,
+                ),
+                end="",
+            )
         elif isinstance(manifest, RunManifestV3):
             from harness.re_v2.protocol_24.controller import Protocol24Controller
             from harness.re_v2.protocol_24.status import render_protocol_24_status

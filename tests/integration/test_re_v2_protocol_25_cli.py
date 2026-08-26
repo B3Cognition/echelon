@@ -416,6 +416,7 @@ def test_schema4_live_execution_uses_protocol25_controller(
     from tests.unit.test_re_v2_protocol_25_inputs import _fixture
 
     calls: list[object] = []
+    materialized: list[object] = []
 
     class ContextMarker:
         paths = SimpleNamespace(root=Path("/tmp/run/v2"))
@@ -442,11 +443,24 @@ def test_schema4_live_execution_uses_protocol25_controller(
         "harness.re_v2.protocol_25.controller.Protocol25Controller",
         Controller,
     )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.materialization.materialize_accepted_l3",
+        materialized.append,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.status.render_protocol_25_status",
+        lambda run_dir, *, context: (
+            f"status for {run_dir.name}\nL3 PAUSED - CONTINUABLE\n"
+        ),
+    )
 
     legacy_cli._run_re_v2_live(context)
 
     assert calls == [context]
-    assert "PROTOCOL 2.5" in capsys.readouterr().out
+    assert materialized == [context]
+    output = capsys.readouterr().out
+    assert "status for run" in output
+    assert output.endswith("L3 PAUSED - CONTINUABLE\n")
 
 
 @pytest.mark.integration
