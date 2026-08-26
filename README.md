@@ -563,6 +563,56 @@ echelon delivery target 001                      # target-specific verify detect
 # If target detection reports "not configured", set delivery.verify_command in specs/<id>/targets.yml.
 ```
 
+### Spec quality: SUE (Socratic Understanding Engine)
+
+Six standalone, stdlib-only tools (`scripts/sue_*.py`) challenge a
+specification for ambiguity and contradiction and surface where model readers
+disagree. No echelon imports; reports are written beside the spec.
+
+```bash
+# One command — runs the whole pipeline and writes a fix-ready dossier:
+python3 scripts/sue_auto.py specs/030-build-sue-challenge-script/spec.md
+python3 scripts/sue_auto.py <spec.md> --profile lite       # quick, ~2 model calls
+python3 scripts/sue_auto.py <spec.md> --profile forensic   # deepest
+
+# Or run a single tier directly:
+python3 scripts/sue_challenge.py <spec.md>                 # quick questions → gaps
+python3 scripts/sue_consensus.py <spec.md> --readers 3     # only ≥2-reader findings
+python3 scripts/sue_reproducibility.py <spec.md> --passes 2 # measure interpretation spread
+python3 scripts/sue_dialectic.py <spec.md> --lens theaetetus --seed "<claim>"  # drill one gap
+```
+
+The first economical Codex experiment profile is explicit (and must be used
+only with a non-confidential requirement file):
+
+```bash
+python3 scripts/sue_challenge.py requirements.md \
+  --model-cmd 'codex=codex' \
+  --model gpt-5.6-luna \
+  --reasoning-effort low
+```
+
+This sends the source content to the selected provider. The preflight and
+per-attempt V1 evidence record the requested profile and model reported by
+Codex. Each V1 attempt—success, retry, or terminal failure—gets exclusive
+metadata, raw JSONL, final-output, and stderr artifacts under a fresh
+`sue-evidence/challenge-*` directory. Do not use it for secrets or private
+specifications without an approved provider and retention policy. `low`
+reduces cost but may reduce extraction quality. It is only the first economical
+experiment profile: A1, not this default, decides whether
+`gpt-5.6-luna`/`low` is usable.
+
+V1 Codex challenge calls run from a neutral temporary directory with an
+allowlisted process environment, ephemeral/no-rules/no-user-config operation,
+disabled model-facing tools, no MCP servers or web search, and no shell
+environment inheritance. These are enforced isolation controls, not a general
+OS-level filesystem-secrecy claim. Other, non-V1 Codex SUE tools intentionally
+retain their legacy transport until separately migrated.
+
+Docs: **[walkthrough / start here](docs/sue-walkthrough.md)** ·
+**[full usage reference](docs/sue-usage.md)** ·
+**[Socratic lenses reference](docs/sue-socratic-lenses.md)**.
+
 ### Harness fulfillment refresh policy
 
 Harness fulfillment refreshes are controlled from the repo config under

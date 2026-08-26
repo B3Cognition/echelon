@@ -1,0 +1,23 @@
+{
+  "declarations": [
+    {
+      "id": "requirement-001",
+      "location": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md",
+      "role": "requirement"
+    }
+  ],
+  "resources": [
+    {
+      "declaration_id": "requirement-001",
+      "declared_relative_path": "2026-07-18-sue-challenge-script-design.md",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "size_bytes": 4609,
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md",
+      "status": "accepted"
+    }
+  ],
+  "schema_version": 1
+}

@@ -1,0 +1,28 @@
+=== b-064 ===
+Stable findings — CONTRADICTED: 5, UNANSWERABLE: 6; sampling noise: 17; 11 follow-up chain(s) completed
+=== c-s1-eu ===
+Dialogue [euthyphro] — 2 turn(s) → APORIA_UNDEFINED
+=== c-s1-pa ===
+Dialogue [parmenides] — 2 turn(s) → APORIA_UNDERDETERMINED
+=== c-s2-eu ===
+Dialogue [euthyphro] — 5 turn(s) → APORIA_UNDERDETERMINED
+=== c-s2-pa ===
+Dialogue [parmenides] — 4 turn(s) → APORIA_UNDERDETERMINED
+=== c-s3-eu ===
+Dialogue [euthyphro] — 1 turn(s) → APORIA_CONTRADICTED
+=== c-s3-pa ===
+Dialogue [parmenides] — 3 turn(s) → APORIA_CONTRADICTED
+=== c-s4-eu ===
+Dialogue [euthyphro] — 1 turn(s) → APORIA_CONTRADICTED
+=== c-s4-pa ===
+Dialogue [parmenides] — 2 turn(s) → APORIA_CONTRADICTED
+=== c-s5-eu-r2 ===
+Dialogue [euthyphro] — 1 turn(s) → APORIA_CONTRADICTED
+=== c-s5-eu-r3 ===
+Dialogue [euthyphro] — 1 turn(s) → APORIA_CONTRADICTED
+=== c-s5-pa ===
+Dialogue [parmenides] — 2 turn(s) → APORIA_CONTRADICTED
+=== d-029 ===
+J-Graph — readers: 3; conflict pairs total: 8
+=== d-064 ===
+J-Graph — readers: 3; conflict pairs total: 14

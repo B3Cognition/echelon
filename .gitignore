@@ -32,6 +32,11 @@ Thumbs.db
 /specs/004-run-finalize-hardening/*
 !/specs/004-run-finalize-hardening/spec.md
 !/specs/004-run-finalize-hardening/plan.md
+!/specs/030-build-sue-challenge-script/
+!/specs/031-sue-validation-gates/
+!/specs/031-sue-validation-gates/spec.md
+!/specs/031-sue-validation-gates/checklists/
+!/specs/031-sue-validation-gates/checklists/requirements.md
 .github/*
 !.github/workflows/
 config-belief-graph.json
@@ -45,6 +50,11 @@ tests/benchmarks/reports/
 .claude/skills/
 .worktrees/
 docs/echelon-*run-*.md
+/runs/
+/.claude/
+/.echelon/
+/sources/*
+!/sources/README.md
 
 # Local AI engineering learning experiments. Keep these out of repo history;
 # tracked experiments already live under /experiments.

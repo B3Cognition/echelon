@@ -1,0 +1,6 @@
+schema_version: 1
+targets:
+- id: workspace
+  path: .
+  role: primary
+  branch: 030-build-sue-challenge-script

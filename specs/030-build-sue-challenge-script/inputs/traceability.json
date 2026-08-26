@@ -1,0 +1,978 @@
+{
+  "references": [],
+  "requirements": [
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-35B242FAD892",
+      "rationale": "Non-normative markdown structure: the design document title line carries no requirement content.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-DA5A2A3AEAB5",
+      "rationale": "Document metadata (date line), not a requirement.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-7698BBDFCDF2",
+      "rationale": "Document metadata (approval status); recorded as design authority context in the spec Input field, not as a requirement.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-8E578B6660BB",
+      "rationale": "The v1 standalone-script scope is adopted as the standalone-operation requirement plus the In Scope section.",
+      "spec_ids": [
+        "FR-045"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-013",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-032461DF1B5D",
+      "rationale": "Included unit had empty spec_ids and reached no acceptance criterion; the no-workflow-integration boundary it states is enforced by FR-045 and verified by the import-scan test reaching AC-022.",
+      "spec_ids": [
+        "FR-045",
+        "AC-022"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-013",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-9C4F8635A18F",
+      "rationale": "Line-fragment continuation of IN-REQ-032461DF1B5D.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-F565489C0B76",
+      "rationale": "Non-normative markdown heading (Purpose).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-60DEBB978E62",
+      "rationale": "The purpose statement (challenge a specification, unanswerable questions become findings) is realized by the two-call mechanism and the finding partition.",
+      "spec_ids": [
+        "FR-008",
+        "FR-032"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-010",
+        "T-012"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-B0E70720E09A",
+      "rationale": "Line-fragment continuation of IN-REQ-60DEBB978E62.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-BF81CFD48938",
+      "rationale": "The grounding rule is operationalized: round 2 answers from spec text alone and evidence is quoted from the actual file lines.",
+      "spec_ids": [
+        "FR-023",
+        "FR-039"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004",
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-7802BD15CC2F",
+      "rationale": "Line-fragment continuation of IN-REQ-BF81CFD48938.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-AA478A158AB9",
+      "rationale": "Non-normative markdown heading (Interface).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-3EA7EE65BD18",
+      "rationale": "Non-normative code-fence delimiter line.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-F7DA9407BAE0",
+      "rationale": "The full command usage line maps to the four interface requirements: positional path plus the questions, claude-cmd, and timeout options.",
+      "spec_ids": [
+        "FR-001",
+        "FR-002",
+        "FR-003",
+        "FR-004"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-002"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-B41782F5561C",
+      "rationale": "Non-normative code-fence delimiter line.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-75BC4F8B9974",
+      "rationale": "The questions option with default 15 is adopted as the question-count option plus the round-1 cap instruction.",
+      "spec_ids": [
+        "FR-002",
+        "FR-015"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-002",
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D8FCFCDDC59E",
+      "rationale": "The claude-cmd option, its default, and its test-seam role are adopted; the binary-versus-command ambiguity (U-004) is resolved as shell-quoting word split.",
+      "spec_ids": [
+        "FR-003",
+        "FR-007",
+        "FR-043"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-002",
+        "T-005",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-F124765D491A",
+      "rationale": "The per-call timeout with default 300 seconds is adopted, applied independently per subprocess invocation.",
+      "spec_ids": [
+        "FR-004",
+        "FR-011"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-002",
+        "T-005"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-E8F14EBD27A7",
+      "rationale": "Exit codes 0 (report written) and 1 (bad input) are adopted; exit 1 is extended by an explicit pre-flight writability check resolving U-005.",
+      "spec_ids": [
+        "FR-005",
+        "FR-006",
+        "FR-040"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-003",
+        "T-012"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-2189E42069FA",
+      "rationale": "Exit codes 2 (CLI unavailable) and 3 (unrecoverable parse failure) are adopted with a deliberate boundary: exit 2 only for executable-not-found (U-007).",
+      "spec_ids": [
+        "FR-012",
+        "FR-030"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-003",
+        "T-009"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-CF04C07BA415",
+      "rationale": "The two-fresh-calls mechanism is adopted as exactly 2 logical model calls, each an isolated subprocess.",
+      "spec_ids": [
+        "FR-008",
+        "FR-010"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-005",
+        "T-012"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-FAF233549D79",
+      "rationale": "Round-1 input (spec text plus generation instruction) is adopted as the round-1 prompt content requirement.",
+      "spec_ids": [
+        "FR-014"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-1C338DB49929",
+      "rationale": "The at-most-N cap and the five weakness categories are adopted verbatim in the round-1 instruction requirement.",
+      "spec_ids": [
+        "FR-015"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-FFF3DC4D608F",
+      "rationale": "Line-fragment continuation of IN-REQ-1C338DB49929.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D50BEC5F92D0",
+      "rationale": "Question tagging with target requirement ID and source line references is adopted in the round-1 schema; line references are made verifiable via 1-based numbering (U-006).",
+      "spec_ids": [
+        "FR-016",
+        "FR-018"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-004",
+        "T-007"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-046E9F3A20C7",
+      "rationale": "Strict JSON output is adopted with the internal tension (WHY1 ISS-002) resolved explicitly: tolerant extraction of exactly 1 JSON object, then strict validation.",
+      "spec_ids": [
+        "FR-016",
+        "FR-026"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-006",
+        "T-007"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-3709F66E4C4E",
+      "rationale": "Round 2 as a fresh call receiving only spec text plus questions is adopted.",
+      "spec_ids": [
+        "FR-008",
+        "FR-021"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-004",
+        "T-012"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-15BAE48979B6",
+      "rationale": "The questions-not-reasoning restriction is adopted: round-2 prompt carries identifiers and question texts only.",
+      "spec_ids": [
+        "FR-021",
+        "FR-022"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-8470DD94F1D6",
+      "rationale": "Answering from spec text alone with one verdict per question is adopted.",
+      "spec_ids": [
+        "FR-023"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-EED398D6F6E8",
+      "rationale": "The ANSWERED verdict with quoted answering lines is adopted; ANSWERED questions route to the audit appendix.",
+      "spec_ids": [
+        "FR-023",
+        "FR-038"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004",
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D1279F33E7C9",
+      "rationale": "The UNANSWERABLE verdict with the named gap is adopted in the verdict set and the evidence-rendering rule.",
+      "spec_ids": [
+        "FR-023",
+        "FR-039"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004",
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-3E606DDF0F98",
+      "rationale": "The CONTRADICTED verdict with both sides quoted is adopted; contradictions rank first.",
+      "spec_ids": [
+        "FR-023",
+        "FR-033"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-001",
+        "T-004",
+        "T-010"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-97C434377BBE",
+      "rationale": "Deterministic assembly with no third model call is adopted as the zero-further-calls plus partition requirements.",
+      "spec_ids": [
+        "FR-009",
+        "FR-032"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-010"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-BEC67C964B9A",
+      "rationale": "Contradictions-first ranking and retention of ANSWERED questions are adopted.",
+      "spec_ids": [
+        "FR-033",
+        "FR-038"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-010",
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-2D4902546481",
+      "rationale": "The collapsed audit-section rendering \u2014 the requirement dropped during DISCOVER (gap 1, TRACKER RF-1) \u2014 is restored explicitly.",
+      "spec_ids": [
+        "FR-038",
+        "AC-008"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-242349C9B920",
+      "rationale": "Non-normative markdown heading (Isolation contract).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-2F84DF72B209",
+      "rationale": "Subprocess execution from a neutral temporary working directory is adopted as a testable outcome.",
+      "spec_ids": [
+        "FR-010"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-005"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-DDDD35B79FFA",
+      "rationale": "The cwd-isolation requirement is adopted, but its premise is challenged per WHY1 ISS-001: repo-scope isolation is guaranteed while operator-scope residual exposure is a documented limitation pending the OQ-002 spike.",
+      "spec_ids": [
+        "FR-010"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-005"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-1A64043748C4",
+      "rationale": "Line-fragment continuation of IN-REQ-DDDD35B79FFA.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-7906C2CCFEBC",
+      "rationale": "The round-2 no-rationale rule is adopted as a prohibition requirement with a stub-verified acceptance scenario.",
+      "spec_ids": [
+        "FR-022",
+        "AC-011"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-004"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-E431AE277766",
+      "rationale": "Non-normative markdown heading (Round JSON schemas).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-1BB9602CB2BA",
+      "rationale": "The round-1 schema fields (id, question, target, lines, category) are adopted in the round-1 validation requirement.",
+      "spec_ids": [
+        "FR-016"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-007"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-D67B2760CFF6",
+      "rationale": "Line-fragment continuation of IN-REQ-1BB9602CB2BA.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-FFF8B8176BC8",
+      "rationale": "The round-2 schema fields (id, verdict, answer, evidence_lines) are adopted in the round-2 validation requirement.",
+      "spec_ids": [
+        "FR-024"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-008"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D003F04C0FC3",
+      "rationale": "The identifier bijection rule (every round-1 id exactly once) is adopted as an explicit requirement, per SCOUT's recommendation to elevate it from schema prose.",
+      "spec_ids": [
+        "FR-025"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-008"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-0F5AB554CF9C",
+      "rationale": "Missing or extra identifiers as parse failures routed to the retry path are adopted.",
+      "spec_ids": [
+        "FR-025",
+        "FR-028"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-008",
+        "T-009"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-C03A6B2ECF2B",
+      "rationale": "Non-normative markdown heading (Output).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-44BED4ECFE26",
+      "rationale": "Report location beside the challenged spec plus the stdout summary are adopted.",
+      "spec_ids": [
+        "FR-034",
+        "FR-040"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-AF7AFAF68FBD",
+      "rationale": "Finding counts with top 3 in the summary, plus overwrite-with-no-history semantics, are adopted; write mechanics deliberately stay unspecified (U-010).",
+      "spec_ids": [
+        "FR-034",
+        "FR-040"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D305BB37F9EB",
+      "rationale": "The regenerable-file property is adopted in the report-write requirement and the Out of Scope history exclusion.",
+      "spec_ids": [
+        "FR-034"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-A06052CA8E2C",
+      "rationale": "Report header contents (spec path, run date, question and finding counts) are adopted.",
+      "spec_ids": [
+        "FR-036",
+        "AC-002"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-EBFAED130BFF",
+      "rationale": "Findings-section contents (verdict, question, target REQ, evidence) are adopted.",
+      "spec_ids": [
+        "FR-037"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-31A836647EEC",
+      "rationale": "The audit appendix of answered-and-discarded questions with answering lines is adopted.",
+      "spec_ids": [
+        "FR-038"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-011"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-276774A45535",
+      "rationale": "Non-normative markdown heading (Error handling).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-49464B14EFA0",
+      "rationale": "Exit 2 with an install pointer, mirroring the ERR-CLI-MISSING pattern verified in spec 029, is adopted.",
+      "spec_ids": [
+        "FR-012",
+        "AC-014"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-003"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-CE9317854005",
+      "rationale": "Line-fragment continuation of IN-REQ-49464B14EFA0.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-5086BCDE7BCE",
+      "rationale": "One corrective retry per round is adopted; the retry content ambiguity (U-003) is resolved: failure named, prior output not echoed, timeout retried as plain re-issue.",
+      "spec_ids": [
+        "FR-028",
+        "FR-029"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-009"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-DAB2BB350DF1",
+      "rationale": "Second failure exiting 3 with raw output saved to the .sue-debug dump is adopted.",
+      "spec_ids": [
+        "FR-030"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-009"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-09CAF50DCD15",
+      "rationale": "Exit 1 before any model call on a bad spec path is adopted as a pre-flight requirement.",
+      "spec_ids": [
+        "FR-005",
+        "AC-013"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-003"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-35B2A2BF9F9D",
+      "rationale": "Timeouts routed to the parse-failure path (retry once, then exit 3) are adopted, with fresh timeout budgets per invocation (A-007).",
+      "spec_ids": [
+        "FR-011",
+        "FR-029"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-005",
+        "T-009"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-C806E13967B4",
+      "rationale": "Non-normative markdown heading (Testing).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-B97DBA8344BE",
+      "rationale": "Pytest unit tests for the deterministic parts at the designated test path are adopted as a deliverable requirement.",
+      "spec_ids": [
+        "FR-044",
+        "AC-022"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-BE91B88E2D80",
+      "rationale": "The enumerated tested surfaces (prompt assembly, extraction and validation, filtering and ranking, rendering, exit codes) are adopted as the 7 deterministic behavior groups.",
+      "spec_ids": [
+        "FR-044"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-B9724D0168AB",
+      "rationale": "Faking model calls via a stub executable through the claude-cmd seam is adopted.",
+      "spec_ids": [
+        "FR-043",
+        "FR-044",
+        "AC-021"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-005",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-18F823464DCC",
+      "rationale": "Line-fragment continuation of IN-REQ-B9724D0168AB.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-760CA37F3F8F",
+      "rationale": "The manual live acceptance run against spec 029 is adopted with an explicit tolerance added per WHY1 ISS-003; maps to T-S01 through FR-034, the requirement AC-023 cites for the live acceptance report.",
+      "spec_ids": [
+        "AC-023",
+        "FR-034"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-A78CE7C82F30",
+      "rationale": "The overlap success criterion is adopted as overlap with at least 1 of the 3 named issues within at most 3 attempts \u2014 a traceable tolerance amendment fixing the flaky-by-construction criterion (contradiction 3); maps to T-S01 through FR-034, the requirement AC-023 cites for the live acceptance report.",
+      "spec_ids": [
+        "AC-023",
+        "FR-034"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D05A70A0F5B4",
+      "rationale": "The 3 named known issues remain the acceptance anchors; A-004 requires re-verification or a frozen fixture before the run; maps to T-S01 through FR-034, the requirement AC-023 cites for the live acceptance report.",
+      "spec_ids": [
+        "AC-023",
+        "FR-034"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-012",
+        "T-S01"
+      ]
+    },
+    {
+      "disposition": "excluded",
+      "input_unit_id": "IN-REQ-64F3FEA20D8C",
+      "rationale": "Non-normative markdown heading (Non-goals).",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-4E9070D640A5",
+      "rationale": "Included unit had empty spec_ids; its non-goals are operationally enforced by FR-042 (no answer encoding back into the spec, AC-010) and FR-045 (no workflow integration, AC-022).",
+      "spec_ids": [
+        "FR-042",
+        "FR-045",
+        "AC-010",
+        "AC-022"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-003",
+        "T-012",
+        "T-013",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-D9CE68110258",
+      "rationale": "Exclusion of an orchestration CLI verb and answer re-encoding is adopted in Out of Scope plus the standalone-operation requirement.",
+      "spec_ids": [
+        "FR-045"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-013",
+        "T-014"
+      ]
+    },
+    {
+      "disposition": "included",
+      "input_unit_id": "IN-REQ-128505B4CC53",
+      "rationale": "Included unit had empty spec_ids; the interface-stability promise is realized by the frozen v1 surface FR-001 and FR-003, exercised end-to-end by AC-001.",
+      "spec_ids": [
+        "FR-001",
+        "FR-003",
+        "AC-001"
+      ],
+      "targets": [
+        "."
+      ],
+      "task_ids": [
+        "T-002"
+      ]
+    },
+    {
+      "disposition": "duplicate",
+      "input_unit_id": "IN-REQ-C68D7D0CB17E",
+      "rationale": "Line-fragment continuation of IN-REQ-128505B4CC53.",
+      "spec_ids": [],
+      "targets": [],
+      "task_ids": []
+    }
+  ],
+  "schema_version": 1
+}

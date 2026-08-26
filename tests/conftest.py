@@ -5,6 +5,7 @@ Registers pytest markers and provides Docker availability skip logic.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,14 @@ from pathlib import Path
 from typing import Optional
 
 import pytest
+
+# Neutralize GitHub Actions terminal detection for the whole test session.
+# Under GITHUB_ACTIONS=true, typer/rich render CLI --help into an empty panel
+# (rich's CI-terminal mode), which breaks every help-text assertion in CI while
+# the same tests pass locally. Nothing in echelon reads this variable, so
+# clearing it for the test process is safe and makes help rendering
+# deterministic across local and CI runs.
+os.environ.pop("GITHUB_ACTIONS", None)
 
 REPO_ROOT = Path(__file__).parent.parent
 

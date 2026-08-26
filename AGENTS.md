@@ -169,3 +169,65 @@ NEVER write `.echelon/constitution.md` outside CHIEF stewardship.
 
 Existing agents only have NEVER rules. New agents must have paired rules.
 Existing agents adopt paired rules when next revised.
+
+## Socratic Understanding handoff
+
+When work concerns the Socratic Understanding Engine (SUE), semantic
+reproducibility, independent specification interpretation, or decision-relative
+epistemic orchestration, read every file under
+`docs/socratic-understanding/` before proposing changes.
+
+### Authority order
+
+1. `docs/socratic-understanding/SPECIFICATION.md`
+2. `docs/socratic-understanding/DECISIONS.md`
+3. Current repository code and tests
+4. `docs/socratic-understanding/HANDOFF.md`
+5. `docs/socratic-understanding/RESEARCH.md`
+6. `docs/socratic-understanding/OPEN-QUESTIONS.md`
+7. `docs/socratic-understanding/TRANSCRIPT.md`
+
+`TRANSCRIPT.md` is historical background, not a source of requirements. If an
+older SUE design or plan conflicts with the authoritative handoff documents,
+surface the conflict and ask for a decision; do not silently choose one.
+
+### Objective and invariants
+
+- Develop a decision-relative epistemic orchestration subsystem that tests
+  whether independently reconstructed interpretations of a software
+  specification are compatible.
+- Do not equate agent agreement with truth.
+- Preserve disagreement, evidence provenance, and run identity.
+- Distinguish extraction instability, vocabulary divergence, provider/model
+  variance, and specification ambiguity.
+- Every finding must link to a source requirement, source span, or an explicitly
+  labelled assumption.
+- Keep cold reconstruction runs isolated. Do not expose one run to another
+  interpretation, an aggregate, a reasoning journal, or squad state before
+  aggregation.
+- Prefer structured cognitive operators and typed records over philosopher
+  personas. Platonic names may label deterministic lens policies, not agent
+  identities.
+- Compare behavioural consequences and grounded relations, not prose similarity
+  alone.
+- Treat aporia as a diagnostic state. It is not automatically a specification
+  defect or a failed run.
+- Never silently rewrite an original requirement. SUE remains diagnose-only
+  unless a separately approved change workflow owns the rewrite.
+- Keep controller-certified evidence and state controller-owned. Qualitative
+  agents may interpret it but must not recalculate or overwrite it.
+
+### Development gate
+
+Before SUE implementation work:
+
+1. Inspect the current repository and the inspected commit.
+2. Cite exact files and symbols for architectural claims.
+3. Reconcile the proposal with the existing six SUE scripts and their tests.
+4. Produce a change plan with falsifiable hypotheses, tests, acceptance
+   criteria, call/cost bounds, and stop conditions.
+5. Wait for explicit approval before modifying implementation code.
+
+Do not rebuild the original Semantic Reproducibility Probe as if SUE were
+greenfield. Start from its existing experiment specification, smoke-run result,
+current scripts, and unresolved A1 extraction-stability gate.
