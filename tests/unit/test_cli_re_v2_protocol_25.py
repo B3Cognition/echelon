@@ -164,11 +164,11 @@ def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     from harness.prosaic_prompt_loader import ProsaicCommandArtifact
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.protocol_22.cli_provider import (
-        SquadCliBaselineExecutor,
         calculate_shared_cli_dispatch_reservation,
     )
     from harness.re_v2.protocol_22.model import ExecutionInputV1
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
+    from harness.re_v2.protocol_25.cli_provider import SquadCliSemanticRenderer
     from tests.re_v2_protocol_22_fixtures import digest
     from tests.unit.test_re_v2_protocol_22_cli_provider import _ProviderSpy, _result
     from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
@@ -181,7 +181,7 @@ def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     assert renderer is not None
     agent = canonical_prosaic_agent_bytes(
         ProsaicCommandArtifact(
-            body="Pinned semantic auditor.\n",
+            body="Pinned semantic auditor. Write exactly `audit.json`.\n",
             frontmatter={
                 "name": "echelon.re-validator",
                 "model_tier": "strong",
@@ -222,9 +222,9 @@ def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     root.mkdir()
     provider = _ProviderSpy(_result())
 
-    result = SquadCliBaselineExecutor(
+    result = SquadCliSemanticRenderer(
         (baseline, semantic),
-        provider=provider,
+        provider_factory=lambda: provider,  # type: ignore[return-value]
     ).execute(
         execution_input,
         agent,

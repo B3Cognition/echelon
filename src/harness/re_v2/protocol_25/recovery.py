@@ -77,8 +77,10 @@ class Protocol25RunContext(Protocol22RunContext):
         if not isinstance(self.semantic_runtime, Protocol25DeterministicRuntime):
             raise Protocol25RecoveryError("semantic runtime is invalid")
         inherited_dependencies = self.dependencies_for
-        inherited_dispatch_hook = self.dispatch_started_hook
-        semantic_bindings: dict[str, Protocol25ControllerActionV1] = {}
+        semantic_bindings: dict[
+            str,
+            tuple[WorkItemV2, Protocol25ControllerActionV1],
+        ] = {}
         if not getattr(inherited_dependencies, "_protocol_25_specialized", False):
             def semantic_dependencies(
                 item: WorkItemV2,
@@ -106,7 +108,7 @@ class Protocol25RunContext(Protocol22RunContext):
                     authorized_item, semantic_context = (
                         build_resolution_dispatch_authority(self, action)
                     )
-                    semantic_bindings[item.work_item_id] = action
+                    semantic_bindings[item.work_item_id] = (item, action)
                 elif item.output_key.artifact_kind == "target-closure-assessment":
                     action = plan_next_protocol_25(
                         recover_protocol_25_run(self).controller_state
@@ -118,7 +120,7 @@ class Protocol25RunContext(Protocol22RunContext):
                     authorized_item, semantic_context = (
                         build_recheck_dispatch_authority(self, action)
                     )
-                    semantic_bindings[item.work_item_id] = action
+                    semantic_bindings[item.work_item_id] = (item, action)
                 elif item.output_key.artifact_kind == "source-composition-assessment":
                     action = plan_next_protocol_25(
                         recover_protocol_25_run(self).controller_state
@@ -130,7 +132,7 @@ class Protocol25RunContext(Protocol22RunContext):
                     authorized_item, semantic_context = (
                         build_source_guard_dispatch_authority(self, action)
                     )
-                    semantic_bindings[item.work_item_id] = action
+                    semantic_bindings[item.work_item_id] = (item, action)
                 else:
                     raise Protocol25RecoveryError(
                         "semantic dependency specialization is not implemented "
@@ -147,22 +149,40 @@ class Protocol25RunContext(Protocol22RunContext):
                 )
 
             setattr(semantic_dependencies, "_protocol_25_specialized", True)
+            setattr(
+                semantic_dependencies,
+                "_protocol_25_semantic_bindings",
+                semantic_bindings,
+            )
             object.__setattr__(self, "dependencies_for", semantic_dependencies)
 
-            def semantic_dispatch_started(item: WorkItemV2, prepared: object) -> None:
-                if inherited_dispatch_hook is not None:
-                    inherited_dispatch_hook(item, prepared)
-                action = semantic_bindings.pop(item.work_item_id, None)
-                if action is None:
-                    return
-                dispatch_id = getattr(prepared, "dispatch_id", None)
-                if not isinstance(dispatch_id, str):
-                    raise Protocol25RecoveryError(
-                        "semantic dispatch has no prepared dispatch identity"
-                    )
-                _bind_semantic_dispatch(self, item, action, dispatch_id)
-
-            object.__setattr__(self, "dispatch_started_hook", semantic_dispatch_started)
+    def bind_semantic_dispatch(self, dispatch_id: str) -> None:
+        """Bind an L3 operation at the inherited controller's durable fault seam."""
+        if not isinstance(dispatch_id, str) or not dispatch_id:
+            raise Protocol25RecoveryError("semantic dispatch ID must be nonempty")
+        bindings = getattr(
+            self.dependencies_for,
+            "_protocol_25_semantic_bindings",
+            None,
+        )
+        if not isinstance(bindings, dict):
+            return
+        matches = tuple(
+            event
+            for event in self.event_store.replay()
+            if event.type == "dispatch_started"
+            and event.payload["dispatch_id"] == dispatch_id
+        )
+        if len(matches) != 1:
+            raise Protocol25RecoveryError(
+                "semantic dispatch boundary has no unique durable start"
+            )
+        work_item_id = str(matches[0].payload["work_item_id"])
+        binding = bindings.pop(work_item_id, None)
+        if binding is None:
+            return
+        item, action = binding
+        _bind_semantic_dispatch(self, item, action, dispatch_id)
 
     def recover_controller_state(self) -> Protocol25ControllerStateV1:
         return recover_protocol_25_run(self).controller_state

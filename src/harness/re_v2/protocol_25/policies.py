@@ -44,6 +44,7 @@ SEMANTIC_EXECUTOR_FAMILIES = (
     "semantic-resolution",
     "source-composition-guard",
 )
+SEMANTIC_RENDERER_ID = "semantic-compact-renderer-v1"
 SEMANTIC_ARTIFACT_KINDS = (
     "audit-closure-root",
     "l3-source-root",
@@ -550,6 +551,7 @@ def _decode_semantic_executor_entry(value: object) -> ExecutorContractEntryV1:
 def build_semantic_executor_catalog(
     inherited: ExecutorContractCatalogV1,
     authorities: tuple[SemanticExecutorAuthorityV1, ...],
+    renderer_implementation_digest: str,
 ) -> SemanticExecutorContractCatalogV1:
     if not isinstance(inherited, ExecutorContractCatalogV1):
         raise Protocol25SchemaError("semantic executor composition requires parent catalog")
@@ -558,6 +560,11 @@ def build_semantic_executor_catalog(
     ):
         raise Protocol25SchemaError("semantic executor authorities are invalid")
     selected = tuple(authorities)
+    _schema(
+        digest_value,
+        renderer_implementation_digest,
+        "semantic renderer implementation digest",
+    )
     if tuple(item.producer_family for item in selected) != SEMANTIC_EXECUTOR_FAMILIES:
         raise Protocol25SchemaError(
             "semantic executor authorities must be exactly the closed L3 families"
@@ -587,9 +594,9 @@ def build_semantic_executor_catalog(
                 implementation_digest=authority.verifier_implementation_digest,
             ),
             request_renderer=SemanticRequestRendererAuthorityV1(
-                renderer_id=renderer.renderer_id,
-                renderer_version=renderer.renderer_version,
-                implementation_digest=renderer.implementation_digest,
+                renderer_id=SEMANTIC_RENDERER_ID,
+                renderer_version="v1",
+                implementation_digest=renderer_implementation_digest,
                 agent_contract_hash=authority.agent_contract_hash,
                 response_schemas=(
                     SemanticResponseSchemaReferenceV1(
@@ -615,6 +622,7 @@ __all__ = (
     "FINDING_CLASSES",
     "SEMANTIC_ARTIFACT_KINDS",
     "SEMANTIC_EXECUTOR_FAMILIES",
+    "SEMANTIC_RENDERER_ID",
     "SemanticArtifactPolicyCatalogV1",
     "SemanticArtifactPolicyEntryV1",
     "SemanticExecutorAuthorityV1",

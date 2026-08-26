@@ -58,7 +58,11 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
         digest("deepening-implementation"),
     )
     policies = build_semantic_v1_policy_catalog()
-    semantic = build_semantic_executor_catalog(shared_parent, _authorities())
+    semantic = build_semantic_executor_catalog(
+        shared_parent,
+        _authorities(),
+        digest("semantic renderer"),
+    )
     executors = SemanticExecutorContractCatalogV1(
         schema_version=1,
         inherited_catalog=deepening,

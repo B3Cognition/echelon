@@ -1,4 +1,4 @@
-"""Thin protocol adapter for Echelon's existing shared AI CLI provider."""
+"""Semantic request rendering over Echelon's frozen shared AI CLI adapter."""
 
 from __future__ import annotations
 
@@ -9,17 +9,16 @@ from typing import Callable
 
 from harness.echelon_result_schema import EchelonResultContract
 from harness.re_v2.canonical import content_digest
-from harness.squad_provider import SquadCliProvider
-
-from .artifacts import ContextBundleV1
-from .executors import (
-    DISPATCH_CALCULATOR_ID,
+from harness.re_v2.protocol_22.cli_provider import (
+    SquadCliBaselineExecutor,
+    calculate_shared_cli_dispatch_reservation,
+)
+from harness.re_v2.protocol_22.executors import (
     SHARED_AI_CLI_ADAPTER_ID,
-    SHARED_PROVIDER_USAGE_NORMALIZER_ID,
     ExecutorContractEntryV1,
 )
-from .model import ExecutionInputV1
-from .provider import (
+from harness.re_v2.protocol_22.model import ExecutionInputV1
+from harness.re_v2.protocol_22.provider import (
     DispatchReservationV1,
     Protocol22ProviderError,
     RawExecutionResultV1,
@@ -31,7 +30,10 @@ from .provider import (
     decode_prosaic_agent_bytes,
     normalize_shared_provider_usage,
 )
-from .schema import Protocol22SchemaError, load_canonical_object
+from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
+from harness.squad_provider import SquadCliProvider
+
+from .policies import SEMANTIC_EXECUTOR_FAMILIES, SEMANTIC_RENDERER_ID
 
 
 _RESULT_CONTRACT = EchelonResultContract(
@@ -41,55 +43,36 @@ _RESULT_CONTRACT = EchelonResultContract(
 )
 
 
-def calculate_shared_cli_dispatch_reservation(
-    agent_bytes: bytes,
-    context_bytes: bytes,
-    response_schema_bytes: bytes,
-    executor: ExecutorContractEntryV1,
-) -> DispatchReservationV1:
-    """Reserve a byte-token upper bound for one shared-provider invocation."""
-    _validate_cli_executor(executor)
-    artifact = decode_prosaic_agent_bytes(agent_bytes)
-    try:
-        context = context_bytes.decode("utf-8", errors="strict")
-        response_schema = response_schema_bytes.decode("utf-8", errors="strict")
-    except (AttributeError, UnicodeDecodeError) as exc:
-        raise Protocol22ProviderError(
-            "shared CLI prompt authority must be UTF-8 bytes"
-        ) from exc
-    initial = len(
-        _render_prompt(artifact.body, context, response_schema).encode("utf-8")
-    )
-    billable = executor.limits.max_billable_tokens_per_dispatch
-    if initial <= 0 or initial > billable:
-        raise Protocol22ProviderError(
-            "shared CLI prompt upper bound exceeds the dispatch reservation"
-        )
-    return DispatchReservationV1(
-        initial_input_tokens=initial,
-        billable_tokens=billable,
-        active_ms=executor.limits.max_active_ms_per_dispatch,
-    )
-
-
-class SquadCliBaselineExecutor:
-    """Adapt one shared-provider dispatch to the existing raw capture surface."""
+class SquadCliSemanticRenderer:
+    """Route inherited work unchanged and render only registered L3 requests."""
 
     def __init__(
         self,
-        executor: ExecutorContractEntryV1,
+        executors: tuple[ExecutorContractEntryV1, ...],
         *,
-        provider: SquadCliProvider | None = None,
-        provider_factory: Callable[[], SquadCliProvider] | None = None,
+        provider_factory: Callable[[], SquadCliProvider],
     ) -> None:
-        _validate_cli_executor(executor)
-        if (provider is None) == (provider_factory is None):
+        if not executors or not callable(provider_factory):
             raise Protocol22ProviderError(
-                "shared CLI adapter requires exactly one provider or provider factory"
+                "semantic shared CLI rendering requires contracts and a provider factory"
             )
-        self.executor = executor
-        self._provider = provider
+        if len({item.executor_contract_hash for item in executors}) != len(executors):
+            raise Protocol22ProviderError("shared CLI executor contracts must be unique")
+        if len({item.provider_id for item in executors}) != 1:
+            raise Protocol22ProviderError("shared CLI contracts must use one provider")
+        self._executors = {
+            item.executor_contract_hash: item for item in executors
+        }
         self._provider_factory = provider_factory
+        self._provider: SquadCliProvider | None = None
+        self._inherited = {
+            item.executor_contract_hash: SquadCliBaselineExecutor(
+                item,
+                provider_factory=self._shared_provider,
+            )
+            for item in executors
+            if item.producer_family not in SEMANTIC_EXECUTOR_FAMILIES
+        }
 
     def execute(
         self,
@@ -101,8 +84,22 @@ class SquadCliBaselineExecutor:
         candidate_root: Path,
         deadline: float,
     ) -> RawExecutionResultV1:
-        artifact = _validate_dispatch_inputs(
-            self.executor,
+        executor = self._executors.get(execution_input.executor_contract_hash)
+        if executor is None:
+            raise Protocol22ProviderError("execution input executor contract mismatch")
+        inherited = self._inherited.get(execution_input.executor_contract_hash)
+        if inherited is not None:
+            return inherited.execute(
+                execution_input,
+                agent_bytes,
+                context_bytes,
+                response_schema_bytes,
+                reservation,
+                candidate_root,
+                deadline,
+            )
+        artifact = _validate_semantic_inputs(
+            executor,
             execution_input,
             agent_bytes,
             context_bytes,
@@ -115,9 +112,7 @@ class SquadCliBaselineExecutor:
             or isinstance(deadline, bool)
             or not math.isfinite(deadline)
         ):
-            raise Protocol22ProviderError(
-                "executor deadline must be finite monotonic time"
-            )
+            raise Protocol22ProviderError("executor deadline must be finite monotonic time")
         remaining_seconds = min(
             deadline - time.monotonic(),
             reservation.active_ms / 1000,
@@ -133,21 +128,17 @@ class SquadCliBaselineExecutor:
                 timing=RawExecutionTimingV1(moment, moment, 0),
                 outcome="timed_out",
             )
-
-        prompt = _render_prompt(
+        prompt = _render_semantic_prompt(
             artifact.body,
             context_bytes.decode("utf-8"),
             response_schema_bytes.decode("utf-8"),
         )
+        if len(prompt.encode("utf-8")) > reservation.initial_input_tokens:
+            raise Protocol22ProviderError(
+                "semantic prompt exceeds the inherited conservative reservation"
+            )
         started_at = _utc_now()
-        provider = self._provider
-        if provider is None:
-            factory = self._provider_factory
-            if factory is None:  # Closed by construction; retained fail-closed.
-                raise Protocol22ProviderError("shared CLI provider factory is missing")
-            provider = factory()
-            self._provider = provider
-        result = provider.exec_agent(
+        result = self._shared_provider().exec_agent(
             str(root),
             prompt,
             timeout_ms=max(1, int(remaining_seconds * 1000)),
@@ -157,10 +148,9 @@ class SquadCliBaselineExecutor:
             strict_result_envelope=True,
             isolated_workspace=True,
         )
-        ended_at = _utc_now()
         timing = RawExecutionTimingV1(
             started_at,
-            ended_at,
+            _utc_now(),
             max(0, int(result.duration_ms)),
         )
         usage = canonical_normalized_usage_bytes(
@@ -216,30 +206,30 @@ class SquadCliBaselineExecutor:
             model_name,
         )
 
-
-def _validate_cli_executor(executor: object) -> None:
-    if not isinstance(executor, ExecutorContractEntryV1) or (
-        executor.execution_mode != "cli"
-        or executor.adapter_id != SHARED_AI_CLI_ADAPTER_ID
-        or executor.provider_id is None
-        or executor.request_renderer is None
-        or executor.reservation_calculator.calculator_id != DISPATCH_CALCULATOR_ID
-        or executor.token_accounting.normalization_id
-        != SHARED_PROVIDER_USAGE_NORMALIZER_ID
-    ):
-        raise Protocol22ProviderError(
-            "shared CLI baseline requires its registered executor contract"
-        )
+    def _shared_provider(self) -> SquadCliProvider:
+        if self._provider is None:
+            self._provider = self._provider_factory()
+        return self._provider
 
 
-def _validate_dispatch_inputs(
+def _validate_semantic_inputs(
     executor: ExecutorContractEntryV1,
     execution_input: ExecutionInputV1,
     agent_bytes: bytes,
     context_bytes: bytes,
     response_schema_bytes: bytes,
     reservation: DispatchReservationV1,
-):
+):  # type: ignore[no-untyped-def]
+    renderer = executor.request_renderer
+    if (
+        executor.producer_family not in SEMANTIC_EXECUTOR_FAMILIES
+        or executor.execution_mode != "cli"
+        or executor.adapter_id != SHARED_AI_CLI_ADAPTER_ID
+        or renderer is None
+        or renderer.renderer_id != SEMANTIC_RENDERER_ID
+        or len(renderer.response_schemas) != 1
+    ):
+        raise Protocol22ProviderError("semantic shared CLI authority is invalid")
     if not isinstance(execution_input, ExecutionInputV1):
         raise Protocol22ProviderError("shared CLI execution requires ExecutionInputV1")
     if execution_input.executor_contract_hash != executor.executor_contract_hash:
@@ -250,42 +240,33 @@ def _validate_dispatch_inputs(
         raise Protocol22ProviderError("execution input context bundle mismatch")
     artifact = decode_prosaic_agent_bytes(agent_bytes)
     try:
-        context = load_canonical_object(context_bytes, ContextBundleV1.from_json_dict)
+        load_canonical_object(context_bytes, lambda value: value)
         load_canonical_object(response_schema_bytes, lambda value: value)
     except Protocol22SchemaError as exc:
         raise Protocol22ProviderError(str(exc)) from exc
-    renderer = executor.request_renderer
-    assert renderer is not None
-    expected_schema = next(
-        (
-            reference.schema_hash
-            for reference in renderer.response_schemas
-            if reference.artifact_kind == context.target_artifact_kind
-        ),
-        None,
-    )
-    if expected_schema != content_digest(response_schema_bytes):
+    if renderer.response_schemas[0].schema_hash != content_digest(
+        response_schema_bytes
+    ):
         raise Protocol22ProviderError("response schema authority mismatch")
-    expected_reservation = calculate_shared_cli_dispatch_reservation(
+    expected = calculate_shared_cli_dispatch_reservation(
         agent_bytes,
         context_bytes,
         response_schema_bytes,
         executor,
     )
-    if reservation != expected_reservation:
+    if reservation != expected:
         raise Protocol22ProviderError("shared CLI dispatch reservation mismatch")
     return artifact
 
 
-def _render_prompt(body: str, context: str, response_schema: str) -> str:
+def _render_semantic_prompt(body: str, context: str, response_schema: str) -> str:
     return (
         body
         + ("" if body.endswith("\n") else "\n")
         + "\n## Dispatch contract\n"
-        + "Write exactly one file named `baseline.json` in the current working "
-        + "directory. The file must contain only the authorial JSON payload that "
-        + "matches the supplied schema. Finish with exactly the required "
-        + "`echelon_result` block.\n\n"
+        + "Write exactly the candidate file required by the role contract. The file "
+        + "must contain only the authorial JSON payload matching the supplied schema. "
+        + "Finish with exactly the required `echelon_result` block.\n\n"
         + "## Bounded context (canonical JSON)\n"
         + context
         + "\n\n## Authorial response schema (canonical JSON)\n"
@@ -294,7 +275,4 @@ def _render_prompt(body: str, context: str, response_schema: str) -> str:
     )
 
 
-__all__ = (
-    "SquadCliBaselineExecutor",
-    "calculate_shared_cli_dispatch_reservation",
-)
+__all__ = ("SquadCliSemanticRenderer",)

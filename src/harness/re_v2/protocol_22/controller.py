@@ -484,8 +484,6 @@ class Protocol22Controller:
             occurred_at=self.context.clock(),
         )
         _fault(self.fault_hook, f"dispatch_started:{prepared.dispatch_id}")
-        if self.context.dispatch_started_hook is not None:
-            self.context.dispatch_started_hook(item, prepared)
         if isinstance(dependencies, DeterministicExecutionDependenciesV1):
             self._execute_deterministic(item, prepared, dependencies)
             return

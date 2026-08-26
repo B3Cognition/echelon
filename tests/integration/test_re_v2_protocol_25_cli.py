@@ -66,6 +66,7 @@ def test_new_audit_preparation_layers_schema4_over_authenticated_parent(
     executor = build_semantic_executor_catalog(
         l2_executor,
         authorities,
+        content_digest(b"protocol-2.5 semantic renderer"),
     )
     policy = build_semantic_v1_policy_catalog()
     selection = SelectionScopeV1(1, True, (), ())
@@ -139,6 +140,7 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
             content_digest(b"protocol-2.4 implementation"),
         ),
         authorities,
+        content_digest(b"protocol-2.5 semantic renderer"),
     )
     prepared_parent = prepare_new_audit_epoch(
         parent=parent,

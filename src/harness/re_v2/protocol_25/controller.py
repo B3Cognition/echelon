@@ -554,7 +554,17 @@ class Protocol25Controller(Protocol24Controller):
         fault_hook: Callable[[str], None] | None = None,
     ) -> None:
         if isinstance(context, Protocol22RunContext):
-            super().__init__(context, fault_hook)
+            def protocol_25_fault(boundary: str) -> None:
+                if fault_hook is not None:
+                    fault_hook(boundary)
+                prefix = "dispatch_started:"
+                if not boundary.startswith(prefix):
+                    return
+                bind = getattr(context, "bind_semantic_dispatch", None)
+                if callable(bind):
+                    bind(boundary.removeprefix(prefix))
+
+            super().__init__(context, protocol_25_fault)
         elif isinstance(context, Protocol25ControllerBackend):
             if fault_hook is not None and not callable(fault_hook):
                 raise TypeError("Protocol25Controller fault_hook must be callable or null")

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+import harness.re_v2.protocol_22.cli_provider as cli_provider_module
+import harness.re_v2.protocol_22.controller as controller_module
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.model import RunManifest
 from harness.re_v2.protocol_22 import PROTOCOL_VERSION, RUN_MANIFEST_SCHEMA_VERSION
@@ -77,3 +81,22 @@ def test_schema_3_manifest_identity_remains_frozen() -> None:
     assert manifest_v3().run_manifest_id == (
         "sha256:c3a5275f55a2daba60dfc5724cec7ed8a0c2d49bbdebf23f11822b32ac56bd90"
     )
+
+
+def test_protocol_22_pinned_executor_module_bytes_remain_frozen() -> None:
+    expected = {
+        cli_provider_module: (
+            "sha256:ceb4c22161a441f29ce7a36231cf31bd813f0549ab9afce7deddea9dcc0d7c66"
+        ),
+        controller_module: (
+            "sha256:3b212dc11fb1170f6431e96a7aecc671e640993b2fbb6cf8cb7cb84a36935254"
+        ),
+    }
+
+    assert {
+        module.__name__: content_digest(Path(module.__file__).read_bytes())
+        for module in expected
+    } == {
+        module.__name__: digest
+        for module, digest in expected.items()
+    }

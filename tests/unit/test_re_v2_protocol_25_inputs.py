@@ -91,7 +91,14 @@ def _executor_fixture():  # type: ignore[no-untyped-def]
                 result_contract_id=f"{family}-candidate-ready-v1",
             )
         )
-    return build_semantic_executor_catalog(inherited, tuple(authorities)), objects
+    return (
+        build_semantic_executor_catalog(
+            inherited,
+            tuple(authorities),
+            digest("semantic renderer"),
+        ),
+        objects,
+    )
 
 
 def _fixture(*, mode: str = "new-audit-epoch"):  # type: ignore[no-untyped-def]

@@ -22,6 +22,7 @@ SEMANTIC_FAMILIES = (
     "semantic-resolution",
     "source-composition-guard",
 )
+RENDERER_DIGEST = digest("semantic renderer")
 
 
 def _policies():  # type: ignore[no-untyped-def]
@@ -103,7 +104,9 @@ def test_l3_executor_catalog_reuses_shared_cli_authorities() -> None:
     module = _policies()
     inherited = _parent_executor_catalog()
     baseline = inherited.entry_for("compact-baseline")
-    catalog = module.build_semantic_executor_catalog(inherited, _authorities())
+    catalog = module.build_semantic_executor_catalog(
+        inherited, _authorities(), RENDERER_DIGEST
+    )
 
     assert catalog.inherited_catalog == inherited
     for family in SEMANTIC_FAMILIES:
@@ -131,7 +134,9 @@ def test_semantic_executor_preserves_configured_shared_provider(provider_id: str
         (replace(baseline, provider_id=provider_id),),
     )
 
-    catalog = module.build_semantic_executor_catalog(inherited, _authorities())
+    catalog = module.build_semantic_executor_catalog(
+        inherited, _authorities(), RENDERER_DIGEST
+    )
 
     assert {
         catalog.entry_for(family).provider_id for family in SEMANTIC_FAMILIES
@@ -153,15 +158,16 @@ def test_semantic_executor_changes_only_pinned_role_schema_and_verifier() -> Non
     catalog = module.build_semantic_executor_catalog(
         inherited,
         _authorities(),
+        RENDERER_DIGEST,
     )
 
     for authority in _authorities():
         entry = catalog.entry_for(authority.producer_family)
         renderer = entry.request_renderer
         assert renderer is not None
-        assert renderer.renderer_id == baseline.request_renderer.renderer_id
-        assert renderer.renderer_version == baseline.request_renderer.renderer_version
-        assert renderer.implementation_digest == baseline.request_renderer.implementation_digest
+        assert renderer.renderer_id == module.SEMANTIC_RENDERER_ID
+        assert renderer.renderer_version == "v1"
+        assert renderer.implementation_digest == RENDERER_DIGEST
         assert renderer.agent_contract_hash == authority.agent_contract_hash
         assert tuple(
             (item.artifact_kind, item.schema_hash)
@@ -179,6 +185,7 @@ def test_semantic_catalog_round_trips_canonically() -> None:
     executors = module.build_semantic_executor_catalog(
         inherited,
         _authorities(),
+        RENDERER_DIGEST,
     )
 
     assert type(policies).from_json_dict(policies.to_json_dict()) == policies
@@ -196,11 +203,13 @@ def test_semantic_executor_rejects_missing_or_duplicate_family() -> None:
         module.build_semantic_executor_catalog(
             inherited,
             authorities[:-1],
+            RENDERER_DIGEST,
         )
     with pytest.raises(module.Protocol25SchemaError, match="exactly"):
         module.build_semantic_executor_catalog(
             inherited,
             authorities[:-1] + (authorities[0],),
+            RENDERER_DIGEST,
         )
 
 
@@ -217,6 +226,7 @@ def test_semantic_catalog_exposes_all_entries_to_shared_authority_validation() -
     catalog = _policies().build_semantic_executor_catalog(
         _parent_executor_catalog(),
         _authorities(),
+        RENDERER_DIGEST,
     )
 
     assert {entry.producer_family for entry in catalog.entries} == {

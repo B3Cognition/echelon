@@ -12942,6 +12942,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     import harness.re_v2.protocol_24.controller as l2_controller_module
     import harness.re_v2.protocol_24.runtime as l2_runtime_module
     import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
+    import harness.re_v2.protocol_25.cli_provider as l3_cli_provider_module
     import harness.re_v2.protocol_25.controller as l3_controller_module
     import harness.re_v2.protocol_25.runtime as l3_runtime_module
     from harness.re_v2.canonical import canonical_json_bytes
@@ -12978,6 +12979,8 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.protocol_25.recovery import Protocol25RunContext
     from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
+    from harness.re_v2.protocol_25.cli_provider import SquadCliSemanticRenderer
+    from harness.re_v2.protocol_25.policies import SEMANTIC_RENDERER_ID
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
 
@@ -13053,6 +13056,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
+        l3_cli_provider_module,
         l3_runtime_module,
         l3_controller_module,
     )
@@ -13093,6 +13097,10 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
             **dict(registry.verifier_implementations),
             DEEPENING_VERIFIER_ID: l2_implementation,
             **semantic_verifiers,
+        },
+        renderer_implementations={
+            **dict(registry.renderer_implementations),
+            SEMANTIC_RENDERER_ID: l3_implementation,
         },
         agent_contracts={
             **dict(registry.agent_contracts),
@@ -13199,7 +13207,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     )
     from harness.squad_provider import SquadCliProvider
 
-    provider = SquadCliBaselineExecutor(
+    provider = SquadCliSemanticRenderer(
         cli_entries,
         provider_factory=lambda: SquadCliProvider(_load_cli_config(project_root)),
     )
@@ -14919,6 +14927,7 @@ def _prepare_re_v25_creation(
     import harness.re_v2.protocol_24.controller as l2_controller_module
     import harness.re_v2.protocol_24.runtime as l2_runtime_module
     import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
+    import harness.re_v2.protocol_25.cli_provider as l3_cli_provider_module
     import harness.re_v2.protocol_25.controller as l3_controller_module
     import harness.re_v2.protocol_25.runtime as l3_runtime_module
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
@@ -14933,6 +14942,7 @@ def _prepare_re_v25_creation(
     from harness.re_v2.protocol_25.lifecycle import prepare_new_audit_epoch
     from harness.re_v2.protocol_25.policies import (
         SEMANTIC_EXECUTOR_FAMILIES,
+        SEMANTIC_RENDERER_ID,
         SemanticExecutorAuthorityV1,
         build_semantic_executor_catalog,
         build_semantic_v1_policy_catalog,
@@ -14973,6 +14983,7 @@ def _prepare_re_v25_creation(
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
+        l3_cli_provider_module,
         l3_runtime_module,
         l3_controller_module,
     )
@@ -15005,7 +15016,11 @@ def _prepare_re_v25_creation(
         )
         for family in SEMANTIC_EXECUTOR_FAMILIES
     )
-    executors = build_semantic_executor_catalog(l2_executors, authorities)
+    executors = build_semantic_executor_catalog(
+        l2_executors,
+        authorities,
+        l3_implementation,
+    )
     baseline = parent.inputs.executor_contract.entry_for("compact-baseline")
     renderer = baseline.request_renderer
     if renderer is None:
@@ -15030,6 +15045,10 @@ def _prepare_re_v25_creation(
                 authority.verifier_id: l3_implementation
                 for authority in authorities
             },
+        },
+        renderer_implementations={
+            **dict(registry.renderer_implementations),
+            SEMANTIC_RENDERER_ID: l3_implementation,
         },
         agent_contracts={
             **dict(registry.agent_contracts),

@@ -449,28 +449,6 @@ def test_deterministic_inventory_graph_commits_certifies_and_accepts_in_order(
         assert ordered.index("dispatch_observed") < ordered.index("artifact_accepted")
 
 
-@pytest.mark.unit
-def test_dispatch_started_hook_runs_immediately_after_durable_start(
-    tmp_path: Path,
-) -> None:
-    context = _inventory_context(tmp_path)
-    observed: list[tuple[str, str]] = []
-
-    def hook(item: WorkItemV2, prepared: object) -> None:
-        events = context.event_store.replay()
-        assert events[-1].type == "dispatch_started"
-        assert events[-1].payload["work_item_id"] == item.work_item_id
-        observed.append((item.work_item_id, getattr(prepared, "dispatch_id")))
-
-    context = replace(context, dispatch_started_hook=hook)
-
-    result = Protocol22Controller(context).run_until_stopped()
-
-    assert result.status == "completed"
-    assert len(observed) == len(context.graph.templates)
-    assert len({dispatch_id for _work_id, dispatch_id in observed}) == len(observed)
-
-
 @dataclass
 class _ScriptedProvider:
     malformed_result: bool = False
