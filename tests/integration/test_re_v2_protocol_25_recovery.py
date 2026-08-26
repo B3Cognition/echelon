@@ -49,6 +49,7 @@ from harness.re_v2.protocol_25.controller import (
     Protocol25Controller,
     Protocol25ControllerActionV1,
     Protocol25ControllerStateV1,
+    SemanticSourceCycleStateV1,
     SemanticTargetControllerStateV1,
     plan_next_protocol_25,
 )
@@ -61,6 +62,7 @@ from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 from tests.unit.test_re_v2_protocol_25_graph import _fixture as _graph_fixture
 from tests.unit.test_re_v2_protocol_25_runtime import (
     _certified_audit,
+    _certified_closure,
     _certified_resolution,
     _context as _semantic_context,
     _runtime as _semantic_runtime,
@@ -256,19 +258,19 @@ def _semantic_audit_work_item(context, result):  # type: ignore[no-untyped-def]
 
 
 def _semantic_result_work_item(context, result):  # type: ignore[no-untyped-def]
-    artifact = result.artifact
+    key = result.acceptance.artifact_key
     family = {
         "semantic-resolution-overlay": "semantic-resolution",
         "target-closure-assessment": "closure-recheck",
         "source-composition-assessment": "source-composition-guard",
-    }[artifact.artifact_key.artifact_kind]
+    }[key.artifact_kind]
     executor = context.semantic_inputs.executor_contract.entry_for(family)
     return WorkItemV2(
         identity_schema_version=2,
         template_id=digest(f"template:{family}"),
         goal_id="semantic-audit-closure",
-        output_key=artifact.artifact_key,
-        required_artifact_hashes=artifact.artifact_key.dependency_hashes,
+        output_key=key,
+        required_artifact_hashes=key.dependency_hashes,
         producer_id=(
             "echelon.re-resolver"
             if family == "semantic-resolution"
@@ -842,6 +844,101 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
     monkeypatch.setattr(
         recovery_module,
         "build_resolution_dispatch_authority",
+        lambda _context, _action: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: observed.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(action)
+
+    assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_recheck_action_enters_inherited_single_dispatch_kernel(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    audit, epoch, _base_context, _resolution, result = _certified_closure()
+    item = _semantic_result_work_item(context, result)
+    target_id = audit.artifact.audit_target_id
+    finding_ids = tuple(
+        finding.finding_key_id for finding in audit.normalized_findings
+    )
+    cycle = SemanticSourceCycleStateV1(
+        source_id="api",
+        source_cycle_id="cycle-recheck-1",
+        semantic_round=1,
+        participating_target_ids=(target_id,),
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=epoch.identity,
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=finding_ids,
+                unresolved_finding_ids=finding_ids,
+                stage="resolution_accepted",
+            ),
+        ),
+        source_cycles=(cycle,),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "recheck_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "closure-recheck"
+    )
+    semantic_context = _semantic_context(
+        unresolved=audit.normalized_findings,
+        mode="CLOSURE_RECHECK",
+        overlays=(result.artifact.resolution_overlay_hash,),
+        extra_authority={
+            result.artifact.resolution_overlay_hash: _resolution.artifact_bytes,
+        },
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic validator\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = object()
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_recheck_dispatch_authority",
         lambda _context, _action: (item, semantic_context),
     )
     monkeypatch.setattr(

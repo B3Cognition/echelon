@@ -575,6 +575,7 @@ class Protocol25Controller(Protocol24Controller):
         if semantic_kind not in {
             "semantic-audit-findings",
             "semantic-resolution-overlay",
+            "target-closure-assessment",
         }:
             super()._certify_provider_candidate(item, committed, candidate_id)
             return
@@ -587,11 +588,11 @@ class Protocol25Controller(Protocol24Controller):
         if (
             entry is None
             or entry.relative_path
-            != (
-                "audit.json"
-                if semantic_kind == "semantic-audit-findings"
-                else "resolution.json"
-            )
+            != {
+                "semantic-audit-findings": "audit.json",
+                "semantic-resolution-overlay": "resolution.json",
+                "target-closure-assessment": "closure.json",
+            }[semantic_kind]
             or entry.object_kind != "regular"
             or entry.content_hash is None
         ):
@@ -624,7 +625,7 @@ class Protocol25Controller(Protocol24Controller):
                     artifact_key=item.output_key,
                     context=context,
                 )
-            else:
+            elif semantic_kind == "semantic-resolution-overlay":
                 ledger = self.context.ledger.replay()
                 epochs = tuple(ledger.audit_epochs.values())  # type: ignore[attr-defined]
                 if len(epochs) != 1:
@@ -660,6 +661,34 @@ class Protocol25Controller(Protocol24Controller):
                     semantic_round=len(prior_overlay_hashes) + 1,
                     prior_overlay_hashes=prior_overlay_hashes,
                     guidance_hash=guidance_hash,
+                )
+            else:
+                ledger = self.context.ledger.replay()
+                epochs = tuple(ledger.audit_epochs.values())  # type: ignore[attr-defined]
+                if len(epochs) != 1:
+                    raise Protocol25RuntimeError(
+                        "closure recheck candidate has no unique frozen epoch"
+                    )
+                epoch = epochs[0]
+                overlay_hashes = tuple(
+                    value
+                    for value in item.output_key.dependency_hashes
+                    if value != epoch.identity
+                )
+                if len(overlay_hashes) != 1:
+                    raise Protocol25RuntimeError(
+                        "closure recheck candidate has no unique resolution overlay"
+                    )
+                overlay = load_canonical_object(
+                    self.context.object_store.read_blob(overlay_hashes[0]),
+                    SemanticResolutionOverlayV1.from_json_dict,
+                )
+                result = self.context.semantic_runtime.certify_target_closure(  # type: ignore[attr-defined]
+                    candidate,
+                    artifact_key=item.output_key,
+                    context=context,
+                    epoch=epoch,
+                    overlay=overlay,
                 )
         except (Protocol22SchemaError, Protocol25RuntimeError):
             self._reject_candidate_before_artifact(
