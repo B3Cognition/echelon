@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from harness.re_v2.protocol_22.model import (
+    ArtifactKeyV2,
     ArtifactScope,
     BudgetPolicyV2,
     CatalogReferenceV1,
@@ -15,6 +16,23 @@ from harness.re_v2.protocol_25.findings import (
     FindingKeyV1,
     SemanticFindingV1,
     normalize_finding_key,
+)
+from harness.re_v2.protocol_25.artifacts import (
+    AuditCandidateV1,
+    AuditClosureRootV1,
+    AuditEpochV1,
+    AuditTargetCandidateAuthorityV1,
+    FindingAssessmentV1,
+    FindingClosureReceiptV1,
+    L3SourceRootV1,
+    ResolutionEntryV1,
+    SemanticCertificationReceiptV1,
+    SemanticResolutionOverlayV1,
+    SourceCompositionAssessmentV1,
+    TargetClosureAssessmentV1,
+    build_finding_closure_receipt,
+    build_semantic_resolution_overlay,
+    build_source_composition_assessment,
 )
 from harness.re_v2.protocol_25.model import RunManifestV4, SemanticClosurePolicyV1
 from tests.re_v2_protocol_22_fixtures import digest
@@ -134,6 +152,213 @@ def deferred_observation_v1(
     )
 
 
+def l3_artifact_key_v2(
+    artifact_kind: str,
+    *,
+    dependency_hashes: tuple[str, ...],
+) -> ArtifactKeyV2:
+    return ArtifactKeyV2(
+        identity_schema_version=2,
+        scope=audit_target_v1().scope,
+        partition_id=digest("partition"),
+        artifact_kind=artifact_kind,
+        layer="L3",
+        producer_protocol_version="2.5",
+        layer_policy_hash=digest(f"{artifact_kind}-policy"),
+        dependency_hashes=tuple(sorted(dependency_hashes)),
+    )
+
+
+def audit_candidate_v1(*, verdict: str = "REPAIR") -> AuditCandidateV1:
+    target = audit_target_v1()
+    return AuditCandidateV1(
+        schema_version=1,
+        audit_target=target,
+        artifact_key=l3_artifact_key_v2(
+            "semantic-audit-findings",
+            dependency_hashes=(target.identity,),
+        ),
+        audit_epoch_id=None,
+        verdict=verdict,
+        findings=(semantic_finding_v1(),) if verdict == "REPAIR" else (),
+    )
+
+
+def audit_epoch_v1(*, candidate: AuditCandidateV1 | None = None) -> AuditEpochV1:
+    selected = candidate or audit_candidate_v1()
+    finding_ids = tuple(item.finding_key_id for item in selected.findings)
+    return AuditEpochV1(
+        schema_version=1,
+        selection_id=digest("selection"),
+        audit_policy_hash=digest("audit-policy"),
+        target_candidate_authorities=(
+            AuditTargetCandidateAuthorityV1(
+                schema_version=1,
+                audit_target_id=selected.audit_target_id,
+                candidate_hash=selected.identity,
+                certification_receipt_id=digest("audit-certification"),
+                acceptance_receipt_id=digest("audit-acceptance"),
+                finding_key_ids=finding_ids,
+            ),
+        ),
+        auditor_authority_hash=digest("auditor"),
+        executor_authority_hash=digest("executor"),
+        verifier_authority_hash=digest("verifier"),
+        finding_key_ids=finding_ids,
+        audited_l2_root_hashes=(digest("l2-root"),),
+    )
+
+
+def resolution_entry_v1() -> ResolutionEntryV1:
+    return ResolutionEntryV1(
+        schema_version=1,
+        finding_key_ids=(finding_key_v1().identity,),
+        disposition="resolved",
+        semantic_claims=("Retry exhaustion returns a bounded failure response.",),
+        evidence_anchor_ids=("evidence:retry-branch",),
+        supersedes_claim_anchor_ids=("claim:search-success",),
+        refines_subject_refs=("operation:search",),
+        unresolved=False,
+    )
+
+
+def semantic_resolution_overlay_v1(
+    *,
+    epoch: AuditEpochV1 | None = None,
+) -> SemanticResolutionOverlayV1:
+    selected_epoch = epoch or audit_epoch_v1()
+    target = audit_target_v1()
+    return build_semantic_resolution_overlay(
+        epoch=selected_epoch,
+        schema_version=1,
+        artifact_key=l3_artifact_key_v2(
+            "semantic-resolution-overlay",
+            dependency_hashes=(selected_epoch.identity, target.identity),
+        ),
+        audit_target_id=target.identity,
+        semantic_round=1,
+        prior_overlay_hashes=(),
+        guidance_hash=None,
+        entries=(resolution_entry_v1(),),
+    )
+
+
+def target_closure_assessment_v1(
+    *,
+    epoch: AuditEpochV1 | None = None,
+    overlay: SemanticResolutionOverlayV1 | None = None,
+) -> TargetClosureAssessmentV1:
+    selected_epoch = epoch or audit_epoch_v1()
+    selected_overlay = overlay or semantic_resolution_overlay_v1(epoch=selected_epoch)
+    return TargetClosureAssessmentV1(
+        schema_version=1,
+        audit_epoch_id=selected_epoch.identity,
+        audit_target_id=audit_target_v1().identity,
+        assessed_finding_ids=selected_epoch.finding_key_ids,
+        verdicts=tuple(
+            FindingAssessmentV1(1, item, "closed", "resolved_by_overlay")
+            for item in selected_epoch.finding_key_ids
+        ),
+        resolution_overlay_hash=selected_overlay.identity,
+        verifier_authority_hash=digest("closure-verifier"),
+        context_authority_hash=digest("closure-context"),
+        deferred_observations=(),
+    )
+
+
+def source_composition_assessment_v1(
+    *,
+    epoch: AuditEpochV1 | None = None,
+    target: TargetClosureAssessmentV1 | None = None,
+) -> SourceCompositionAssessmentV1:
+    selected_epoch = epoch or audit_epoch_v1()
+    selected_target = target or target_closure_assessment_v1(epoch=selected_epoch)
+    return build_source_composition_assessment(
+        epoch=selected_epoch,
+        schema_version=1,
+        source_id="api",
+        overlay_hashes=(selected_target.resolution_overlay_hash,),
+        target_assessment_hashes=(selected_target.identity,),
+        composed_authority_hash=digest("composed-source"),
+        implicated_finding_ids=(),
+        deferred_observations=(),
+        outcome="passed",
+    )
+
+
+def semantic_certification_receipt_v1() -> SemanticCertificationReceiptV1:
+    key = l3_artifact_key_v2(
+        "semantic-audit-findings",
+        dependency_hashes=(audit_target_v1().identity,),
+    )
+    return SemanticCertificationReceiptV1(
+        schema_version=1,
+        artifact_key_id=key.identity,
+        artifact_hash=digest("audit-artifact"),
+        verifier_authority_hash=digest("semantic-verifier"),
+        audit_epoch_id=None,
+        audit_target_id=audit_target_v1().identity,
+        evidence_scope_hash=digest("audit-evidence-scope"),
+        verdict="accepted",
+        normalized_diagnostics=(),
+    )
+
+
+def finding_closure_receipt_v1() -> FindingClosureReceiptV1:
+    epoch = audit_epoch_v1()
+    overlay = semantic_resolution_overlay_v1(epoch=epoch)
+    target = target_closure_assessment_v1(epoch=epoch, overlay=overlay)
+    source = source_composition_assessment_v1(epoch=epoch, target=target)
+    return build_finding_closure_receipt(
+        epoch=epoch,
+        target_assessment=target,
+        source_assessment=source,
+        schema_version=1,
+        finding_key_id=epoch.finding_key_ids[0],
+        audit_target_id=audit_target_v1().identity,
+        resolution_overlay_hash=overlay.identity,
+        closure_verifier_authority_hash=digest("closure-verifier"),
+        context_authority_hash=digest("closure-context"),
+        semantic_round=1,
+        verdict="closed",
+        reason_code="resolved_by_overlay",
+        diagnostic="The overlay resolves the frozen finding.",
+        previous_closure_receipt_id=None,
+    )
+
+
+def audit_closure_root_v1() -> AuditClosureRootV1:
+    epoch = audit_epoch_v1()
+    receipt = finding_closure_receipt_v1()
+    target_id = audit_target_v1().identity
+    return AuditClosureRootV1(
+        schema_version=1,
+        audit_epoch_id=epoch.identity,
+        frozen_finding_ids=epoch.finding_key_ids,
+        latest_closure_receipts=(receipt,),
+        unresolved_finding_ids=(),
+        target_rounds=((target_id, 1),),
+        plateau_counts=((target_id, 0),),
+        deferred_observations=(),
+    )
+
+
+def l3_source_root_v1() -> L3SourceRootV1:
+    closure = audit_closure_root_v1()
+    return L3SourceRootV1(
+        schema_version=1,
+        source_id="api",
+        selected_domain_keys=(digest("orders-domain"),),
+        full_source_coverage=False,
+        audit_target_ids=(audit_target_v1().identity,),
+        closure_root_hashes=(closure.identity,),
+        adopted_l2_root_hash=digest("l2-root"),
+        unresolved_finding_ids=(),
+        deferred_observation_ids=(),
+        state="complete",
+    )
+
+
 def manifest_v4(
     *,
     run_id: str = "re-l3-child",
@@ -198,13 +423,24 @@ def manifest_v4(
 
 
 __all__ = (
+    "audit_candidate_v1",
+    "audit_closure_root_v1",
+    "audit_epoch_v1",
     "audit_target_v1",
     "audited_artifact_authority_v1",
     "catalog_reference",
     "deferred_observation_v1",
+    "finding_closure_receipt_v1",
     "finding_key_v1",
     "finding_vocabulary_v1",
+    "l3_artifact_key_v2",
+    "l3_source_root_v1",
     "manifest_v4",
+    "resolution_entry_v1",
+    "semantic_certification_receipt_v1",
     "semantic_finding_v1",
     "semantic_policy_v1",
+    "semantic_resolution_overlay_v1",
+    "source_composition_assessment_v1",
+    "target_closure_assessment_v1",
 )
