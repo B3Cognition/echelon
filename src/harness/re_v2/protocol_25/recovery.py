@@ -12,24 +12,33 @@ from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
     plan_next_v2,
 )
-from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+from harness.re_v2.protocol_22.model import WorkItemV2
+from harness.re_v2.protocol_22.budget import evaluate_budget_v22
+from harness.re_v2.protocol_22.execution import ProviderExecutionDependenciesV1
+from harness.re_v2.protocol_22.recovery import (
+    Protocol22RecoveryResult,
+    Protocol22RunContext,
+)
 from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.run_store import load_run_manifest
 
 from .artifacts import AuditCandidateV1, AuditEpochV1
 from .controller import (
+    Protocol25Controller,
     Protocol25ControllerActionV1,
     Protocol25ControllerStateV1,
     SemanticSourceCycleStateV1,
     SemanticTargetControllerStateV1,
 )
-from .events import Protocol25ReplayState
-from .graph import Protocol25Graph
+from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .graph import Protocol25Graph, Protocol25GraphError
 from .inputs import ValidatedProtocol25Inputs
 from .ledger import Protocol25LedgerView
 from .runtime import (
     Protocol25DeterministicRuntime,
+    Protocol25RuntimeError,
     SemanticCertificationResultV1,
+    SemanticContextV1,
 )
 
 
@@ -401,6 +410,96 @@ def _accepted_prerequisites(
     return result
 
 
+def build_audit_dispatch_authority(
+    context: Protocol25RunContext,
+    audit_target_id: str,
+) -> tuple[WorkItemV2, SemanticContextV1]:
+    """Materialize one audit work item and its exact bounded provider context."""
+    if not isinstance(context, Protocol25RunContext):
+        raise Protocol25RecoveryError(
+            "audit dispatch authority requires Protocol25RunContext"
+        )
+    ledger = context.ledger.replay()
+    if not isinstance(ledger, Protocol25LedgerView):
+        raise Protocol25RecoveryError("audit dispatch has no protocol-2.5 ledger")
+    accepted = _accepted_prerequisites(context, ledger)
+    materialized = context.semantic_graph.ready_audit_targets(accepted)
+    selected = tuple(
+        (target, template)
+        for target, template in zip(
+            materialized,
+            context.semantic_graph.audit_templates,
+            strict=True,
+        )
+        if target.audit_target_id == audit_target_id
+    )
+    if len(selected) != 1:
+        raise Protocol25RecoveryError(
+            "audit action has no unique ready target authority"
+        )
+    target, template = selected[0]
+    dependencies = {
+        template_id: accepted[template_id]
+        for template_id in template.required_template_ids
+    }
+    item = context.semantic_graph.instantiate_audit_item(
+        template,
+        target,
+        dependencies,
+    )
+    lower_hashes = tuple(
+        sorted(
+            {
+                *(authority.artifact_hash for authority in target.audited_artifacts),
+                *target.lower_dependency_hashes,
+                *target.context_object_hashes,
+                *target.evidence_object_hashes,
+            }
+        )
+    )
+    try:
+        payloads = {
+            object_hash: context.object_store.read_blob(object_hash)
+            for object_hash in lower_hashes
+        }
+        semantic_context = context.semantic_runtime.build_audit_context(
+            audit_target=target,
+            workspace_partition=context.semantic_inputs.workspace_partition,
+            authority_payloads=payloads,
+        )
+    except (ReV2LedgerError, Protocol25GraphError, Protocol25RuntimeError) as exc:
+        raise Protocol25RecoveryError(
+            "audit provider context cannot be reconstructed from accepted L2 authority"
+        ) from exc
+    context_bytes = canonical_json_bytes(semantic_context.to_json_dict())
+    context.object_store.put_blob(context_bytes)
+    return item, semantic_context
+
+
+def _shared_action_recovery(
+    context: Protocol25RunContext,
+    recovered: Protocol25RecoveryResult,
+) -> Protocol22RecoveryResult:
+    manifest = context.semantic_graph.manifest
+    budget = evaluate_budget_v22(
+        manifest.initial_budget_policy,
+        recovered.events,
+        (),
+        context.clock(),
+        event_protocol=PROTOCOL_25_EVENTS,
+    )
+    return Protocol22RecoveryResult(
+        manifest=manifest,  # type: ignore[arg-type]
+        inputs=context.inputs,
+        graph=context.graph,
+        events=recovered.events,
+        ledger=recovered.ledger,
+        budget=budget,
+        dispatch_actions={},
+        operational_state="ready",
+    )
+
+
 def _target_states(
     context: Protocol25RunContext,
     ledger: Protocol25LedgerView,
@@ -598,6 +697,52 @@ def _apply_controller_action(
         raise Protocol25RecoveryError(
             "semantic action must be Protocol25ControllerActionV1"
         )
+    if action.kind == "run_prerequisite":
+        recovered = recover_protocol_25_run(context)
+        recovery = _shared_action_recovery(context, recovered)
+        decision = plan_next_v2(
+            context.semantic_graph.prerequisite_graph,
+            recovered.ledger,
+            recovery.budget,
+        )
+        if not decision.ready:
+            raise Protocol25RecoveryError(
+                "prerequisite action has no shared ready work item"
+            )
+        Protocol25Controller(context)._execute_one(decision.ready[0], recovery)
+        return
+    if action.kind == "audit_target":
+        recovered = recover_protocol_25_run(context)
+        if (
+            not recovered.controller_state.prerequisites_complete
+            or recovered.controller_state.audit_epoch_id is not None
+            or action.audit_target_id is None
+        ):
+            raise Protocol25RecoveryError(
+                "audit action is outside the pre-freeze ready state"
+            )
+        item, semantic_context = build_audit_dispatch_authority(
+            context,
+            action.audit_target_id,
+        )
+        dependencies = context.dependencies_for(item, "initial_generation")
+        expected_context_bytes = canonical_json_bytes(semantic_context.to_json_dict())
+        if (
+            not isinstance(dependencies, ProviderExecutionDependenciesV1)
+            or dependencies.context_bytes != expected_context_bytes
+            or dependencies.executor
+            != context.semantic_inputs.executor_contract.entry_for(
+                item.producer_family
+            )
+        ):
+            raise Protocol25RecoveryError(
+                "semantic dependency resolver differs from audit authority"
+            )
+        Protocol25Controller(context)._execute_one(
+            item,
+            _shared_action_recovery(context, recovered),
+        )
+        return
     if action.kind == "freeze_epoch":
         recovered = recover_protocol_25_run(context)
         state = recovered.controller_state

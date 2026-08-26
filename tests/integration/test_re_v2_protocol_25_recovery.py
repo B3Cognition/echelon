@@ -6,6 +6,7 @@ from types import MappingProxyType
 import pytest
 
 import harness.re_v2.protocol_25 as protocol_25
+import harness.re_v2.protocol_25.recovery as recovery_module
 from harness.re_v2.events import EventStore
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore
@@ -17,7 +18,10 @@ from harness.re_v2.protocol_22.baseline import (
     certify_deterministic_artifact,
 )
 from harness.re_v2.protocol_22.artifacts import DeterministicAssessmentInputV2
-from harness.re_v2.protocol_22.execution import Protocol22ExecutionStore
+from harness.re_v2.protocol_22.execution import (
+    Protocol22ExecutionStore,
+    ProviderExecutionDependenciesV1,
+)
 from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
     plan_next_v2,
@@ -43,6 +47,8 @@ from harness.re_v2.protocol_25.recovery import (
 from harness.re_v2.protocol_25.controller import (
     Protocol25Controller,
     Protocol25ControllerActionV1,
+    Protocol25ControllerStateV1,
+    SemanticTargetControllerStateV1,
 )
 from harness.re_v2.protocol_22.model import WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
@@ -53,6 +59,7 @@ from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 from tests.unit.test_re_v2_protocol_25_graph import _fixture as _graph_fixture
 from tests.unit.test_re_v2_protocol_25_runtime import (
     _certified_audit,
+    _context as _semantic_context,
     _runtime as _semantic_runtime,
 )
 from tests.unit.test_re_v2_protocol_22_artifacts import _zero_debt
@@ -218,6 +225,31 @@ def _epoch_publication_fixture(tmp_path):  # type: ignore[no-untyped-def]
     )
     root_hash = context.object_store.put_blob(b"accepted L2 root\n")
     return context, result, (root_hash,)
+
+
+def _semantic_audit_work_item(context, result):  # type: ignore[no-untyped-def]
+    template = context.semantic_graph.audit_templates[0]
+    return WorkItemV2(
+        identity_schema_version=2,
+        template_id=template.template_id,
+        goal_id=template.goal_id,
+        output_key=result.acceptance.artifact_key,
+        required_artifact_hashes=result.acceptance.artifact_key.dependency_hashes,
+        producer_id=template.producer_id,
+        producer_family=template.producer_family,
+        producer_protocol_version=template.producer_protocol_version,
+        executor_contract_hash=template.executor_contract_hash,
+        verifier_id=template.verifier_id,
+        verifier_version=template.verifier_version,
+        verifier_implementation_digest=template.verifier_implementation_digest,
+        result_contract_id=template.result_contract_id,
+        max_provider_attempts=template.max_provider_attempts,
+        max_generation_attempts=template.max_generation_attempts,
+        max_semantic_rounds=template.max_semantic_rounds,
+        max_result_contract_retries=template.max_result_contract_retries,
+        max_shared_retries=template.max_shared_retries,
+        max_artifact_contract_retries=template.max_artifact_contract_retries,
+    )
 
 
 class _AvailableBudget:
@@ -447,28 +479,7 @@ def test_controller_persists_certified_audit_through_shared_receipt_chain(
         occurred_at=context.semantic_graph.manifest.created_at,
     )
     result = _certified_audit(verdict="PASS")
-    template = context.semantic_graph.audit_templates[0]
-    item = WorkItemV2(
-        identity_schema_version=2,
-        template_id=template.template_id,
-        goal_id=template.goal_id,
-        output_key=result.acceptance.artifact_key,
-        required_artifact_hashes=result.acceptance.artifact_key.dependency_hashes,
-        producer_id=template.producer_id,
-        producer_family=template.producer_family,
-        producer_protocol_version=template.producer_protocol_version,
-        executor_contract_hash=template.executor_contract_hash,
-        verifier_id=template.verifier_id,
-        verifier_version=template.verifier_version,
-        verifier_implementation_digest=template.verifier_implementation_digest,
-        result_contract_id=template.result_contract_id,
-        max_provider_attempts=template.max_provider_attempts,
-        max_generation_attempts=template.max_generation_attempts,
-        max_semantic_rounds=template.max_semantic_rounds,
-        max_result_contract_retries=template.max_result_contract_retries,
-        max_shared_retries=template.max_shared_retries,
-        max_artifact_contract_retries=template.max_artifact_contract_retries,
-    )
+    item = _semantic_audit_work_item(context, result)
     capture_hash = context.object_store.put_blob(b"semantic capture\n")
     result = replace(
         result,
@@ -541,6 +552,79 @@ def test_controller_persists_certified_audit_through_shared_receipt_chain(
         "artifact_accepted",
         "audit_candidate_accepted",
     ]
+
+
+@pytest.mark.integration
+def test_audit_action_enters_inherited_single_dispatch_kernel(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    result = _certified_audit(verdict="PASS")
+    item = _semantic_audit_work_item(context, result)
+    semantic_context = _semantic_context()
+    target_id = digest("ready-audit-target")
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=None,
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="pending",
+            ),
+        ),
+    )
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic agent\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = object()
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_audit_dispatch_authority",
+        lambda _context, _target_id: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: observed.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(
+        Protocol25ControllerActionV1(
+            kind="audit_target",
+            audit_target_id=target_id,
+        )
+    )
+
+    assert observed == [(item, shared_recovery)]
 
 
 @pytest.mark.integration
