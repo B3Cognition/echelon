@@ -449,6 +449,35 @@ class Protocol25ReplayState(EventReplayState):
             if "audit_target_id" in payload
             else None
         )
+        existing = self.semantic_operation
+        if existing is not None:
+            retry_fields = (
+                (existing.event_type, event_type),
+                (existing.work_item_id, str(payload["work_item_id"])),
+                (existing.source_cycle_id, str(payload["source_cycle_id"])),
+                (existing.source_id, str(payload["source_id"])),
+                (existing.semantic_round, int(payload["semantic_round"])),
+                (existing.audit_target_id, target),
+            )
+            if (
+                existing.stage != "provider"
+                or any(left != right for left, right in retry_fields)
+                or existing.dispatch_id == str(payload["dispatch_id"])
+            ):
+                raise ReV2EventError(
+                    "semantic retry does not match its original operation"
+                )
+            self.semantic_operation = _SemanticOperation(
+                event_type=event_type,
+                dispatch_id=str(payload["dispatch_id"]),
+                work_item_id=existing.work_item_id,
+                source_cycle_id=existing.source_cycle_id,
+                source_id=existing.source_id,
+                semantic_round=existing.semantic_round,
+                audit_target_id=existing.audit_target_id,
+            )
+            self.pending_semantic_binding = False
+            return
         cycle = self.source_cycles.get(cycle_id)
         if cycle is None:
             cycle = _SourceCycle(cycle_id, source_id, round_index)

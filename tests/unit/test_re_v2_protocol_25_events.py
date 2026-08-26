@@ -391,6 +391,90 @@ def test_resolution_recheck_guard_receipts_and_progress_are_ordered(
 
 
 @pytest.mark.unit
+def test_semantic_operation_retry_rebinds_same_work_without_reopening_cycle(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _freeze(store, (TARGET_A,))
+    work = digest("resolution:retry")
+    first_dispatch = "resolution-retry-first"
+    payload = _semantic_start_payload(
+        dispatch_id=first_dispatch,
+        work=work,
+        target=TARGET_A,
+        cycle_id="cycle-retry",
+    )
+    _start_shared(store, dispatch_id=first_dispatch, work=work)
+    _append(store, "semantic_resolution_started", payload)
+    candidate = digest("candidate:resolution-retry-first")
+    _append(
+        store,
+        "dispatch_observed",
+        {
+            "active_usage_status": "trusted_exact",
+            "dispatch_id": first_dispatch,
+            "execution_capture_hash": digest("capture:resolution-retry-first"),
+            "observed_active_ms": 200,
+            "raw_result_contract_status": "valid",
+            "reported_token_usage": 20,
+            "token_usage_status": "trusted_exact",
+            "work_item_id": work,
+        },
+    )
+    _append(
+        store,
+        "candidate_persisted",
+        {
+            "candidate_id": candidate,
+            "candidate_inventory_hash": digest("inventory:resolution-retry-first"),
+            "dispatch_id": first_dispatch,
+            "execution_capture_hash": digest("capture:resolution-retry-first"),
+            "work_item_id": work,
+        },
+    )
+    _append(
+        store,
+        "candidate_rejected",
+        {
+            "candidate_assessment_id": digest("assessment:resolution-retry-first"),
+            "candidate_id": candidate,
+            "certification_receipt_id": digest("certification:resolution-retry-first"),
+            "work_item_id": work,
+        },
+    )
+    second_dispatch = "resolution-retry-second"
+    _append(
+        store,
+        "dispatch_leased",
+        {"dispatch_id": second_dispatch, "work_item_id": work},
+    )
+    _append(
+        store,
+        "dispatch_started",
+        {
+            "active_ms_reservation": 1_000,
+            "attempt_index": 1,
+            "attempt_kind": "artifact_contract_retry",
+            "billable_token_reservation": 100,
+            "dispatch_id": second_dispatch,
+            "execution_input_hash": digest("input:resolution-retry-second"),
+            "executor_contract_hash": digest("executor"),
+            "work_item_id": work,
+        },
+    )
+    payload["dispatch_id"] = second_dispatch
+    _append(store, "semantic_resolution_started", payload)
+
+    replay = Protocol25ReplayState()
+    for event in store.replay():
+        replay.consume(event)
+    assert replay.semantic_operation is not None
+    assert replay.semantic_operation.dispatch_id == second_dispatch
+    assert replay.source_cycles["cycle-retry"].resolution_targets == {TARGET_A}
+
+
+@pytest.mark.unit
 def test_closure_receipt_requires_passing_source_guard(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _run(store)

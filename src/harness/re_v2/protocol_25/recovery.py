@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Callable, Mapping
 
 from harness.re_v2.events import EventRecord
@@ -116,6 +117,18 @@ class Protocol25RunContext(Protocol22RunContext):
                         )
                     authorized_item, semantic_context = (
                         build_recheck_dispatch_authority(self, action)
+                    )
+                    semantic_bindings[item.work_item_id] = action
+                elif item.output_key.artifact_kind == "source-composition-assessment":
+                    action = plan_next_protocol_25(
+                        recover_protocol_25_run(self).controller_state
+                    )
+                    if action is None or action.kind != "guard_source":
+                        raise Protocol25RecoveryError(
+                            "source guard item has no current controller authority"
+                        )
+                    authorized_item, semantic_context = (
+                        build_source_guard_dispatch_authority(self, action)
                     )
                     semantic_bindings[item.work_item_id] = action
                 else:
@@ -766,6 +779,180 @@ def build_recheck_dispatch_authority(
     return item, semantic_context
 
 
+def build_source_guard_dispatch_authority(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> tuple[WorkItemV2, SemanticContextV1]:
+    """Materialize one source-wide composed guard over a complete target batch."""
+    from .artifacts import (
+        FindingClosureReceiptV1,
+        SemanticResolutionOverlayV1,
+        TargetClosureAssessmentV1,
+    )
+
+    if (
+        not isinstance(context, Protocol25RunContext)
+        or not isinstance(action, Protocol25ControllerActionV1)
+        or action.kind != "guard_source"
+        or action.source_id is None
+        or action.semantic_round is None
+        or not action.participating_target_ids
+    ):
+        raise Protocol25RecoveryError(
+            "source guard requires exact controller action authority"
+        )
+    ledger = context.ledger.replay()
+    if not isinstance(ledger, Protocol25LedgerView) or len(ledger.audit_epochs) != 1:
+        raise Protocol25RecoveryError("source guard requires one frozen epoch")
+    epoch = next(iter(ledger.audit_epochs.values()))
+    candidates: dict[str, AuditCandidateV1] = {}
+    for authority in epoch.target_candidate_authorities:
+        candidate = load_canonical_object(
+            context.object_store.read_blob(authority.candidate_hash),
+            AuditCandidateV1.from_json_dict,
+        )
+        candidates[authority.audit_target_id] = candidate
+    source_candidates = tuple(
+        candidate
+        for candidate in candidates.values()
+        if candidate.audit_target.target_kind == "source"
+        and candidate.audit_target.scope.source_id == action.source_id
+    )
+    if len(source_candidates) != 1:
+        raise Protocol25RecoveryError("source guard has no unique source audit target")
+    source_candidate = source_candidates[0]
+    participants = set(action.participating_target_ids)
+    if any(
+        target_id not in candidates
+        or candidates[target_id].audit_target.scope.source_id != action.source_id
+        for target_id in participants
+    ):
+        raise Protocol25RecoveryError("source guard participant is outside its source")
+
+    overlays = []
+    for acceptance in ledger.accepted_artifacts.values():
+        if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
+            continue
+        overlay = load_canonical_object(
+            context.object_store.read_blob(acceptance.artifact_hash),
+            SemanticResolutionOverlayV1.from_json_dict,
+        )
+        if (
+            overlay.audit_epoch_id == epoch.identity
+            and overlay.audit_target_id in participants
+            and overlay.semantic_round == action.semantic_round
+        ):
+            overlays.append(overlay)
+    overlays.sort(key=lambda item: (item.audit_target_id, item.identity))
+    if {item.audit_target_id for item in overlays} != participants:
+        raise Protocol25RecoveryError(
+            "source guard does not have one current overlay per participant"
+        )
+    assessments = tuple(
+        sorted(
+            (
+                item
+                for item in ledger.target_closure_assessments.values()
+                if item.audit_epoch_id == epoch.identity
+                and item.audit_target_id in participants
+                and item.resolution_overlay_hash
+                in {overlay.identity for overlay in overlays}
+            ),
+            key=lambda item: (item.audit_target_id, item.identity),
+        )
+    )
+    if {item.audit_target_id for item in assessments} != participants:
+        raise Protocol25RecoveryError(
+            "source guard does not have one current assessment per participant"
+        )
+    findings_by_id = {
+        finding.finding_key_id: finding
+        for candidate in candidates.values()
+        if candidate.audit_target.scope.source_id == action.source_id
+        for finding in candidate.findings
+    }
+    active_ids = tuple(
+        sorted(
+            {
+                finding_id
+                for overlay in overlays
+                for finding_id in overlay.finding_key_ids
+            }
+        )
+    )
+    try:
+        unresolved = tuple(findings_by_id[item] for item in active_ids)
+    except KeyError as exc:
+        raise Protocol25RecoveryError(
+            "source guard overlay finding is outside source candidates"
+        ) from exc
+    active_siblings = tuple(
+        sorted(
+            receipt.identity
+            for finding_id, receipt in ledger.latest_finding_closures.items()
+            if receipt.verdict == "closed"
+            and finding_id in findings_by_id
+            and finding_id not in active_ids
+        )
+    )
+    audit_item, base_context = build_audit_dispatch_authority(
+        context,
+        source_candidate.audit_target_id,
+    )
+    authority_payloads = {
+        item.object_hash: item.payload_bytes for item in base_context.authority_objects
+    }
+    for authority in (*overlays, *assessments):
+        authority_payloads[authority.identity] = context.object_store.read_blob(
+            authority.identity
+        )
+    for receipt_id in active_siblings:
+        receipt = ledger.finding_closures[receipt_id]
+        if not isinstance(receipt, FindingClosureReceiptV1):
+            raise Protocol25RecoveryError("source guard sibling receipt is invalid")
+        authority_payloads[receipt_id] = context.object_store.read_blob(receipt_id)
+    semantic_context = context.semantic_runtime.build_context(
+        mode="SOURCE_COMPOSITION_GUARD",
+        audit_target=source_candidate.audit_target,
+        vocabulary=base_context.vocabulary,
+        authorized_evidence=base_context.authorized_evidence,
+        authority_payloads=authority_payloads,
+        lower_authority_hashes=base_context.lower_authority_hashes,
+        unresolved_findings=unresolved,
+        overlay_hashes=tuple(item.identity for item in overlays),
+        target_assessment_hashes=tuple(item.identity for item in assessments),
+        active_sibling_authority_hashes=active_siblings,
+    )
+    context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
+    composed = context.semantic_runtime.build_composed_view(
+        context=semantic_context,
+        epoch=epoch,
+        source_id=action.source_id,
+        overlays=tuple(overlays),
+        target_assessments=assessments,
+    )
+    context.object_store.put_blob(canonical_json_bytes(composed.to_json_dict()))
+    dependencies = tuple(
+        sorted(
+            (
+                epoch.identity,
+                *(item.identity for item in overlays),
+                *(item.identity for item in assessments),
+            )
+        )
+    )
+    return (
+        _semantic_operation_item(
+            context,
+            audit_item,
+            source_candidate.audit_target,
+            "source-composition-assessment",
+            dependencies,
+        ),
+        semantic_context,
+    )
+
+
 def _semantic_operation_item(
     context: Protocol25RunContext,
     audit_item: WorkItemV2,
@@ -845,20 +1032,29 @@ def _bind_semantic_dispatch(
     event_by_action = {
         "resolve_target": "semantic_resolution_started",
         "recheck_target": "closure_recheck_started",
+        "guard_source": "source_composition_guard_started",
     }
     event_type = event_by_action.get(action.kind)
-    if event_type is None or action.audit_target_id is None:
+    if event_type is None or (
+        action.kind != "guard_source" and action.audit_target_id is None
+    ):
         raise Protocol25RecoveryError("semantic dispatch binding is unsupported")
+    payload = {
+        "dispatch_id": dispatch_id,
+        "semantic_round": action.semantic_round,
+        "source_cycle_id": action.source_cycle_id,
+        "source_id": action.source_id,
+        "work_item_id": item.work_item_id,
+    }
+    if action.kind == "guard_source":
+        payload["participating_target_ids"] = list(
+            action.participating_target_ids
+        )
+    else:
+        payload["audit_target_id"] = action.audit_target_id
     context.event_store.append(
         event_type,
-        {
-            "audit_target_id": action.audit_target_id,
-            "dispatch_id": dispatch_id,
-            "semantic_round": action.semantic_round,
-            "source_cycle_id": action.source_cycle_id,
-            "source_id": action.source_id,
-            "work_item_id": item.work_item_id,
-        },
+        payload,
         occurred_at=context.clock(),
     )
 
@@ -1125,6 +1321,35 @@ def _accepted_l2_root_hashes(
     return tuple(sorted(roots))
 
 
+def _accepted_l2_root_hash_by_source(
+    context: Protocol25RunContext,
+    ledger: Protocol25LedgerView,
+) -> Mapping[str, str]:
+    selected_sources = set(context.semantic_graph.selected_source_ids)
+    template_by_id = {
+        item.template_id: item
+        for item in context.semantic_graph.prerequisite_graph.templates
+        if item.layer == "L2" and item.artifact_kind == "source-baseline-root"
+    }
+    result = {}
+    for certification_id, item in ledger.certification_work_items.items():
+        template = template_by_id.get(item.template_id)
+        if template is None or template.scope.source_id not in selected_sources:
+            continue
+        acceptance = ledger.accepted_artifacts.get(item.output_key.identity)
+        if acceptance is None or acceptance.certification_receipt_id != certification_id:
+            raise Protocol25RecoveryError(
+                "selected L2 source root has no exact artifact acceptance"
+            )
+        source_id = template.scope.source_id
+        if source_id in result:
+            raise Protocol25RecoveryError("selected source has multiple L2 roots")
+        result[source_id] = acceptance.artifact_hash
+    if set(result) != selected_sources:
+        raise Protocol25RecoveryError("selected source is missing its accepted L2 root")
+    return MappingProxyType(dict(sorted(result.items())))
+
+
 def _apply_controller_action(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
@@ -1178,6 +1403,36 @@ def _apply_controller_action(
             item,
             _shared_action_recovery(context, recovered),
         )
+        return
+    if action.kind == "record_finding_receipts":
+        _record_finding_receipts(context, action)
+        return
+    if action.kind == "record_progress":
+        _record_semantic_progress(context, action)
+        return
+    if action.kind == "record_plateau":
+        recovered = recover_protocol_25_run(context)
+        if plan_next_protocol_25(recovered.controller_state) != action:
+            raise Protocol25RecoveryError(
+                "plateau action differs from fresh controller authority"
+            )
+        target = next(
+            item
+            for item in recovered.controller_state.targets
+            if item.audit_target_id == action.audit_target_id
+        )
+        context.event_store.append(
+            "semantic_plateau_reached",
+            {
+                "audit_target_id": target.audit_target_id,
+                "semantic_round": target.semantic_round,
+                "unresolved_finding_ids": list(target.unresolved_finding_ids),
+            },
+            occurred_at=context.clock(),
+        )
+        return
+    if action.kind == "accept_roots":
+        _accept_semantic_roots(context, action)
         return
     if action.kind == "freeze_epoch":
         recovered = recover_protocol_25_run(context)
@@ -1260,6 +1515,34 @@ def _apply_controller_action(
             _shared_action_recovery(context, recovered),
         )
         return
+    if action.kind == "guard_source":
+        recovered = recover_protocol_25_run(context)
+        if plan_next_protocol_25(recovered.controller_state) != action:
+            raise Protocol25RecoveryError(
+                "source guard action differs from fresh controller authority"
+            )
+        item, semantic_context = build_source_guard_dispatch_authority(
+            context,
+            action,
+        )
+        dependencies = context.dependencies_for(item, "initial_generation")
+        if (
+            not isinstance(dependencies, ProviderExecutionDependenciesV1)
+            or dependencies.context_bytes
+            != canonical_json_bytes(semantic_context.to_json_dict())
+            or dependencies.executor
+            != context.semantic_inputs.executor_contract.entry_for(
+                "source-composition-guard"
+            )
+        ):
+            raise Protocol25RecoveryError(
+                "semantic dependency resolver differs from source guard authority"
+            )
+        Protocol25Controller(context)._execute_one(
+            item,
+            _shared_action_recovery(context, recovered),
+        )
+        return
     terminal = {
         "terminal_complete": (
             "run_completed",
@@ -1302,6 +1585,236 @@ def _apply_controller_action(
         return
     raise Protocol25RecoveryError(
         f"protocol-2.5 action {action.kind!r} has no durable reconciler"
+    )
+
+
+def _source_assessment_for_action(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+    ledger: Protocol25LedgerView,
+) -> object:
+    from .artifacts import SourceCompositionAssessmentV1
+
+    replay = Protocol25ReplayState()
+    for event in context.event_store.replay():
+        replay.consume(event)
+    cycle = replay.source_cycles.get(action.source_cycle_id or "")
+    if cycle is None or cycle.source_assessment_id is None:
+        raise Protocol25RecoveryError("semantic cycle has no source assessment")
+    assessment = ledger.source_composition_assessments.get(
+        cycle.source_assessment_id
+    )
+    if not isinstance(assessment, SourceCompositionAssessmentV1):
+        raise Protocol25RecoveryError("source assessment ledger authority is missing")
+    return assessment
+
+
+def _record_finding_receipts(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> None:
+    from .artifacts import build_finding_closure_receipt
+
+    recovered = recover_protocol_25_run(context)
+    if plan_next_protocol_25(recovered.controller_state) != action:
+        raise Protocol25RecoveryError(
+            "finding receipt action differs from fresh controller authority"
+        )
+    ledger = recovered.ledger
+    if len(ledger.audit_epochs) != 1 or action.semantic_round is None:
+        raise Protocol25RecoveryError("finding receipts require one frozen epoch")
+    epoch = next(iter(ledger.audit_epochs.values()))
+    source_assessment = _source_assessment_for_action(context, action, ledger)
+    for target_id in action.participating_target_ids:
+        assessments = tuple(
+            item
+            for item in ledger.target_closure_assessments.values()
+            if item.identity in source_assessment.target_assessment_hashes
+            and item.audit_target_id == target_id
+        )
+        if len(assessments) != 1:
+            raise Protocol25RecoveryError(
+                "finding receipts require one target assessment per participant"
+            )
+        target_assessment = assessments[0]
+        for verdict in target_assessment.verdicts:
+            previous = ledger.latest_finding_closures.get(verdict.finding_key_id)
+            receipt = build_finding_closure_receipt(
+                epoch=epoch,
+                target_assessment=target_assessment,
+                source_assessment=source_assessment,
+                schema_version=1,
+                finding_key_id=verdict.finding_key_id,
+                audit_target_id=target_id,
+                resolution_overlay_hash=target_assessment.resolution_overlay_hash,
+                closure_verifier_authority_hash=(
+                    target_assessment.verifier_authority_hash
+                ),
+                context_authority_hash=target_assessment.context_authority_hash,
+                semantic_round=action.semantic_round,
+                verdict=verdict.verdict,
+                reason_code=verdict.reason_code,
+                diagnostic=f"Target recheck verdict: {verdict.reason_code}.",
+                previous_closure_receipt_id=(
+                    None if previous is None else previous.identity
+                ),
+            )
+            context.object_store.put_blob(canonical_json_bytes(receipt.to_json_dict()))
+            context.ledger.record_finding_closure(receipt)
+            context.event_store.append(
+                "finding_closure_recorded",
+                {
+                    "audit_target_id": target_id,
+                    "finding_closure_receipt_id": receipt.identity,
+                    "finding_key_id": verdict.finding_key_id,
+                    "semantic_round": action.semantic_round,
+                    "source_composition_assessment_id": source_assessment.identity,
+                    "source_cycle_id": action.source_cycle_id,
+                    "verdict": verdict.verdict,
+                },
+                occurred_at=context.clock(),
+            )
+
+
+def _record_semantic_progress(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> None:
+    recovered = recover_protocol_25_run(context)
+    if plan_next_protocol_25(recovered.controller_state) != action:
+        raise Protocol25RecoveryError(
+            "semantic progress action differs from fresh controller authority"
+        )
+    ledger = recovered.ledger
+    source_assessment = _source_assessment_for_action(context, action, ledger)
+    for target_id in action.participating_target_ids:
+        assessment = next(
+            item
+            for item in ledger.target_closure_assessments.values()
+            if item.identity in source_assessment.target_assessment_hashes
+            and item.audit_target_id == target_id
+        )
+        before = assessment.assessed_finding_ids
+        if source_assessment.outcome == "passed":
+            after = tuple(
+                item.finding_key_id
+                for item in assessment.verdicts
+                if item.verdict == "open"
+            )
+        else:
+            after = before
+        context.event_store.append(
+            "semantic_progress_recorded",
+            {
+                "audit_target_id": target_id,
+                "semantic_round": action.semantic_round,
+                "source_cycle_id": action.source_cycle_id,
+                "unresolved_after_ids": list(after),
+                "unresolved_before_ids": list(before),
+            },
+            occurred_at=context.clock(),
+        )
+
+
+def _accept_semantic_roots(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> None:
+    recovered = recover_protocol_25_run(context)
+    if plan_next_protocol_25(recovered.controller_state) != action or action.source_id is None:
+        raise Protocol25RecoveryError(
+            "root acceptance action differs from fresh controller authority"
+        )
+    ledger = recovered.ledger
+    if len(ledger.audit_epochs) != 1:
+        raise Protocol25RecoveryError("semantic roots require one frozen epoch")
+    epoch = next(iter(ledger.audit_epochs.values()))
+    replay = Protocol25ReplayState()
+    for event in recovered.events:
+        replay.consume(event)
+    deferred = {
+        item.observation_id: item
+        for assessment in (
+            *ledger.target_closure_assessments.values(),
+            *ledger.source_composition_assessments.values(),
+        )
+        for item in assessment.deferred_observations
+    }
+    closure_root = context.semantic_runtime.build_closure_root(
+        epoch,
+        latest_receipts=tuple(ledger.latest_finding_closures.values()),
+        target_rounds=tuple(
+            sorted(
+                (target.audit_target_id, target.semantic_round)
+                for target in recovered.controller_state.targets
+            )
+        ),
+        plateau_counts=tuple(
+            sorted(
+                (target.audit_target_id, target.no_reduction_rounds)
+                for target in recovered.controller_state.targets
+            )
+        ),
+        deferred_observations=tuple(deferred[key] for key in sorted(deferred)),
+    )
+    if not ledger.audit_closure_roots:
+        context.object_store.put_blob(
+            canonical_json_bytes(closure_root.to_json_dict())
+        )
+        context.ledger.record_audit_closure_root(closure_root)
+        context.event_store.append(
+            "audit_closure_root_accepted",
+            {
+                "audit_closure_root_id": closure_root.identity,
+                "audit_epoch_id": epoch.identity,
+                "deferred_observation_ids": list(
+                    item.observation_id for item in closure_root.deferred_observations
+                ),
+                "unresolved_finding_ids": list(
+                    closure_root.unresolved_finding_ids
+                ),
+            },
+            occurred_at=context.clock(),
+        )
+    elif ledger.audit_closure_roots != {closure_root.identity: closure_root}:
+        raise Protocol25RecoveryError("existing audit closure root conflicts")
+
+    source_targets = tuple(
+        item
+        for item in context.semantic_graph.audit_target_plans
+        if item.scope.source_id == action.source_id
+    )
+    source_plan = next(
+        (item for item in source_targets if item.target_kind == "source"),
+        None,
+    )
+    if source_plan is None:
+        raise Protocol25RecoveryError("L3 root has no source audit plan")
+    root_hashes = _accepted_l2_root_hash_by_source(context, ledger)
+    source_root = context.semantic_runtime.build_source_root(
+        source_id=action.source_id,
+        selected_domain_keys=tuple(
+            sorted(
+                item.scope.domain_key
+                for item in source_targets
+                if item.scope.domain_key is not None
+            )
+        ),
+        full_source_coverage=not source_plan.not_requested_domain_keys,
+        audit_target_ids=tuple(sorted(item.audit_target_id for item in source_targets)),
+        closure_roots=(closure_root,),
+        adopted_l2_root_hash=root_hashes[action.source_id],
+    )
+    context.object_store.put_blob(canonical_json_bytes(source_root.to_json_dict()))
+    context.ledger.record_l3_source_root(source_root)
+    context.event_store.append(
+        "l3_source_root_accepted",
+        {
+            "l3_source_root_id": source_root.identity,
+            "scope_state": source_root.state,
+            "source_id": action.source_id,
+        },
+        occurred_at=context.clock(),
     )
 
 

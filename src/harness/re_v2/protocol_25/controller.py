@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, ClassVar, Literal, Protocol, runtime_checkable
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.controller import (
     Protocol22ControllerError,
     _fault,
@@ -575,6 +575,7 @@ class Protocol25Controller(Protocol24Controller):
         if semantic_kind not in {
             "semantic-audit-findings",
             "semantic-resolution-overlay",
+            "source-composition-assessment",
             "target-closure-assessment",
         }:
             super()._certify_provider_candidate(item, committed, candidate_id)
@@ -591,6 +592,7 @@ class Protocol25Controller(Protocol24Controller):
             != {
                 "semantic-audit-findings": "audit.json",
                 "semantic-resolution-overlay": "resolution.json",
+                "source-composition-assessment": "closure.json",
                 "target-closure-assessment": "closure.json",
             }[semantic_kind]
             or entry.object_kind != "regular"
@@ -662,7 +664,7 @@ class Protocol25Controller(Protocol24Controller):
                     prior_overlay_hashes=prior_overlay_hashes,
                     guidance_hash=guidance_hash,
                 )
-            else:
+            elif semantic_kind == "target-closure-assessment":
                 ledger = self.context.ledger.replay()
                 epochs = tuple(ledger.audit_epochs.values())  # type: ignore[attr-defined]
                 if len(epochs) != 1:
@@ -689,6 +691,77 @@ class Protocol25Controller(Protocol24Controller):
                     context=context,
                     epoch=epoch,
                     overlay=overlay,
+                )
+            else:
+                ledger = self.context.ledger.replay()
+                epochs = tuple(ledger.audit_epochs.values())  # type: ignore[attr-defined]
+                if len(epochs) != 1:
+                    raise Protocol25RuntimeError(
+                        "source guard candidate has no unique frozen epoch"
+                    )
+                epoch = epochs[0]
+                dependency_ids = set(item.output_key.dependency_hashes)
+                target_assessments = tuple(
+                    sorted(
+                        (
+                            assessment
+                            for identity, assessment in ledger.target_closure_assessments.items()  # type: ignore[attr-defined]
+                            if identity in dependency_ids
+                        ),
+                        key=lambda assessment: (
+                            assessment.audit_target_id,
+                            assessment.identity,
+                        ),
+                    )
+                )
+                overlay_hashes = {
+                    assessment.resolution_overlay_hash
+                    for assessment in target_assessments
+                }
+                overlays = tuple(
+                    sorted(
+                        (
+                            load_canonical_object(
+                                self.context.object_store.read_blob(overlay_hash),
+                                SemanticResolutionOverlayV1.from_json_dict,
+                            )
+                            for overlay_hash in overlay_hashes
+                        ),
+                        key=lambda overlay: (
+                            overlay.audit_target_id,
+                            overlay.identity,
+                        ),
+                    )
+                )
+                expected_dependencies = {
+                    epoch.identity,
+                    *(item.identity for item in overlays),
+                    *(item.identity for item in target_assessments),
+                }
+                if dependency_ids != expected_dependencies:
+                    raise Protocol25RuntimeError(
+                        "source guard dependency authority is not exact"
+                    )
+                source_id = context.audit_target.scope.source_id
+                composed = self.context.semantic_runtime.build_composed_view(  # type: ignore[attr-defined]
+                    context=context,
+                    epoch=epoch,
+                    source_id=source_id,
+                    overlays=overlays,
+                    target_assessments=target_assessments,
+                )
+                self.context.object_store.put_blob(
+                    canonical_json_bytes(composed.to_json_dict())
+                )
+                result = self.context.semantic_runtime.certify_source_guard(  # type: ignore[attr-defined]
+                    candidate,
+                    artifact_key=item.output_key,
+                    context=context,
+                    epoch=epoch,
+                    source_id=source_id,
+                    overlays=overlays,
+                    target_assessments=target_assessments,
+                    composed_view=composed,
                 )
         except (Protocol22SchemaError, Protocol25RuntimeError):
             self._reject_candidate_before_artifact(
