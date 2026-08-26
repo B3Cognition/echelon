@@ -52,6 +52,7 @@ from .findings import (
 )
 from .model import Protocol25SchemaError
 from .policies import (
+    SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT,
     SemanticArtifactPolicyCatalogV1,
     build_semantic_v1_policy_catalog,
 )
@@ -1606,7 +1607,8 @@ class Protocol25DeterministicRuntime:
             not isinstance(artifact_key, ArtifactKeyV2)
             or artifact_key.artifact_kind != artifact_kind
             or artifact_key.layer != "L3"
-            or artifact_key.producer_protocol_version != "2.5"
+            or artifact_key.producer_protocol_version
+            != SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT[artifact_kind]
             or artifact_key.scope != context.audit_target.scope
         ):
             raise Protocol25RuntimeError("semantic artifact key is invalid")

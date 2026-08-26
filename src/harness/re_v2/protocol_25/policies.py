@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import ClassVar
 
 from harness.re_v2.canonical import content_digest
@@ -50,6 +51,14 @@ SEMANTIC_ARTIFACT_KINDS = (
     "semantic-resolution-overlay",
     "source-composition-assessment",
     "target-closure-assessment",
+)
+SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT = MappingProxyType(
+    {
+        "semantic-audit-findings": "protocol-2.5-semantic-audit-v1",
+        "semantic-resolution-overlay": "protocol-2.5-semantic-resolution-v1",
+        "target-closure-assessment": "protocol-2.5-closure-recheck-v1",
+        "source-composition-assessment": "protocol-2.5-source-composition-guard-v1",
+    }
 )
 AUDIT_RULE_IDS = (
     "behavior.incorrect",

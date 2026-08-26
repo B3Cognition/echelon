@@ -22,6 +22,7 @@ from harness.re_v2.protocol_22.schema import (
 
 from .findings import AuditTargetV1, DeferredObservationV1, SemanticFindingV1
 from .model import Protocol25SchemaError
+from .policies import SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT
 
 
 _AUDIT_VERDICTS = frozenset({"PASS", "REPAIR"})
@@ -125,7 +126,8 @@ class AuditCandidateV1(_Authority):
         if (
             self.artifact_key.artifact_kind != "semantic-audit-findings"
             or self.artifact_key.layer != "L3"
-            or self.artifact_key.producer_protocol_version != "2.5"
+            or self.artifact_key.producer_protocol_version
+            != SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT["semantic-audit-findings"]
             or self.artifact_key.scope != self.audit_target.scope
         ):
             raise Protocol25SchemaError("audit candidate artifact key is invalid")
@@ -470,7 +472,10 @@ class SemanticResolutionOverlayV1(_Authority):
         if (
             self.artifact_key.artifact_kind != "semantic-resolution-overlay"
             or self.artifact_key.layer != "L3"
-            or self.artifact_key.producer_protocol_version != "2.5"
+            or self.artifact_key.producer_protocol_version
+            != SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT[
+                "semantic-resolution-overlay"
+            ]
         ):
             raise Protocol25SchemaError("semantic resolution artifact key is invalid")
         _schema(digest_value, self.audit_epoch_id, "semantic resolution audit_epoch_id")

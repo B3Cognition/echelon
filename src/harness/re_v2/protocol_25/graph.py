@@ -15,10 +15,13 @@ from harness.re_v2.protocol_22.graph import (
 )
 from harness.re_v2.protocol_22.inputs import ValidatedProtocol22Inputs
 from harness.re_v2.protocol_22.model import (
+    ArtifactKeyV2,
     ArtifactScope,
     BudgetPolicyV2,
     CatalogReferenceV1,
+    WorkItemV2,
     WorkTemplateV2,
+    instantiate_work_item_v2,
 )
 from harness.re_v2.protocol_22.partition import (
     DomainDescriptorV1,
@@ -328,6 +331,77 @@ class Protocol25Graph:
             self._validate_accepted_closure(plan, accepted_by_template)
             ready.append(self._materialize_target(plan, accepted_by_template))
         return tuple(ready)
+
+    def instantiate_audit_item(
+        self,
+        template: WorkTemplateV2,
+        audit_target: AuditTargetV1,
+        accepted_dependencies: Mapping[str, AcceptedArtifactV2],
+    ) -> WorkItemV2:
+        """Instantiate a domain- or source-scoped semantic audit exactly.
+
+        Shared graph instantiation infers scope from the lower-layer artifact
+        kind vocabulary.  The generic L3 ``semantic-audit-findings`` kind is
+        intentionally usable at either scope, so protocol 2.5 supplies the
+        already-frozen template scope and its matching partition directly.
+        """
+        if template not in self.audit_templates:
+            raise Protocol25GraphError("semantic audit template is not registered")
+        template_index = self.audit_templates.index(template)
+        plan = self.audit_target_plans[template_index]
+        if set(accepted_dependencies) != set(template.required_template_ids):
+            raise Protocol25GraphError(
+                "semantic audit dependencies do not equal the template closure"
+            )
+        if any(
+            not isinstance(value, AcceptedArtifactV2)
+            for value in accepted_dependencies.values()
+        ):
+            raise Protocol25GraphError("semantic audit dependency is invalid")
+        self._validate_accepted_closure(plan, accepted_dependencies)
+        if self._materialize_target(plan, accepted_dependencies) != audit_target:
+            raise Protocol25GraphError(
+                "semantic audit target differs from accepted prerequisite authority"
+            )
+        source = next(
+            (
+                item
+                for item in self._inputs.workspace_partition.sources
+                if item.source_id == template.scope.source_id
+            ),
+            None,
+        )
+        if source is None:
+            raise Protocol25GraphError("semantic audit source is not partitioned")
+        if template.scope.domain_key is None:
+            partition_id = source.source_partition_id
+        else:
+            domain = next(
+                (
+                    item
+                    for item in source.domains
+                    if item.domain_key == template.scope.domain_key
+                ),
+                None,
+            )
+            if domain is None:
+                raise Protocol25GraphError("semantic audit domain is not partitioned")
+            partition_id = domain.domain_partition_id
+        dependency_hashes = (audit_target.identity,)
+        key = ArtifactKeyV2(
+            identity_schema_version=2,
+            scope=template.scope,
+            partition_id=partition_id,
+            artifact_kind=template.artifact_kind,
+            layer=template.layer,
+            producer_protocol_version=template.producer_protocol_version,
+            layer_policy_hash=template.layer_policy_hash,
+            dependency_hashes=dependency_hashes,
+        )
+        try:
+            return instantiate_work_item_v2(template, key, dependency_hashes)
+        except Protocol22SchemaError as exc:
+            raise Protocol25GraphError(str(exc)) from exc
 
     def _validate_accepted_closure(
         self,

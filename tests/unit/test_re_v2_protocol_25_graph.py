@@ -257,6 +257,32 @@ def test_audit_templates_are_l3_and_depend_only_on_selected_closure() -> None:
     }
 
 
+def test_audit_items_preserve_domain_and_source_template_scope() -> None:
+    graph, _inputs, authority, _parent, accepted = _fixture()
+    _complete_l2(graph, authority, accepted)
+
+    targets = graph.ready_audit_targets(accepted)
+    items = tuple(
+        graph.instantiate_audit_item(
+            template,
+            target,
+            {
+                dependency: accepted[dependency]
+                for dependency in template.required_template_ids
+            },
+        )
+        for target, template in zip(targets, graph.audit_templates, strict=True)
+    )
+
+    assert tuple(item.output_key.scope for item in items) == tuple(
+        template.scope for template in graph.audit_templates
+    )
+    assert {item.output_key.scope.is_domain for item in items} == {False, True}
+    assert tuple(item.required_artifact_hashes for item in items) == tuple(
+        (target.identity,) for target in targets
+    )
+
+
 def test_protocol_25_graph_uses_shared_planner_for_l2_prerequisites() -> None:
     graph, _inputs, authority, _parent, _accepted = _fixture()
 

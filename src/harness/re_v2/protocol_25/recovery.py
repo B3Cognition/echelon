@@ -10,7 +10,6 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ReV2LedgerError
 from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
-    instantiate_ready_item,
     plan_next_v2,
 )
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
@@ -79,6 +78,89 @@ class Protocol25RecoveryResult:
     controller_state: Protocol25ControllerStateV1
     events: tuple[EventRecord, ...]
     ledger: Protocol25LedgerView
+
+
+def reconstruct_accepted_audit_results(
+    context: Protocol25RunContext,
+) -> tuple[SemanticCertificationResultV1, ...]:
+    """Rebuild accepted audit certification envelopes from durable authority."""
+    if not isinstance(context, Protocol25RunContext):
+        raise Protocol25RecoveryError(
+            "accepted audit reconstruction requires Protocol25RunContext"
+        )
+    ledger = context.ledger.replay()
+    if not isinstance(ledger, Protocol25LedgerView):
+        raise Protocol25RecoveryError("accepted audit has no protocol-2.5 ledger")
+    replay = Protocol25ReplayState()
+    for event in context.event_store.replay():
+        replay.consume(event)
+    results = []
+    for audit_target_id, candidate_hash in sorted(replay.audit_candidates.items()):
+        artifact_bytes = context.object_store.read_blob(candidate_hash)
+        artifact = load_canonical_object(
+            artifact_bytes,
+            AuditCandidateV1.from_json_dict,
+        )
+        if (
+            artifact.identity != candidate_hash
+            or artifact.audit_target_id != audit_target_id
+        ):
+            raise Protocol25RecoveryError(
+                "accepted audit event does not bind its candidate object"
+            )
+        certifications = tuple(
+            item
+            for item in ledger.semantic_certifications.values()
+            if item.artifact_hash == candidate_hash
+            and item.artifact_key_id == artifact.artifact_key.identity
+            and item.audit_target_id == audit_target_id
+            and item.audit_epoch_id is None
+            and item.verdict == "accepted"
+        )
+        if len(certifications) != 1:
+            raise Protocol25RecoveryError(
+                "accepted audit candidate has no unique certification"
+            )
+        certification = certifications[0]
+        assessments = tuple(
+            item
+            for item in ledger.candidate_assessments.values()
+            if item.certification_receipt_id == certification.identity
+            and item.artifact_hash == candidate_hash
+            and item.outcome == "certified"
+        )
+        if len(assessments) != 1:
+            raise Protocol25RecoveryError(
+                "accepted audit candidate has no unique candidate assessment"
+            )
+        assessment = assessments[0]
+        normalized_hash = assessment.normalized_authorial_payload_hash
+        if normalized_hash is None:
+            raise Protocol25RecoveryError(
+                "accepted audit candidate omitted normalized payload authority"
+            )
+        acceptance = ledger.accepted_artifacts.get(artifact.artifact_key.identity)
+        if (
+            acceptance is None
+            or acceptance.artifact_hash != candidate_hash
+            or acceptance.certification_receipt_id != certification.identity
+        ):
+            raise Protocol25RecoveryError(
+                "accepted audit candidate has no exact artifact acceptance"
+            )
+        results.append(
+            SemanticCertificationResultV1(
+                artifact=artifact,
+                artifact_bytes=artifact_bytes,
+                normalized_authorial_payload_bytes=context.object_store.read_blob(
+                    normalized_hash
+                ),
+                certification=certification,
+                candidate_assessment=assessment,
+                acceptance=acceptance,
+            )
+        )
+    return tuple(results)
 
 
 def publish_audit_epoch(
@@ -351,7 +433,11 @@ def _target_states(
         dependencies = {
             item: accepted[item] for item in template.required_template_ids
         }
-        work_item = instantiate_ready_item(template, dependencies, context.semantic_graph.inputs)
+        work_item = context.semantic_graph.instantiate_audit_item(
+            template,
+            target,
+            dependencies,
+        )
         failure = ledger.work_failure(work_item.work_item_id)
         authority_hash = accepted_authorities.get(target.audit_target_id)
         if authority_hash is not None:
@@ -470,6 +556,40 @@ def _deferred_ids(ledger: Protocol25LedgerView) -> tuple[str, ...]:
     return tuple(sorted(values))
 
 
+def _accepted_l2_root_hashes(
+    context: Protocol25RunContext,
+    ledger: Protocol25LedgerView,
+) -> tuple[str, ...]:
+    selected_sources = set(context.semantic_graph.selected_source_ids)
+    template_ids = {
+        item.template_id
+        for item in context.semantic_graph.prerequisite_graph.templates
+        if item.layer == "L2"
+        and item.artifact_kind == "source-baseline-root"
+        and item.scope.source_id in selected_sources
+    }
+    roots = []
+    observed_sources = set()
+    for certification_id, item in ledger.certification_work_items.items():
+        if item.template_id not in template_ids:
+            continue
+        acceptance = ledger.accepted_artifacts.get(item.output_key.identity)
+        if (
+            acceptance is None
+            or acceptance.certification_receipt_id != certification_id
+        ):
+            raise Protocol25RecoveryError(
+                "selected L2 source root has no exact artifact acceptance"
+            )
+        roots.append(acceptance.artifact_hash)
+        observed_sources.add(item.output_key.scope.source_id)
+    if observed_sources != selected_sources or len(roots) != len(selected_sources):
+        raise Protocol25RecoveryError(
+            "audit epoch does not have one accepted L2 root per selected source"
+        )
+    return tuple(sorted(roots))
+
+
 def _apply_controller_action(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
@@ -478,6 +598,34 @@ def _apply_controller_action(
         raise Protocol25RecoveryError(
             "semantic action must be Protocol25ControllerActionV1"
         )
+    if action.kind == "freeze_epoch":
+        recovered = recover_protocol_25_run(context)
+        state = recovered.controller_state
+        if (
+            not state.prerequisites_complete
+            or state.prerequisites_failed
+            or any(item.audit_state != "accepted" for item in state.targets)
+        ):
+            raise Protocol25RecoveryError(
+                "audit epoch cannot freeze before every selected audit is accepted"
+            )
+        candidates = reconstruct_accepted_audit_results(context)
+        if {item.artifact.audit_target_id for item in candidates} != {
+            item.audit_target_id for item in state.targets
+        }:
+            raise Protocol25RecoveryError(
+                "accepted audit candidates differ from recovered target authority"
+            )
+        epoch = publish_audit_epoch(
+            context,
+            candidates,
+            _accepted_l2_root_hashes(context, recovered.ledger),
+        )
+        if state.audit_epoch_id is not None and state.audit_epoch_id != epoch.identity:
+            raise Protocol25RecoveryError(
+                "recovered audit epoch differs from deterministic publication"
+            )
+        return
     terminal = {
         "terminal_complete": (
             "run_completed",
@@ -528,5 +676,6 @@ __all__ = (
     "Protocol25RecoveryResult",
     "Protocol25RunContext",
     "publish_audit_epoch",
+    "reconstruct_accepted_audit_results",
     "recover_protocol_25_run",
 )

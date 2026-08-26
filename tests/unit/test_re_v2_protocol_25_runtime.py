@@ -19,6 +19,9 @@ from harness.re_v2.protocol_25.runtime import (
     SemanticCandidateInputV1,
     semantic_response_schema,
 )
+from harness.re_v2.protocol_25.policies import (
+    SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT,
+)
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import (
     audit_target_v1,
@@ -586,7 +589,9 @@ def _source_artifact_key(
         partition_id=digest("partition"),
         artifact_kind=artifact_kind,
         layer="L3",
-        producer_protocol_version="2.5",
+        producer_protocol_version=SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT[
+            artifact_kind
+        ],
         layer_policy_hash=digest(f"{artifact_kind}-policy"),
         dependency_hashes=tuple(sorted(dependencies)),
     )

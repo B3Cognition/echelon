@@ -7,13 +7,29 @@ import pytest
 
 import harness.re_v2.protocol_25 as protocol_25
 from harness.re_v2.events import EventStore
-from harness.re_v2.canonical import canonical_json_bytes
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore
+from harness.re_v2.protocol_22.baseline import (
+    ArtifactAcceptanceReceiptV2,
+    CandidateAssessmentReceiptV1,
+    CertificationKeyV2,
+    CertificationReceiptV2,
+    certify_deterministic_artifact,
+)
+from harness.re_v2.protocol_22.artifacts import DeterministicAssessmentInputV2
 from harness.re_v2.protocol_22.execution import Protocol22ExecutionStore
+from harness.re_v2.protocol_22.graph import (
+    AcceptedArtifactV2,
+    plan_next_v2,
+)
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_25.adoption import (
     ParentAuthorityBundleV2,
     ParentSemanticAuthorityV1,
+)
+from harness.re_v2.protocol_25.artifacts import (
+    AuditCandidateV1,
+    SemanticCertificationReceiptV1,
 )
 from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
@@ -21,6 +37,7 @@ from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 from harness.re_v2.protocol_25.recovery import (
     Protocol25RunContext,
     publish_audit_epoch,
+    reconstruct_accepted_audit_results,
     recover_protocol_25_run,
 )
 from harness.re_v2.protocol_25.controller import Protocol25ControllerActionV1
@@ -34,6 +51,8 @@ from tests.unit.test_re_v2_protocol_25_runtime import (
     _certified_audit,
     _runtime as _semantic_runtime,
 )
+from tests.unit.test_re_v2_protocol_22_artifacts import _zero_debt
+from tests.unit.test_re_v2_protocol_22_ledger import _provider_authority, _verifier
 
 
 class _SnapshotReader:
@@ -197,6 +216,188 @@ def _epoch_publication_fixture(tmp_path):  # type: ignore[no-untyped-def]
     return context, result, (root_hash,)
 
 
+class _AvailableBudget:
+    @staticmethod
+    def item_attempt_available(_item: object) -> bool:
+        return True
+
+
+def _accept_every_prerequisite(context: Protocol25RunContext):  # type: ignore[no-untyped-def]
+    _fixture_item, compact_certification, _assessment, _acceptance = (
+        _provider_authority(context.object_store)
+    )
+    compact_assessment = compact_certification.assessment
+    for _round in range(16):
+        decision = plan_next_v2(
+            context.semantic_graph.prerequisite_graph,
+            context.ledger.replay(),
+            _AvailableBudget(),
+        )
+        if not decision.ready:
+            break
+        for item in decision.ready:
+            payload = canonical_json_bytes({"work_item_id": item.work_item_id})
+            artifact_hash = context.object_store.put_blob(payload)
+            if item.output_key.artifact_kind in {"domain-baseline", "source-overview"}:
+                certification = CertificationReceiptV2(
+                    schema_version=2,
+                    certification_key=CertificationKeyV2(
+                        identity_schema_version=2,
+                        artifact_hash=artifact_hash,
+                        artifact_key=item.output_key,
+                        verifier_id=item.verifier_id,
+                        verifier_version=item.verifier_version,
+                        verifier_implementation_digest=item.verifier_implementation_digest,
+                        scoped_content_id=item.output_key.scope.content_id,
+                        audit_epoch_id=None,
+                    ),
+                    verdict="accepted",
+                    assessment=compact_assessment,
+                )
+            else:
+                certification = certify_deterministic_artifact(
+                    item,
+                    artifact_hash,
+                    DeterministicAssessmentInputV2(
+                        canonical_schema_valid=True,
+                        dependency_closure_valid=True,
+                        policy_conformance_valid=True,
+                        depth_debt=(
+                            _zero_debt()
+                            if item.output_key.artifact_kind
+                            in {
+                                "source-evidence-pack",
+                                "domain-evidence-pack",
+                                "domain-context-bundle",
+                                "source-overview-context-bundle",
+                            }
+                            else None
+                        ),
+                        normalized_diagnostics=(),
+                    ),
+                    _verifier(item),
+                )
+            acceptance = ArtifactAcceptanceReceiptV2(
+                schema_version=2,
+                artifact_key=item.output_key,
+                artifact_hash=artifact_hash,
+                certification_receipt_id=certification.identity,
+            )
+            context.ledger.record_certification(certification, item)
+            if item.output_key.artifact_kind in {"domain-baseline", "source-overview"}:
+                capture_hash = context.object_store.put_blob(
+                    f"prerequisite-capture:{item.work_item_id}\n".encode()
+                )
+                context.ledger.record_candidate_assessment(
+                    CandidateAssessmentReceiptV1(
+                        schema_version=1,
+                        candidate_id=content_digest(
+                            {"prerequisite-candidate": item.work_item_id}
+                        ),
+                        work_item_id=item.work_item_id,
+                        execution_capture_hash=capture_hash,
+                        normalized_authorial_payload_hash=artifact_hash,
+                        artifact_hash=artifact_hash,
+                        certification_receipt_id=certification.identity,
+                        outcome="certified",
+                        normalized_diagnostics=(),
+                    )
+                )
+            context.ledger.record_artifact_acceptance(acceptance)
+    assert not plan_next_v2(
+        context.semantic_graph.prerequisite_graph,
+        context.ledger.replay(),
+        _AvailableBudget(),
+    ).ready
+
+
+def _accept_every_audit(context: Protocol25RunContext) -> None:
+    ledger = context.ledger.replay()
+    accepted = {}
+    for receipt in ledger.accepted_artifacts.values():
+        item = ledger.certification_work_items.get(receipt.certification_receipt_id)
+        if item is not None:
+            accepted[item.template_id] = AcceptedArtifactV2(
+                receipt.artifact_key.identity,
+                receipt.artifact_hash,
+            )
+    targets = context.semantic_graph.ready_audit_targets(accepted)
+    for target, template in zip(
+        targets,
+        context.semantic_graph.audit_templates,
+        strict=True,
+    ):
+        dependencies = {
+            item: accepted[item] for item in template.required_template_ids
+        }
+        work_item = context.semantic_graph.instantiate_audit_item(
+            template,
+            target,
+            dependencies,
+        )
+        artifact = AuditCandidateV1(
+            schema_version=1,
+            audit_target=target,
+            artifact_key=work_item.output_key,
+            audit_epoch_id=None,
+            verdict="PASS",
+            findings=(),
+        )
+        artifact_bytes = canonical_json_bytes(artifact.to_json_dict())
+        artifact_hash = context.object_store.put_blob(artifact_bytes)
+        normalized = canonical_json_bytes(
+            {
+                "schema_version": 1,
+                "audit_target_id": target.identity,
+                "verdict": "PASS",
+                "findings": [],
+            }
+        )
+        normalized_hash = context.object_store.put_blob(normalized)
+        certification = SemanticCertificationReceiptV1(
+            schema_version=1,
+            artifact_key_id=work_item.output_key.identity,
+            artifact_hash=artifact_hash,
+            verifier_authority_hash=context.semantic_runtime.verifier_authority_hash,
+            audit_epoch_id=None,
+            audit_target_id=target.identity,
+            evidence_scope_hash=content_digest({"audit_target_id": target.identity}),
+            verdict="accepted",
+            normalized_diagnostics=(),
+        )
+        capture_hash = context.object_store.put_blob(
+            f"capture:{work_item.work_item_id}\n".encode()
+        )
+        assessment = CandidateAssessmentReceiptV1(
+            schema_version=1,
+            candidate_id=content_digest({"candidate": work_item.work_item_id}),
+            work_item_id=work_item.work_item_id,
+            execution_capture_hash=capture_hash,
+            normalized_authorial_payload_hash=normalized_hash,
+            artifact_hash=artifact_hash,
+            certification_receipt_id=certification.identity,
+            outcome="certified",
+            normalized_diagnostics=(),
+        )
+        acceptance = ArtifactAcceptanceReceiptV2(
+            schema_version=2,
+            artifact_key=work_item.output_key,
+            artifact_hash=artifact_hash,
+            certification_receipt_id=certification.identity,
+        )
+        context.ledger.record_semantic_certification(certification)
+        context.ledger.record_candidate_assessment(assessment)
+        context.ledger.record_artifact_acceptance(acceptance)
+        context.event_store.append(
+            "audit_candidate_accepted",
+            {
+                "audit_candidate_authority_id": artifact.identity,
+                "audit_target_id": target.identity,
+            },
+            occurred_at=context.clock(),
+        )
+
+
 @pytest.mark.integration
 def test_audit_epoch_publication_recovers_object_before_ledger(tmp_path) -> None:
     context, result, roots = _epoch_publication_fixture(tmp_path)
@@ -220,6 +421,35 @@ def test_audit_epoch_publication_recovers_object_before_ledger(tmp_path) -> None
     assert [item.type for item in context.event_store.replay()].count(
         "audit_epoch_frozen"
     ) == 1
+
+
+@pytest.mark.integration
+def test_accepted_audit_result_reconstructs_without_provider_state(tmp_path) -> None:
+    context, result, _roots = _epoch_publication_fixture(tmp_path)
+
+    reconstructed = reconstruct_accepted_audit_results(context)
+
+    assert reconstructed == (result,)
+
+
+@pytest.mark.integration
+def test_freeze_epoch_action_reconstructs_and_publishes_at_most_once(tmp_path) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    _accept_every_audit(context)
+    action = Protocol25ControllerActionV1(kind="freeze_epoch")
+
+    context.apply_controller_action(action)
+    context.apply_controller_action(action)
+
+    events = context.event_store.replay()
+    assert [item.type for item in events].count("audit_epoch_frozen") == 1
+    assert len(context.ledger.replay().audit_epochs) == 1
 
 
 @pytest.mark.integration

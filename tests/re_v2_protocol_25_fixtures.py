@@ -44,6 +44,9 @@ from harness.re_v2.protocol_25.artifacts import (
     build_source_composition_assessment,
 )
 from harness.re_v2.protocol_25.model import RunManifestV4, SemanticClosurePolicyV1
+from harness.re_v2.protocol_25.policies import (
+    SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT,
+)
 from tests.re_v2_protocol_22_fixtures import digest
 
 
@@ -278,7 +281,9 @@ def l3_artifact_key_v2(
         partition_id=digest("partition"),
         artifact_kind=artifact_kind,
         layer="L3",
-        producer_protocol_version="2.5",
+        producer_protocol_version=SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT[
+            artifact_kind
+        ],
         layer_policy_hash=digest(f"{artifact_kind}-policy"),
         dependency_hashes=tuple(sorted(dependency_hashes)),
     )
