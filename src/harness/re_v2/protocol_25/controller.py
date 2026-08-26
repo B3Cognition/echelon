@@ -14,9 +14,22 @@ from dataclasses import dataclass
 from typing import Callable, ClassVar, Literal, Protocol, runtime_checkable
 
 from harness.re_v2.canonical import content_digest
-from harness.re_v2.protocol_22.controller import Protocol22ControllerError
+from harness.re_v2.protocol_22.controller import (
+    Protocol22ControllerError,
+    _fault,
+)
+from harness.re_v2.protocol_22.execution import Committed
+from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.re_v2.protocol_24.controller import Protocol24Controller
+
+from .runtime import (
+    Protocol25RuntimeError,
+    SemanticCandidateInputV1,
+    SemanticCertificationResultV1,
+    SemanticContextV1,
+)
 
 
 AuditStateV1 = Literal["pending", "accepted", "failed"]
@@ -544,6 +557,154 @@ class Protocol25Controller(Protocol24Controller):
             raise TypeError(
                 "Protocol25Controller requires a shared run context or protocol-2.5 backend"
             )
+
+    def _certify_provider_candidate(
+        self,
+        item: WorkItemV2,
+        committed: Committed,
+        candidate_id: str,
+    ) -> None:
+        if item.output_key.artifact_kind != "semantic-audit-findings":
+            super()._certify_provider_candidate(item, committed, candidate_id)
+            return
+        inventory = committed.closure.candidate_inventory
+        entry = (
+            inventory.entries[0]
+            if inventory is not None and len(inventory.entries) == 1
+            else None
+        )
+        if (
+            entry is None
+            or entry.relative_path != "audit.json"
+            or entry.object_kind != "regular"
+            or entry.content_hash is None
+        ):
+            self._reject_candidate_before_artifact(
+                item,
+                committed,
+                candidate_id,
+                "candidate_tree_invalid",
+            )
+            return
+        context_hash = committed.closure.execution_input.context_bundle_hash
+        if context_hash is None:
+            raise Protocol25ControllerError(
+                "semantic audit candidate has no pinned context bundle"
+            )
+        try:
+            context = load_canonical_object(
+                self.context.object_store.read_blob(context_hash),
+                SemanticContextV1.from_json_dict,
+            )
+            candidate = SemanticCandidateInputV1(
+                candidate_id=candidate_id,
+                execution_capture_hash=committed.closure.capture.identity,
+                inventory=inventory,
+                candidate_bytes=self.context.object_store.read_blob(entry.content_hash),
+            )
+            result = self.context.semantic_runtime.certify_audit(  # type: ignore[attr-defined]
+                candidate,
+                artifact_key=item.output_key,
+                context=context,
+            )
+        except (Protocol22SchemaError, Protocol25RuntimeError):
+            self._reject_candidate_before_artifact(
+                item,
+                committed,
+                candidate_id,
+                "authorial_schema_invalid",
+            )
+            return
+        self._record_semantic_result(item, candidate_id, result)
+
+    def _record_semantic_result(
+        self,
+        item: WorkItemV2,
+        candidate_id: str,
+        result: SemanticCertificationResultV1,
+    ) -> None:
+        if (
+            result.candidate_assessment.candidate_id != candidate_id
+            or result.candidate_assessment.work_item_id != item.work_item_id
+            or result.acceptance.artifact_key != item.output_key
+        ):
+            raise Protocol25ControllerError(
+                "semantic certification result differs from dispatch authority"
+            )
+        normalized_hash = self.context.object_store.put_blob(
+            result.normalized_authorial_payload_bytes
+        )
+        if (
+            result.candidate_assessment.normalized_authorial_payload_hash
+            != normalized_hash
+        ):
+            raise Protocol25ControllerError(
+                "semantic candidate normalized payload authority mismatch"
+            )
+        artifact_hash = self.context.object_store.put_blob(result.artifact_bytes)
+        if (
+            artifact_hash != result.certification.artifact_hash
+            or result.acceptance.artifact_hash != artifact_hash
+            or result.acceptance.certification_receipt_id
+            != result.certification.identity
+        ):
+            raise Protocol25ControllerError(
+                "semantic certification artifact authority mismatch"
+            )
+        ledger = self.context.ledger
+        record_semantic = getattr(ledger, "record_semantic_certification", None)
+        if not callable(record_semantic):
+            raise Protocol25ControllerError(
+                "semantic run has no protocol-2.5 ledger"
+            )
+        record_semantic(result.certification)
+        _fault(self.fault_hook, f"semantic_certification:{result.certification.identity}")
+        ledger.record_candidate_assessment(result.candidate_assessment)
+        _fault(
+            self.fault_hook,
+            f"candidate_assessment:{result.candidate_assessment.identity}",
+        )
+        self.context.event_store.append(
+            "candidate_certified",
+            {
+                "candidate_assessment_id": result.candidate_assessment.identity,
+                "candidate_id": candidate_id,
+                "certification_receipt_id": result.certification.identity,
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=self.context.clock(),
+        )
+        _fault(
+            self.fault_hook,
+            f"candidate_certified:{result.candidate_assessment.identity}",
+        )
+        ledger.record_artifact_acceptance(result.acceptance)
+        _fault(
+            self.fault_hook,
+            f"artifact_acceptance_receipt:{result.acceptance.identity}",
+        )
+        self.context.event_store.append(
+            "artifact_accepted",
+            {
+                "artifact_acceptance_receipt_id": result.acceptance.identity,
+                "artifact_hash": result.acceptance.artifact_hash,
+                "artifact_key_id": result.acceptance.artifact_key.identity,
+                "candidate_assessment_id": result.candidate_assessment.identity,
+                "certification_receipt_id": result.certification.identity,
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=self.context.clock(),
+        )
+        _fault(self.fault_hook, f"artifact_accepted:{item.work_item_id}")
+        self.context.event_store.append(
+            "audit_candidate_accepted",
+            {
+                "audit_candidate_authority_id": artifact_hash,
+                "audit_target_id": result.certification.audit_target_id,
+            },
+            occurred_at=self.context.clock(),
+        )
+        _fault(self.fault_hook, f"audit_candidate_accepted:{artifact_hash}")
 
     def run_until_stopped(self) -> Protocol25ControllerResult:
         backend = self.context

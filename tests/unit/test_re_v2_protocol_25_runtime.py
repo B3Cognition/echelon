@@ -22,6 +22,7 @@ from harness.re_v2.protocol_25.runtime import (
     Protocol25DeterministicRuntime,
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
+    SemanticContextV1,
     semantic_response_schema,
 )
 from harness.re_v2.protocol_25.policies import (
@@ -259,6 +260,18 @@ def test_audit_context_derives_closed_authority_from_accepted_l2_objects() -> No
     assert tuple(
         item.aliases[0] for item in context.vocabulary.evidence_anchors
     ) == tuple(item.aliases[0] for item in context.authorized_evidence)
+
+
+@pytest.mark.unit
+def test_semantic_context_round_trips_as_closed_provider_authority() -> None:
+    runtime, target, partition, payloads = _derived_audit_context_fixture()
+    context = runtime.build_audit_context(
+        audit_target=target,
+        workspace_partition=partition,
+        authority_payloads=payloads,
+    )
+
+    assert SemanticContextV1.from_json_dict(context.to_json_dict()) == context
 
 
 @pytest.mark.unit

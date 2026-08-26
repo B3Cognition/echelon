@@ -25,6 +25,7 @@ from harness.re_v2.protocol_22.partition import (
 from harness.re_v2.protocol_22.schema import (
     Protocol22SchemaError,
     digest_value,
+    exact_object,
     load_canonical_object,
     positive_int,
     safe_id,
@@ -418,6 +419,42 @@ class AuthorizedEvidenceRangeV1:
             "file_record": self.file_record.to_json_dict(),
         }
 
+    @classmethod
+    def from_json_dict(cls, value: object) -> "AuthorizedEvidenceRangeV1":
+        fields = frozenset(
+            {
+                "schema_version",
+                "canonical_anchor_id",
+                "aliases",
+                "source_id",
+                "source_relative_path",
+                "start_line",
+                "end_line",
+                "source_blob_hash",
+                "file_record",
+            }
+        )
+        try:
+            raw = exact_object(value, fields, cls.__name__)
+            aliases = raw["aliases"]
+            if not isinstance(aliases, (list, tuple)):
+                raise Protocol22SchemaError(
+                    "AuthorizedEvidenceRangeV1.aliases must be an array"
+                )
+            return cls(
+                schema_version=raw["schema_version"],
+                canonical_anchor_id=raw["canonical_anchor_id"],
+                aliases=tuple(aliases),
+                source_id=raw["source_id"],
+                source_relative_path=raw["source_relative_path"],
+                start_line=raw["start_line"],
+                end_line=raw["end_line"],
+                source_blob_hash=raw["source_blob_hash"],
+                file_record=FileRecordV1.from_json_dict(raw["file_record"]),
+            )
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(str(exc)) from exc
+
 
 @dataclass(frozen=True, slots=True)
 class BoundedAuthorityObjectV1:
@@ -455,6 +492,21 @@ class BoundedAuthorityObjectV1:
             "object_hash": self.object_hash,
             "payload_text": self.payload_text,
         }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "BoundedAuthorityObjectV1":
+        try:
+            raw = exact_object(
+                value,
+                frozenset({"object_hash", "payload_text"}),
+                cls.__name__,
+            )
+            return cls(
+                object_hash=raw["object_hash"],
+                payload_text=raw["payload_text"],
+            )
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,6 +660,71 @@ class SemanticContextV1:
             "response_schema_hash": self.response_schema_hash,
             "max_canonical_json_bytes": self.max_canonical_json_bytes,
         }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SemanticContextV1":
+        fields = frozenset(
+            {
+                "schema_version",
+                "mode",
+                "audit_target",
+                "vocabulary",
+                "authorized_evidence",
+                "authority_objects",
+                "lower_authority_hashes",
+                "unresolved_findings",
+                "overlay_hashes",
+                "target_assessment_hashes",
+                "active_sibling_authority_hashes",
+                "response_schema_hash",
+                "max_canonical_json_bytes",
+            }
+        )
+        try:
+            raw = exact_object(value, fields, cls.__name__)
+            arrays = (
+                "authorized_evidence",
+                "authority_objects",
+                "lower_authority_hashes",
+                "unresolved_findings",
+                "overlay_hashes",
+                "target_assessment_hashes",
+                "active_sibling_authority_hashes",
+            )
+            if any(not isinstance(raw[field], (list, tuple)) for field in arrays):
+                raise Protocol22SchemaError(
+                    "SemanticContextV1 collection fields must be arrays"
+                )
+            return cls(
+                schema_version=raw["schema_version"],
+                mode=raw["mode"],
+                audit_target=AuditTargetV1.from_json_dict(raw["audit_target"]),
+                vocabulary=FindingAuthorityVocabularyV1.from_json_dict(
+                    raw["vocabulary"]
+                ),
+                authorized_evidence=tuple(
+                    AuthorizedEvidenceRangeV1.from_json_dict(item)
+                    for item in raw["authorized_evidence"]
+                ),
+                authority_objects=tuple(
+                    BoundedAuthorityObjectV1.from_json_dict(item)
+                    for item in raw["authority_objects"]
+                ),
+                lower_authority_hashes=tuple(raw["lower_authority_hashes"]),
+                unresolved_findings=tuple(
+                    SemanticFindingV1.from_json_dict(item)
+                    for item in raw["unresolved_findings"]
+                ),
+                overlay_hashes=tuple(raw["overlay_hashes"]),
+                target_assessment_hashes=tuple(raw["target_assessment_hashes"]),
+                active_sibling_authority_hashes=tuple(
+                    raw["active_sibling_authority_hashes"]
+                ),
+                response_schema_hash=raw["response_schema_hash"],
+                max_canonical_json_bytes=raw["max_canonical_json_bytes"],
+            )
+        except Protocol22SchemaError as exc:
+            raise Protocol25RuntimeError(str(exc)) from exc
 
 
 @dataclass(frozen=True, slots=True)

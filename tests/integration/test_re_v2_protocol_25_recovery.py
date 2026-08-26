@@ -40,7 +40,11 @@ from harness.re_v2.protocol_25.recovery import (
     reconstruct_accepted_audit_results,
     recover_protocol_25_run,
 )
-from harness.re_v2.protocol_25.controller import Protocol25ControllerActionV1
+from harness.re_v2.protocol_25.controller import (
+    Protocol25Controller,
+    Protocol25ControllerActionV1,
+)
+from harness.re_v2.protocol_22.model import WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
 from harness.re_v2.run_store import ReV2Paths
@@ -430,6 +434,113 @@ def test_accepted_audit_result_reconstructs_without_provider_state(tmp_path) -> 
     reconstructed = reconstruct_accepted_audit_results(context)
 
     assert reconstructed == (result,)
+
+
+@pytest.mark.integration
+def test_controller_persists_certified_audit_through_shared_receipt_chain(
+    tmp_path,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    result = _certified_audit(verdict="PASS")
+    template = context.semantic_graph.audit_templates[0]
+    item = WorkItemV2(
+        identity_schema_version=2,
+        template_id=template.template_id,
+        goal_id=template.goal_id,
+        output_key=result.acceptance.artifact_key,
+        required_artifact_hashes=result.acceptance.artifact_key.dependency_hashes,
+        producer_id=template.producer_id,
+        producer_family=template.producer_family,
+        producer_protocol_version=template.producer_protocol_version,
+        executor_contract_hash=template.executor_contract_hash,
+        verifier_id=template.verifier_id,
+        verifier_version=template.verifier_version,
+        verifier_implementation_digest=template.verifier_implementation_digest,
+        result_contract_id=template.result_contract_id,
+        max_provider_attempts=template.max_provider_attempts,
+        max_generation_attempts=template.max_generation_attempts,
+        max_semantic_rounds=template.max_semantic_rounds,
+        max_result_contract_retries=template.max_result_contract_retries,
+        max_shared_retries=template.max_shared_retries,
+        max_artifact_contract_retries=template.max_artifact_contract_retries,
+    )
+    capture_hash = context.object_store.put_blob(b"semantic capture\n")
+    result = replace(
+        result,
+        candidate_assessment=replace(
+            result.candidate_assessment,
+            work_item_id=item.work_item_id,
+            execution_capture_hash=capture_hash,
+        ),
+    )
+    dispatch_id = "semantic-dispatch-1"
+    occurred_at = context.clock()
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "active_ms_reservation": 1_000,
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "billable_token_reservation": 100,
+            "dispatch_id": dispatch_id,
+            "execution_input_hash": digest("semantic-execution-input"),
+            "executor_contract_hash": item.executor_contract_hash,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "active_usage_status": "trusted_exact",
+            "dispatch_id": dispatch_id,
+            "execution_capture_hash": capture_hash,
+            "observed_active_ms": 100,
+            "raw_result_contract_status": "valid",
+            "reported_token_usage": 10,
+            "token_usage_status": "trusted_exact",
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": result.candidate_assessment.candidate_id,
+            "candidate_inventory_hash": digest("semantic-inventory"),
+            "dispatch_id": dispatch_id,
+            "execution_capture_hash": capture_hash,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+
+    Protocol25Controller(context)._record_semantic_result(
+        item,
+        result.candidate_assessment.candidate_id,
+        result,
+    )
+
+    ledger = context.ledger.replay()
+    assert ledger.semantic_certifications[result.certification.identity] == result.certification
+    assert ledger.candidate_assessments[result.candidate_assessment.identity] == result.candidate_assessment
+    assert ledger.accepted_artifacts[result.acceptance.artifact_key.identity] == result.acceptance
+    event_types = [event.type for event in context.event_store.replay()]
+    assert event_types[-3:] == [
+        "candidate_certified",
+        "artifact_accepted",
+        "audit_candidate_accepted",
+    ]
 
 
 @pytest.mark.integration

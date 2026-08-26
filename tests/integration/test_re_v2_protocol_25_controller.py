@@ -130,6 +130,10 @@ def test_protocol_25_controller_is_a_narrow_protocol_24_extension() -> None:
     assert issubclass(Protocol25Controller, Protocol24Controller)
     assert Protocol25Controller._execute_one is Protocol22Controller._execute_one
     assert Protocol25Controller._execute_provider is Protocol22Controller._execute_provider
+    assert (
+        Protocol25Controller._certify_provider_candidate
+        is not Protocol24Controller._certify_provider_candidate
+    )
 
 
 @pytest.mark.integration
