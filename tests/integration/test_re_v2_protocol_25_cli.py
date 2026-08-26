@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import time
+import json
 
 import pytest
 
@@ -373,6 +374,12 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
         "run_resumed",
     ]
     assert continued == [rebuilt]
+
+    from harness.re_v2.status import render_v2_status
+
+    routed = json.loads(render_v2_status(first, as_json=True))
+    assert routed["engine_protocol_version"] == "2.5"
+    assert routed["run_id"] == first.name
 
 
 @pytest.mark.integration

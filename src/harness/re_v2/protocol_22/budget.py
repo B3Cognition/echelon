@@ -401,7 +401,7 @@ def evaluate_budget_v22(
         shared_retries,
         artifact_retries,
     )
-    replay_state = _protocol_state(history)
+    replay_state = _protocol_state(history, selected_protocol)
     terminal = frozenset(
         (*replay_state.accepted_work_items, *replay_state.failed_work_items)
     )
@@ -441,14 +441,21 @@ def evaluate_budget_v22(
     )
 
 
-def _protocol_state(history: tuple[EventRecord, ...]) -> Protocol22ReplayState:
-    state = Protocol22ReplayState()
+def _protocol_state(
+    history: tuple[EventRecord, ...],
+    protocol: EventProtocol,
+) -> Protocol22ReplayState:
+    state = protocol.new_state()
     for event in history:
-        if event.type == "artifact_adopted":
-            state.accepted_work_items.add(str(event.payload["work_item_id"]))
-            continue
         state.consume(event)
-    return state
+    shared = state
+    while not isinstance(shared, Protocol22ReplayState):
+        shared = getattr(shared, "shared", None)
+        if shared is None:
+            raise ReV2BudgetV22Error(
+                "registered event protocol does not expose shared budget state"
+            )
+    return shared
 
 
 def _infer_event_protocol(history: tuple[EventRecord, ...]) -> EventProtocol:
