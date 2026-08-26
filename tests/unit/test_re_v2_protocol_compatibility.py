@@ -10,6 +10,7 @@ from tests.re_v2_protocol_22_fixtures import (
     manifest_v2,
     work_template_v2,
 )
+from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_model import (
     valid_artifact_key,
     valid_run_manifest_dict,
@@ -69,4 +70,10 @@ def test_schema_2_manifest_and_work_identities_remain_frozen() -> None:
     )
     assert work_template_v2().identity == (
         "sha256:ac14a69b78a0b807a078fe7576c4271a130c62ab6336fa115af0fabd223a0d23"
+    )
+
+
+def test_schema_3_manifest_identity_remains_frozen() -> None:
+    assert manifest_v3().run_manifest_id == (
+        "sha256:c3a5275f55a2daba60dfc5724cec7ed8a0c2d49bbdebf23f11822b32ac56bd90"
     )
