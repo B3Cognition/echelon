@@ -31,16 +31,23 @@ from .schema import (
 )
 
 
-GoalV2 = Literal["baseline", "inventory", "selective-deepening"]
-LayerV2 = Literal["L0", "L1", "L2"]
+GoalV2 = Literal[
+    "baseline",
+    "inventory",
+    "selective-deepening",
+    "semantic-audit-closure",
+]
+LayerV2 = Literal["L0", "L1", "L2", "L3"]
 AttemptKindV2 = Literal[
     "initial_generation",
     "result_contract_retry",
     "artifact_contract_retry",
 ]
 
-_GOALS = frozenset({"baseline", "inventory", "selective-deepening"})
-_LAYERS = frozenset({"L0", "L1", "L2"})
+_GOALS = frozenset(
+    {"baseline", "inventory", "selective-deepening", "semantic-audit-closure"}
+)
+_LAYERS = frozenset({"L0", "L1", "L2", "L3"})
 _ATTEMPT_KINDS = frozenset(
     {"initial_generation", "result_contract_retry", "artifact_contract_retry"}
 )
@@ -135,6 +142,7 @@ class BudgetPolicyV2(_CanonicalIdentity):
         "baseline": (2, 2, 0, 1, 1, 1),
         "inventory": (0, 1, 0, 0, 0, 0),
         "selective-deepening": (2, 2, 0, 1, 1, 1),
+        "semantic-audit-closure": (2, 2, 0, 1, 1, 1),
     }
 
     def __post_init__(self) -> None:
