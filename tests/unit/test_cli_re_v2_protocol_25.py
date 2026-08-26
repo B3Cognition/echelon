@@ -156,9 +156,10 @@ def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
 
 
 @pytest.mark.unit
-def test_reused_protocol_25_child_is_run_to_a_visible_stop(
+def test_reused_protocol_25_child_is_reported_without_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from echelon import cli
 
@@ -166,10 +167,19 @@ def test_reused_protocol_25_child_is_run_to_a_visible_stop(
     calls: list[object] = []
     monkeypatch.setattr(cli, "_re_v2_context", lambda _workspace, _run: context)
     monkeypatch.setattr(cli, "_run_re_v2_live", calls.append)
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run: "EXACT CHILD REUSED\n",
+    )
 
-    cli._run_or_report_re_v25_child(tmp_path, tmp_path / "runs" / "re-existing")
+    cli._run_or_report_re_v25_child(
+        tmp_path,
+        tmp_path / "runs" / "re-existing",
+        execute=False,
+    )
 
-    assert calls == [context]
+    assert calls == []
+    assert capsys.readouterr().out == "EXACT CHILD REUSED\n"
 
 
 @pytest.mark.unit

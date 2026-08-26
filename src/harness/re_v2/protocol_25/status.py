@@ -356,7 +356,11 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             "semantic_trusted_observed_tokens": (
                 semantic_budget.trusted_observed_tokens
             ),
-            "zero_call_reuse": manifest.run_mode != "new-audit-epoch",
+            # Every exact semantic request is resolved to this immutable child
+            # before controller/provider execution, regardless of how the child
+            # was originally created. Successor adoption is a separate fact.
+            "zero_call_reuse": True,
+            "successor_adoption": manifest.run_mode != "new-audit-epoch",
         },
     }
 

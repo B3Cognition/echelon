@@ -56,6 +56,8 @@ def test_complete_l3_status_limits_its_quality_claim_to_selected_scope(
     }
     assert document["completion_scope"] == "selected L3 scope only"
     assert document["next_action"] == "none — selected L3 scope is complete"
+    assert document["telemetry"]["zero_call_reuse"] is True
+    assert document["telemetry"]["successor_adoption"] is False
     assert human.endswith("L3 SELECTED SCOPE COMPLETE\n")
     assert "workspace synthesis: not run" in human
 

@@ -532,6 +532,10 @@ def test_concurrent_identical_resume_creates_one_child_and_one_paid_run(
         "_run_re_v2_live",
         lambda context: paid.append(context.run_dir),
     )
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run: "EXACT CHILD REUSED\n",
+    )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = tuple(

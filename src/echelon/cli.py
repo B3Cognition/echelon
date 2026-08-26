@@ -14042,7 +14042,15 @@ def _run_re_v25_continue(
     recovered = recover_protocol_25_run(context)
     changes = validate(recovered)
     if recovered.controller_state.terminal_state is not None or not changes:
-        _run_re_v2_live(context)
+        from harness.re_v2.protocol_25.status import render_protocol_25_status
+
+        print(
+            render_protocol_25_status(
+                context.paths.root.parent,
+                context=context,
+            ),
+            end="",
+        )
         return
     with protocol_22_run_lock(context.paths):
         recovered = recover_protocol_25_run(context)
@@ -14712,9 +14720,19 @@ def _run_re_v24_deepen(
     return run_dir
 
 
-def _run_or_report_re_v25_child(workspace: Path, run_dir: Path) -> None:
-    """Resume an interrupted exact child or print its existing terminal banner."""
-    _run_re_v2_live(_re_v2_context(workspace, run_dir))
+def _run_or_report_re_v25_child(
+    workspace: Path,
+    run_dir: Path,
+    *,
+    execute: bool,
+) -> None:
+    """Execute a new child or report an exact immutable child without execution."""
+    if execute:
+        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+        return
+    from harness.re_v2.status import render_v2_status
+
+    print(render_v2_status(run_dir), end="")
 
 
 def _run_re_v25_deepen(
@@ -14769,7 +14787,7 @@ def _run_re_v25_deepen(
             run_dir = existing
             initialize_protocol_25_child(run_dir, parent)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir)
+    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
     return run_dir
 
 
@@ -14848,7 +14866,7 @@ def _run_re_v25_next_epoch(
             run_dir = existing
             initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir)
+    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
     return run_dir
 
 
@@ -14916,7 +14934,7 @@ def _run_re_v25_resume(
             run_dir = existing
             initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir)
+    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
     return run_dir
 
 
