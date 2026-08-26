@@ -18,6 +18,7 @@ from tests.integration.test_re_v2_protocol_24_controller import _completed_paren
 from tests.integration.test_re_v2_protocol_24_cli import _registry
 from tests.unit.test_re_v2_protocol_24_prosaic import _role_artifact
 from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+from tests.unit.test_re_v2_protocol_22_controller import _SnapshotReader
 
 
 @pytest.mark.integration
@@ -101,6 +102,7 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
     from echelon import cli as legacy_cli
     from harness.re_v2.events import EventStore
     from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    from harness.re_v2.protocol_25.inputs import load_protocol_25_inputs
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
@@ -160,3 +162,88 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
         parent.ledger.accepted_artifacts
     )
     assert (workspace / "runs" / ".current-re").read_text() == first.name + "\n"
+
+    loaded_inputs = load_protocol_25_inputs(ReV2Paths.for_run(first), manifest)
+    payloads = {
+        (source.source_id, record.source_relative_path): b"print('ok')\n"
+        for source in loaded_inputs.workspace_partition.sources
+        for record in source.files
+    }
+    reader = _SnapshotReader(loaded_inputs.workspace_partition, payloads)
+    monkeypatch.setattr(legacy_cli, "_load_re_v2_snapshot", lambda *_args: object())
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_22.evidence.PinnedSnapshotReaderV1",
+        lambda _snapshot, _partition: reader,
+    )
+    rebuilt = legacy_cli._re_v25_context(workspace, first, manifest)
+
+    assert rebuilt.semantic_graph.manifest == manifest
+    assert rebuilt.event_store.protocol is PROTOCOL_25_EVENTS
+    assert tuple(rebuilt.executors) == ("shared-ai-cli-baseline-v1",)
+
+
+@pytest.mark.integration
+def test_schema4_context_dispatches_to_protocol25_builder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture
+
+    inputs, manifest = _fixture()
+    run_dir = tmp_path / manifest.run_id
+    create_protocol_25_run_store(run_dir, manifest, inputs)
+    marker = object()
+    calls: list[tuple[Path, Path, object]] = []
+
+    def build(project_root: Path, received: Path, authoritative: object) -> object:
+        calls.append((project_root, received, authoritative))
+        return marker
+
+    monkeypatch.setattr(legacy_cli, "_re_v25_context", build, raising=False)
+
+    assert legacy_cli._re_v2_context(tmp_path, run_dir) is marker
+    assert calls == [(tmp_path, run_dir, manifest)]
+
+
+@pytest.mark.integration
+def test_schema4_live_execution_uses_protocol25_controller(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli as legacy_cli
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture
+
+    calls: list[object] = []
+
+    class ContextMarker:
+        paths = SimpleNamespace(root=Path("/tmp/run/v2"))
+
+    context = ContextMarker()
+    _inputs, manifest = _fixture()
+
+    class Controller:
+        def __init__(self, received: object) -> None:
+            calls.append(received)
+
+        def run_until_stopped(self) -> object:
+            return SimpleNamespace(status="paused")
+
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_22.recovery.Protocol22RunContext",
+        ContextMarker,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run_dir: manifest,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.controller.Protocol25Controller",
+        Controller,
+    )
+
+    legacy_cli._run_re_v2_live(context)
+
+    assert calls == [context]
+    assert "PROTOCOL 2.5" in capsys.readouterr().out

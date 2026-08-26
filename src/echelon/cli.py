@@ -12933,6 +12933,312 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     return context
 
 
+def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> object:
+    """Reconstruct schema-4 execution solely from authenticated child authority."""
+    from dataclasses import replace
+    from types import MappingProxyType
+
+    import harness.re_v2.protocol_24.artifacts as l2_artifacts_module
+    import harness.re_v2.protocol_24.controller as l2_controller_module
+    import harness.re_v2.protocol_24.runtime as l2_runtime_module
+    import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
+    import harness.re_v2.protocol_25.controller as l3_controller_module
+    import harness.re_v2.protocol_25.runtime as l3_runtime_module
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.authorities import validate_installed_authorities
+    from harness.re_v2.protocol_22.cli_provider import SquadCliBaselineExecutor
+    from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+    from harness.re_v2.protocol_22.evidence import PinnedSnapshotReaderV1
+    from harness.re_v2.protocol_22.execution import (
+        DeterministicExecutionDependenciesV1,
+        Protocol22ExecutionStore,
+        ProviderExecutionDependenciesV1,
+    )
+    from harness.re_v2.protocol_22.materialization import (
+        validate_or_repair_materialization,
+    )
+    from harness.re_v2.protocol_22.model import (
+        DeterministicInvocationInputV1,
+        DeterministicInvocationV1,
+    )
+    from harness.re_v2.protocol_22.runtime import DeterministicRuntimeV1
+    from harness.re_v2.protocol_24.artifacts import (
+        DEEPENER_AGENT_ID,
+        DEEPENING_IN_PROCESS_ADAPTER_ID,
+        DEEPENING_VERIFIER_ID,
+    )
+    from harness.re_v2.protocol_24.graph import reconstruct_adopted_parent_closure
+    from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
+    from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    from harness.re_v2.protocol_25.graph import build_protocol_25_graph
+    from harness.re_v2.protocol_25.inputs import load_protocol_25_inputs
+    from harness.re_v2.protocol_25.ledger import Protocol25Ledger
+    from harness.re_v2.protocol_25.model import RunManifestV4
+    from harness.re_v2.protocol_25.recovery import Protocol25RunContext
+    from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
+    from harness.re_v2.run_store import ReV2Paths
+    from harness.re_v2.snapshot import validate_source_snapshot
+
+    if not isinstance(manifest, RunManifestV4):
+        raise ValueError("protocol-2.5 context requires a schema-4 manifest")
+    paths = ReV2Paths.for_run(run_dir)
+    semantic_inputs = load_protocol_25_inputs(paths, manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol25Ledger(paths, objects)
+    ledger_view = ledger.replay()
+    accepted_parent = reconstruct_adopted_parent_closure(
+        semantic_inputs.parent_authority_bundle.lower_authority_bundle,
+        ledger_view,
+    )
+    semantic_graph = build_protocol_25_graph(
+        manifest,
+        semantic_inputs.graph_inputs,
+        accepted_parent,
+    )
+    inputs = semantic_graph.inputs
+    graph = semantic_graph.prerequisite_graph
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot_reader = PinnedSnapshotReaderV1(
+        snapshot,
+        semantic_inputs.workspace_partition,
+    )
+    adopted_payloads = {
+        (
+            template.scope.source_id,
+            template.scope.domain_key,
+            template.layer,
+            template.artifact_kind,
+        ): objects.read_blob(artifact.artifact_hash)
+        for template, artifact in accepted_parent.values()
+    }
+    inherited_runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
+    deepening_runtime = Protocol24DeterministicRuntime(
+        inputs,
+        snapshot_reader,
+        adopted_payloads,
+    )
+    semantic_entries = semantic_inputs.executor_contract.semantic_entries
+    verifier_digests = {
+        entry.verifier.implementation_digest for entry in semantic_entries
+    }
+    if len(verifier_digests) != 1:
+        raise ValueError("protocol-2.5 semantic verifier authority is inconsistent")
+    semantic_runtime = Protocol25DeterministicRuntime(
+        verifier_authority_hash=next(iter(verifier_digests)),
+        snapshot_reader=snapshot_reader,
+        artifact_policy=semantic_inputs.artifact_policy,
+    )
+
+    baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
+    baseline_renderer = baseline_entry.request_renderer
+    if baseline_renderer is None:
+        raise ValueError("protocol-2.5 parent provider renderer is missing")
+    baseline_agent = objects.read_blob(baseline_renderer.agent_contract_hash)
+    registry, _agent, _schemas = _re_schema2_installed_registry(
+        baseline_agent,
+        provider_mode="cli",
+    )
+    deepening_entry = inputs.executor_contract.entry_for("compact-deepening")
+    deepening_renderer = deepening_entry.request_renderer
+    if deepening_renderer is None:
+        raise ValueError("protocol-2.5 deepening renderer is missing")
+    deepener_hash = deepening_renderer.agent_contract_hash
+    objects.read_blob(deepener_hash)
+    l2_implementation = _re_v22_implementation_digest(
+        l2_artifacts_module,
+        l2_runtime_module,
+        l2_controller_module,
+    )
+    l3_implementation = _re_v22_implementation_digest(
+        l3_artifacts_module,
+        l3_runtime_module,
+        l3_controller_module,
+    )
+    role_by_family = {
+        "closure-recheck": "echelon.re-validator",
+        "semantic-audit": "echelon.re-validator",
+        "semantic-resolution": "echelon.re-resolver",
+        "source-composition-guard": "echelon.re-validator",
+    }
+    semantic_agents: dict[str, str] = {}
+    semantic_schemas: dict[str, str] = {}
+    semantic_verifiers: dict[str, str] = {}
+    for entry in semantic_entries:
+        renderer = entry.request_renderer
+        if renderer is None or len(renderer.response_schemas) != 1:
+            raise ValueError("protocol-2.5 semantic renderer authority is invalid")
+        role_id = role_by_family[entry.producer_family]
+        agent_hash = renderer.agent_contract_hash
+        objects.read_blob(agent_hash)
+        previous_agent = semantic_agents.get(role_id)
+        if previous_agent is not None and previous_agent != agent_hash:
+            raise ValueError("protocol-2.5 role has conflicting agent authority")
+        semantic_agents[role_id] = agent_hash
+        schema = renderer.response_schemas[0]
+        objects.read_blob(schema.schema_hash)
+        previous_schema = semantic_schemas.get(schema.artifact_kind)
+        if previous_schema is not None and previous_schema != schema.schema_hash:
+            raise ValueError("protocol-2.5 response schema authority conflicts")
+        semantic_schemas[schema.artifact_kind] = schema.schema_hash
+        semantic_verifiers[entry.verifier.verifier_id] = l3_implementation
+    registry = replace(
+        registry,
+        executor_implementations={
+            **dict(registry.executor_implementations),
+            DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
+        },
+        verifier_implementations={
+            **dict(registry.verifier_implementations),
+            DEEPENING_VERIFIER_ID: l2_implementation,
+            **semantic_verifiers,
+        },
+        agent_contracts={
+            **dict(registry.agent_contracts),
+            DEEPENER_AGENT_ID: deepener_hash,
+            **semantic_agents,
+        },
+        response_schemas={
+            **dict(registry.response_schemas),
+            **semantic_schemas,
+        },
+    )
+    mismatches = validate_installed_authorities(
+        semantic_inputs.executor_contract,
+        registry,
+    )
+    if mismatches:
+        details = ", ".join(
+            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
+        )
+        raise ValueError(f"protocol-2.5 installed authority mismatch: {details}")
+
+    context_ref: dict[str, object] = {}
+    workspace_bytes = canonical_json_bytes(
+        semantic_inputs.workspace_partition.to_json_dict()
+    )
+    workspace_hash = semantic_inputs.workspace_partition.identity
+
+    def dependencies_for(item: object, _attempt_kind: str) -> object:
+        executor = inputs.executor_contract.entry_for(
+            getattr(item, "producer_family")
+        )
+        accepted = accepted_dependencies_for(context_ref["context"], item)
+        if executor.execution_mode in {"api", "cli"}:
+            renderer = executor.request_renderer
+            if renderer is None:
+                raise ValueError("protocol-2.5 prerequisite provider has no renderer")
+            schema_hash = next(
+                (
+                    reference.schema_hash
+                    for reference in renderer.response_schemas
+                    if reference.artifact_kind
+                    == getattr(getattr(item, "output_key"), "artifact_kind")
+                ),
+                None,
+            )
+            if schema_hash is None:
+                raise ValueError("protocol-2.5 prerequisite has no response schema")
+            return ProviderExecutionDependenciesV1(
+                executor=executor,
+                registry=registry,
+                agent_bytes=objects.read_blob(renderer.agent_contract_hash),
+                context_bytes=accepted.payload_for_role("context_bundle"),
+                response_schema_bytes=objects.read_blob(schema_hash),
+                tokenizer=None,
+            )
+        invocation_inputs = tuple(
+            DeterministicInvocationInputV1(
+                role=role,
+                object_hash=accepted_artifact.artifact_hash,
+            )
+            for role, accepted_artifact in accepted.by_role.items()
+        )
+        uses_workspace_partition = set(accepted.by_role) == {"workspace_partition"}
+        return DeterministicExecutionDependenciesV1(
+            executor=executor,
+            registry=registry,
+            invocation=DeterministicInvocationV1(
+                schema_version=1,
+                producer_family=getattr(item, "producer_family"),
+                output_key=getattr(item, "output_key"),
+                artifact_policy_hash=getattr(
+                    getattr(item, "output_key"), "layer_policy_hash"
+                ),
+                inputs=invocation_inputs,
+            ),
+            workspace_partition_hash=(
+                workspace_hash if uses_workspace_partition else None
+            ),
+            referenced_objects=(
+                {workspace_hash: workspace_bytes}
+                if uses_workspace_partition
+                else dict(accepted.payloads_by_hash)
+            ),
+        )
+
+    l2_families = {
+        "targeted-evidence-pack",
+        "deepening-context-bundle",
+        "deepening-source-root",
+    }
+    producers = {
+        entry.producer_family: (
+            deepening_runtime
+            if entry.producer_family in l2_families
+            else inherited_runtime
+        )
+        for entry in inputs.executor_contract.entries
+        if entry.execution_mode == "in_process"
+    }
+    cli_entries = tuple(
+        entry
+        for entry in semantic_inputs.executor_contract.entries
+        if entry.execution_mode == "cli"
+    )
+    from harness.squad_provider import SquadCliProvider
+
+    provider = SquadCliBaselineExecutor(
+        cli_entries,
+        provider_factory=lambda: SquadCliProvider(_load_cli_config(project_root)),
+    )
+    verifiers = {
+        entry.verifier.verifier_id: (
+            semantic_runtime
+            if entry.producer_family in role_by_family
+            else deepening_runtime
+            if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
+            else inherited_runtime
+        )
+        for entry in semantic_inputs.executor_contract.entries
+    }
+    context = Protocol25RunContext(
+        paths=paths,
+        inputs=inputs,
+        graph=graph,
+        event_store=EventStore(paths, protocol=PROTOCOL_25_EVENTS),
+        object_store=objects,
+        ledger=ledger,
+        execution_store=Protocol22ExecutionStore(paths, objects),
+        installed_authorities=registry,
+        dependencies_for=dependencies_for,
+        executors=MappingProxyType({deepening_entry.adapter_id: provider}),
+        producers=MappingProxyType(producers),
+        verifiers=MappingProxyType(verifiers),
+        snapshot_validator=lambda: validate_source_snapshot(snapshot),
+        materialization_validator=lambda: validate_or_repair_materialization(
+            context_ref["context"],
+            layers=frozenset({"L2"}),
+        ),
+        semantic_inputs=semantic_inputs,
+        semantic_graph=semantic_graph,
+        semantic_runtime=semantic_runtime,
+    )
+    context_ref["context"] = context
+    return context
+
+
 def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.candidates import CandidateStore
     from harness.re_v2.events import EventStore
@@ -12945,11 +13251,14 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     manifest = load_run_manifest(run_dir)
     from harness.re_v2.protocol_22.model import RunManifestV2
     from harness.re_v2.protocol_24.model import RunManifestV3
+    from harness.re_v2.protocol_25.model import RunManifestV4
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
     if isinstance(manifest, RunManifestV3):
         return _re_v24_context(project_root, run_dir, manifest)
+    if isinstance(manifest, RunManifestV4):
+        return _re_v25_context(project_root, run_dir, manifest)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -13273,10 +13582,17 @@ def _run_re_v2_live(context: object) -> None:
 
     if isinstance(context, Protocol22RunContext):
         from harness.re_v2.protocol_24.model import RunManifestV3
+        from harness.re_v2.protocol_25.model import RunManifestV4
         from harness.re_v2.run_store import load_run_manifest
 
         manifest = load_run_manifest(context.paths.root.parent)
-        if isinstance(manifest, RunManifestV3):
+        if isinstance(manifest, RunManifestV4):
+            from harness.re_v2.protocol_25.controller import Protocol25Controller
+
+            result = Protocol25Controller(context).run_until_stopped()
+            print("RE V2 — PROTOCOL 2.5")
+            print(f"state: {result.status}")
+        elif isinstance(manifest, RunManifestV3):
             from harness.re_v2.protocol_24.controller import Protocol24Controller
             from harness.re_v2.protocol_24.status import render_protocol_24_status
 

@@ -153,3 +153,88 @@ def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
         manifest.semantic_request_id,
     ) == child
     assert find_exact_protocol_25_child(tmp_path, f"sha256:{'0' * 64}") is None
+
+
+@pytest.mark.unit
+def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_22.cli_provider import (
+        SquadCliBaselineExecutor,
+        calculate_shared_cli_dispatch_reservation,
+    )
+    from harness.re_v2.protocol_22.model import ExecutionInputV1
+    from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
+    from tests.re_v2_protocol_22_fixtures import digest
+    from tests.unit.test_re_v2_protocol_22_cli_provider import _ProviderSpy, _result
+    from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+    from tests.unit.test_re_v2_protocol_25_runtime import _context
+
+    catalog, objects = _executor_fixture()
+    semantic = catalog.entry_for("semantic-audit")
+    baseline = catalog.entry_for("compact-baseline")
+    renderer = semantic.request_renderer
+    assert renderer is not None
+    agent = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            body="Pinned semantic auditor.\n",
+            frontmatter={
+                "name": "echelon.re-validator",
+                "model_tier": "strong",
+                "effort": "high",
+                "tools": "write",
+            },
+        )
+    )
+    semantic = replace(
+        semantic,
+        request_renderer=replace(
+            renderer,
+            agent_contract_hash=content_digest(agent),
+        ),
+    )
+    renderer = semantic.request_renderer
+    assert renderer is not None
+    schema = objects[renderer.response_schemas[0].schema_hash]
+    context = canonical_json_bytes(_context().to_json_dict())
+    execution_input = ExecutionInputV1(
+        schema_version=1,
+        dispatch_id="semantic-dispatch-1",
+        work_item_id=digest("semantic work"),
+        attempt_kind="initial_generation",
+        executor_contract_hash=semantic.executor_contract_hash,
+        agent_contract_hash=content_digest(agent),
+        context_bundle_hash=content_digest(context),
+        provider_request_envelope_hash=digest("unused semantic envelope"),
+        deterministic_invocation=None,
+    )
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent,
+        context,
+        schema,
+        semantic,
+    )
+    root = tmp_path / "candidate"
+    root.mkdir()
+    provider = _ProviderSpy(_result())
+
+    result = SquadCliBaselineExecutor(
+        (baseline, semantic),
+        provider=provider,
+    ).execute(
+        execution_input,
+        agent,
+        context,
+        schema,
+        reservation,
+        root,
+        10**12,
+    )
+
+    assert result.outcome == "candidate_ready"
+    assert "audit.json" in provider.calls[0]["prompt"]
+    assert "baseline.json" not in provider.calls[0]["prompt"]

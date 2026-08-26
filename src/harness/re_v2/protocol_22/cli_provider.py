@@ -58,7 +58,12 @@ def calculate_shared_cli_dispatch_reservation(
             "shared CLI prompt authority must be UTF-8 bytes"
         ) from exc
     initial = len(
-        _render_prompt(artifact.body, context, response_schema).encode("utf-8")
+        _render_prompt(
+            artifact.body,
+            context,
+            response_schema,
+            _candidate_filename(executor),
+        ).encode("utf-8")
     )
     billable = executor.limits.max_billable_tokens_per_dispatch
     if initial <= 0 or initial > billable:
@@ -77,17 +82,34 @@ class SquadCliBaselineExecutor:
 
     def __init__(
         self,
-        executor: ExecutorContractEntryV1,
+        executor: ExecutorContractEntryV1 | tuple[ExecutorContractEntryV1, ...],
         *,
         provider: SquadCliProvider | None = None,
         provider_factory: Callable[[], SquadCliProvider] | None = None,
     ) -> None:
-        _validate_cli_executor(executor)
+        executors = executor if isinstance(executor, tuple) else (executor,)
+        if not executors:
+            raise Protocol22ProviderError(
+                "shared CLI adapter requires at least one executor contract"
+            )
+        for item in executors:
+            _validate_cli_executor(item)
+        if len({item.executor_contract_hash for item in executors}) != len(executors):
+            raise Protocol22ProviderError(
+                "shared CLI executor contracts must be unique"
+            )
+        if len({item.provider_id for item in executors}) != 1:
+            raise Protocol22ProviderError(
+                "shared CLI executor contracts must use one provider"
+            )
         if (provider is None) == (provider_factory is None):
             raise Protocol22ProviderError(
                 "shared CLI adapter requires exactly one provider or provider factory"
             )
-        self.executor = executor
+        self.executor = executors[0]
+        self._executors = {
+            item.executor_contract_hash: item for item in executors
+        }
         self._provider = provider
         self._provider_factory = provider_factory
 
@@ -101,8 +123,11 @@ class SquadCliBaselineExecutor:
         candidate_root: Path,
         deadline: float,
     ) -> RawExecutionResultV1:
+        executor = self._executors.get(execution_input.executor_contract_hash)
+        if executor is None:
+            raise Protocol22ProviderError("execution input executor contract mismatch")
         artifact = _validate_dispatch_inputs(
-            self.executor,
+            executor,
             execution_input,
             agent_bytes,
             context_bytes,
@@ -138,6 +163,7 @@ class SquadCliBaselineExecutor:
             artifact.body,
             context_bytes.decode("utf-8"),
             response_schema_bytes.decode("utf-8"),
+            _candidate_filename(executor),
         )
         started_at = _utc_now()
         provider = self._provider
@@ -250,20 +276,27 @@ def _validate_dispatch_inputs(
         raise Protocol22ProviderError("execution input context bundle mismatch")
     artifact = decode_prosaic_agent_bytes(agent_bytes)
     try:
-        context = load_canonical_object(context_bytes, ContextBundleV1.from_json_dict)
+        raw_context = load_canonical_object(context_bytes, lambda value: value)
         load_canonical_object(response_schema_bytes, lambda value: value)
     except Protocol22SchemaError as exc:
         raise Protocol22ProviderError(str(exc)) from exc
     renderer = executor.request_renderer
     assert renderer is not None
-    expected_schema = next(
-        (
-            reference.schema_hash
-            for reference in renderer.response_schemas
-            if reference.artifact_kind == context.target_artifact_kind
-        ),
-        None,
-    )
+    if len(renderer.response_schemas) == 1:
+        expected_schema = renderer.response_schemas[0].schema_hash
+    else:
+        try:
+            context = ContextBundleV1.from_json_dict(raw_context)
+        except Protocol22SchemaError as exc:
+            raise Protocol22ProviderError(str(exc)) from exc
+        expected_schema = next(
+            (
+                reference.schema_hash
+                for reference in renderer.response_schemas
+                if reference.artifact_kind == context.target_artifact_kind
+            ),
+            None,
+        )
     if expected_schema != content_digest(response_schema_bytes):
         raise Protocol22ProviderError("response schema authority mismatch")
     expected_reservation = calculate_shared_cli_dispatch_reservation(
@@ -277,12 +310,26 @@ def _validate_dispatch_inputs(
     return artifact
 
 
-def _render_prompt(body: str, context: str, response_schema: str) -> str:
+def _candidate_filename(executor: ExecutorContractEntryV1) -> str:
+    return {
+        "closure-recheck": "closure.json",
+        "semantic-audit": "audit.json",
+        "semantic-resolution": "resolution.json",
+        "source-composition-guard": "closure.json",
+    }.get(executor.producer_family, "baseline.json")
+
+
+def _render_prompt(
+    body: str,
+    context: str,
+    response_schema: str,
+    candidate_filename: str,
+) -> str:
     return (
         body
         + ("" if body.endswith("\n") else "\n")
         + "\n## Dispatch contract\n"
-        + "Write exactly one file named `baseline.json` in the current working "
+        + f"Write exactly one file named `{candidate_filename}` in the current working "
         + "directory. The file must contain only the authorial JSON payload that "
         + "matches the supplied schema. Finish with exactly the required "
         + "`echelon_result` block.\n\n"
