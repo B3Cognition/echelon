@@ -47,6 +47,7 @@ SUBAGENT_POLICY = {
     "echelon.re-constituter.md": ("strong", "high"),
     "echelon.re-expander.md": ("strong", "high"),
     "echelon.re-planner.md": ("strong", "high"),
+    "echelon.re-resolver.md": ("strong", "high"),
     "echelon.re-specifier.md": ("strong", "high"),
     "echelon.re-tasker.md": ("strong", "high"),
     "echelon.re-validator.md": ("strong", "high"),

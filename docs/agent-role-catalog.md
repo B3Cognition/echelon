@@ -15,9 +15,9 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Neutral Prosaic agent roles | 59 | Canonical subagent files with neutral `echelon.*` identities |
+| Neutral Prosaic agent roles | 60 | Canonical subagent files with neutral `echelon.*` identities |
 | Workflow-dispatched roles | 38 | Neutral IDs used by structured `agent` or nested dispatch nodes |
-| Direct-use roles | 21 | Available roles invoked outside ordinary workflow agent nodes |
+| Direct-use roles | 22 | Available roles invoked outside ordinary workflow agent nodes |
 | Support prose files | 14 | Appendices and templates that are not independent agent entry points |
 
 Every workflow-dispatched ID resolves to a canonical Prosaic subagent. Direct-use
@@ -35,7 +35,7 @@ for judgment and routing rather than declared as an ordinary agent phase.
 | Specialists | 6 | 6 | 0 |
 | Learning | 8 | 0 | 8 |
 | Build | 15 | 10 | 5 |
-| Reverse engineering | 11 | 9 | 2 |
+| Reverse engineering | 12 | 9 | 3 |
 
 ## Workflow-Dispatched Roles
 
@@ -64,7 +64,7 @@ nodes in the runtime graph.
 | Feasibility | VALIDATOR |
 | Learning | ADAPTIVE, AUDITOR, CONSOLIDATOR, INTERNALIZER, MIRROR, MONITOR, REALIST, VETERAN |
 | Build | CHANGE CONTROLLER, ENGINEERING MANAGER, SPEC FULFILLMENT AUDITOR, VERIFICATION, VISUAL VALIDATOR |
-| Reverse engineering | RE-BASELINER, RE-DEEPENER |
+| Reverse engineering | RE-BASELINER, RE-DEEPENER, RE-RESOLVER |
 
 ## Companion Prose
 
