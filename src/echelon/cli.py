@@ -13662,6 +13662,9 @@ class _ReDeepenOptions:
     from_run: str | None
     token_limit: int | None
     active_ms_limit: int | None
+    semantic_token_limit: int | None
+    semantic_active_ms_limit: int | None
+    new_audit_epoch: bool
 
 
 def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
@@ -13673,12 +13676,17 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         "from_run": None,
         "token_limit": None,
         "active_ms_limit": None,
+        "semantic_token_limit": None,
+        "semantic_active_ms_limit": None,
+        "new_audit_epoch": False,
     }
     scalar = {
         "--to": "target_layer",
         "--from-run": "from_run",
         "--token-limit": "token_limit",
         "--active-ms-limit": "active_ms_limit",
+        "--semantic-token-limit": "semantic_token_limit",
+        "--semantic-active-ms-limit": "semantic_active_ms_limit",
     }
     repeatable = {"--source": "source_ids", "--domain": "domain_ids"}
     index = 0
@@ -13688,6 +13696,12 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
             if values["all_sources"]:
                 raise ValueError("--all may be supplied only once")
             values["all_sources"] = True
+            index += 1
+            continue
+        if option == "--new-audit-epoch":
+            if values["new_audit_epoch"]:
+                raise ValueError("--new-audit-epoch may be supplied only once")
+            values["new_audit_epoch"] = True
             index += 1
             continue
         name = option
@@ -13716,7 +13730,12 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         field = scalar[name]
         if values[field] is not None:
             raise ValueError(f"{name} may be supplied only once")
-        if name in {"--token-limit", "--active-ms-limit"}:
+        if name in {
+            "--token-limit",
+            "--active-ms-limit",
+            "--semantic-token-limit",
+            "--semantic-active-ms-limit",
+        }:
             try:
                 parsed = int(value)
             except ValueError as exc:
@@ -13727,8 +13746,8 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         else:
             values[field] = value
     target = values["target_layer"]
-    if target != "L2":
-        raise ValueError("--to L2 is required; L3/L4 are not registered")
+    if target not in {"L2", "L3"}:
+        raise ValueError("--to requires one of L2 or L3; L4 is not registered")
     sources = tuple(values["source_ids"])
     domains = tuple(values["domain_ids"])
     all_sources = bool(values["all_sources"])
@@ -13738,8 +13757,14 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         raise ValueError("exactly one selector form is required: --all or --source")
     if domains and len(sources) != 1:
         raise ValueError("--domain requires exactly one --source")
+    if target != "L3" and (
+        values["semantic_token_limit"] is not None
+        or values["semantic_active_ms_limit"] is not None
+        or bool(values["new_audit_epoch"])
+    ):
+        raise ValueError("semantic limits and --new-audit-epoch are valid only for L3")
     return _ReDeepenOptions(
-        target_layer="L2",
+        target_layer=target,
         all_sources=all_sources,
         source_ids=tuple(sorted(sources)),
         domain_ids=tuple(sorted(domains)),
@@ -13750,6 +13775,17 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
             if isinstance(values["active_ms_limit"], int)
             else None
         ),
+        semantic_token_limit=(
+            values["semantic_token_limit"]
+            if isinstance(values["semantic_token_limit"], int)
+            else None
+        ),
+        semantic_active_ms_limit=(
+            values["semantic_active_ms_limit"]
+            if isinstance(values["semantic_active_ms_limit"], int)
+            else None
+        ),
+        new_audit_epoch=bool(values["new_audit_epoch"]),
     )
 
 

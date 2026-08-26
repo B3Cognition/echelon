@@ -157,6 +157,7 @@ class ReGoal(str, Enum):
 
 class ReDeepeningLayer(str, Enum):
     L2 = "L2"
+    L3 = "L3"
 
 
 re_memory_app = typer.Typer(
@@ -916,7 +917,7 @@ def re_deepen(
         ...,
         "--to",
         case_sensitive=True,
-        help="Registered deeper layer to generate; currently L2.",
+        help="Registered deeper layer to generate: L2 or L3.",
     ),
     all_sources: bool = typer.Option(
         False,
@@ -950,6 +951,23 @@ def re_deepen(
         min=1,
         help="Authorize the child run's active-time ceiling in milliseconds.",
     ),
+    semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-token-limit",
+        min=1,
+        help="For L3, authorize the independent semantic token ceiling.",
+    ),
+    semantic_active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-active-ms-limit",
+        min=1,
+        help="For L3, authorize the independent semantic active-time ceiling.",
+    ),
+    new_audit_epoch: bool = typer.Option(
+        False,
+        "--new-audit-epoch",
+        help="For L3, explicitly create the next audit epoch from an eligible parent.",
+    ),
 ) -> None:
     """Create or reuse a self-contained selected-scope RE v2 child run."""
     if all_sources and (source or domain):
@@ -967,6 +985,15 @@ def re_deepen(
             "--domain requires exactly one --source",
             param_hint="--domain",
         )
+    if target_layer is not ReDeepeningLayer.L3 and (
+        semantic_token_limit is not None
+        or semantic_active_ms_limit is not None
+        or new_audit_epoch
+    ):
+        raise typer.BadParameter(
+            "semantic limits and --new-audit-epoch are valid only for L3",
+            param_hint="--to",
+        )
     args = ["--to", target_layer.value]
     if all_sources:
         args.append("--all")
@@ -977,6 +1004,10 @@ def re_deepen(
     _extend_option(args, "--from-run", from_run)
     _extend_option(args, "--token-limit", token_limit)
     _extend_option(args, "--active-ms-limit", active_ms_limit)
+    _extend_option(args, "--semantic-token-limit", semantic_token_limit)
+    _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
+    if new_audit_epoch:
+        args.append("--new-audit-epoch")
     _legacy_cli()._cmd_re_deepen(args)
 
 

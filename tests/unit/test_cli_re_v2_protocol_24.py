@@ -72,7 +72,6 @@ def test_deepen_routes_all_sources_without_provider_specific_controls(
     "args",
     (
         ["re", "deepen", "--all"],
-        ["re", "deepen", "--to", "L3", "--all"],
         ["re", "deepen", "--to", "L2"],
         ["re", "deepen", "--to", "L2", "--all", "--source", "api"],
         ["re", "deepen", "--to", "L2", "--all", "--domain", "orders"],
