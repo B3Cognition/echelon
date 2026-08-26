@@ -129,12 +129,15 @@ __all__ = (
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
     "evaluate_semantic_budget",
+    "guidance_id_for",
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
+    "normalize_guidance_answer",
     "plan_next_protocol_25",
     "publish_audit_epoch",
     "reconstruct_accepted_audit_results",
     "semantic_response_schema",
+    "semantic_request_id_v2",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
@@ -230,6 +233,13 @@ _LAZY_RECOVERY_EXPORTS = frozenset(
         "recover_protocol_25_run",
     }
 )
+_LAZY_LIFECYCLE_EXPORTS = frozenset(
+    {
+        "guidance_id_for",
+        "normalize_guidance_answer",
+        "semantic_request_id_v2",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -251,6 +261,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import controller as module
     elif name in _LAZY_RECOVERY_EXPORTS:
         from . import recovery as module
+    elif name in _LAZY_LIFECYCLE_EXPORTS:
+        from . import lifecycle as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)
