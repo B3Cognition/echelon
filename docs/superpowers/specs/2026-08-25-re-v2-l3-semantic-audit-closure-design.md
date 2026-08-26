@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25  
 **Findings:** EGR-167 and the L3 increment of EGR-169  
-**Status:** Approved in chat; awaiting review of this written specification
+**Status:** Approved
 
 ## Summary
 
