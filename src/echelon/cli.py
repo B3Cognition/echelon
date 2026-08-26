@@ -12979,7 +12979,10 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.protocol_25.recovery import Protocol25RunContext
     from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
-    from harness.re_v2.protocol_25.cli_provider import SquadCliSemanticRenderer
+    from harness.re_v2.protocol_25.cli_provider import (
+        Protocol25ExecutionStore,
+        SquadCliSemanticRenderer,
+    )
     from harness.re_v2.protocol_25.policies import SEMANTIC_RENDERER_ID
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
@@ -13228,7 +13231,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         event_store=EventStore(paths, protocol=PROTOCOL_25_EVENTS),
         object_store=objects,
         ledger=ledger,
-        execution_store=Protocol22ExecutionStore(paths, objects),
+        execution_store=Protocol25ExecutionStore(paths, objects),
         installed_authorities=registry,
         dependencies_for=dependencies_for,
         executors=MappingProxyType({deepening_entry.adapter_id: provider}),

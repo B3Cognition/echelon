@@ -8,7 +8,7 @@ import time
 from typing import Callable
 
 from harness.echelon_result_schema import EchelonResultContract
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.cli_provider import (
     SquadCliBaselineExecutor,
     calculate_shared_cli_dispatch_reservation,
@@ -17,7 +17,13 @@ from harness.re_v2.protocol_22.executors import (
     SHARED_AI_CLI_ADAPTER_ID,
     ExecutorContractEntryV1,
 )
-from harness.re_v2.protocol_22.model import ExecutionInputV1
+from harness.re_v2.protocol_22.execution import (
+    PreparedExecutionV1,
+    Protocol22ExecutionError,
+    Protocol22ExecutionStore,
+    ProviderExecutionDependenciesV1,
+)
+from harness.re_v2.protocol_22.model import ExecutionInputV1, WorkItemV2
 from harness.re_v2.protocol_22.provider import (
     DispatchReservationV1,
     Protocol22ProviderError,
@@ -33,7 +39,12 @@ from harness.re_v2.protocol_22.provider import (
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.squad_provider import SquadCliProvider
 
-from .policies import SEMANTIC_EXECUTOR_FAMILIES, SEMANTIC_RENDERER_ID
+from .policies import (
+    SEMANTIC_ARTIFACT_KINDS,
+    SEMANTIC_EXECUTOR_FAMILIES,
+    SEMANTIC_RENDERER_ID,
+)
+from .runtime import Protocol25RuntimeError, SemanticContextV1
 
 
 _RESULT_CONTRACT = EchelonResultContract(
@@ -41,6 +52,185 @@ _RESULT_CONTRACT = EchelonResultContract(
     allowed_verdicts=frozenset({"DONE"}),
     unexpected_state_updates="reject",
 )
+
+_SEMANTIC_MODE_BY_ARTIFACT = {
+    "semantic-audit-findings": "AUDIT_EPOCH_TARGET",
+    "semantic-resolution-overlay": "SEMANTIC_RESOLUTION",
+    "target-closure-assessment": "CLOSURE_RECHECK",
+    "source-composition-assessment": "SOURCE_COMPOSITION_GUARD",
+}
+
+
+class Protocol25ExecutionStore(Protocol22ExecutionStore):
+    """Extend the frozen execution store only for authenticated L3 CLI requests."""
+
+    def _prepare_provider(
+        self,
+        work_item: WorkItemV2,
+        attempt_kind: str,
+        dispatch_id: str,
+        dependencies: ProviderExecutionDependenciesV1,
+        fault_hook: Callable[[str], None] | None,
+    ) -> PreparedExecutionV1:
+        if work_item.output_key.artifact_kind not in _SEMANTIC_MODE_BY_ARTIFACT:
+            return super()._prepare_provider(
+                work_item,
+                attempt_kind,
+                dispatch_id,
+                dependencies,
+                fault_hook,
+            )
+        executor = dependencies.executor
+        if (attempt_kind == "initial_generation") != (
+            not dependencies.retry_diagnostics
+        ):
+            raise Protocol22ExecutionError(
+                "provider retry diagnostics must exist exactly for retry attempts"
+            )
+        if executor.execution_mode != "cli":
+            raise Protocol22ExecutionError(
+                "semantic provider preparation requires shared CLI execution"
+            )
+        validate_semantic_provider_content_authority(
+            work_item,
+            dependencies.agent_bytes,
+            dependencies.context_bytes,
+            executor,
+            content_digest(dependencies.response_schema_bytes),
+        )
+        agent_hash = self.object_store.put_blob(dependencies.agent_bytes)
+        context_hash = self.object_store.put_blob(dependencies.context_bytes)
+        self.object_store.put_blob(dependencies.response_schema_bytes)
+        reservation = calculate_shared_cli_dispatch_reservation(
+            dependencies.agent_bytes,
+            dependencies.context_bytes,
+            dependencies.response_schema_bytes,
+            executor,
+        )
+        execution_input = ExecutionInputV1(
+            schema_version=1,
+            dispatch_id=dispatch_id,
+            work_item_id=work_item.work_item_id,
+            attempt_kind=attempt_kind,  # type: ignore[arg-type]
+            executor_contract_hash=executor.executor_contract_hash,
+            agent_contract_hash=agent_hash,
+            context_bundle_hash=context_hash,
+            provider_request_envelope_hash=None,
+            deterministic_invocation=None,
+        )
+        input_hash = self.object_store.put_blob(
+            canonical_json_bytes(execution_input.to_json_dict())
+        )
+        if fault_hook is not None:
+            fault_hook("execution_input_fsynced")
+        return PreparedExecutionV1(
+            dispatch_id=dispatch_id,
+            execution_input=execution_input,
+            execution_input_hash=input_hash,
+            provider_envelope=None,
+            provider_envelope_hash=None,
+            reservation=reservation,
+        )
+
+    def _validate_prepared_provider(
+        self,
+        prepared: PreparedExecutionV1,
+        work_item: WorkItemV2,
+        dependencies: ProviderExecutionDependenciesV1,
+    ) -> PreparedExecutionV1:
+        if work_item.output_key.artifact_kind not in _SEMANTIC_MODE_BY_ARTIFACT:
+            return super()._validate_prepared_provider(
+                prepared,
+                work_item,
+                dependencies,
+            )
+        if (
+            dependencies.executor.execution_mode != "cli"
+            or prepared.provider_envelope is not None
+            or prepared.provider_envelope_hash is not None
+        ):
+            raise Protocol22ExecutionError(
+                "prepared semantic CLI execution contains invalid provider authority"
+            )
+        validate_semantic_provider_content_authority(
+            work_item,
+            dependencies.agent_bytes,
+            dependencies.context_bytes,
+            dependencies.executor,
+            content_digest(dependencies.response_schema_bytes),
+        )
+        expected = calculate_shared_cli_dispatch_reservation(
+            self.object_store.read_blob(
+                prepared.execution_input.agent_contract_hash or ""
+            ),
+            self.object_store.read_blob(
+                prepared.execution_input.context_bundle_hash or ""
+            ),
+            dependencies.response_schema_bytes,
+            dependencies.executor,
+        )
+        if expected != prepared.reservation:
+            raise Protocol22ExecutionError(
+                "prepared semantic CLI reservation authority mismatch"
+            )
+        return prepared
+
+
+def validate_semantic_provider_content_authority(
+    work_item: WorkItemV2,
+    agent_bytes: bytes,
+    context_bytes: bytes,
+    executor: ExecutorContractEntryV1,
+    schema_hash: str,
+) -> SemanticContextV1:
+    """Validate L3 request bytes without widening protocol 2.2's frozen schema."""
+    kind = work_item.output_key.artifact_kind
+    renderer = executor.request_renderer
+    expected_mode = _SEMANTIC_MODE_BY_ARTIFACT.get(kind)
+    schema = (
+        None
+        if renderer is None
+        else next(
+            (
+                item
+                for item in renderer.response_schemas
+                if item.artifact_kind == kind
+            ),
+            None,
+        )
+    )
+    if (
+        work_item.output_key.layer != "L3"
+        or kind not in SEMANTIC_ARTIFACT_KINDS
+        or executor.producer_family not in SEMANTIC_EXECUTOR_FAMILIES
+        or executor.execution_mode != "cli"
+        or executor.adapter_id != SHARED_AI_CLI_ADAPTER_ID
+        or renderer is None
+        or renderer.renderer_id != SEMANTIC_RENDERER_ID
+        or schema is None
+        or schema.schema_hash != schema_hash
+        or expected_mode is None
+    ):
+        raise Protocol22ProviderError("semantic shared CLI content authority is invalid")
+    if content_digest(agent_bytes) != renderer.agent_contract_hash:
+        raise Protocol22ProviderError("semantic agent contract hash mismatch")
+    decode_prosaic_agent_bytes(agent_bytes)
+    try:
+        context = load_canonical_object(
+            context_bytes,
+            SemanticContextV1.from_json_dict,
+        )
+    except (Protocol22SchemaError, Protocol25RuntimeError) as exc:
+        raise Protocol22ProviderError(f"invalid semantic context: {exc}") from exc
+    if (
+        context.mode != expected_mode
+        or context.audit_target.scope != work_item.output_key.scope
+        or context.response_schema_hash != schema_hash
+    ):
+        raise Protocol22ProviderError(
+            "semantic context does not match work item and response authority"
+        )
+    return context
 
 
 class SquadCliSemanticRenderer:
