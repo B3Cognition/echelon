@@ -5,6 +5,7 @@ import importlib
 
 import pytest
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.executors import ExecutorContractCatalogV1
 from harness.re_v2.protocol_22.graph import AcceptedArtifactV2, plan_next_v2
 from harness.re_v2.protocol_22.model import CatalogReferenceV1
@@ -159,6 +160,30 @@ def test_all_source_selection_adds_every_nonempty_domain_and_full_source_target(
     assert len([item for item in targets if item.target_kind == "source"]) == 1
     assert graph.source_target("api").coverage == "full-source"
     assert graph.not_requested_domain_keys == ()
+
+
+def test_next_epoch_audit_targets_include_retained_l3_semantic_authority() -> None:
+    """Catch a new epoch silently throwing away the prior composed L3 result."""
+    graph, inputs, authority, accepted_parent, accepted = _fixture()
+    prior_payload = b'{"prior":"l3-source-root"}\n'
+    prior_hash = content_digest(prior_payload)
+    next_inputs = replace(
+        inputs,
+        immutable_objects={prior_hash: prior_payload},
+        prior_semantic_object_hashes=(prior_hash,),
+    )
+    next_graph = _graph_module().build_protocol_25_graph(
+        graph.manifest,
+        next_inputs,
+        accepted_parent,
+    )
+    _complete_l2(next_graph, authority, accepted)
+
+    targets = next_graph.ready_audit_targets(accepted)
+
+    assert targets
+    assert all(prior_hash in item.lower_dependency_hashes for item in targets)
+    assert all(prior_hash in item.context_object_hashes for item in targets)
 
 
 def test_audit_target_waits_for_every_exact_l2_dependency() -> None:

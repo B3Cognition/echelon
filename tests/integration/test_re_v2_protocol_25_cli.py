@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 import pytest
 
@@ -438,3 +440,95 @@ def test_schema4_live_execution_uses_protocol25_controller(
 
     assert calls == [context]
     assert "PROTOCOL 2.5" in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_concurrent_identical_resume_creates_one_child_and_one_paid_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch exact resume checking outside the workspace creation lock."""
+    from echelon import cli as legacy_cli
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture
+
+    workspace = tmp_path / "workspace"
+    parent_run = workspace / "runs" / "re-blocked-parent"
+    parent_run.mkdir(parents=True)
+    inputs, manifest = _fixture(mode="audit-successor")
+    manifest = replace(manifest, run_id="re-concurrent-successor")
+    prepared = SimpleNamespace(manifest=manifest, inputs=inputs)
+    exported = SimpleNamespace(
+        parent=object(),
+        manifest=manifest,
+        inputs=inputs,
+        accepted_parent={},
+        immutable_objects=inputs.immutable_objects,
+    )
+    created: list[Path] = []
+    initialized: list[Path] = []
+    paid: list[Path] = []
+
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v2_context",
+        lambda _workspace, run_dir: SimpleNamespace(run_dir=run_dir),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.lifecycle.export_protocol_25_parent",
+        lambda _context: exported,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.lifecycle.prepare_guided_successor",
+        lambda **_kwargs: prepared,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.lifecycle.find_exact_protocol_25_child",
+        lambda _workspace, _request: (created[0] if created else None),
+    )
+
+    def create(run_dir: Path, _manifest: object, _inputs: object) -> None:
+        run_dir.mkdir(parents=True)
+        time.sleep(0.05)
+        created.append(run_dir)
+
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.inputs.create_protocol_25_run_store",
+        create,
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.lifecycle.initialize_protocol_25_successor",
+        lambda run_dir, _exported: initialized.append(run_dir),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_new_re_v2_run_id",
+        lambda _workspace: "re-concurrent-successor",
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_run_re_v2_live",
+        lambda context: paid.append(context.run_dir),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            pool.map(
+                lambda _index: legacy_cli._run_re_v25_resume(
+                    workspace,
+                    parent_run,
+                    "Use retained evidence only.",
+                    None,
+                    None,
+                ),
+                range(2),
+            )
+        )
+
+    expected = workspace / "runs" / "re-concurrent-successor"
+    assert results == (expected, expected)
+    assert created == [expected]
+    assert initialized == [expected, expected]
+    assert paid == [expected]
+    assert (workspace / "runs" / ".current-re").read_text() == (
+        "re-concurrent-successor\n"
+    )

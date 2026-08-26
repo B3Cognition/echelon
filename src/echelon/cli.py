@@ -14707,6 +14707,20 @@ def _run_re_v25_deepen(
 
     workspace = workspace_root.resolve()
     parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
+    from harness.re_v2.protocol_25.model import RunManifestV4
+    from harness.re_v2.run_store import load_run_manifest
+
+    parent_manifest = (
+        load_run_manifest(parent_path)
+        if (parent_path / "v2" / "run.json").is_file()
+        else None
+    )
+    if isinstance(parent_manifest, RunManifestV4):
+        if not options.new_audit_epoch:
+            raise ValueError(
+                "terminal L3 parents require explicit --new-audit-epoch"
+            )
+        return _run_re_v25_next_epoch(workspace, parent_path, options)
     parent = validate_parent_for_deepening(parent_path, workspace)
     prepared = _prepare_re_v25_creation(workspace, parent, options)
     created = False
@@ -14728,6 +14742,86 @@ def _run_re_v25_deepen(
         else:
             run_dir = existing
             initialize_protocol_25_child(run_dir, parent)
+        _activate_re_v2_run(workspace, run_dir.name)
+    if created:
+        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    return run_dir
+
+
+def _run_re_v25_next_epoch(
+    workspace: Path,
+    parent_run: Path,
+    options: _ReDeepenOptions,
+) -> Path:
+    """Create or reuse an explicit independent epoch from terminal L3 authority."""
+    from dataclasses import replace
+
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from harness.re_v2.protocol_25.lifecycle import (
+        export_protocol_25_parent,
+        find_exact_protocol_25_child,
+        initialize_protocol_25_successor,
+        prepare_next_audit_epoch,
+    )
+
+    context = _re_v2_context(workspace, parent_run)
+    exported = export_protocol_25_parent(context, mode="new-audit-epoch")
+    requested_selection = _resolve_re_v24_selection(
+        exported.inputs.workspace_partition,
+        options,
+    )
+    if requested_selection != exported.manifest.selection:
+        raise ValueError(
+            "next audit epoch selection must exactly match the terminal L3 parent"
+        )
+    parent_manifest = exported.manifest
+    prepared = prepare_next_audit_epoch(
+        parent=exported.parent,
+        parent_manifest=parent_manifest,
+        parent_inputs=exported.inputs,
+        accepted_parent=exported.accepted_parent,
+        parent_objects=exported.immutable_objects,
+        created_at=_re_v2_now(),
+        token_limit=(
+            options.token_limit
+            if options.token_limit is not None
+            else parent_manifest.initial_budget_policy.token_limit
+        ),
+        active_ms_limit=(
+            options.active_ms_limit
+            if options.active_ms_limit is not None
+            else parent_manifest.initial_budget_policy.active_ms_limit
+        ),
+        semantic_token_limit=(
+            options.semantic_token_limit
+            if options.semantic_token_limit is not None
+            else parent_manifest.semantic_closure_policy.token_limit
+        ),
+        semantic_active_ms_limit=(
+            options.semantic_active_ms_limit
+            if options.semantic_active_ms_limit is not None
+            else parent_manifest.semantic_closure_policy.active_ms_limit
+        ),
+    )
+    created = False
+    with _re_v24_creation_lock(workspace):
+        existing = find_exact_protocol_25_child(
+            workspace,
+            prepared.manifest.semantic_request_id,
+        )
+        if existing is None:
+            manifest = replace(
+                prepared.manifest,
+                run_id=_new_re_v2_run_id(workspace),
+                created_at=_re_v2_now(),
+            )
+            run_dir = workspace / "runs" / manifest.run_id
+            create_protocol_25_run_store(run_dir, manifest, prepared.inputs)
+            initialize_protocol_25_successor(run_dir, exported)
+            created = True
+        else:
+            run_dir = existing
+            initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
     if created:
         _run_re_v2_live(_re_v2_context(workspace, run_dir))

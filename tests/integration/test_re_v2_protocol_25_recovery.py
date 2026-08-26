@@ -538,6 +538,58 @@ def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
 
 
 @pytest.mark.integration
+def test_complete_l3_parent_prepares_explicit_next_epoch_over_prior_roots(
+    tmp_path,
+) -> None:
+    """Catch --new-audit-epoch restarting from L2 and discarding prior L3 roots."""
+    from harness.re_v2.protocol_25.lifecycle import (
+        export_protocol_25_parent,
+        prepare_next_audit_epoch,
+    )
+
+    context = _context(tmp_path / "parent")
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    _accept_every_audit(context)
+    for expected_kind in ("freeze_epoch", "accept_roots", "terminal_complete"):
+        action = plan_next_protocol_25(
+            recover_protocol_25_run(context).controller_state
+        )
+        assert action is not None and action.kind == expected_kind
+        context.apply_controller_action(action)
+
+    exported = export_protocol_25_parent(context, mode="new-audit-epoch")
+    prepared = prepare_next_audit_epoch(
+        parent=exported.parent,
+        parent_manifest=exported.manifest,
+        parent_inputs=exported.inputs,
+        accepted_parent=exported.accepted_parent,
+        parent_objects=exported.immutable_objects,
+        created_at="2026-08-26T14:00:00Z",
+        token_limit=5_000_000,
+        active_ms_limit=10_800_000,
+        semantic_token_limit=1_000_000,
+        semantic_active_ms_limit=1_800_000,
+    )
+    prior = set(exported.parent.candidate.semantic_authority.object_ids)
+    accepted = {
+        template_id: pair[1]
+        for template_id, pair in exported.accepted_parent.items()
+    }
+    targets = prepared.graph.ready_audit_targets(accepted)
+
+    assert prepared.manifest.run_mode == "new-audit-epoch"
+    assert prepared.manifest.human_guidance is None
+    assert prior
+    assert targets
+    assert all(prior.issubset(item.context_object_hashes) for item in targets)
+
+
+@pytest.mark.integration
 def test_audit_epoch_publication_recovers_object_before_ledger(tmp_path) -> None:
     context, result, roots = _epoch_publication_fixture(tmp_path)
 

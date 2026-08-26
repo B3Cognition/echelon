@@ -489,13 +489,18 @@ def prepare_new_audit_epoch(
         executor_contract=inputs.executor_contract,
         audit_policy=inputs.audit_policy,
         immutable_objects=inputs.immutable_objects,
+        prior_semantic_object_hashes=bundle.semantic_authority.object_ids,
     )
     graph = build_protocol_25_graph(manifest, graph_inputs, parent.accepted_parent)
     canonical_json_bytes(manifest.to_json_dict())
     return PreparedProtocol25Creation(validated_parent, manifest, inputs, graph)
 
 
-def export_protocol_25_parent(context: object) -> ExportedProtocol25Parent:
+def export_protocol_25_parent(
+    context: object,
+    *,
+    mode: RunModeV1 | None = None,
+) -> ExportedProtocol25Parent:
     """Authenticate and export a terminal schema-4 blocker as direct-parent authority."""
     from harness.re_v2.canonical import canonical_json_bytes
     from harness.re_v2.protocol_22.graph import AcceptedArtifactV2
@@ -518,14 +523,18 @@ def export_protocol_25_parent(context: object) -> ExportedProtocol25Parent:
         raise ValueError("schema-4 parent export requires Protocol25RunContext")
     recovered = recover_protocol_25_run(context)
     state = recovered.controller_state
-    if state.terminal_state == "blocked_incomplete" and state.audit_epoch_id is None:
-        mode = "audit-successor"
-    elif state.terminal_state == "blocked_plateau" and state.audit_epoch_id is not None:
-        mode = "closure-successor"
-    else:
-        raise ValueError(
-            f"parent state {state.terminal_state!r} is ineligible for guided resume"
-        )
+    selected_mode = mode
+    if selected_mode is None:
+        if state.terminal_state == "blocked_incomplete" and state.audit_epoch_id is None:
+            selected_mode = "audit-successor"
+        elif state.terminal_state == "blocked_plateau" and state.audit_epoch_id is not None:
+            selected_mode = "closure-successor"
+        else:
+            raise ValueError(
+                f"parent state {state.terminal_state!r} is ineligible for guided resume"
+            )
+    elif selected_mode != "new-audit-epoch":
+        raise ValueError("explicit schema-4 export mode must be new-audit-epoch")
     manifest = context.semantic_graph.manifest
     if not isinstance(manifest, RunManifestV4):
         raise ValueError("schema-4 parent export requires RunManifestV4")
@@ -568,7 +577,7 @@ def export_protocol_25_parent(context: object) -> ExportedProtocol25Parent:
     closure_root = None if not roots else roots[0]
     if len(roots) > 1:
         raise ValueError("schema-4 parent has ambiguous closure roots")
-    if mode == "closure-successor" and closure_root is None:
+    if selected_mode in {"closure-successor", "new-audit-epoch"} and closure_root is None:
         raise ValueError("closure successor parent has no authenticated closure root")
     unresolved_findings = tuple(
         sorted(
@@ -719,7 +728,7 @@ def export_protocol_25_parent(context: object) -> ExportedProtocol25Parent:
     )
     validated = validate_protocol_25_parent(
         candidate,
-        mode=mode,
+        mode=selected_mode,
         expected_source_snapshot_id=manifest.source_snapshot_id,
         expected_selection_id=manifest.selection.identity,
     )
@@ -801,6 +810,65 @@ def prepare_guided_successor(
     semantic_active_ms_limit: int,
 ) -> PreparedProtocol25Creation:
     """Prepare one immutable guided child from authenticated schema-4 authority."""
+    return _prepare_protocol_25_l3_child(
+        parent=parent,
+        parent_manifest=parent_manifest,
+        parent_inputs=parent_inputs,
+        accepted_parent=accepted_parent,
+        parent_objects=parent_objects,
+        answer=answer,
+        created_at=created_at,
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+        semantic_token_limit=semantic_token_limit,
+        semantic_active_ms_limit=semantic_active_ms_limit,
+    )
+
+
+def prepare_next_audit_epoch(
+    *,
+    parent: object,
+    parent_manifest: object,
+    parent_inputs: object,
+    accepted_parent: Mapping[str, object],
+    parent_objects: Mapping[str, bytes],
+    created_at: str,
+    token_limit: int,
+    active_ms_limit: int,
+    semantic_token_limit: int,
+    semantic_active_ms_limit: int,
+) -> PreparedProtocol25Creation:
+    """Prepare an explicit independent audit epoch over a terminal L3 parent."""
+    return _prepare_protocol_25_l3_child(
+        parent=parent,
+        parent_manifest=parent_manifest,
+        parent_inputs=parent_inputs,
+        accepted_parent=accepted_parent,
+        parent_objects=parent_objects,
+        answer=None,
+        created_at=created_at,
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+        semantic_token_limit=semantic_token_limit,
+        semantic_active_ms_limit=semantic_active_ms_limit,
+    )
+
+
+def _prepare_protocol_25_l3_child(
+    *,
+    parent: object,
+    parent_manifest: object,
+    parent_inputs: object,
+    accepted_parent: Mapping[str, object],
+    parent_objects: Mapping[str, bytes],
+    answer: str | None,
+    created_at: str,
+    token_limit: int,
+    active_ms_limit: int,
+    semantic_token_limit: int,
+    semantic_active_ms_limit: int,
+) -> PreparedProtocol25Creation:
+    """Shared schema-4 child preparation for guided and next-epoch modes."""
     from harness.re_v2.canonical import canonical_json_bytes
     from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
     from harness.re_v2.protocol_24.model import ParentLineageV1
@@ -816,8 +884,14 @@ def prepare_guided_successor(
 
     if not isinstance(parent, ValidatedProtocol25ParentV1):
         raise ValueError("guided successor requires authenticated schema-4 parent")
-    if parent.mode not in {"audit-successor", "closure-successor"}:
-        raise ValueError("guided successor parent mode is invalid")
+    if parent.mode == "new-audit-epoch":
+        if answer is not None:
+            raise ValueError("new audit epoch cannot carry human guidance")
+    elif parent.mode in {"audit-successor", "closure-successor"}:
+        if answer is None:
+            raise ValueError("guided successor requires human guidance")
+    else:
+        raise ValueError("schema-4 child parent mode is invalid")
     if not isinstance(parent_manifest, RunManifestV4):
         raise ValueError("guided successor requires RunManifestV4 parent")
     if not isinstance(parent_inputs, ValidatedProtocol25Inputs):
@@ -836,18 +910,21 @@ def prepare_guided_successor(
         raise ValueError("guided successor direct-parent authority is inconsistent")
 
     semantic = candidate.semantic_authority
-    guidance_payload = _guidance_payload(
-        parent_manifest_hash=parent_manifest_hash,
-        parent_terminal_event_hash=lower.source_terminal_event_hash,
-        accepted_audit_candidate_hashes=semantic.accepted_audit_candidate_hashes,
-        unresolved_audit_target_ids=semantic.unresolved_audit_target_ids,
-        audit_epoch_id=semantic.audit_epoch_id,
-        closure_root_hash=semantic.closure_root_hash,
-        unresolved_finding_ids=semantic.unresolved_finding_ids,
-        answer=answer,
-    )
-    guidance_bytes = canonical_json_bytes(guidance_payload)
-    guidance_hash = content_digest(guidance_bytes)
+    guidance_bytes = None
+    guidance_hash = None
+    if answer is not None:
+        guidance_payload = _guidance_payload(
+            parent_manifest_hash=parent_manifest_hash,
+            parent_terminal_event_hash=lower.source_terminal_event_hash,
+            accepted_audit_candidate_hashes=semantic.accepted_audit_candidate_hashes,
+            unresolved_audit_target_ids=semantic.unresolved_audit_target_ids,
+            audit_epoch_id=semantic.audit_epoch_id,
+            closure_root_hash=semantic.closure_root_hash,
+            unresolved_finding_ids=semantic.unresolved_finding_ids,
+            answer=answer,
+        )
+        guidance_bytes = canonical_json_bytes(guidance_payload)
+        guidance_hash = content_digest(guidance_bytes)
     bundle = build_parent_authority_bundle_v2(parent)
     lineage = ParentLineageV1(
         schema_version=1,
@@ -888,9 +965,17 @@ def prepare_guided_successor(
         artifact_policy_hash=parent_inputs.artifact_policy.identity,
         executor_contract_hash=parent_inputs.executor_contract.identity,
         audit_policy_hash=parent_inputs.audit_policy.identity,
-        accepted_audit_target_ids=semantic.accepted_audit_target_ids,
-        frozen_audit_epoch_id=semantic.audit_epoch_id,
-        closure_root_hash=semantic.closure_root_hash,
+        accepted_audit_target_ids=(
+            ()
+            if parent.mode == "new-audit-epoch"
+            else semantic.accepted_audit_target_ids
+        ),
+        frozen_audit_epoch_id=(
+            None if parent.mode == "new-audit-epoch" else semantic.audit_epoch_id
+        ),
+        closure_root_hash=(
+            None if parent.mode == "new-audit-epoch" else semantic.closure_root_hash
+        ),
         guidance_hash=guidance_hash,
     )
     manifest = RunManifestV4(
@@ -932,7 +1017,11 @@ def prepare_guided_successor(
             if frozen_epoch is None
             else CatalogReferenceV1(frozen_epoch.identity, "audit-epoch.json")
         ),
-        human_guidance=CatalogReferenceV1(guidance_hash, "human-guidance.json"),
+        human_guidance=(
+            None
+            if guidance_hash is None
+            else CatalogReferenceV1(guidance_hash, "human-guidance.json")
+        ),
         semantic_request_id=semantic_id,
         initial_budget_policy=BudgetPolicyV2(
             token_limit=token_limit,
@@ -972,6 +1061,7 @@ def prepare_guided_successor(
         executor_contract=inputs.executor_contract,
         audit_policy=inputs.audit_policy,
         immutable_objects=inputs.immutable_objects,
+        prior_semantic_object_hashes=bundle.semantic_authority.object_ids,
     )
     graph = build_protocol_25_graph(manifest, graph_inputs, accepted_parent)
     canonical_json_bytes(manifest.to_json_dict())
@@ -1104,6 +1194,7 @@ def initialize_protocol_25_successor(
         raise ValueError("schema-4 successor initialization requires exported parent")
     manifest = load_run_manifest(run_dir)
     if not isinstance(manifest, RunManifestV4) or manifest.run_mode not in {
+        "new-audit-epoch",
         "audit-successor",
         "closure-successor",
     }:
@@ -1122,6 +1213,7 @@ def initialize_protocol_25_successor(
     ledger = Protocol25Ledger(paths, objects)
     source_ledger = exported.recovered.ledger
     lower_bundle = exported.parent.candidate.lower_authority_bundle
+    import_semantic = manifest.run_mode != "new-audit-epoch"
 
     for authority in lower_bundle.artifacts:
         acceptance = source_ledger.accepted_artifacts.get(authority.artifact_key_id)
@@ -1144,10 +1236,14 @@ def initialize_protocol_25_successor(
         ledger.record_artifact_acceptance(acceptance)
 
     semantic = exported.parent.candidate.semantic_authority
-    retained_semantic_hashes = {
-        *semantic.accepted_audit_candidate_hashes,
-        *semantic.resolution_overlay_hashes,
-    }
+    retained_semantic_hashes = (
+        {
+            *semantic.accepted_audit_candidate_hashes,
+            *semantic.resolution_overlay_hashes,
+        }
+        if import_semantic
+        else set()
+    )
     semantic_acceptances = tuple(
         sorted(
             (
@@ -1175,26 +1271,26 @@ def initialize_protocol_25_successor(
         ledger.record_candidate_assessment(assessments[0])
         ledger.record_artifact_acceptance(acceptance)
 
-    if semantic.audit_epoch_id is not None:
+    if import_semantic and semantic.audit_epoch_id is not None:
         ledger.record_audit_epoch(source_ledger.audit_epochs[semantic.audit_epoch_id])
-    for object_id in semantic.target_assessment_hashes:
+    for object_id in semantic.target_assessment_hashes if import_semantic else ():
         ledger.record_target_closure_assessment(
             source_ledger.target_closure_assessments[object_id]
         )
-    for object_id in semantic.source_assessment_hashes:
+    for object_id in semantic.source_assessment_hashes if import_semantic else ():
         ledger.record_source_composition_assessment(
             source_ledger.source_composition_assessments[object_id]
         )
-    for object_id in semantic.closure_receipt_ids:
+    for object_id in semantic.closure_receipt_ids if import_semantic else ():
         ledger.record_finding_closure(source_ledger.finding_closures[object_id])
-    if semantic.closure_root_hash is not None:
+    if import_semantic and semantic.closure_root_hash is not None:
         ledger.record_audit_closure_root(
             source_ledger.audit_closure_roots[semantic.closure_root_hash]
         )
     roots_by_identity = {
         item.identity: item for item in source_ledger.l3_source_roots.values()
     }
-    for object_id in semantic.l3_source_root_hashes:
+    for object_id in semantic.l3_source_root_hashes if import_semantic else ():
         ledger.record_l3_source_root(roots_by_identity[object_id])
 
     source_replay = Protocol25ReplayState()
@@ -1217,7 +1313,9 @@ def initialize_protocol_25_successor(
                 },
             )
         )
-    for target_id, candidate_hash in sorted(source_replay.audit_candidates.items()):
+    for target_id, candidate_hash in (
+        sorted(source_replay.audit_candidates.items()) if import_semantic else ()
+    ):
         expected_events.append(
             (
                 "audit_candidate_accepted",
@@ -1227,7 +1325,7 @@ def initialize_protocol_25_successor(
                 },
             )
         )
-    if semantic.audit_epoch_id is not None:
+    if import_semantic and semantic.audit_epoch_id is not None:
         epoch = source_ledger.audit_epochs[semantic.audit_epoch_id]
         expected_events.append(
             (
@@ -1238,7 +1336,7 @@ def initialize_protocol_25_successor(
                 },
             )
         )
-    if semantic.closure_root_hash is not None:
+    if import_semantic and semantic.closure_root_hash is not None:
         root = source_ledger.audit_closure_roots[semantic.closure_root_hash]
         expected_events.append(
             (
@@ -1298,6 +1396,7 @@ __all__ = (
     "initialize_protocol_25_successor",
     "normalize_guidance_answer",
     "prepare_guided_successor",
+    "prepare_next_audit_epoch",
     "prepare_new_audit_epoch",
     "PreparedProtocol25Creation",
     "semantic_request_id_v2",

@@ -152,6 +152,9 @@ class ValidatedProtocol25Inputs:
             executor_contract=self.executor_contract,
             audit_policy=self.audit_policy,
             immutable_objects=self.immutable_objects,
+            prior_semantic_object_hashes=(
+                self.parent_authority_bundle.semantic_authority.object_ids
+            ),
         )
 
 

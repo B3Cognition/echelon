@@ -77,6 +77,7 @@ class Protocol25GraphInputsV1:
     executor_contract: SemanticExecutorContractCatalogV1
     audit_policy: AuditTaxonomyV1
     immutable_objects: Mapping[str, bytes]
+    prior_semantic_object_hashes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.workspace_partition, WorkspacePartitionCatalogV1):
@@ -100,11 +101,21 @@ class Protocol25GraphInputsV1:
             _schema(digest_value, key, "protocol-2.5 immutable object hash")
             if content_digest(payload) != key:
                 raise Protocol25GraphError("protocol-2.5 immutable object hash mismatch")
+        prior = _schema(
+            sorted_unique_digests,
+            self.prior_semantic_object_hashes,
+            "Protocol25GraphInputsV1.prior_semantic_object_hashes",
+        )
+        if not set(prior).issubset(self.immutable_objects):
+            raise Protocol25GraphError(
+                "prior semantic graph authority is absent from immutable objects"
+            )
         object.__setattr__(
             self,
             "immutable_objects",
             MappingProxyType(dict(sorted(self.immutable_objects.items()))),
         )
+        object.__setattr__(self, "prior_semantic_object_hashes", prior)
 
     @property
     def l2_inputs(self) -> ValidatedProtocol22Inputs:
@@ -465,14 +476,29 @@ class Protocol25Graph:
                     dependency_hashes=dependencies,
                 )
             )
+        prior_semantic = (
+            self._inputs.prior_semantic_object_hashes
+            if self.manifest.run_mode == "new-audit-epoch"
+            else ()
+        )
         lower_hashes = tuple(
-            sorted(accepted[item].artifact_hash for item in plan.required_template_ids)
+            sorted(
+                {
+                    *(accepted[item].artifact_hash for item in plan.required_template_ids),
+                    *prior_semantic,
+                }
+            )
         )
         context_hashes = tuple(
             sorted(
-                accepted[item].artifact_hash
-                for item in plan.required_template_ids
-                if "context" in templates[item].artifact_kind
+                {
+                    *(
+                        accepted[item].artifact_hash
+                        for item in plan.required_template_ids
+                        if "context" in templates[item].artifact_kind
+                    ),
+                    *prior_semantic,
+                }
             )
         )
         evidence_hashes = tuple(
