@@ -206,3 +206,86 @@ def test_semantic_execution_store_prepares_and_revalidates_l3_cli_authority(
     assert prepared.provider_envelope is None
     assert prepared.execution_input.context_bundle_hash == content_digest(context_bytes)
     assert store.validate_prepared_execution(prepared, item, dependencies) == prepared
+
+
+@pytest.mark.unit
+def test_semantic_renderer_recovers_exact_candidate_when_only_result_is_missing(
+    tmp_path: Path,
+) -> None:
+    catalog, objects = _executor_fixture()
+    executor = catalog.entry_for("semantic-audit")
+    renderer = executor.request_renderer
+    assert renderer is not None
+    agent_bytes = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            body="Write exactly `audit.json`.\n",
+            frontmatter={"name": "echelon.re-validator"},
+        )
+    )
+    executor = replace(
+        executor,
+        request_renderer=replace(
+            renderer,
+            agent_contract_hash=content_digest(agent_bytes),
+        ),
+    )
+    renderer = executor.request_renderer
+    assert renderer is not None
+    schema_bytes = objects[renderer.response_schemas[0].schema_hash]
+    context_bytes = canonical_json_bytes(
+        replace(
+            _context(),
+            response_schema_hash=content_digest(schema_bytes),
+        ).to_json_dict()
+    )
+    execution_input = ExecutionInputV1(
+        schema_version=1,
+        dispatch_id="semantic-dispatch-fallback",
+        work_item_id=digest("semantic fallback work"),
+        attempt_kind="initial_generation",
+        executor_contract_hash=executor.executor_contract_hash,
+        agent_contract_hash=content_digest(agent_bytes),
+        context_bundle_hash=content_digest(context_bytes),
+        provider_request_envelope_hash=None,
+        deterministic_invocation=None,
+    )
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        executor,
+    )
+    candidate_root = tmp_path / "candidate-fallback"
+    candidate_root.mkdir()
+
+    class MissingResultProvider(_ProviderSpy):
+        def exec_agent(self, project_root: str, prompt: str, **kwargs):  # type: ignore[no-untyped-def]
+            Path(project_root, "audit.json").write_text(
+                '{"schema_version":1,"audit_target_id":"sha256:'
+                + "0" * 64
+                + '","verdict":"PASS","findings":[]}\n'
+            )
+            return super().exec_agent(project_root, prompt, **kwargs)
+
+    provider = MissingResultProvider(
+        _result(
+            exit_code=1,
+            echelon_result=None,
+            echelon_result_validation_reason="missing echelon_result",
+        )
+    )
+
+    result = SquadCliSemanticRenderer(
+        (executor,),
+        provider_factory=lambda: provider,  # type: ignore[return-value]
+    ).execute(
+        execution_input,
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        reservation,
+        candidate_root,
+        10**12,
+    )
+
+    assert result.outcome == "candidate_ready"

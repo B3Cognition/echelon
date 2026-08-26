@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import stat
 import time
 from typing import Callable
 
@@ -58,6 +59,12 @@ _SEMANTIC_MODE_BY_ARTIFACT = {
     "semantic-resolution-overlay": "SEMANTIC_RESOLUTION",
     "target-closure-assessment": "CLOSURE_RECHECK",
     "source-composition-assessment": "SOURCE_COMPOSITION_GUARD",
+}
+_CANDIDATE_FILE_BY_ARTIFACT = {
+    "semantic-audit-findings": "audit.json",
+    "semantic-resolution-overlay": "resolution.json",
+    "target-closure-assessment": "closure.json",
+    "source-composition-assessment": "closure.json",
 }
 
 
@@ -362,6 +369,36 @@ class SquadCliSemanticRenderer:
                 provider_name,
                 model_name,
             )
+        result_invalid = bool(
+            result.echelon_result_validation_reason
+            or result.verdict != "DONE"
+            or result.state_updates
+        )
+        if result_invalid:
+            if (
+                result.echelon_result_validation_reason
+                and result.echelon_result is None
+                and not result.state_updates
+                and _has_exact_semantic_candidate(root, execution_input, executor)
+            ):
+                return RawExecutionResultV1(
+                    _RESULT_STDOUT,
+                    stderr,
+                    usage,
+                    timing,
+                    "candidate_ready",
+                    provider_name,
+                    model_name,
+                )
+            return RawExecutionResultV1(
+                b"",
+                b"invalid_response:echelon_result\n",
+                usage,
+                timing,
+                "invalid_response",
+                provider_name,
+                model_name,
+            )
         if result.exit_code != 0:
             return RawExecutionResultV1(
                 b"",
@@ -369,20 +406,6 @@ class SquadCliSemanticRenderer:
                 usage,
                 timing,
                 "transport_error",
-                provider_name,
-                model_name,
-            )
-        if (
-            result.echelon_result_validation_reason
-            or result.verdict != "DONE"
-            or result.state_updates
-        ):
-            return RawExecutionResultV1(
-                b"",
-                b"invalid_response:echelon_result\n",
-                usage,
-                timing,
-                "invalid_response",
                 provider_name,
                 model_name,
             )
@@ -465,4 +488,32 @@ def _render_semantic_prompt(body: str, context: str, response_schema: str) -> st
     )
 
 
-__all__ = ("SquadCliSemanticRenderer",)
+def _has_exact_semantic_candidate(
+    root: Path,
+    execution_input: ExecutionInputV1,
+    executor: ExecutorContractEntryV1,
+) -> bool:
+    """Recover only one regular candidate; certification still validates its bytes."""
+    renderer = executor.request_renderer
+    if renderer is None or len(renderer.response_schemas) != 1:
+        return False
+    expected = _CANDIDATE_FILE_BY_ARTIFACT.get(
+        renderer.response_schemas[0].artifact_kind
+    )
+    if expected is None:
+        return False
+    try:
+        entries = tuple(root.iterdir())
+        metadata = entries[0].lstat() if len(entries) == 1 else None
+    except OSError:
+        return False
+    return bool(
+        metadata is not None
+        and entries[0].name == expected
+        and stat.S_ISREG(metadata.st_mode)
+        and metadata.st_size > 0
+        and execution_input.executor_contract_hash == executor.executor_contract_hash
+    )
+
+
+__all__ = ("Protocol25ExecutionStore", "SquadCliSemanticRenderer")

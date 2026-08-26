@@ -363,6 +363,28 @@ def test_audit_schema_requires_pass_zero_or_repair_nonzero() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("rule_id", "invented.rule"),
+        ("finding_class", "invented-class"),
+        ("subject_kind", "invented-subject"),
+    ),
+)
+def test_audit_schema_exposes_the_closed_certifier_taxonomy(
+    field: str,
+    value: str,
+) -> None:
+    payload = _audit_payload()
+    payload["findings"][0][field] = value  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        Draft202012Validator(
+            semantic_response_schema("semantic-audit-findings")
+        ).validate(payload)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     "controller_field",
     (
         "candidate_id",

@@ -54,12 +54,15 @@ from .findings import (
     AuditTargetV1,
     DeferredObservationV1,
     EvidenceAnchorAuthorityV1,
+    FINDING_CLASSES,
     FindingAuthorityVocabularyV1,
     SemanticFindingV1,
+    SUBJECT_KINDS,
     normalize_finding_key,
 )
 from .model import Protocol25SchemaError
 from .policies import (
+    AUDIT_RULE_IDS,
     SEMANTIC_PRODUCER_PROTOCOL_BY_ARTIFACT,
     SemanticArtifactPolicyCatalogV1,
     build_semantic_v1_policy_catalog,
@@ -120,9 +123,9 @@ def _evidence_schema() -> dict[str, object]:
 
 def _finding_schema(*, deferred: bool = False) -> dict[str, object]:
     properties: dict[str, object] = {
-        "rule_id": _safe_id_schema(),
-        "finding_class": _safe_id_schema(),
-        "subject_kind": _safe_id_schema(),
+        "rule_id": {"enum": list(AUDIT_RULE_IDS)},
+        "finding_class": {"enum": sorted(FINDING_CLASSES)},
+        "subject_kind": {"enum": sorted(SUBJECT_KINDS)},
         "subject_ref": _safe_id_schema(),
         "claim_anchor_ids": {
             "type": "array",
