@@ -193,7 +193,7 @@ _PAYLOAD_SCHEMAS = {
     },
     "l3_source_root_accepted": {
         "l3_source_root_id": _digest,
-        "scope_state": _choice("complete", "next_epoch_required"),
+        "scope_state": _choice("blocked", "complete", "next_epoch_required"),
         "source_id": _safe_id,
     },
     "semantic_budget_authorized": {

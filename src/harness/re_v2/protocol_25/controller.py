@@ -499,10 +499,6 @@ def plan_next_protocol_25(
             participating_target_ids=cycle.participating_target_ids,
         )
 
-    if blocked_incomplete:
-        return Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
-    if blocked_plateau:
-        return Protocol25ControllerActionV1(kind="terminal_blocked_plateau")
     missing_roots = tuple(
         source for source in state.source_ids if source not in state.rooted_source_ids
     )
@@ -510,6 +506,10 @@ def plan_next_protocol_25(
         return Protocol25ControllerActionV1(
             kind="accept_roots", source_id=missing_roots[0]
         )
+    if blocked_incomplete:
+        return Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
+    if blocked_plateau:
+        return Protocol25ControllerActionV1(kind="terminal_blocked_plateau")
     return Protocol25ControllerActionV1(
         kind=(
             "terminal_next_epoch"

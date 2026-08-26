@@ -404,6 +404,9 @@ def test_two_unchanged_rounds_record_plateau_then_block() -> None:
 
     recorded = replace(unresolved, stage="plateau_recorded")
     assert plan_next_protocol_25(_state(recorded)) == Protocol25ControllerActionV1(
+        kind="accept_roots", source_id=SOURCE
+    )
+    assert plan_next_protocol_25(_state(recorded, roots=(SOURCE,))) == Protocol25ControllerActionV1(
         kind="terminal_blocked_plateau"
     )
 
@@ -439,6 +442,9 @@ def test_third_round_ceiling_blocks_without_fabricating_plateau() -> None:
     )
 
     assert plan_next_protocol_25(state) == Protocol25ControllerActionV1(
+        kind="accept_roots", source_id=SOURCE
+    )
+    assert plan_next_protocol_25(replace(state, rooted_source_ids=(SOURCE,))) == Protocol25ControllerActionV1(
         kind="terminal_blocked_incomplete"
     )
 
