@@ -327,9 +327,53 @@ def _deferred_ids(ledger: Protocol25LedgerView) -> tuple[str, ...]:
 
 
 def _apply_controller_action(
-    _context: Protocol25RunContext,
+    context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
 ) -> None:
+    if not isinstance(action, Protocol25ControllerActionV1):
+        raise Protocol25RecoveryError(
+            "semantic action must be Protocol25ControllerActionV1"
+        )
+    terminal = {
+        "terminal_complete": (
+            "run_completed",
+            "all selected protocol-2.5 sources are closed",
+        ),
+        "terminal_next_epoch": (
+            "run_completed",
+            "audit epoch closed with deferred observations",
+        ),
+        "terminal_blocked_incomplete": (
+            "run_failed",
+            "semantic closure is incomplete",
+        ),
+        "terminal_blocked_plateau": (
+            "run_failed",
+            "semantic closure reached plateau",
+        ),
+    }.get(action.kind)
+    if terminal is not None:
+        events = context.event_store.replay()
+        existing = next(
+            (
+                item
+                for item in events
+                if item.type in {"run_completed", "run_failed"}
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.type != terminal[0] or existing.payload["reason"] != terminal[1]:
+                raise Protocol25RecoveryError(
+                    "durable terminal event conflicts with requested semantic state"
+                )
+            return
+        context.event_store.append(
+            terminal[0],
+            {"reason": terminal[1]},
+            occurred_at=context.clock(),
+        )
+        return
     raise Protocol25RecoveryError(
         f"protocol-2.5 action {action.kind!r} has no durable reconciler"
     )

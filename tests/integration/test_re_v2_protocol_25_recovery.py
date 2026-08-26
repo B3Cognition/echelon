@@ -21,6 +21,8 @@ from harness.re_v2.protocol_25.recovery import (
     Protocol25RunContext,
     recover_protocol_25_run,
 )
+from harness.re_v2.protocol_25.controller import Protocol25ControllerActionV1
+from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
 from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_25_fixtures import lower_parent_authority_bundle_v1
@@ -121,3 +123,30 @@ def test_recovery_derives_prerequisite_state_without_semantic_projection(
     assert result.controller_state.targets == ()
     assert result.events[-1].type == "run_created"
     assert result.ledger.semantic_records == {}
+
+
+@pytest.mark.integration
+def test_terminal_reconciliation_is_idempotent(tmp_path) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    context.event_store.append(
+        "executor_failed",
+        {
+            "executor_contract_hash": digest("failed-executor"),
+            "executor_failure_receipt_id": digest("failure-receipt"),
+            "trigger_work_item_id": digest("failed-audit-work"),
+        },
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    action = Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
+
+    context.apply_controller_action(action)
+    context.apply_controller_action(action)
+
+    events = context.event_store.replay()
+    assert [item.type for item in events].count("run_failed") == 1
+    assert events[-1].payload["reason"] == "semantic closure is incomplete"

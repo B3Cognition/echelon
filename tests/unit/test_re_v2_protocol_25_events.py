@@ -560,6 +560,52 @@ def test_semantic_plateau_is_terminal_without_inventing_shared_work_failure(
 
 
 @pytest.mark.unit
+def test_three_round_ceiling_is_terminal_without_fabricating_plateau(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _freeze(store, (TARGET_A,))
+    first = digest("finding:first")
+    second = digest("finding:second")
+    third = digest("finding:third")
+    from tests.unit.test_re_v2_protocol_25_budget import _record_cycle
+
+    _record_cycle(
+        store,
+        cycle_id="cycle-1",
+        round_index=1,
+        before=tuple(sorted((first, second, third))),
+        after=tuple(sorted((second, third))),
+        passed=True,
+    )
+    _record_cycle(
+        store,
+        cycle_id="cycle-2",
+        round_index=2,
+        before=tuple(sorted((second, third))),
+        after=(third,),
+        passed=True,
+    )
+    _record_cycle(
+        store,
+        cycle_id="cycle-3",
+        round_index=3,
+        before=(third,),
+        after=(third,),
+        passed=False,
+    )
+
+    _append(store, "run_failed", {"reason": "three-round semantic ceiling"})
+
+    state = PROTOCOL_25_EVENTS.new_state()
+    assert isinstance(state, Protocol25ReplayState)
+    for event in store.replay():
+        state.consume(event)
+    assert state.semantic_state(prerequisites_complete=True) == "blocked_incomplete"
+
+
+@pytest.mark.unit
 def test_deferred_source_root_derives_next_epoch_required(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _run(store)

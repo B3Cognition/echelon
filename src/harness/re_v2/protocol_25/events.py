@@ -307,15 +307,21 @@ class Protocol25ReplayState(EventReplayState):
             if any(not cycle.complete for cycle in self.source_cycles.values()):
                 raise ReV2EventError("run completion conflicts with an incomplete source cycle")
 
-        if event.type == "run_failed" and self.plateau_targets:
+        ceiling_targets = {
+            target
+            for target, unresolved in self.unresolved_by_target.items()
+            if unresolved and self.rounds_by_target.get(target, 0) >= 3
+        }
+        if event.type == "run_failed" and (self.plateau_targets or ceiling_targets):
             unresolved_targets = {
                 target
                 for target, unresolved in self.unresolved_by_target.items()
                 if unresolved
             }
-            if not unresolved_targets or not unresolved_targets <= self.plateau_targets:
+            terminal_targets = self.plateau_targets | ceiling_targets
+            if not unresolved_targets or not unresolved_targets <= terminal_targets:
                 raise ReV2EventError(
-                    "semantic plateau cannot fail a child with runnable unresolved targets"
+                    "semantic ceiling cannot fail a child with runnable unresolved targets"
                 )
             shared = self.shared.shared
             if shared.active is not None or shared.lease_dispatch_id is not None:
