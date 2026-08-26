@@ -388,7 +388,11 @@ def _accept_every_prerequisite(context: Protocol25RunContext):  # type: ignore[n
     ).ready
 
 
-def _accept_every_audit(context: Protocol25RunContext) -> None:
+def _accept_every_audit(
+    context: Protocol25RunContext,
+    *,
+    limit: int | None = None,
+) -> None:
     ledger = context.ledger.replay()
     accepted = {}
     for receipt in ledger.accepted_artifacts.values():
@@ -399,11 +403,13 @@ def _accept_every_audit(context: Protocol25RunContext) -> None:
                 receipt.artifact_hash,
             )
     targets = context.semantic_graph.ready_audit_targets(accepted)
-    for target, template in zip(
+    for index, (target, template) in enumerate(zip(
         targets,
         context.semantic_graph.audit_templates,
         strict=True,
-    ):
+    )):
+        if limit is not None and index >= limit:
+            break
         dependencies = {
             item: accepted[item] for item in template.required_template_ids
         }
@@ -473,6 +479,62 @@ def _accept_every_audit(context: Protocol25RunContext) -> None:
             },
             occurred_at=context.clock(),
         )
+
+
+@pytest.mark.integration
+def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
+    tmp_path,
+) -> None:
+    """Catch retained audit siblings being lost across immutable resume."""
+    from harness.re_v2.protocol_25.lifecycle import (
+        export_protocol_25_parent,
+        prepare_guided_successor,
+    )
+
+    context = _context(tmp_path / "parent")
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    _accept_every_audit(context, limit=1)
+    context.event_store.append(
+        "executor_failed",
+        {
+            "executor_contract_hash": digest("failed-audit-executor"),
+            "executor_failure_receipt_id": digest("failed-audit-receipt"),
+            "trigger_work_item_id": digest("missing-audit-work"),
+        },
+        occurred_at=context.clock(),
+    )
+    context.event_store.append(
+        "run_failed",
+        {"reason": "semantic closure is incomplete"},
+        occurred_at=context.clock(),
+    )
+
+    exported = export_protocol_25_parent(context)
+    prepared = prepare_guided_successor(
+        parent=exported.parent,
+        parent_manifest=exported.manifest,
+        parent_inputs=exported.inputs,
+        accepted_parent=exported.accepted_parent,
+        parent_objects=exported.immutable_objects,
+        answer="Retry the missing audit target with the retained sibling.",
+        created_at="2026-08-26T13:00:00Z",
+        token_limit=5_000_000,
+        active_ms_limit=10_800_000,
+        semantic_token_limit=1_000_000,
+        semantic_active_ms_limit=1_800_000,
+    )
+    assert prepared.manifest.run_mode == "audit-successor"
+    assert prepared.manifest.parent_run_id == context.semantic_graph.manifest.run_id
+    assert len(exported.parent.adopted_audit_candidate_hashes) == 1
+    assert len(exported.parent.remaining_audit_target_ids) == 1
+    assert prepared.inputs.parent_authority_bundle.semantic_authority == (
+        exported.parent.candidate.semantic_authority
+    )
 
 
 @pytest.mark.integration

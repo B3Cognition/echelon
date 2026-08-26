@@ -14734,6 +14734,75 @@ def _run_re_v25_deepen(
     return run_dir
 
 
+def _run_re_v25_resume(
+    workspace_root: Path,
+    parent_run: Path,
+    answer: str,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> Path:
+    """Create or exactly reuse one immutable guided protocol-2.5 successor."""
+    from dataclasses import replace
+
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from harness.re_v2.protocol_25.lifecycle import (
+        export_protocol_25_parent,
+        find_exact_protocol_25_child,
+        initialize_protocol_25_successor,
+        prepare_guided_successor,
+    )
+
+    workspace = workspace_root.resolve()
+    parent_dir = parent_run.resolve()
+    context = _re_v2_context(workspace, parent_dir)
+    exported = export_protocol_25_parent(context)
+    parent_manifest = exported.manifest
+    prepared = prepare_guided_successor(
+        parent=exported.parent,
+        parent_manifest=parent_manifest,
+        parent_inputs=exported.inputs,
+        accepted_parent=exported.accepted_parent,
+        parent_objects=exported.immutable_objects,
+        answer=answer,
+        created_at=_re_v2_now(),
+        token_limit=(
+            token_limit
+            if token_limit is not None
+            else parent_manifest.initial_budget_policy.token_limit
+        ),
+        active_ms_limit=(
+            time_limit_minutes * 60_000
+            if time_limit_minutes is not None
+            else parent_manifest.initial_budget_policy.active_ms_limit
+        ),
+        semantic_token_limit=parent_manifest.semantic_closure_policy.token_limit,
+        semantic_active_ms_limit=parent_manifest.semantic_closure_policy.active_ms_limit,
+    )
+    created = False
+    with _re_v24_creation_lock(workspace):
+        existing = find_exact_protocol_25_child(
+            workspace,
+            prepared.manifest.semantic_request_id,
+        )
+        if existing is None:
+            manifest = replace(
+                prepared.manifest,
+                run_id=_new_re_v2_run_id(workspace),
+                created_at=_re_v2_now(),
+            )
+            run_dir = workspace / "runs" / manifest.run_id
+            create_protocol_25_run_store(run_dir, manifest, prepared.inputs)
+            initialize_protocol_25_successor(run_dir, exported)
+            created = True
+        else:
+            run_dir = existing
+            initialize_protocol_25_successor(run_dir, exported)
+        _activate_re_v2_run(workspace, run_dir.name)
+    if created:
+        _run_re_v2_live(_re_v2_context(workspace, run_dir))
+    return run_dir
+
+
 def _prepare_re_v25_creation(
     workspace_root: Path,
     parent: object,
@@ -15216,7 +15285,7 @@ def _cmd_re_continue(args: list[str]) -> None:
 
 
 def _cmd_re_resume(args: list[str]) -> None:
-    from harness.re_lifecycle import ReLifecycleError
+    from harness.re_lifecycle import ReLifecycleError, resolve_current_re_run
 
     try:
         _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
@@ -15227,12 +15296,35 @@ def _cmd_re_resume(args: list[str]) -> None:
         )
         if len(positional) != 1:
             raise ValueError('usage: echelon re resume "<answer>"')
+        project_root = Path.cwd()
+        run_dir = resolve_current_re_run(project_root)
+        if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
+            if re_max_inner is not None:
+                raise ValueError(
+                    "v2 has independent attempt budgets; this option is valid only for v1"
+                )
+            from harness.re_v2.protocol_25.model import RunManifestV4
+            from harness.re_v2.run_store import load_run_manifest
+
+            manifest = load_run_manifest(run_dir)
+            if not isinstance(manifest, RunManifestV4):
+                raise ValueError(
+                    "immutable guidance resume is valid only for protocol 2.5"
+                )
+            _run_re_v25_resume(
+                project_root,
+                run_dir,
+                positional[0],
+                token_limit,
+                time_limit_minutes,
+            )
+            return
         overrides: dict[str, int] = {}
         if token_limit is not None:
             overrides["hard_token_limit"] = token_limit
         if time_limit_minutes is not None:
             overrides["hard_active_minutes"] = time_limit_minutes
-        result = _re_lifecycle_controller(Path.cwd()).resume(
+        result = _re_lifecycle_controller(project_root).resume(
             positional[0],
             re_max_inner,
             **overrides,

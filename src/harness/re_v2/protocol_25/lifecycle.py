@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
@@ -37,6 +38,32 @@ class PreparedProtocol25Creation:
     manifest: object
     inputs: object
     graph: object
+
+
+@dataclass(frozen=True, slots=True)
+class ExportedProtocol25Parent:
+    """Authenticated schema-4 parent closure retained for one child creation."""
+
+    parent: object
+    manifest: object
+    inputs: object
+    accepted_parent: Mapping[str, object]
+    immutable_objects: Mapping[str, bytes]
+    recovered: object
+    ledger_history: tuple[object, ...]
+    source_context: object
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "accepted_parent",
+            MappingProxyType(dict(sorted(self.accepted_parent.items()))),
+        )
+        object.__setattr__(
+            self,
+            "immutable_objects",
+            MappingProxyType(dict(sorted(self.immutable_objects.items()))),
+        )
 
 
 def normalize_guidance_answer(answer: object) -> str:
@@ -468,6 +495,297 @@ def prepare_new_audit_epoch(
     return PreparedProtocol25Creation(validated_parent, manifest, inputs, graph)
 
 
+def export_protocol_25_parent(context: object) -> ExportedProtocol25Parent:
+    """Authenticate and export a terminal schema-4 blocker as direct-parent authority."""
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.protocol_22.graph import AcceptedArtifactV2
+    from harness.re_v2.protocol_24.model import (
+        AdoptedArtifactAuthorityV1,
+        ParentAuthorityBundleV1,
+    )
+
+    from .adoption import (
+        ParentSemanticAuthorityV1,
+        Protocol25ParentCandidateV1,
+        validate_protocol_25_parent,
+    )
+    from .events import Protocol25ReplayState
+    from .inputs import _semantic_executor_roles
+    from .model import RunManifestV4
+    from .recovery import Protocol25RunContext, recover_protocol_25_run
+
+    if not isinstance(context, Protocol25RunContext):
+        raise ValueError("schema-4 parent export requires Protocol25RunContext")
+    recovered = recover_protocol_25_run(context)
+    state = recovered.controller_state
+    if state.terminal_state == "blocked_incomplete" and state.audit_epoch_id is None:
+        mode = "audit-successor"
+    elif state.terminal_state == "blocked_plateau" and state.audit_epoch_id is not None:
+        mode = "closure-successor"
+    else:
+        raise ValueError(
+            f"parent state {state.terminal_state!r} is ineligible for guided resume"
+        )
+    manifest = context.semantic_graph.manifest
+    if not isinstance(manifest, RunManifestV4):
+        raise ValueError("schema-4 parent export requires RunManifestV4")
+    if not recovered.events or recovered.events[-1].type not in {
+        "run_failed",
+        "run_completed",
+    }:
+        raise ValueError("guided resume requires an authenticated terminal event")
+
+    manifest_bytes = _stable_regular_bytes(context.paths.manifest, "parent manifest")
+    if manifest_bytes != canonical_json_bytes(manifest.to_json_dict()):
+        raise ValueError("schema-4 parent manifest changed during export")
+    event_bytes = _stable_regular_bytes(context.paths.events, "parent event chain")
+    ledger_bytes = _stable_regular_bytes(context.paths.ledger, "parent ledger chain")
+    ledger_history, ledger = context.ledger.replay_with_history()
+    if ledger != recovered.ledger:
+        raise ValueError("schema-4 parent ledger changed during export")
+
+    replay = Protocol25ReplayState()
+    for event in recovered.events:
+        replay.consume(event)
+    accepted_target_ids = tuple(sorted(replay.audit_candidates))
+    accepted_candidate_hashes = tuple(sorted(replay.audit_candidates.values()))
+    unresolved_target_ids = (
+        tuple(
+            sorted(
+                item.audit_target_id
+                for item in state.targets
+                if item.audit_state != "accepted"
+            )
+        )
+        if state.audit_epoch_id is None
+        else ()
+    )
+    epochs = tuple(ledger.audit_epochs.values())
+    epoch = None if not epochs else epochs[0]
+    if len(epochs) > 1 or (epoch is None) != (state.audit_epoch_id is None):
+        raise ValueError("schema-4 parent audit epoch authority is inconsistent")
+    roots = tuple(ledger.audit_closure_roots.values())
+    closure_root = None if not roots else roots[0]
+    if len(roots) > 1:
+        raise ValueError("schema-4 parent has ambiguous closure roots")
+    if mode == "closure-successor" and closure_root is None:
+        raise ValueError("closure successor parent has no authenticated closure root")
+    unresolved_findings = tuple(
+        sorted(
+            {
+                finding_id
+                for item in state.targets
+                for finding_id in item.unresolved_finding_ids
+            }
+        )
+    )
+    overlays = tuple(
+        sorted(
+            receipt.artifact_hash
+            for receipt in ledger.accepted_artifacts.values()
+            if receipt.artifact_key.artifact_kind == "semantic-resolution-overlay"
+        )
+    )
+    semantic = ParentSemanticAuthorityV1(
+        schema_version=1,
+        accepted_audit_target_ids=accepted_target_ids,
+        accepted_audit_candidate_hashes=accepted_candidate_hashes,
+        unresolved_audit_target_ids=unresolved_target_ids,
+        audit_epoch_id=(None if epoch is None else epoch.identity),
+        resolution_overlay_hashes=overlays,
+        target_assessment_hashes=tuple(
+            sorted(ledger.target_closure_assessments)
+        ),
+        source_assessment_hashes=tuple(
+            sorted(ledger.source_composition_assessments)
+        ),
+        closure_receipt_ids=tuple(sorted(ledger.finding_closures)),
+        closure_root_hash=(None if closure_root is None else closure_root.identity),
+        unresolved_finding_ids=unresolved_findings,
+        deferred_observation_ids=state.deferred_observation_ids,
+        l3_source_root_hashes=tuple(
+            sorted(item.identity for item in ledger.l3_source_roots.values())
+        ),
+    )
+
+    lower_acceptances = tuple(
+        sorted(
+            (
+                receipt
+                for receipt in ledger.accepted_artifacts.values()
+                if receipt.certification_receipt_id in ledger.certifications
+            ),
+            key=lambda item: item.artifact_key.identity,
+        )
+    )
+    artifacts = []
+    for acceptance in lower_acceptances:
+        certification = ledger.certifications[acceptance.certification_receipt_id]
+        matches = tuple(
+            item
+            for item in ledger.candidate_assessments.values()
+            if item.certification_receipt_id == certification.identity
+            and item.outcome == "certified"
+        )
+        if len(matches) > 1:
+            raise ValueError("schema-4 lower artifact has ambiguous candidate authority")
+        record = ledger.artifact_acceptance_records.get(acceptance.identity)
+        if record is None:
+            raise ValueError("schema-4 lower artifact has no ledger authority")
+        artifacts.append(
+            AdoptedArtifactAuthorityV1(
+                schema_version=1,
+                artifact_key_id=acceptance.artifact_key.identity,
+                artifact_hash=acceptance.artifact_hash,
+                dependency_hashes=acceptance.artifact_key.dependency_hashes,
+                certification_receipt_id=certification.identity,
+                candidate_assessment_id=(matches[0].identity if matches else None),
+                artifact_acceptance_receipt_id=acceptance.identity,
+                source_run_id=manifest.run_id,
+                source_ledger_entry_hash=record.record_hash,
+            )
+        )
+    if not artifacts:
+        raise ValueError("schema-4 parent has no accepted lower-layer authority")
+
+    retained = dict(context.semantic_inputs.immutable_objects)
+    parent_bundle_bytes = canonical_json_bytes(
+        context.semantic_inputs.parent_authority_bundle.to_json_dict()
+    )
+    retained[content_digest(parent_bundle_bytes)] = parent_bundle_bytes
+    semantic_artifact_hashes = {
+        *semantic.accepted_audit_candidate_hashes,
+        *semantic.resolution_overlay_hashes,
+    }
+    for object_id in semantic.object_ids:
+        retained[object_id] = context.object_store.read_blob(object_id)
+    retained_artifact_hashes = {
+        *(item.artifact_hash for item in lower_acceptances),
+        *semantic_artifact_hashes,
+    }
+    for acceptance in ledger.accepted_artifacts.values():
+        if acceptance.artifact_hash not in retained_artifact_hashes:
+            continue
+        retained[acceptance.artifact_hash] = context.object_store.read_blob(
+            acceptance.artifact_hash
+        )
+        matches = tuple(
+            item
+            for item in ledger.candidate_assessments.values()
+            if item.certification_receipt_id == acceptance.certification_receipt_id
+        )
+        for assessment in matches:
+            retained[assessment.execution_capture_hash] = context.object_store.read_blob(
+                assessment.execution_capture_hash
+            )
+            if assessment.normalized_authorial_payload_hash is not None:
+                payload_hash = assessment.normalized_authorial_payload_hash
+                retained[payload_hash] = context.object_store.read_blob(payload_hash)
+
+    manifest_hash = content_digest(manifest_bytes)
+    event_hash = content_digest(event_bytes)
+    ledger_hash = content_digest(ledger_bytes)
+    retained[manifest_hash] = manifest_bytes
+    retained[event_hash] = event_bytes
+    retained[ledger_hash] = ledger_bytes
+    executor_objects = set(_semantic_executor_roles(context.semantic_inputs.executor_contract))
+    current_chains = {manifest_hash, event_hash, ledger_hash}
+    ancestors = tuple(
+        sorted(set(retained) - executor_objects - current_chains - set(semantic.object_ids))
+    )
+    lower_bundle = ParentAuthorityBundleV1(
+        schema_version=1,
+        direct_parent_run_id=manifest.run_id,
+        source_manifest_hash=manifest_hash,
+        source_event_chain_hash=event_hash,
+        source_terminal_event_hash=recovered.events[-1].event_hash,
+        source_ledger_chain_hash=ledger_hash,
+        lineage_root_run_id=manifest.parent_lineage.lineage_root_run_id,
+        ancestor_bundle_hashes=ancestors,
+        artifacts=tuple(artifacts),
+    )
+    candidate = Protocol25ParentCandidateV1(
+        schema_version=1,
+        parent_layer="L3",
+        parent_state=state.terminal_state,
+        source_snapshot_id=manifest.source_snapshot_id,
+        selection_id=manifest.selection.identity,
+        terminal_event_hash=recovered.events[-1].event_hash,
+        authentication_state="authenticated",
+        workspace_state="clean_exact_commits",
+        lineage_state="acyclic",
+        lower_authority_bundle=lower_bundle,
+        semantic_authority=semantic,
+    )
+    validated = validate_protocol_25_parent(
+        candidate,
+        mode=mode,
+        expected_source_snapshot_id=manifest.source_snapshot_id,
+        expected_selection_id=manifest.selection.identity,
+    )
+
+    accepted_parent = {}
+    for template in context.semantic_graph.prerequisite_graph.templates:
+        matching = tuple(
+            (receipt, ledger.certification_work_items[receipt.certification_receipt_id])
+            for receipt in lower_acceptances
+            if receipt.certification_receipt_id in ledger.certification_work_items
+            and ledger.certification_work_items[
+                receipt.certification_receipt_id
+            ].template_id
+            == template.template_id
+        )
+        if len(matching) != 1:
+            raise ValueError("schema-4 parent prerequisite closure is incomplete")
+        receipt, _work_item = matching[0]
+        accepted_parent[template.template_id] = (
+            template,
+            AcceptedArtifactV2(receipt.artifact_key.identity, receipt.artifact_hash),
+        )
+    return ExportedProtocol25Parent(
+        parent=validated,
+        manifest=manifest,
+        inputs=context.semantic_inputs,
+        accepted_parent=accepted_parent,
+        immutable_objects=retained,
+        recovered=recovered,
+        ledger_history=ledger_history,
+        source_context=context,
+    )
+
+
+def _stable_regular_bytes(path: Path, label: str) -> bytes:
+    """Read one no-follow regular file and reject concurrent replacement."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            chunks = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise ValueError(f"cannot read {label}: {exc}") from exc
+    identity = lambda item: (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+    payload = b"".join(chunks)
+    if identity(before) != identity(after) or len(payload) != before.st_size:
+        raise ValueError(f"{label} changed during export")
+    return payload
+
+
 def prepare_guided_successor(
     *,
     parent: object,
@@ -768,10 +1086,216 @@ def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
         raise ValueError("schema-4 child adoption initialization is incomplete")
 
 
+def initialize_protocol_25_successor(
+    run_dir: Path,
+    exported: ExportedProtocol25Parent,
+) -> None:
+    """Idempotently import retained lower and semantic authority into a successor."""
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+    from .inputs import load_protocol_25_inputs
+    from .ledger import Protocol25Ledger
+    from .model import RunManifestV4
+
+    if not isinstance(exported, ExportedProtocol25Parent):
+        raise ValueError("schema-4 successor initialization requires exported parent")
+    manifest = load_run_manifest(run_dir)
+    if not isinstance(manifest, RunManifestV4) or manifest.run_mode not in {
+        "audit-successor",
+        "closure-successor",
+    }:
+        raise ValueError("schema-4 successor initialization requires successor manifest")
+    inputs = load_protocol_25_inputs(ReV2Paths.for_run(run_dir), manifest)
+    if (
+        inputs.parent_authority_bundle.lower_authority_bundle
+        != exported.parent.candidate.lower_authority_bundle
+        or inputs.parent_authority_bundle.semantic_authority
+        != exported.parent.candidate.semantic_authority
+    ):
+        raise ValueError("existing successor parent authority does not match export")
+
+    paths = ReV2Paths.for_run(run_dir)
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol25Ledger(paths, objects)
+    source_ledger = exported.recovered.ledger
+    lower_bundle = exported.parent.candidate.lower_authority_bundle
+
+    for authority in lower_bundle.artifacts:
+        acceptance = source_ledger.accepted_artifacts.get(authority.artifact_key_id)
+        certification = source_ledger.certifications.get(
+            authority.certification_receipt_id
+        )
+        work_item = source_ledger.certification_work_items.get(
+            authority.certification_receipt_id
+        )
+        if acceptance is None or certification is None or work_item is None:
+            raise ValueError("successor lower authority receipt closure is incomplete")
+        ledger.record_certification(certification, work_item)
+        if authority.candidate_assessment_id is not None:
+            assessment = source_ledger.candidate_assessments.get(
+                authority.candidate_assessment_id
+            )
+            if assessment is None:
+                raise ValueError("successor lower candidate authority is missing")
+            ledger.record_candidate_assessment(assessment)
+        ledger.record_artifact_acceptance(acceptance)
+
+    semantic = exported.parent.candidate.semantic_authority
+    retained_semantic_hashes = {
+        *semantic.accepted_audit_candidate_hashes,
+        *semantic.resolution_overlay_hashes,
+    }
+    semantic_acceptances = tuple(
+        sorted(
+            (
+                receipt
+                for receipt in source_ledger.accepted_artifacts.values()
+                if receipt.artifact_hash in retained_semantic_hashes
+                and receipt.certification_receipt_id
+                in source_ledger.semantic_certifications
+            ),
+            key=lambda item: item.artifact_key.identity,
+        )
+    )
+    for acceptance in semantic_acceptances:
+        certification = source_ledger.semantic_certifications[
+            acceptance.certification_receipt_id
+        ]
+        ledger.record_semantic_certification(certification)
+        assessments = tuple(
+            item
+            for item in source_ledger.candidate_assessments.values()
+            if item.certification_receipt_id == certification.identity
+        )
+        if len(assessments) != 1:
+            raise ValueError("successor semantic candidate authority is ambiguous")
+        ledger.record_candidate_assessment(assessments[0])
+        ledger.record_artifact_acceptance(acceptance)
+
+    if semantic.audit_epoch_id is not None:
+        ledger.record_audit_epoch(source_ledger.audit_epochs[semantic.audit_epoch_id])
+    for object_id in semantic.target_assessment_hashes:
+        ledger.record_target_closure_assessment(
+            source_ledger.target_closure_assessments[object_id]
+        )
+    for object_id in semantic.source_assessment_hashes:
+        ledger.record_source_composition_assessment(
+            source_ledger.source_composition_assessments[object_id]
+        )
+    for object_id in semantic.closure_receipt_ids:
+        ledger.record_finding_closure(source_ledger.finding_closures[object_id])
+    if semantic.closure_root_hash is not None:
+        ledger.record_audit_closure_root(
+            source_ledger.audit_closure_roots[semantic.closure_root_hash]
+        )
+    roots_by_identity = {
+        item.identity: item for item in source_ledger.l3_source_roots.values()
+    }
+    for object_id in semantic.l3_source_root_hashes:
+        ledger.record_l3_source_root(roots_by_identity[object_id])
+
+    source_replay = Protocol25ReplayState()
+    for event in exported.recovered.events:
+        source_replay.consume(event)
+    expected_events: list[tuple[str, dict[str, object]]] = [
+        ("run_created", {"run_manifest_id": manifest.run_manifest_id})
+    ]
+    for authority in lower_bundle.artifacts:
+        work_item = source_ledger.certification_work_items[
+            authority.certification_receipt_id
+        ]
+        expected_events.append(
+            (
+                "artifact_adopted",
+                {
+                    "adopted_artifact_authority": authority.to_json_dict(),
+                    "parent_authority_bundle_hash": inputs.parent_authority_bundle.identity,
+                    "work_item_id": work_item.work_item_id,
+                },
+            )
+        )
+    for target_id, candidate_hash in sorted(source_replay.audit_candidates.items()):
+        expected_events.append(
+            (
+                "audit_candidate_accepted",
+                {
+                    "audit_candidate_authority_id": candidate_hash,
+                    "audit_target_id": target_id,
+                },
+            )
+        )
+    if semantic.audit_epoch_id is not None:
+        epoch = source_ledger.audit_epochs[semantic.audit_epoch_id]
+        expected_events.append(
+            (
+                "audit_epoch_frozen",
+                {
+                    "audit_epoch_id": epoch.identity,
+                    "audit_target_ids": list(epoch.audit_target_ids),
+                },
+            )
+        )
+    if semantic.closure_root_hash is not None:
+        root = source_ledger.audit_closure_roots[semantic.closure_root_hash]
+        expected_events.append(
+            (
+                "audit_closure_root_accepted",
+                {
+                    "audit_closure_root_id": root.identity,
+                    "audit_epoch_id": root.audit_epoch_id,
+                    "deferred_observation_ids": [
+                        item.observation_id for item in root.deferred_observations
+                    ],
+                    "unresolved_finding_ids": list(root.unresolved_finding_ids),
+                },
+            )
+        )
+        for object_id in semantic.l3_source_root_hashes:
+            source_root = roots_by_identity[object_id]
+            expected_events.append(
+                (
+                    "l3_source_root_accepted",
+                    {
+                        "l3_source_root_id": source_root.identity,
+                        "scope_state": source_root.state,
+                        "source_id": source_root.source_id,
+                    },
+                )
+            )
+
+    events = EventStore(paths, protocol=PROTOCOL_25_EVENTS)
+    existing = events.replay()
+    for index, (event_type, payload) in enumerate(expected_events):
+        if index < len(existing):
+            event = existing[index]
+            if event.type != event_type or dict(event.payload) != payload:
+                raise ValueError("existing successor initialization conflicts with export")
+            continue
+        events.append(event_type, payload, occurred_at=manifest.created_at)
+    if len(existing) > len(expected_events):
+        return
+
+    final = ledger.replay()
+    if not {
+        item.artifact_key_id for item in lower_bundle.artifacts
+    }.issubset(final.accepted_artifacts):
+        raise ValueError("successor lower authority import is incomplete")
+    if not retained_semantic_hashes.issubset(
+        {item.artifact_hash for item in final.accepted_artifacts.values()}
+    ):
+        raise ValueError("successor semantic authority import is incomplete")
+
+
 __all__ = (
+    "export_protocol_25_parent",
+    "ExportedProtocol25Parent",
     "find_exact_protocol_25_child",
     "guidance_id_for",
     "initialize_protocol_25_child",
+    "initialize_protocol_25_successor",
     "normalize_guidance_answer",
     "prepare_guided_successor",
     "prepare_new_audit_epoch",

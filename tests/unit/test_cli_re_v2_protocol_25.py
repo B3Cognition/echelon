@@ -309,3 +309,56 @@ def test_typer_continue_forwards_semantic_authorization_flags(
         "--re-semantic-time-limit-minutes",
         "30",
     ]]
+
+
+@pytest.mark.unit
+def test_resume_routes_terminal_schema4_run_to_immutable_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch schema-4 resume falling through to the mutable v1 lifecycle."""
+    from echelon import cli
+
+    run_dir = tmp_path / "runs" / "re-blocked-l3"
+    calls: list[tuple[Path, Path, str, int | None, int | None]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest_v4(run_id="re-blocked-l3"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_resume",
+        lambda workspace, parent, answer, token_limit, time_limit_minutes: calls.append(
+            (workspace, parent, answer, token_limit, time_limit_minutes)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_re_lifecycle_controller",
+        lambda _root: (_ for _ in ()).throw(
+            AssertionError("schema-4 resume must not use the v1 lifecycle")
+        ),
+    )
+
+    cli._cmd_re_resume(
+        ["Resolve only the retained timeout finding", "--re-token-limit", "7000000"]
+    )
+
+    assert calls == [
+        (
+            tmp_path,
+            run_dir,
+            "Resolve only the retained timeout finding",
+            7_000_000,
+            None,
+        )
+    ]
