@@ -14201,6 +14201,15 @@ def _run_re_v24_deepen(
     return run_dir
 
 
+def _run_re_v25_deepen(
+    workspace_root: Path,
+    options: _ReDeepenOptions,
+) -> Path:
+    """Create or reuse an authenticated protocol-2.5 semantic child."""
+    del workspace_root, options
+    raise ValueError("protocol-2.5 lifecycle creation is not initialized")
+
+
 def _initialize_re_v24_child(
     run_dir: Path,
     parent: object,
@@ -14445,7 +14454,10 @@ def _continue_re_v24_semantic_child(
 def _cmd_re_deepen(args: list[str]) -> None:
     try:
         options = _parse_re_deepen_options(args)
-        _run_re_v24_deepen(Path.cwd(), options)
+        if options.target_layer == "L2":
+            _run_re_v24_deepen(Path.cwd(), options)
+        else:
+            _run_re_v25_deepen(Path.cwd(), options)
     except (RuntimeError, ValueError) as exc:
         print(f"echelon re deepen: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc

@@ -129,6 +129,7 @@ __all__ = (
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
     "evaluate_semantic_budget",
+    "find_exact_protocol_25_child",
     "guidance_id_for",
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
@@ -235,6 +236,7 @@ _LAZY_RECOVERY_EXPORTS = frozenset(
 )
 _LAZY_LIFECYCLE_EXPORTS = frozenset(
     {
+        "find_exact_protocol_25_child",
         "guidance_id_for",
         "normalize_guidance_answer",
         "semantic_request_id_v2",

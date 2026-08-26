@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 import unicodedata
 
@@ -201,7 +202,43 @@ def semantic_request_id_v2(
     )
 
 
+def find_exact_protocol_25_child(
+    workspace_root: Path,
+    semantic_request_id: str,
+) -> Path | None:
+    """Return an exact immutable semantic request regardless of mutable state."""
+    from harness.re_v2.run_store import load_run_manifest
+
+    from .model import RunManifestV4
+
+    try:
+        digest_value(semantic_request_id, "semantic request ID")
+    except Protocol22SchemaError as exc:
+        raise ValueError(str(exc)) from exc
+    runs = workspace_root.resolve() / "runs"
+    if not runs.exists():
+        return None
+    if runs.is_symlink() or not runs.is_dir():
+        raise ValueError("workspace runs path is unsafe")
+    for candidate in sorted(runs.iterdir(), key=lambda path: path.name):
+        if (
+            not candidate.name.startswith("re-")
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+            or not (candidate / "v2" / "run.json").is_file()
+        ):
+            continue
+        manifest = load_run_manifest(candidate)
+        if (
+            isinstance(manifest, RunManifestV4)
+            and manifest.semantic_request_id == semantic_request_id
+        ):
+            return candidate
+    return None
+
+
 __all__ = (
+    "find_exact_protocol_25_child",
     "guidance_id_for",
     "normalize_guidance_answer",
     "semantic_request_id_v2",

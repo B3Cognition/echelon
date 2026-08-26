@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -103,3 +106,50 @@ def test_deepen_parser_rejects_cross_layer_or_nonpositive_semantic_flags(
 
     with pytest.raises(ValueError):
         _parse_re_deepen_options(args)
+
+
+@pytest.mark.unit
+def test_legacy_deepen_dispatches_l3_only_to_protocol_25(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v24_deepen",
+        lambda _root, options: calls.append(("2.4", options.target_layer)),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_deepen",
+        lambda _root, options: calls.append(("2.5", options.target_layer)),
+        raising=False,
+    )
+
+    cli._cmd_re_deepen(["--to", "L3", "--all"])
+
+    assert calls == [("2.5", "L3")]
+
+
+@pytest.mark.unit
+def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from harness.re_v2.protocol_25.lifecycle import find_exact_protocol_25_child
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture
+
+    inputs, manifest = _fixture()
+    manifest = replace(manifest, run_id="re-existing-semantic-child")
+    child = tmp_path / "runs" / manifest.run_id
+    create_protocol_25_run_store(child, manifest, inputs)
+
+    # Mutable run state is intentionally irrelevant to immutable request reuse.
+    (child / "v2" / "state-marker").write_text("blocked_plateau\n")
+
+    assert find_exact_protocol_25_child(
+        tmp_path,
+        manifest.semantic_request_id,
+    ) == child
+    assert find_exact_protocol_25_child(tmp_path, f"sha256:{'0' * 64}") is None
