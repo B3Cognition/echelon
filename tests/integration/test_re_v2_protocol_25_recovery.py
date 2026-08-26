@@ -34,6 +34,7 @@ from harness.re_v2.protocol_25.adoption import (
 from harness.re_v2.protocol_25.artifacts import (
     AuditCandidateV1,
     SemanticCertificationReceiptV1,
+    SemanticResolutionOverlayV1,
 )
 from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
@@ -59,6 +60,7 @@ from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 from tests.unit.test_re_v2_protocol_25_graph import _fixture as _graph_fixture
 from tests.unit.test_re_v2_protocol_25_runtime import (
     _certified_audit,
+    _certified_resolution,
     _context as _semantic_context,
     _runtime as _semantic_runtime,
 )
@@ -249,6 +251,41 @@ def _semantic_audit_work_item(context, result):  # type: ignore[no-untyped-def]
         max_result_contract_retries=template.max_result_contract_retries,
         max_shared_retries=template.max_shared_retries,
         max_artifact_contract_retries=template.max_artifact_contract_retries,
+    )
+
+
+def _semantic_result_work_item(context, result):  # type: ignore[no-untyped-def]
+    artifact = result.artifact
+    family = {
+        "semantic-resolution-overlay": "semantic-resolution",
+        "target-closure-assessment": "closure-recheck",
+        "source-composition-assessment": "source-composition-guard",
+    }[artifact.artifact_key.artifact_kind]
+    executor = context.semantic_inputs.executor_contract.entry_for(family)
+    return WorkItemV2(
+        identity_schema_version=2,
+        template_id=digest(f"template:{family}"),
+        goal_id="semantic-audit-closure",
+        output_key=artifact.artifact_key,
+        required_artifact_hashes=artifact.artifact_key.dependency_hashes,
+        producer_id=(
+            "echelon.re-resolver"
+            if family == "semantic-resolution"
+            else "echelon.re-validator"
+        ),
+        producer_family=family,
+        producer_protocol_version=executor.producer_protocol_version,
+        executor_contract_hash=executor.executor_contract_hash,
+        verifier_id=executor.verifier.verifier_id,
+        verifier_version=executor.verifier.verifier_version,
+        verifier_implementation_digest=executor.verifier.implementation_digest,
+        result_contract_id=executor.result_contract_id,
+        max_provider_attempts=2,
+        max_generation_attempts=2,
+        max_semantic_rounds=0,
+        max_result_contract_retries=1,
+        max_shared_retries=1,
+        max_artifact_contract_retries=1,
     )
 
 
@@ -552,6 +589,123 @@ def test_controller_persists_certified_audit_through_shared_receipt_chain(
         "artifact_accepted",
         "audit_candidate_accepted",
     ]
+
+
+@pytest.mark.integration
+def test_controller_publishes_resolution_with_operation_specific_authority(
+    tmp_path,
+) -> None:
+    context = _context(tmp_path)
+    audit, epoch, _semantic_context_value, result = _certified_resolution()
+    assert isinstance(result.artifact, SemanticResolutionOverlayV1)
+    item = _semantic_result_work_item(context, result)
+    capture_hash = context.object_store.put_blob(b"semantic resolution capture\n")
+    result = replace(
+        result,
+        candidate_assessment=replace(
+            result.candidate_assessment,
+            work_item_id=item.work_item_id,
+            execution_capture_hash=capture_hash,
+        ),
+    )
+    occurred_at = context.clock()
+    dispatch_id = "semantic-resolution-dispatch-1"
+    source_id = digest("semantic-source")
+    source_cycle_id = "cycle-semantic-resolution-1"
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "audit_candidate_accepted",
+        {
+            "audit_candidate_authority_id": audit.artifact.identity,
+            "audit_target_id": audit.artifact.audit_target_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "audit_epoch_frozen",
+        {
+            "audit_epoch_id": epoch.identity,
+            "audit_target_ids": [audit.artifact.audit_target_id],
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "active_ms_reservation": 1_000,
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "billable_token_reservation": 100,
+            "dispatch_id": dispatch_id,
+            "execution_input_hash": digest("resolution-execution-input"),
+            "executor_contract_hash": item.executor_contract_hash,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "semantic_resolution_started",
+        {
+            "audit_target_id": audit.artifact.audit_target_id,
+            "dispatch_id": dispatch_id,
+            "semantic_round": 1,
+            "source_cycle_id": source_cycle_id,
+            "source_id": source_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "active_usage_status": "trusted_exact",
+            "dispatch_id": dispatch_id,
+            "execution_capture_hash": capture_hash,
+            "observed_active_ms": 100,
+            "raw_result_contract_status": "valid",
+            "reported_token_usage": 10,
+            "token_usage_status": "trusted_exact",
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+    context.event_store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": result.candidate_assessment.candidate_id,
+            "candidate_inventory_hash": digest("resolution-inventory"),
+            "dispatch_id": dispatch_id,
+            "execution_capture_hash": capture_hash,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=occurred_at,
+    )
+
+    Protocol25Controller(context)._record_semantic_result(
+        item,
+        result.candidate_assessment.candidate_id,
+        result,
+    )
+
+    events = context.event_store.replay()
+    assert events[-1].type == "semantic_resolution_accepted"
+    assert events[-1].payload == {
+        "audit_target_id": audit.artifact.audit_target_id,
+        "resolution_overlay_id": result.artifact.identity,
+        "semantic_round": 1,
+        "source_cycle_id": source_cycle_id,
+        "source_id": source_id,
+        "work_item_id": item.work_item_id,
+    }
 
 
 @pytest.mark.integration

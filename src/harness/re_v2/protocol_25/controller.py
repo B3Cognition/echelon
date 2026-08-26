@@ -24,6 +24,13 @@ from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.re_v2.protocol_24.controller import Protocol24Controller
 
+from .artifacts import (
+    AuditCandidateV1,
+    SemanticResolutionOverlayV1,
+    SourceCompositionAssessmentV1,
+    TargetClosureAssessmentV1,
+)
+from .events import Protocol25ReplayState
 from .runtime import (
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
@@ -696,15 +703,84 @@ class Protocol25Controller(Protocol24Controller):
             occurred_at=self.context.clock(),
         )
         _fault(self.fault_hook, f"artifact_accepted:{item.work_item_id}")
+        self._publish_semantic_artifact_event(item, result)
+
+    def _publish_semantic_artifact_event(
+        self,
+        item: WorkItemV2,
+        result: SemanticCertificationResultV1,
+    ) -> None:
+        """Publish the typed semantic transition immediately after acceptance."""
+        artifact = result.artifact
+        if isinstance(artifact, AuditCandidateV1):
+            event_type = "audit_candidate_accepted"
+            payload = {
+                "audit_candidate_authority_id": artifact.identity,
+                "audit_target_id": artifact.audit_target_id,
+            }
+        else:
+            replay = Protocol25ReplayState()
+            for event in self.context.event_store.replay():
+                replay.consume(event)
+            operation = replay.semantic_operation
+            if operation is None or operation.work_item_id != item.work_item_id:
+                raise Protocol25ControllerError(
+                    "accepted semantic artifact has no matching active operation"
+                )
+            common = {
+                "semantic_round": operation.semantic_round,
+                "source_cycle_id": operation.source_cycle_id,
+                "source_id": operation.source_id,
+                "work_item_id": item.work_item_id,
+            }
+            if isinstance(artifact, SemanticResolutionOverlayV1):
+                if operation.event_type != "semantic_resolution_started":
+                    raise Protocol25ControllerError(
+                        "resolution artifact differs from active semantic operation"
+                    )
+                event_type = "semantic_resolution_accepted"
+                payload = {
+                    **common,
+                    "audit_target_id": artifact.audit_target_id,
+                    "resolution_overlay_id": artifact.identity,
+                }
+            elif isinstance(artifact, TargetClosureAssessmentV1):
+                if operation.event_type != "closure_recheck_started":
+                    raise Protocol25ControllerError(
+                        "target assessment differs from active semantic operation"
+                    )
+                self.context.ledger.record_target_closure_assessment(artifact)
+                event_type = "target_closure_assessed"
+                payload = {
+                    **common,
+                    "audit_target_id": artifact.audit_target_id,
+                    "target_closure_assessment_id": artifact.identity,
+                }
+            elif isinstance(artifact, SourceCompositionAssessmentV1):
+                if operation.event_type != "source_composition_guard_started":
+                    raise Protocol25ControllerError(
+                        "source assessment differs from active semantic operation"
+                    )
+                self.context.ledger.record_source_composition_assessment(artifact)
+                event_type = "source_composition_assessed"
+                payload = {
+                    **common,
+                    "implicated_finding_ids": list(
+                        artifact.implicated_finding_ids
+                    ),
+                    "passed": artifact.outcome == "passed",
+                    "source_composition_assessment_id": artifact.identity,
+                }
+            else:
+                raise Protocol25ControllerError(
+                    "semantic certification produced an unsupported artifact"
+                )
         self.context.event_store.append(
-            "audit_candidate_accepted",
-            {
-                "audit_candidate_authority_id": artifact_hash,
-                "audit_target_id": result.certification.audit_target_id,
-            },
+            event_type,
+            payload,
             occurred_at=self.context.clock(),
         )
-        _fault(self.fault_hook, f"audit_candidate_accepted:{artifact_hash}")
+        _fault(self.fault_hook, f"{event_type}:{artifact.identity}")
 
     def run_until_stopped(self) -> Protocol25ControllerResult:
         backend = self.context
