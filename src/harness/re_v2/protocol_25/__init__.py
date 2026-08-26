@@ -71,6 +71,8 @@ __all__ = (
     "L3SourceRootV1",
     "ParentAuthorityBundleV2",
     "ParentSemanticAuthorityV1",
+    "Protocol25InputSet",
+    "Protocol25InputStoreError",
     "Protocol25SchemaError",
     "Protocol25Graph",
     "Protocol25GraphError",
@@ -102,6 +104,8 @@ __all__ = (
     "build_semantic_v1_policy_catalog",
     "normalize_finding_key",
     "import_protocol_25_parent_closure",
+    "create_protocol_25_run_store",
+    "load_protocol_25_inputs",
     "validate_protocol_25_parent",
 )
 
@@ -126,6 +130,14 @@ _LAZY_ADOPTION_EXPORTS = frozenset(
         "validate_protocol_25_parent",
     }
 )
+_LAZY_INPUT_EXPORTS = frozenset(
+    {
+        "Protocol25InputSet",
+        "Protocol25InputStoreError",
+        "create_protocol_25_run_store",
+        "load_protocol_25_inputs",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -133,6 +145,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import graph as module
     elif name in _LAZY_ADOPTION_EXPORTS:
         from . import adoption as module
+    elif name in _LAZY_INPUT_EXPORTS:
+        from . import inputs as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)

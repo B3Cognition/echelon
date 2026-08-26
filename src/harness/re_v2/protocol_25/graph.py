@@ -44,6 +44,7 @@ from harness.re_v2.protocol_24.model import RunManifestV3
 from .findings import AuditTargetV1, AuditedArtifactAuthorityV1
 from .model import Protocol25SchemaError, RunManifestV4
 from .policies import (
+    AuditTaxonomyV1,
     SemanticArtifactPolicyCatalogV1,
     SemanticExecutorContractCatalogV1,
 )
@@ -71,6 +72,7 @@ class Protocol25GraphInputsV1:
     workspace_partition: WorkspacePartitionCatalogV1
     artifact_policy: SemanticArtifactPolicyCatalogV1
     executor_contract: SemanticExecutorContractCatalogV1
+    audit_policy: AuditTaxonomyV1
     immutable_objects: Mapping[str, bytes]
 
     def __post_init__(self) -> None:
@@ -80,6 +82,12 @@ class Protocol25GraphInputsV1:
             raise Protocol25GraphError("protocol-2.5 graph artifact policy is invalid")
         if not isinstance(self.executor_contract, SemanticExecutorContractCatalogV1):
             raise Protocol25GraphError("protocol-2.5 graph executor catalog is invalid")
+        if not isinstance(self.audit_policy, AuditTaxonomyV1):
+            raise Protocol25GraphError("protocol-2.5 graph audit policy is invalid")
+        if self.audit_policy != self.artifact_policy.audit_taxonomy:
+            raise Protocol25GraphError(
+                "protocol-2.5 graph artifact and audit policies disagree"
+            )
         if not isinstance(self.immutable_objects, Mapping) or any(
             not isinstance(key, str) or not isinstance(value, bytes)
             for key, value in self.immutable_objects.items()
@@ -400,9 +408,6 @@ class Protocol25Graph:
                 if "evidence" in templates[item].artifact_kind
             )
         )
-        policy = self._inputs.artifact_policy.entry_for(
-            "L3", "semantic-audit-findings"
-        )
         executor = self._inputs.executor_contract.entry_for("semantic-audit")
         renderer = executor.request_renderer
         if renderer is None or len(renderer.response_schemas) != 1:
@@ -417,7 +422,7 @@ class Protocol25Graph:
             lower_dependency_hashes=lower_hashes,
             context_object_hashes=context_hashes,
             evidence_object_hashes=evidence_hashes,
-            audit_policy_hash=policy.identity,
+            audit_policy_hash=self._inputs.audit_policy.identity,
             auditor_authority_hash=renderer.agent_contract_hash,
             response_schema_hash=renderer.response_schemas[0].schema_hash,
         )
@@ -573,6 +578,7 @@ def _validate_manifest_inputs(
         (manifest.workspace_partition_catalog.object_hash, inputs.workspace_partition.identity),
         (manifest.artifact_policy_catalog.object_hash, inputs.artifact_policy.identity),
         (manifest.executor_contract_catalog.object_hash, inputs.executor_contract.identity),
+        (manifest.audit_policy_catalog.object_hash, inputs.audit_policy.identity),
     )
     if any(left != right for left, right in expected):
         raise Protocol25GraphError("protocol-2.5 graph catalog or snapshot mismatch")

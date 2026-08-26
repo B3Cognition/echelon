@@ -67,6 +67,7 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
         workspace_partition=parent_inputs.workspace_partition,
         artifact_policy=policies,
         executor_contract=executors,
+        audit_policy=policies.audit_taxonomy,
         immutable_objects={},
     )
     source = inputs.workspace_partition.sources[0]
@@ -92,6 +93,10 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
         executor_contract_catalog=CatalogReferenceV1(
             executors.identity,
             "executor-contract.json",
+        ),
+        audit_policy_catalog=CatalogReferenceV1(
+            policies.audit_taxonomy.identity,
+            "audit-policy.json",
         ),
         selection=selection,
     )
@@ -128,7 +133,7 @@ def test_l1_parent_schedules_missing_l2_before_audit() -> None:
 
 
 def test_domain_selection_adds_domain_and_source_targets() -> None:
-    graph, _inputs, authority, _parent, accepted = _fixture()
+    graph, inputs, authority, _parent, accepted = _fixture()
     _complete_l2(graph, authority, accepted)
 
     targets = graph.ready_audit_targets(accepted)
@@ -139,6 +144,9 @@ def test_domain_selection_adds_domain_and_source_targets() -> None:
     )
     assert graph.source_target("api").coverage == "selected-domains"
     assert len(graph.not_requested_domain_keys) == 1
+    assert {item.audit_policy_hash for item in targets} == {
+        inputs.audit_policy.identity
+    }
 
 
 def test_all_source_selection_adds_every_nonempty_domain_and_full_source_target() -> None:
