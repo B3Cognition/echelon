@@ -57,6 +57,7 @@ __all__ = (
     "AuditClosureRootV1",
     "AuditEpochV1",
     "AuditTargetV1",
+    "AuditTargetPlanV1",
     "AuditTargetCandidateAuthorityV1",
     "AuditTaxonomyV1",
     "AuditedArtifactAuthorityV1",
@@ -69,6 +70,9 @@ __all__ = (
     "FindingKeyV1",
     "L3SourceRootV1",
     "Protocol25SchemaError",
+    "Protocol25Graph",
+    "Protocol25GraphError",
+    "Protocol25GraphInputsV1",
     "RunManifestV4",
     "RunModeV1",
     "ResolutionEntryV1",
@@ -86,9 +90,31 @@ __all__ = (
     "SourceCompositionAssessmentV1",
     "TargetClosureAssessmentV1",
     "build_finding_closure_receipt",
+    "build_protocol_25_graph",
     "build_semantic_resolution_overlay",
     "build_source_composition_assessment",
     "build_semantic_executor_catalog",
     "build_semantic_v1_policy_catalog",
     "normalize_finding_key",
 )
+
+
+_LAZY_GRAPH_EXPORTS = frozenset(
+    {
+        "AuditTargetPlanV1",
+        "Protocol25Graph",
+        "Protocol25GraphError",
+        "Protocol25GraphInputsV1",
+        "build_protocol_25_graph",
+    }
+)
+
+
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
+    if name not in _LAZY_GRAPH_EXPORTS:
+        raise AttributeError(name)
+    from . import graph
+
+    value = getattr(graph, name)
+    globals()[name] = value
+    return value
