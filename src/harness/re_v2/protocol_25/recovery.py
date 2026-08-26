@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 
 from harness.re_v2.events import EventRecord
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.ledger import ReV2LedgerError
 from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
     instantiate_ready_item,
@@ -15,7 +17,7 @@ from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.run_store import load_run_manifest
 
-from .artifacts import AuditCandidateV1
+from .artifacts import AuditCandidateV1, AuditEpochV1
 from .controller import (
     Protocol25ControllerActionV1,
     Protocol25ControllerStateV1,
@@ -26,7 +28,10 @@ from .events import Protocol25ReplayState
 from .graph import Protocol25Graph
 from .inputs import ValidatedProtocol25Inputs
 from .ledger import Protocol25LedgerView
-from .runtime import Protocol25DeterministicRuntime
+from .runtime import (
+    Protocol25DeterministicRuntime,
+    SemanticCertificationResultV1,
+)
 
 
 class Protocol25RecoveryError(RuntimeError):
@@ -74,6 +79,145 @@ class Protocol25RecoveryResult:
     controller_state: Protocol25ControllerStateV1
     events: tuple[EventRecord, ...]
     ledger: Protocol25LedgerView
+
+
+def publish_audit_epoch(
+    context: Protocol25RunContext,
+    candidates: tuple[SemanticCertificationResultV1, ...],
+    audited_l2_root_hashes: tuple[str, ...],
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> AuditEpochV1:
+    """Publish one deterministic audit epoch through object, ledger, and event.
+
+    Every input candidate must already have its semantic certification, shared
+    candidate assessment, artifact acceptance, object bytes, and
+    ``audit_candidate_accepted`` event durably published.  Re-entry after a
+    crash recomputes the same epoch and fills only the missing suffix.
+    """
+    if not isinstance(context, Protocol25RunContext):
+        raise Protocol25RecoveryError("audit epoch requires Protocol25RunContext")
+    if fault_hook is not None and not callable(fault_hook):
+        raise Protocol25RecoveryError("audit epoch fault hook must be callable or null")
+    if not candidates or any(
+        not isinstance(item, SemanticCertificationResultV1)
+        or not isinstance(item.artifact, AuditCandidateV1)
+        for item in candidates
+    ):
+        raise Protocol25RecoveryError("audit epoch requires certified candidates")
+    provided_roots = tuple(audited_l2_root_hashes)
+    roots = tuple(sorted(set(provided_roots)))
+    if not roots or provided_roots != roots:
+        raise Protocol25RecoveryError(
+            "audit epoch L2 roots must be nonempty, sorted, and unique"
+        )
+    for root_hash in roots:
+        try:
+            context.object_store.read_blob(root_hash)
+        except ReV2LedgerError as exc:
+            raise Protocol25RecoveryError(
+                "audit epoch L2 root object is unavailable"
+            ) from exc
+
+    ordered = tuple(
+        sorted(candidates, key=lambda item: item.artifact.audit_target_id)
+    )
+    target_ids = tuple(item.artifact.audit_target_id for item in ordered)
+    if target_ids != tuple(sorted(set(target_ids))):
+        raise Protocol25RecoveryError("audit epoch candidate targets are not unique")
+    policies = {item.artifact.audit_target.audit_policy_hash for item in ordered}
+    auditors = {item.artifact.audit_target.auditor_authority_hash for item in ordered}
+    if len(policies) != 1 or len(auditors) != 1:
+        raise Protocol25RecoveryError(
+            "audit epoch candidates disagree on policy or auditor authority"
+        )
+
+    ledger = context.ledger.replay()
+    if not isinstance(ledger, Protocol25LedgerView):
+        raise Protocol25RecoveryError("audit epoch has no protocol-2.5 ledger")
+    for result in ordered:
+        artifact = result.artifact
+        artifact_hash = content_digest(result.artifact_bytes)
+        if (
+            not isinstance(artifact, AuditCandidateV1)
+            or artifact_hash != artifact.identity
+            or context.object_store.read_blob(artifact_hash) != result.artifact_bytes
+            or context.object_store.read_blob(
+                content_digest(result.normalized_authorial_payload_bytes)
+            )
+            != result.normalized_authorial_payload_bytes
+            or ledger.semantic_certifications.get(result.certification.identity)
+            != result.certification
+            or ledger.candidate_assessments.get(result.candidate_assessment.identity)
+            != result.candidate_assessment
+            or ledger.accepted_artifacts.get(result.acceptance.artifact_key.identity)
+            != result.acceptance
+        ):
+            raise Protocol25RecoveryError(
+                "audit epoch candidate durable receipt chain is not exact"
+            )
+
+    events = context.event_store.replay()
+    replay = Protocol25ReplayState()
+    for event in events:
+        replay.consume(event)
+    expected_candidates = {
+        item.artifact.audit_target_id: item.artifact.identity for item in ordered
+    }
+    if replay.audit_candidates != expected_candidates:
+        raise Protocol25RecoveryError(
+            "audit epoch candidates differ from accepted event authority"
+        )
+
+    executor = context.semantic_inputs.executor_contract.entry_for("semantic-audit")
+    epoch = context.semantic_runtime.freeze_epoch(
+        ordered,
+        selection_id=context.semantic_graph.manifest.selection.identity,
+        audit_policy_hash=next(iter(policies)),
+        auditor_authority_hash=next(iter(auditors)),
+        executor_authority_hash=executor.executor_contract_hash,
+        verifier_authority_hash=context.semantic_runtime.verifier_authority_hash,
+        audited_l2_root_hashes=roots,
+    )
+    epoch_bytes = canonical_json_bytes(epoch.to_json_dict())
+    if context.object_store.put_blob(epoch_bytes) != epoch.identity:
+        raise Protocol25RecoveryError("audit epoch object hash is not canonical")
+    if fault_hook is not None:
+        fault_hook(f"audit_epoch_object:{epoch.identity}")
+
+    durable_epochs = context.ledger.replay().audit_epochs
+    if durable_epochs:
+        if durable_epochs != {epoch.identity: epoch}:
+            raise Protocol25RecoveryError("durable audit epoch conflicts with replay")
+    else:
+        context.ledger.record_audit_epoch(epoch)
+        if fault_hook is not None:
+            fault_hook(f"audit_epoch_ledger:{epoch.identity}")
+
+    frozen_events = [
+        item for item in context.event_store.replay() if item.type == "audit_epoch_frozen"
+    ]
+    payload = {
+        "audit_epoch_id": epoch.identity,
+        "audit_target_ids": list(target_ids),
+    }
+    if frozen_events:
+        existing_payload = frozen_events[0].payload
+        if (
+            len(frozen_events) != 1
+            or existing_payload["audit_epoch_id"] != epoch.identity
+            or tuple(existing_payload["audit_target_ids"]) != target_ids
+        ):
+            raise Protocol25RecoveryError("durable audit epoch event conflicts with replay")
+    else:
+        context.event_store.append(
+            "audit_epoch_frozen",
+            payload,
+            occurred_at=context.clock(),
+        )
+        if fault_hook is not None:
+            fault_hook(f"audit_epoch_event:{epoch.identity}")
+    return epoch
 
 
 def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25RecoveryResult:
@@ -383,5 +527,6 @@ __all__ = (
     "Protocol25RecoveryError",
     "Protocol25RecoveryResult",
     "Protocol25RunContext",
+    "publish_audit_epoch",
     "recover_protocol_25_run",
 )

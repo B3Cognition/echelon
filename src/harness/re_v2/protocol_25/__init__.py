@@ -132,6 +132,7 @@ __all__ = (
     "initial_semantic_pool_reservation",
     "normalize_finding_key",
     "plan_next_protocol_25",
+    "publish_audit_epoch",
     "semantic_response_schema",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
@@ -223,6 +224,7 @@ _LAZY_RECOVERY_EXPORTS = frozenset(
         "Protocol25RecoveryError",
         "Protocol25RecoveryResult",
         "Protocol25RunContext",
+        "publish_audit_epoch",
         "recover_protocol_25_run",
     }
 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
@@ -19,6 +20,7 @@ from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 from harness.re_v2.protocol_25.recovery import (
     Protocol25RunContext,
+    publish_audit_epoch,
     recover_protocol_25_run,
 )
 from harness.re_v2.protocol_25.controller import Protocol25ControllerActionV1
@@ -28,6 +30,10 @@ from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_25_fixtures import lower_parent_authority_bundle_v1
 from tests.unit.test_re_v2_protocol_22_recovery import _registry_from_inputs
 from tests.unit.test_re_v2_protocol_25_graph import _fixture as _graph_fixture
+from tests.unit.test_re_v2_protocol_25_runtime import (
+    _certified_audit,
+    _runtime as _semantic_runtime,
+)
 
 
 class _SnapshotReader:
@@ -94,6 +100,7 @@ def test_protocol_25_context_reuses_the_shared_run_context_contract() -> None:
     assert issubclass(Protocol25RunContext, Protocol22RunContext)
     assert callable(recover_protocol_25_run)
     assert protocol_25.Protocol25RunContext is Protocol25RunContext
+    assert protocol_25.publish_audit_epoch is publish_audit_epoch
     assert protocol_25.recover_protocol_25_run is recover_protocol_25_run
 
 
@@ -150,3 +157,90 @@ def test_terminal_reconciliation_is_idempotent(tmp_path) -> None:
     events = context.event_store.replay()
     assert [item.type for item in events].count("run_failed") == 1
     assert events[-1].payload["reason"] == "semantic closure is incomplete"
+
+
+class _InjectedCrash(RuntimeError):
+    pass
+
+
+def _epoch_publication_fixture(tmp_path):  # type: ignore[no-untyped-def]
+    context = _context(tmp_path)
+    context = replace(context, semantic_runtime=_semantic_runtime())
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    result = _certified_audit(verdict="PASS")
+    capture_hash = context.object_store.put_blob(b"captured provider execution\n")
+    result = replace(
+        result,
+        candidate_assessment=replace(
+            result.candidate_assessment,
+            execution_capture_hash=capture_hash,
+        ),
+    )
+    assert context.object_store.put_blob(result.artifact_bytes) == result.artifact.identity
+    context.object_store.put_blob(result.normalized_authorial_payload_bytes)
+    context.ledger.record_semantic_certification(result.certification)
+    context.ledger.record_candidate_assessment(result.candidate_assessment)
+    context.ledger.record_artifact_acceptance(result.acceptance)
+    context.event_store.append(
+        "audit_candidate_accepted",
+        {
+            "audit_candidate_authority_id": result.artifact.identity,
+            "audit_target_id": result.artifact.audit_target_id,
+        },
+        occurred_at=context.clock(),
+    )
+    root_hash = context.object_store.put_blob(b"accepted L2 root\n")
+    return context, result, (root_hash,)
+
+
+@pytest.mark.integration
+def test_audit_epoch_publication_recovers_object_before_ledger(tmp_path) -> None:
+    context, result, roots = _epoch_publication_fixture(tmp_path)
+
+    def crash(boundary: str) -> None:
+        if boundary.startswith("audit_epoch_object:"):
+            raise _InjectedCrash(boundary)
+
+    with pytest.raises(_InjectedCrash, match="audit_epoch_object"):
+        publish_audit_epoch(context, (result,), roots, fault_hook=crash)
+
+    assert context.ledger.replay().audit_epochs == {}
+    first = publish_audit_epoch(context, (result,), roots)
+    second = publish_audit_epoch(context, (result,), roots)
+
+    assert first == second
+    assert context.object_store.read_blob(first.identity) == canonical_json_bytes(
+        first.to_json_dict()
+    )
+    assert tuple(context.ledger.replay().audit_epochs) == (first.identity,)
+    assert [item.type for item in context.event_store.replay()].count(
+        "audit_epoch_frozen"
+    ) == 1
+
+
+@pytest.mark.integration
+def test_audit_epoch_publication_recovers_ledger_before_event(tmp_path) -> None:
+    context, result, roots = _epoch_publication_fixture(tmp_path)
+
+    def crash(boundary: str) -> None:
+        if boundary.startswith("audit_epoch_ledger:"):
+            raise _InjectedCrash(boundary)
+
+    with pytest.raises(_InjectedCrash, match="audit_epoch_ledger"):
+        publish_audit_epoch(context, (result,), roots, fault_hook=crash)
+
+    epoch_id = next(iter(context.ledger.replay().audit_epochs))
+    assert "audit_epoch_frozen" not in {
+        item.type for item in context.event_store.replay()
+    }
+
+    resumed = publish_audit_epoch(context, (result,), roots)
+
+    assert resumed.identity == epoch_id
+    assert [item.type for item in context.event_store.replay()].count(
+        "audit_epoch_frozen"
+    ) == 1
