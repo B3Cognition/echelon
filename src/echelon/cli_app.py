@@ -1043,12 +1043,30 @@ def re_continue(
         min=1,
         help="Raise the active run's active-time ceiling without resetting it.",
     ),
+    re_semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-token-limit",
+        min=1,
+        help="Raise the active L3 run's independent semantic token ceiling.",
+    ),
+    re_semantic_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-time-limit-minutes",
+        min=1,
+        help="Raise the active L3 run's independent semantic time ceiling.",
+    ),
 ) -> None:
     """Continue the active RE run without a human answer."""
     args: list[str] = []
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
+    _extend_option(
+        args,
+        "--re-semantic-time-limit-minutes",
+        re_semantic_time_limit_minutes,
+    )
     _legacy_cli()._cmd_re_continue(args)
 
 

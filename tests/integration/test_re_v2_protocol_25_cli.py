@@ -175,11 +175,46 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
         "harness.re_v2.protocol_22.evidence.PinnedSnapshotReaderV1",
         lambda _snapshot, _partition: reader,
     )
+    monkeypatch.setattr(
+        "harness.re_v2.snapshot.validate_source_snapshot",
+        lambda _snapshot: None,
+    )
     rebuilt = legacy_cli._re_v25_context(workspace, first, manifest)
 
     assert rebuilt.semantic_graph.manifest == manifest
     assert rebuilt.event_store.protocol is PROTOCOL_25_EVENTS
     assert tuple(rebuilt.executors) == ("shared-ai-cli-baseline-v1",)
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "semantic resource authorization required",
+            "reason_code": "budget_authorization_required",
+        },
+        occurred_at=manifest.created_at,
+    )
+    continued: list[object] = []
+    monkeypatch.setattr(legacy_cli, "_run_re_v2_live", continued.append)
+    legacy_cli._run_re_v25_continue(
+        rebuilt,
+        token_limit=6_000_000,
+        time_limit_minutes=200,
+        semantic_token_limit=2_000_000,
+        semantic_time_limit_minutes=40,
+    )
+    continuation_events = rebuilt.event_store.replay()
+
+    assert [
+        event.type
+        for event in continuation_events[-5:]
+    ] == [
+        "budget_authorized",
+        "budget_authorized",
+        "semantic_budget_authorized",
+        "semantic_budget_authorized",
+        "run_resumed",
+    ]
+    assert continued == [rebuilt]
 
 
 @pytest.mark.integration

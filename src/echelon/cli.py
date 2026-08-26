@@ -13673,11 +13673,25 @@ def _run_re_v2_continue(
     *,
     token_limit: int | None,
     time_limit_minutes: int | None,
+    semantic_token_limit: int | None = None,
+    semantic_time_limit_minutes: int | None = None,
 ) -> None:
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+    from harness.re_v2.protocol_25.recovery import Protocol25RunContext
 
     project_root = run_dir.resolve().parent.parent
     context = _re_v2_context(project_root, run_dir)
+    if isinstance(context, Protocol25RunContext):
+        _run_re_v25_continue(
+            context,
+            token_limit=token_limit,
+            time_limit_minutes=time_limit_minutes,
+            semantic_token_limit=semantic_token_limit,
+            semantic_time_limit_minutes=semantic_time_limit_minutes,
+        )
+        return
+    if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
+        raise ValueError("semantic resource authorization is valid only for protocol 2.5")
     if isinstance(context, Protocol22RunContext):
         _run_re_v22_continue(
             context,
@@ -13763,6 +13777,44 @@ def _run_re_v2_continue(
             occurred_at=_re_v2_now(),
         )
     _run_re_v2_live(context)
+
+
+def _extract_re_semantic_budget_options(
+    args: list[str],
+) -> tuple[list[str], int | None, int | None]:
+    fields = {
+        "--re-semantic-token-limit": "tokens",
+        "--re-semantic-time-limit-minutes": "minutes",
+    }
+    values: dict[str, int | None] = {"tokens": None, "minutes": None}
+    remaining: list[str] = []
+    index = 0
+    while index < len(args):
+        raw = args[index]
+        name, separator, inline = raw.partition("=")
+        field = fields.get(name)
+        if field is None:
+            remaining.append(raw)
+            index += 1
+            continue
+        if values[field] is not None:
+            raise ValueError(f"{name} may be supplied only once")
+        if separator:
+            value_text = inline
+            index += 1
+        else:
+            if index + 1 >= len(args):
+                raise ValueError(f"{name} requires a positive integer")
+            value_text = args[index + 1]
+            index += 2
+        try:
+            value = int(value_text)
+        except ValueError as exc:
+            raise ValueError(f"{name} requires a positive integer") from exc
+        if value <= 0:
+            raise ValueError(f"{name} requires a positive integer")
+        values[field] = value
+    return remaining, values["tokens"], values["minutes"]
 
 
 def _run_re_v22_continue(
@@ -13855,6 +13907,128 @@ def _run_re_v22_continue(
         for dimension, new_value, old_value in changes:
             context.event_store.append(
                 "budget_authorized",
+                {
+                    "authorized_by": "echelon-cli",
+                    "dimension": dimension,
+                    "new_value": new_value,
+                    "old_value": old_value,
+                    "reason": "CLI resource ceiling increase",
+                },
+                occurred_at=_re_v2_now(),
+            )
+        context.event_store.append(
+            "run_resumed",
+            {"reason": "CLI continuation after resource authorization"},
+            occurred_at=_re_v2_now(),
+        )
+    _run_re_v2_live(context)
+
+
+def _run_re_v25_continue(
+    context: object,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+    semantic_token_limit: int | None,
+    semantic_time_limit_minutes: int | None,
+) -> None:
+    """Authorize independent run-wide/semantic resources on one paused L3 run."""
+    from harness.re_v2.protocol_22.budget import evaluate_budget_v22
+    from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
+    from harness.re_v2.protocol_25.budget import evaluate_semantic_budget
+    from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    from harness.re_v2.protocol_25.recovery import (
+        Protocol25RunContext,
+        recover_protocol_25_run,
+    )
+    from harness.re_v2.run_store import load_run_manifest
+
+    if not isinstance(context, Protocol25RunContext):
+        raise ValueError("protocol-2.5 continuation requires Protocol25RunContext")
+    requested = {
+        ("run", "tokens"): token_limit,
+        ("run", "active_ms"): (
+            time_limit_minutes * 60_000
+            if time_limit_minutes is not None
+            else None
+        ),
+        ("semantic", "tokens"): semantic_token_limit,
+        ("semantic", "active_ms"): (
+            semantic_time_limit_minutes * 60_000
+            if semantic_time_limit_minutes is not None
+            else None
+        ),
+    }
+
+    def validate(recovered: object) -> list[tuple[str, str, int, int | None]]:
+        state = recovered.controller_state
+        changes = [
+            (pool, dimension, value)
+            for (pool, dimension), value in requested.items()
+            if value is not None
+        ]
+        if state.terminal_state is not None:
+            if changes:
+                raise ValueError(
+                    "terminal protocol-2.5 runs cannot receive resource authorization"
+                )
+            return []
+        if not state.paused_resource:
+            if changes:
+                raise ValueError(
+                    "protocol-2.5 resource authorization requires a paused run"
+                )
+            return []
+        if not changes:
+            raise ValueError(
+                "paused protocol-2.5 continuation requires a strictly higher "
+                "run-wide or semantic ceiling"
+            )
+        manifest = load_run_manifest(context.paths.root.parent)
+        run_budget = evaluate_budget_v22(
+            manifest.initial_budget_policy,
+            recovered.events,
+            (),
+            _re_v2_now(),
+            event_protocol=PROTOCOL_25_EVENTS,
+        )
+        semantic_budget = evaluate_semantic_budget(
+            manifest.semantic_closure_policy,
+            recovered.events,
+        )
+        validated: list[tuple[str, str, int, int | None]] = []
+        for pool, dimension, value in changes:
+            if pool == "run":
+                old_value = (
+                    run_budget.token_limit
+                    if dimension == "tokens"
+                    else run_budget.active_ms_limit
+                )
+            else:
+                old_value = (
+                    semantic_budget.token_limit
+                    if dimension == "tokens"
+                    else semantic_budget.active_ms_limit
+                )
+            if old_value is not None and value <= old_value:
+                raise ValueError(
+                    f"protocol-2.5 {pool} {dimension} ceiling must be "
+                    f"strictly higher than {old_value}"
+                )
+            validated.append((pool, dimension, value, old_value))
+        return validated
+
+    recovered = recover_protocol_25_run(context)
+    changes = validate(recovered)
+    if recovered.controller_state.terminal_state is not None or not changes:
+        _run_re_v2_live(context)
+        return
+    with protocol_22_run_lock(context.paths):
+        recovered = recover_protocol_25_run(context)
+        changes = validate(recovered)
+        for pool, dimension, new_value, old_value in changes:
+            context.event_store.append(
+                "budget_authorized" if pool == "run" else "semantic_budget_authorized",
                 {
                     "authorized_by": "echelon-cli",
                     "dimension": dimension,
@@ -14986,8 +15160,13 @@ def _cmd_re_continue(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError, resolve_current_re_run
 
     try:
+        (
+            lifecycle_args,
+            semantic_token_limit,
+            semantic_time_limit_minutes,
+        ) = _extract_re_semantic_budget_options(args)
         _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
-            args,
+            lifecycle_args,
             allow_policy=False,
             allow_reset=False,
             allow_budget_overrides=True,
@@ -15002,14 +15181,24 @@ def _cmd_re_continue(args: list[str]) -> None:
                     "v2 has independent attempt budgets; this option is valid only for v1"
                 )
             try:
-                _run_re_v2_continue(
-                    run_dir,
-                    token_limit=token_limit,
-                    time_limit_minutes=time_limit_minutes,
-                )
+                continuation_options = {
+                    "token_limit": token_limit,
+                    "time_limit_minutes": time_limit_minutes,
+                }
+                if semantic_token_limit is not None:
+                    continuation_options["semantic_token_limit"] = semantic_token_limit
+                if semantic_time_limit_minutes is not None:
+                    continuation_options["semantic_time_limit_minutes"] = (
+                        semantic_time_limit_minutes
+                    )
+                _run_re_v2_continue(run_dir, **continuation_options)
             except RuntimeError as exc:
                 raise ValueError(str(exc)) from exc
             return
+        if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
+            raise ValueError(
+                "semantic resource authorization is valid only for protocol 2.5"
+            )
         _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
         overrides: dict[str, int] = {}
         if token_limit is not None:

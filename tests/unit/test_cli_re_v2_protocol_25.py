@@ -238,3 +238,74 @@ def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     assert result.outcome == "candidate_ready"
     assert "audit.json" in provider.calls[0]["prompt"]
     assert "baseline.json" not in provider.calls[0]["prompt"]
+
+
+@pytest.mark.unit
+def test_continue_routes_distinct_runwide_and_semantic_authorization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli
+
+    run_dir = tmp_path / "runs" / "re-semantic"
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v2_continue",
+        lambda _run, **kwargs: calls.append(kwargs),
+    )
+
+    cli._cmd_re_continue(
+        [
+            "--re-token-limit",
+            "5000000",
+            "--re-semantic-token-limit",
+            "1000000",
+            "--re-semantic-time-limit-minutes",
+            "30",
+        ]
+    )
+
+    assert calls == [
+        {
+            "token_limit": 5_000_000,
+            "time_limit_minutes": None,
+            "semantic_token_limit": 1_000_000,
+            "semantic_time_limit_minutes": 30,
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_typer_continue_forwards_semantic_authorization_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_continue", calls.append)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "re",
+            "continue",
+            "--re-semantic-token-limit",
+            "1000000",
+            "--re-semantic-time-limit-minutes",
+            "30",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [[
+        "--re-semantic-token-limit",
+        "1000000",
+        "--re-semantic-time-limit-minutes",
+        "30",
+    ]]
