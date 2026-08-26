@@ -73,6 +73,9 @@ __all__ = (
     "ParentSemanticAuthorityV1",
     "Protocol25InputSet",
     "Protocol25InputStoreError",
+    "Protocol25Ledger",
+    "Protocol25LedgerProtocol",
+    "Protocol25LedgerView",
     "Protocol25SchemaError",
     "Protocol25Graph",
     "Protocol25GraphError",
@@ -138,6 +141,13 @@ _LAZY_INPUT_EXPORTS = frozenset(
         "load_protocol_25_inputs",
     }
 )
+_LAZY_LEDGER_EXPORTS = frozenset(
+    {
+        "Protocol25Ledger",
+        "Protocol25LedgerProtocol",
+        "Protocol25LedgerView",
+    }
+)
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -147,6 +157,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import adoption as module
     elif name in _LAZY_INPUT_EXPORTS:
         from . import inputs as module
+    elif name in _LAZY_LEDGER_EXPORTS:
+        from . import ledger as module
     else:
         raise AttributeError(name)
     value = getattr(module, name)
