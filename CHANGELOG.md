@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-167 / EGR-169 layered L3 semantic closure** — Opt-in RE v2
+  protocol `2.5`/schema `4` now audits selected L2 authority in one immutable
+  epoch, resolves only its frozen findings through L3 overlays, rechecks
+  closure under an independent semantic budget, and stops at fixed retry,
+  round, and plateau limits. `echelon re deepen --to L3` composes the existing
+  L0→L1→L2 layers and shared Prosaic/provider machinery; exact requests and
+  identical guidance reuse immutable children without provider calls. Status,
+  telemetry, and run-local `re/l3/` materialization make selected-scope
+  completion explicit while leaving workspace synthesis, exhaustive L4,
+  default-engine cutover, and atomic lower-artifact repair out of scope.
+
 - **Explicit governance structural nodes** — Feasibility and intent-alignment
   certification now run in visible provider-free
   `phase2-feasibility-structural` and

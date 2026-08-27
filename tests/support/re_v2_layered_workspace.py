@@ -238,7 +238,7 @@ def build_and_commit_fixture(
 
 def _source_layout(scenario: str) -> dict[str, tuple[str, ...]]:
     if scenario == "live-codex":
-        return {"api": ("src/orders",)}
+        return {"api": ("src/orders", "src/users")}
     if scenario == "invalid-domain":
         return {
             "api": ("src/broken", "src/orders"),

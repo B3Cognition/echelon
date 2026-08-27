@@ -120,7 +120,7 @@ Before modifying any shared file, prove it is absent from `_re_schema2_installed
 - Extends the shared additive `LayerV2`/`GoalV2` value validation with `L3`/`semantic-audit-closure` so protocol 2.5 can keep using `ArtifactKeyV2` and `WorkTemplateV2`; old serialized values remain unchanged.
 - Dispatches only `(schema_version=4, engine_protocol_version="2.5")` to `RunManifestV4`.
 
-- [ ] **Step 1: Record old canonical authorities before editing**
+- [x] **Step 1: Record old canonical authorities before editing**
 
 Run:
 
@@ -131,7 +131,7 @@ git diff --exit-code -- src/harness/re_v2/protocol_22 src/harness/re_v2/protocol
 
 Expected: compatibility/run-store tests pass; protocol-2.2 and protocol-2.4 source trees are unchanged from `bcb9a56e`.
 
-- [ ] **Step 2: Write failing closed-model and exact-dispatch tests**
+- [x] **Step 2: Write failing closed-model and exact-dispatch tests**
 
 ```python
 def test_manifest_v4_round_trips_canonically() -> None:
@@ -156,23 +156,23 @@ def test_schema_4_rejects_every_protocol_except_2_5(tmp_path: Path) -> None:
         load_run_manifest(tmp_path)
 ```
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: collection fails because `protocol_25` and `RunManifestV4` do not exist.
 
-- [ ] **Step 4: Implement strict schema-4 values and dispatch**
+- [x] **Step 4: Implement strict schema-4 values and dispatch**
 
 Use closed dataclasses with `ClassVar FIELDS`, `exact_object`, `safe_id`, `digest_value`, sorted tuple validation, canonical `to_json_dict`, and exact `from_json_dict`, following `RunManifestV3`. Add `RE_V2_SCHEMA_4_PROTOCOLS = frozenset({"2.5"})`, extend the root `Manifest` union, and add exact schema-4 decode/validation branches.
 
-- [ ] **Step 5: Re-run model, store, and frozen-fixture tests**
+- [x] **Step 5: Re-run model, store, and frozen-fixture tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass; existing schema-1/2/3 canonical digests remain exact.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/model.py src/harness/re_v2/run_store.py \
@@ -200,7 +200,7 @@ git commit -m "feat(re-v2): register protocol 2.5 manifest"
 - Uses closed finding classes and controller-issued `rule_id`, `subject_ref`, `claim_anchor_ids`, and `evidence_anchor_ids`.
 - Excludes all diagnostic prose from `FindingKeyV1.identity` and includes it only in bounded diagnostic values.
 
-- [ ] **Step 1: Write failing identity and authority-boundary tests**
+- [x] **Step 1: Write failing identity and authority-boundary tests**
 
 ```python
 def test_finding_identity_ignores_diagnostic_rewording() -> None:
@@ -223,23 +223,23 @@ def test_free_form_subject_is_rejected() -> None:
 
 Cover unsorted/duplicate anchors, unknown rule/class, unregistered target, evidence outside target closure, oversized prose, NFC/whitespace violations, equivalent evidence-fact aliases, and deterministic deferred-observation IDs.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_findings.py`
 
 Expected: collection fails because the finding authority types are absent.
 
-- [ ] **Step 3: Implement closed finding normalization**
+- [x] **Step 3: Implement closed finding normalization**
 
 Keep allowed vocabulary in immutable policy-owned tuples. Require normalization against a controller-created `FindingAuthorityVocabularyV1`; do not accept provider-created IDs. Hash `FindingKeyV1.to_json_dict()` for the key ID and hash the full `SemanticFindingV1` for diagnostic-object identity.
 
-- [ ] **Step 4: Run identity/property tests**
+- [x] **Step 4: Run identity/property tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_findings.py`
 
 Expected: all pass, including reordering/rewording stability and distinct-authority separation.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/findings.py \
@@ -262,7 +262,7 @@ git commit -m "feat(re-v2): define stable semantic findings"
 - Uses existing `ArtifactKeyV2` for `semantic-audit-findings` and L3 resolution overlays.
 - Separates structurally accepted attempts from active composed authority; final closure receipts require both target and passing source assessment hashes.
 
-- [ ] **Step 1: Write failing canonical and cross-reference tests**
+- [x] **Step 1: Write failing canonical and cross-reference tests**
 
 ```python
 def test_epoch_identity_is_independent_of_run_and_time() -> None:
@@ -283,23 +283,23 @@ def test_resolution_rejects_non_epoch_finding() -> None:
 
 Also cover exact target/candidate/audited-root binding, null pre-epoch reference, zero-finding epoch, prior-overlay chain, supersession references, assessment coverage exactly once, new-finding rejection, previous closure-receipt dependency, unresolved/root set equality, provisional domain closure, selected coverage, and deferred-observation completion rejection.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_artifacts.py`
 
 Expected: collection fails because L3 artifact/receipt types are absent.
 
-- [ ] **Step 3: Implement strict immutable value types**
+- [x] **Step 3: Implement strict immutable value types**
 
 Every type gets an exact closed decoder and content identity. Constructors validate cross-references against explicit epoch/target/source inputs rather than consulting mutable state. `L3SourceRootV1.state` accepts only `complete`, `next_epoch_required`, and `blocked`; `complete` requires zero unresolved findings and zero deferred observations.
 
-- [ ] **Step 4: Run artifact and finding tests**
+- [x] **Step 4: Run artifact and finding tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_findings.py tests/unit/test_re_v2_protocol_25_artifacts.py`
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/artifacts.py \
@@ -325,7 +325,7 @@ git commit -m "feat(re-v2): define L3 closure authority"
 - Adds response-schema hashes and Prosaic agent hashes, not provider adapters.
 - Reuses `build_deepening_v1_policy_catalog` and `build_deepening_executor_catalog` when an L1 parent needs missing L2 work; protocol 2.5 does not recreate the L2 deepener catalog.
 
-- [ ] **Step 1: Write failing policy and Prosaic tests**
+- [x] **Step 1: Write failing policy and Prosaic tests**
 
 ```python
 def test_l3_executor_catalog_reuses_shared_cli_adapter() -> None:
@@ -348,27 +348,27 @@ def test_prosaic_roles_are_provider_neutral() -> None:
 
 Assert validator v1 text remains unchanged outside its new explicit v2 section; modes allow exactly `AUDIT_EPOCH_TARGET` and `CLOSURE_RECHECK`; resolver writes exactly `resolution.json`; frontmatter is neutral and loaded through `ProsaicPromptLoader`; and v2 execution receives no live-workspace path or read authority beyond its controller-created immutable context. Target rechecks and source composition guards both use `CLOSURE_RECHECK`, distinguished by a controller-owned `assessment_kind` value `target` or `source-composition` in the closed request schema.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_policies.py tests/unit/test_re_v2_protocol_25_prosaic.py`
 
 Expected: failures for missing L3 policy catalog, resolver role, and validator modes.
 
-- [ ] **Step 3: Implement policy/catalog composition**
+- [x] **Step 3: Implement policy/catalog composition**
 
 Build new executor entries by copying the authenticated parent shared adapter/renderer/usage authorities and replacing only agent, response schema, producer policy, and verifier hashes. Pin the fixed semantic attempt/round/plateau values in `SemanticClosurePolicyV1`; never derive them from CLI resource flags.
 
-- [ ] **Step 4: Extend neutral Prosaic roles**
+- [x] **Step 4: Extend neutral Prosaic roles**
 
 The validator v2 contract reads only the supplied mode, schema, target, epoch/finding set, and bounded context; it writes exactly `audit.json` or `closure.json`. The resolver reads only unresolved frozen IDs and accepted authority; it writes exactly `resolution.json`. Add paired ALWAYS/NEVER rules and prohibit receipts, routing, counters, new findings, live-source discovery, and lower-layer edits.
 
-- [ ] **Step 5: Run Prosaic/provider compatibility tests**
+- [x] **Step 5: Run Prosaic/provider compatibility tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_policies.py tests/unit/test_re_v2_protocol_25_prosaic.py tests/unit/test_re_v2_protocol_24_prosaic.py tests/unit/test_re_v2_protocol_22_cli_provider.py tests/unit/test_squad_provider.py`
 
 Expected: all pass; Claude, Codex, Copilot, and OpenCode configuration continues through the existing shared provider route.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/policies.py \
@@ -393,7 +393,7 @@ git commit -m "feat(re-v2): register Prosaic semantic roles"
 - Schedules missing selected L2 work before L3, one audit target per selected domain, and one selection-relative source target per selected source.
 - Reconstructs adopted accepted authority from the child ledger; it never reads materialized Markdown or parent mutable state.
 
-- [ ] **Step 1: Write failing graph and scope tests**
+- [x] **Step 1: Write failing graph and scope tests**
 
 ```python
 def test_l1_parent_schedules_missing_l2_before_audit() -> None:
@@ -415,23 +415,23 @@ def test_domain_selection_adds_domain_and_source_targets() -> None:
 
 Cover L2 parent zero prerequisite calls; all-source non-empty domains; deterministic target IDs; exact L2 dependency closure; source cross-domain inputs; `not_requested` unselected domains; no full-source claim for partial selection; empty/unknown domains; and no audit target ready before every exact L2 dependency is accepted.
 
-- [ ] **Step 2: Run graph tests and confirm RED**
+- [x] **Step 2: Run graph tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_graph.py`
 
 Expected: collection fails because the protocol-2.5 graph does not exist.
 
-- [ ] **Step 3: Compose, do not copy, prerequisite planning**
+- [x] **Step 3: Compose, do not copy, prerequisite planning**
 
 Call protocol-2.4 public graph/adoption helpers to reconstruct exact L0/L1/L2 templates and accepted artifacts, then add L3 templates in `protocol_25.graph`. If a required public seam is absent, add a protocol-2.5 adapter over returned values; do not edit protocol-2.4 source.
 
-- [ ] **Step 4: Run L2/L3 graph regressions**
+- [x] **Step 4: Run L2/L3 graph regressions**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_graph.py tests/unit/test_re_v2_protocol_25_graph.py tests/unit/test_re_v2_protocol_22_graph.py`
 
 Expected: all pass and protocol-2.4 graph fixture identities remain exact.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/graph.py \
@@ -453,7 +453,7 @@ git commit -m "feat(re-v2): plan ascending L3 audit work"
 - Produces `validate_protocol_25_parent(...)`, `build_parent_authority_bundle_v2(...)`, and `import_protocol_25_parent_closure(...)`.
 - Enforces mode-specific parents: complete L1/L2 for `new-audit-epoch`; pre-epoch `blocked_incomplete` for `audit-successor`; frozen terminal blocker for `closure-successor`; complete or `next_epoch_required` L3 with every frozen finding closed for explicit next epoch.
 
-- [ ] **Step 1: Write failing parent matrix tests**
+- [x] **Step 1: Write failing parent matrix tests**
 
 Cover every accepted mode/state pair and reject running, paused, corrupt, partial, wrong-snapshot, wrong-selection, missing terminal event, incomplete receipt closure, missing candidate, missing epoch/root, cyclic lineage, source commit drift, and dirty Git with exact commit/stash/revert guidance.
 
@@ -471,27 +471,27 @@ def test_mode_rejects_wrong_parent_state(mode: str, parent_state: str) -> None:
         validate_protocol_25_parent(parent_run(parent_state), mode=mode)
 ```
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_adoption.py`
 
 Expected: collection fails because V2 adoption is absent.
 
-- [ ] **Step 3: Implement exact closure import**
+- [x] **Step 3: Implement exact closure import**
 
 Delegate lower-layer validation and `ParentAuthorityBundleV1` construction to protocol-2.4 public functions. Copy authenticated manifest/event/ledger/object closure into child objects once. Add semantic objects and typed receipts in sorted dependency order. Require successful child replay after deleting access to the parent directory.
 
-- [ ] **Step 4: Prove retained partial progress**
+- [x] **Step 4: Prove retained partial progress**
 
 Assert an audit successor imports accepted sibling audit candidates and lists only missing target IDs. Assert a closure successor imports the exact epoch, all overlays, assessments, deferred observations, and closed receipts, while only unresolved frozen IDs become work.
 
-- [ ] **Step 5: Run adoption compatibility tests**
+- [x] **Step 5: Run adoption compatibility tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py tests/unit/test_re_v2_protocol_25_adoption.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass; parent bundles V1 remain byte-identical.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/adoption.py \
@@ -514,27 +514,27 @@ git commit -m "feat(re-v2): authenticate L3 successor authority"
 - Publishes workspace partition, artifact policy, executor contract, audit taxonomy/policy, parent bundle, optional frozen epoch, optional guidance, and canonical manifest.
 - Reuses the manifest-last/no-clobber input publication primitive extracted for protocol 2.4.
 
-- [ ] **Step 1: Write failing publication and fault tests**
+- [x] **Step 1: Write failing publication and fault tests**
 
 Assert every referenced object is stored/fsynced before `run.json`; optional epoch/guidance presence matches run mode; catalogs authenticate before graph construction; incomplete stores never look runnable; symlinks and existing files fail closed; and each injected failure leaves either no manifest or a fully loadable immutable input set.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_inputs.py`
 
 Expected: collection fails because schema-4 input storage is absent.
 
-- [ ] **Step 3: Implement schema-4 publication/loading**
+- [x] **Step 3: Implement schema-4 publication/loading**
 
 Use protocol-2.4's existing schema-neutral publication helper. Validate mode-specific optional fields before publication and again on load. Never recover a missing authority from the parent directory, status JSON, or materialized projection.
 
-- [ ] **Step 4: Run old/new input suites**
+- [x] **Step 4: Run old/new input suites**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_inputs.py tests/unit/test_re_v2_protocol_24_inputs.py tests/unit/test_re_v2_protocol_25_inputs.py`
 
 Expected: all pass with unchanged protocol-2.2/2.4 fixtures.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/inputs.py \
@@ -557,7 +557,7 @@ git commit -m "feat(re-v2): publish schema 4 semantic runs"
 - Recognizes existing protocol-2.2 certification/candidate/acceptance/failure receipts plus protocol-2.5 semantic certification, target/source assessments, closure receipts, audit closure roots, and L3 source roots.
 - Keeps `Protocol22Ledger` decoding and record identities unchanged.
 
-- [ ] **Step 1: Write failing append/replay tests**
+- [x] **Step 1: Write failing append/replay tests**
 
 ```python
 def test_semantic_ledger_replays_shared_and_l3_receipts(tmp_path: Path) -> None:
@@ -579,23 +579,23 @@ def test_later_closure_receipt_requires_previous_receipt() -> None:
 
 Cover duplicate IDs, wrong target/epoch, object-hash absence, close-before-assess, source-fail close, non-epoch finding, unresolved/root mismatch, out-of-order round, deferred observation identity, mixed old/new replay, truncation, and hash-chain corruption.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_ledger.py`
 
 Expected: collection fails because the protocol-2.5 ledger facade is absent.
 
-- [ ] **Step 3: Expose only the generic ledger decoder seam**
+- [x] **Step 3: Expose only the generic ledger decoder seam**
 
 If needed, add a schema-neutral registered-receipt decoder hook to `protocol_22/ledger.py` while retaining its default registry and exact behavior. Put every new receipt branch and cross-reference validation in `protocol_25/ledger.py`; do not teach `Protocol22Ledger` L3 semantics.
 
-- [ ] **Step 4: Run ledger and compatibility suites**
+- [x] **Step 4: Run ledger and compatibility suites**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_ledger.py tests/unit/test_re_v2_protocol_25_ledger.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass; protocol-2.2 ledger fixtures and errors remain exact.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_22/ledger.py \
@@ -623,11 +623,11 @@ git commit -m "feat(re-v2): persist typed semantic receipts"
 - Records one target round after a completed source cycle, not per call.
 - Derives exactly `running_prerequisites`, `running_audit`, `epoch_frozen`, `running_resolution`, `running_closure_recheck`, `running_source_guard`, `paused_resource`, `blocked_incomplete`, `blocked_plateau`, `next_epoch_required`, or `complete`; no mutable state field independently controls routing.
 
-- [ ] **Step 1: Write failing event ordering tests**
+- [x] **Step 1: Write failing event ordering tests**
 
 Assert `audit_candidate_accepted` precedes freeze; freeze occurs once after every target; no audit dispatch after freeze; resolution precedes target recheck; all source target assessments precede the source guard; closure receipts follow a passing guard; progress follows receipts; roots precede terminal; terminal immutability; and protocol-2.4 replay rejects L3 events.
 
-- [ ] **Step 2: Write failing budget/progress tests**
+- [x] **Step 2: Write failing budget/progress tests**
 
 ```python
 def test_audit_does_not_consume_semantic_pool() -> None:
@@ -650,23 +650,23 @@ Cover known/unknown/trusted/reserved usage; token and active-time exhaustion; re
 
 Also prove the initial semantic pool reserves one resolution/recheck cycle per selected audit target plus one source guard per selected source through the shared conservative reservation calculator. A later round proceeds only when measured remaining capacity or an explicit semantic resource authorization covers it.
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_events.py tests/unit/test_re_v2_protocol_25_budget.py`
 
 Expected: collection fails because protocol-2.5 event/accounting types are absent.
 
-- [ ] **Step 4: Implement delegated replay and semantic projection**
+- [x] **Step 4: Implement delegated replay and semantic projection**
 
 Reuse `EventStore`, `EventProtocol`, shared usage events, and the existing reservation calculator. Add operation class and source-cycle IDs to validated L3 payloads. Derive semantic state, rounds, no-reduction counts, and pool usage from events plus ledger authority; do not store mutable counters.
 
-- [ ] **Step 5: Run shared and semantic event/budget suites**
+- [x] **Step 5: Run shared and semantic event/budget suites**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_budget.py tests/unit/test_re_v2_protocol_24_events.py tests/unit/test_re_v2_protocol_25_events.py tests/unit/test_re_v2_protocol_25_budget.py`
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/events.py \
@@ -690,7 +690,7 @@ git commit -m "feat(re-v2): bound semantic cycles independently"
 - Produces `Protocol25DeterministicRuntime` methods to build bounded contexts; parse candidate output; validate inventory/evidence/IDs; normalize findings and deferred observations; certify semantic artifacts; freeze epochs; and build closure/source roots.
 - Reuses candidate capture, `CandidateAssessmentReceiptV1`, `ArtifactAcceptanceReceiptV2`, `PinnedSnapshotReaderV1`, and existing bounded-context/evidence helpers.
 
-- [ ] **Step 1: Write failing response-contract tests**
+- [x] **Step 1: Write failing response-contract tests**
 
 For audit, require exactly one regular `audit.json`; exact target ID; verdict `PASS` with zero findings or `REPAIR` with at least one; closed rule/class vocabulary; controller-issued anchors; bounded count/bytes; authorized evidence paths/ranges; and no provider-owned IDs, epoch, receipts, routing, counters, or completion.
 
@@ -698,7 +698,7 @@ For resolution, require exactly one regular `resolution.json`; every entry targe
 
 For closure/source guard, require exactly one regular `closure.json`; every input ID appears exactly once; no new authoritative finding; exact overlay/assessment hashes; normalized deferred observations; and no controller-owned receipt or terminal field.
 
-- [ ] **Step 2: Write failing normalization and zero-finding tests**
+- [x] **Step 2: Write failing normalization and zero-finding tests**
 
 ```python
 def test_duplicate_provider_findings_normalize_to_one() -> None:
@@ -714,27 +714,27 @@ def test_zero_finding_audits_freeze_and_close_without_model_work() -> None:
     assert fake_provider().calls == []
 ```
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_runtime.py`
 
 Expected: collection fails because the protocol-2.5 runtime is absent.
 
-- [ ] **Step 4: Implement bounded contexts and deterministic certification**
+- [x] **Step 4: Implement bounded contexts and deterministic certification**
 
 Build audit targets from exact accepted artifact/evidence closure. Resolve every provider reference through controller-issued maps before constructing `FindingKeyV1`. Store normalized artifact bytes and semantic certification receipt before acceptance. Keep candidate assessment and artifact acceptance in the shared envelope. Build epochs/roots only from ledger replay, never raw provider output.
 
-- [ ] **Step 5: Implement composed-view and guard inputs**
+- [x] **Step 5: Implement composed-view and guard inputs**
 
 Compose lower claims plus only the current candidate overlay set in memory. Mark refinement/supersession explicitly. Include already-active closed sibling authority in every source guard. A failed guard leaves implicated authorizing frozen IDs open and does not activate the attempted overlay.
 
-- [ ] **Step 6: Run runtime/artifact/evidence suites**
+- [x] **Step 6: Run runtime/artifact/evidence suites**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_runtime.py tests/unit/test_re_v2_protocol_25_artifacts.py tests/unit/test_re_v2_protocol_25_findings.py tests/unit/test_re_v2_protocol_22_evidence.py tests/unit/test_re_v2_protocol_24_artifacts.py`
 
 Expected: all pass; protocol-2.4 artifact identities remain exact.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/runtime.py \
@@ -757,7 +757,7 @@ git commit -m "feat(re-v2): certify frozen semantic candidates"
 - Specializes protocol-2.5 candidate certification and controller-owned transitions only: audit acceptance, epoch freeze, target resolution, closure recheck, source guard, finding receipt recording, progress/plateau, roots, and terminal state.
 - Continues independent audit targets/sources after a sibling exhausts attempts, while preserving every durable accepted sibling result.
 
-- [ ] **Step 1: Write a failing end-to-end fake-executor lifecycle**
+- [x] **Step 1: Write a failing end-to-end fake-executor lifecycle**
 
 ```python
 def test_controller_freezes_then_closes_one_source() -> None:
@@ -775,31 +775,31 @@ def test_controller_freezes_then_closes_one_source() -> None:
     assert context.event_store.replay()[-1].type == "run_completed"
 ```
 
-- [ ] **Step 2: Add failing bounded-closure cases**
+- [x] **Step 2: Add failing bounded-closure cases**
 
 Cover all-pass zero-call closure; one resolver batch per target; one guard per selected source/cycle; closed target skips resolver/recheck but remains in guard context; source-guard regression keeps implicated IDs open; deferred observation produces `next_epoch_required`; reduction resets plateau; unchanged IDs block after two rounds; third-round ceiling; audit contract exhaustion produces `blocked_incomplete`; resource exhaustion pauses; and indeterminate execution is not redispatched.
 
-- [ ] **Step 3: Run controller tests and confirm RED**
+- [x] **Step 3: Run controller tests and confirm RED**
 
 Run: `pytest -q tests/integration/test_re_v2_protocol_25_controller.py`
 
 Expected: collection fails because `Protocol25Controller` is absent.
 
-- [ ] **Step 4: Implement controller-owned scheduling**
+- [x] **Step 4: Implement controller-owned scheduling**
 
 Subclass `Protocol24Controller` without changing it. Reuse inherited L2 prerequisite execution and shared dispatch functions. Override only candidate filename/schema routing, semantic receipt writes, plan selection after prerequisites, and terminalization. Drive each transition from replayed ledger/events; never trust mutable projection state or model verdict fields.
 
-- [ ] **Step 5: Enforce frozen membership and source-cycle atomicity**
+- [x] **Step 5: Enforce frozen membership and source-cycle atomicity**
 
 After `audit_epoch_frozen`, reject every audit dispatch. Collect all target assessments for a source cycle before dispatching its source guard. Record final closure receipts in deterministic finding-ID order only after a passing guard. Crash midway through receipt publication must replay to the same complete receipt set without another provider call.
 
-- [ ] **Step 6: Run L2/L3 controller regressions**
+- [x] **Step 6: Run L2/L3 controller regressions**
 
 Run: `pytest -q tests/integration/test_re_v2_protocol_24_controller.py tests/integration/test_re_v2_protocol_25_controller.py tests/unit/test_re_v2_protocol_25_events.py tests/unit/test_re_v2_protocol_25_ledger.py`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/controller.py \
@@ -823,7 +823,7 @@ git commit -m "feat(re-v2): run bounded semantic closure"
 - Validates manifest, inputs, graph, adopted authority, candidate commits, semantic receipts, events, objects, and snapshot before advancing.
 - Never reissues a provider call solely because projection/event/receipt publication after a captured result was interrupted.
 
-- [ ] **Step 1: Parameterize the 16-boundary crash matrix**
+- [x] **Step 1: Parameterize the 16-boundary crash matrix**
 
 Inject a process fault after:
 
@@ -846,27 +846,27 @@ Inject a process fault after:
 
 For each boundary, resume twice and assert identical terminal/replay authority, exact dispatch IDs, and no duplicate provider call after durable observation.
 
-- [ ] **Step 2: Run recovery tests and confirm RED**
+- [x] **Step 2: Run recovery tests and confirm RED**
 
 Run: `pytest -q tests/integration/test_re_v2_protocol_25_recovery.py`
 
 Expected: failures at protocol-2.5 context/recovery routing.
 
-- [ ] **Step 3: Add a registered recovery strategy seam if required**
+- [x] **Step 3: Add a registered recovery strategy seam if required**
 
 Keep protocol-2.2 defaults exact. Add only a schema-neutral context callback/strategy entry to `protocol_22/recovery.py` when an inherited method cannot invoke L3 reconciliation. Put semantic boundary logic in `protocol_25/recovery.py`; do not add L3 branches to the pinned controller/execution modules.
 
-- [ ] **Step 4: Implement authoritative reconciliation**
+- [x] **Step 4: Implement authoritative reconciliation**
 
 Prefer durable candidate capture, ledger receipts, and event hashes in that order. Reconstruct missing deterministic epoch/root/progress/terminal records idempotently. Classify started-without-observation operations through existing indeterminate execution rules. Rebuild projections, never semantic authority, from replay.
 
-- [ ] **Step 5: Run all protocol recovery matrices**
+- [x] **Step 5: Run all protocol recovery matrices**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_recovery.py tests/integration/test_re_v2_protocol_24_recovery.py tests/integration/test_re_v2_protocol_25_recovery.py`
 
 Expected: all pass; no protocol-2.2/2.4 dispatch identity changes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_22/recovery.py \
@@ -893,11 +893,11 @@ git commit -m "feat(re-v2): recover semantic closure at most once"
 - Extends v2 `echelon re continue` with `--re-semantic-token-limit` and `--re-semantic-time-limit-minutes` alongside the existing run-wide controls, and extends v2 `echelon re resume "<answer>"` with immutable successor creation.
 - Produces `semantic_request_id_v2(...)`, `guidance_id_for(...)`, exact-child lookup, and creation under the existing workspace lock/pointer sequence.
 
-- [ ] **Step 1: Write failing parser and validation tests**
+- [x] **Step 1: Write failing parser and validation tests**
 
 Cover existing L2 grammar unchanged; required selection; positive semantic limits; semantic flags rejected for L2/v1; `--new-audit-epoch` accepted only for L3 with an eligible terminal L3 parent; `--re-max-inner` rejected for v2; resume answer NFC/size normalization; and exact error text for wrong parent states.
 
-- [ ] **Step 2: Write failing semantic request identity tests**
+- [x] **Step 2: Write failing semantic request identity tests**
 
 ```python
 def test_exact_l3_request_reuses_every_existing_state() -> None:
@@ -916,31 +916,31 @@ def test_changed_guidance_creates_distinct_successor() -> None:
 
 Assert request identity binds lineage root, direct parent closure, snapshot/partition, selection, mode, catalogs/policies, accepted audit targets or epoch/root, and guidance hash. Run-wide/semantic resource ceilings are authorization events on the same paused run and do not create a different semantic request.
 
-- [ ] **Step 3: Run CLI tests and confirm RED**
+- [x] **Step 3: Run CLI tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_cli_re_v2_protocol_25.py tests/integration/test_re_v2_protocol_25_cli.py`
 
 Expected: parser rejects L3 and v2 resume/semantic flags.
 
-- [ ] **Step 4: Implement lifecycle outside the monolithic CLI**
+- [x] **Step 4: Implement lifecycle outside the monolithic CLI**
 
 Put schema-4 preparation, exact-child scanning, guidance creation, successor selection, and run-store initialization in `protocol_25/lifecycle.py`. Keep installed-registry composition and context construction in `src/echelon/cli.py`, where `_re_v22_implementation_digest` and `_re_schema2_installed_registry` already live; pass the prepared registry/digests into lifecycle functions instead of importing `echelon.cli` back from the harness. Reuse `_re_v24_creation_lock`, `_new_re_v2_run_id`, and `_activate_re_v2_run`; do not clone provider setup.
 
-- [ ] **Step 5: Implement mode-specific operations**
+- [x] **Step 5: Implement mode-specific operations**
 
 `deepen --to L3` validates clean Git and creates/reuses `new-audit-epoch`; `continue` appends only requested token/time authorization events to `paused_resource` and resumes the same run; `resume` normalizes/stores guidance and creates/reuses `audit-successor` or `closure-successor`; `--new-audit-epoch` requires explicit terminal eligibility and seeds deferred observations into the next audit context.
 
-- [ ] **Step 6: Prove concurrent zero-duplicate creation**
+- [x] **Step 6: Prove concurrent zero-duplicate creation**
 
 Run two identical creation/resume processes under the existing no-follow `flock`; assert one schema-4 child, one manifest, one pointer update, and zero calls from the losing exact-reuse process.
 
-- [ ] **Step 7: Run old/new CLI suites**
+- [x] **Step 7: Run old/new CLI suites**
 
 Run: `pytest -q tests/unit/test_cli_re_lifecycle.py tests/unit/test_cli_re_v2_protocol_22.py tests/unit/test_cli_re_v2_protocol_24.py tests/unit/test_cli_re_v2_protocol_25.py tests/integration/test_re_v2_protocol_25_cli.py`
 
 Expected: all pass; L2 command behavior remains exact.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_25/lifecycle.py \
@@ -969,11 +969,11 @@ git commit -m "feat(cli): add L3 semantic lifecycle"
 - Materializes epoch, findings, overlays, closure receipts, source roots, and explicit composed views only under `runs/<run-id>/re/l3/`.
 - Produces exact banners `L3 SELECTED SCOPE COMPLETE`, `L3 PAUSED - CONTINUABLE`, `L3 BLOCKED - FROZEN FINDINGS UNRESOLVED`, and `L3 EPOCH CLOSED - NEXT AUDIT EPOCH REQUIRED`.
 
-- [ ] **Step 1: Write failing materialization tests**
+- [x] **Step 1: Write failing materialization tests**
 
 Assert exact paths from the design; sorted deterministic JSON/Markdown; raw L2 unchanged; raw L3 overlay and composed view separately inspectable; explicit refinement/supersession markers; deleted projection rebuilds byte-identically; altered projection quarantines through existing policy; no workspace `re/`; and source Git bytes/status unchanged.
 
-- [ ] **Step 2: Write failing status/banner tests**
+- [x] **Step 2: Write failing status/banner tests**
 
 Assert protocol/schema/mode/lineage/selection; adopted/generated counts by layer; per-target audit/closure state; frozen/closed/unresolved/deferred counts; rounds and plateau counters; calls and usage by operation; run-wide versus semantic authorization; selected versus full coverage; retained closed receipts; exact blocker-class next action; and zero-call reuse/adoption facts.
 
@@ -986,27 +986,27 @@ def test_deferred_observation_never_renders_complete() -> None:
     assert "L3 SELECTED SCOPE COMPLETE" not in human
 ```
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_25_materialization.py tests/unit/test_re_v2_protocol_25_status.py`
 
 Expected: schema-4 status/materialization is unsupported.
 
-- [ ] **Step 4: Reuse projection and status routers**
+- [x] **Step 4: Reuse projection and status routers**
 
 Add registered layer/kind projection hooks to the shared non-pinned materializer only if required; put L3 path/layout and composed rendering in `protocol_25/materialization.py`. Extend the one status router by exact protocol. Derive status from immutable inputs, ledger, events, graph, and budget replay; never persist a semantic status cache.
 
-- [ ] **Step 5: Implement terminal guidance**
+- [x] **Step 5: Implement terminal guidance**
 
 The complete banner states selected/full scope, zero deferred observations, workspace synthesis not run, L4 not run, and unaudited unselected domains. Plateau/incomplete banners state retained closed work, unresolved count/classes, exact `resume`/evidence/atomic-repair action, and that identical continuation is zero-call. Next-epoch state prints the explicit `deepen --new-audit-epoch` command.
 
-- [ ] **Step 6: Run status/materialization regressions**
+- [x] **Step 6: Run status/materialization regressions**
 
 Run: `pytest -q tests/unit/test_re_v2_status.py tests/unit/test_re_v2_protocol_22_status.py tests/unit/test_re_v2_protocol_24_status.py tests/unit/test_re_v2_protocol_25_status.py tests/unit/test_re_v2_protocol_22_materialization.py tests/unit/test_re_v2_protocol_25_materialization.py`
 
 Expected: all pass and old human/JSON output fixtures remain exact.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/status.py \
@@ -1033,7 +1033,7 @@ git commit -m "feat(re-v2): report and materialize L3 closure"
 - Proves an installed clean-Git Codex-provider run uses Prosaic/shared provider execution and exercises audit, closure, exact reuse, status, telemetry, and run-local materialization.
 - Records evidence without claiming workspace synthesis, L4, default-engine readiness, or atomic repair.
 
-- [ ] **Step 1: Run focused protocol-2.5 tests**
+- [x] **Step 1: Run focused protocol-2.5 tests**
 
 Run:
 
@@ -1047,7 +1047,7 @@ pytest -q tests/unit/test_re_v2_protocol_25*.py \
 
 Expected: all pass; live provider test remains explicitly skipped unless its opt-in environment is present.
 
-- [ ] **Step 2: Run the complete RE v2 and provider matrix**
+- [x] **Step 2: Run the complete RE v2 and provider matrix**
 
 Run:
 
@@ -1063,7 +1063,7 @@ pytest -q tests/unit/test_re_v2*.py \
 
 Expected: all pass. Record exact pass/skip counts in this plan after execution.
 
-- [ ] **Step 3: Verify frozen authority source and canonical compatibility**
+- [x] **Step 3: Verify frozen authority source and canonical compatibility**
 
 Run:
 
@@ -1074,13 +1074,13 @@ pytest -q tests/unit/test_re_v2_protocol_compatibility.py
 
 Expected: no protocol-2.4 source diff and all schema-1/2/3 fixture digests pass. Also inspect every modified protocol-2.2 file against `_re_schema2_installed_registry()` and prove no pinned implementation module changed.
 
-- [ ] **Step 4: Run the complete repository suite**
+- [x] **Step 4: Run the complete repository suite**
 
 Run: `pytest`
 
 Expected: zero failures. Record exact pass/skip/deselect counts and separately identify any environment-only retry with the exact isolated rerun result.
 
-- [ ] **Step 5: Install Echelon and refresh a disposable real workspace**
+- [x] **Step 5: Install Echelon and refresh a disposable real workspace**
 
 Run:
 
@@ -1090,7 +1090,7 @@ bash scripts/install.sh
 
 In a disposable clean real workspace, run the normal `echelon workspace migrate-to-prosaic` flow. Verify installed `echelon.re-validator` and `echelon.re-resolver` bytes and frontmatter match repository sources. Confirm the workspace and every selected source report empty `git status --short` before child creation.
 
-- [ ] **Step 6: Run the real Codex pilot**
+- [x] **Step 6: Run the real Codex pilot**
 
 Use `harness.llm.cli: codex`, a completed L1 or L2 parent, at least two selected domains in one source, and explicit bounded run-wide/semantic resources. The pilot must prove:
 
@@ -1106,15 +1106,15 @@ Use `harness.llm.cli: codex`, a completed L1 or L2 parent, at least two selected
 
 If the real model returns no repairable finding, use a deterministic fixture-backed loopback run for the repair branch and record that limitation honestly; do not manipulate real source or provider output to manufacture a finding.
 
-- [ ] **Step 7: Inspect telemetry for efficiency and correctness**
+- [x] **Step 7: Inspect telemetry for efficiency and correctness**
 
 Record audit target count, frozen findings by class/rule/scope, closed per round, unresolved/deferred counts, call counts by audit/resolution/recheck/guard, known versus conservatively reserved tokens, active duration, plateau outcome, successor reuse, and zero-dispatch reuse. Verify no target is audited twice within one epoch, no closed finding re-enters a later round, and telemetry contains only guidance identity—not raw guidance text.
 
-- [ ] **Step 8: Update release/finding documentation from evidence**
+- [x] **Step 8: Update release/finding documentation from evidence**
 
 Document protocol/schema, commands, fixed limits, truthful terminal meanings, test counts, pilot run IDs, provider/model/effort evidence, usage, clean-Git proof, and remaining EGR-168/EGR-169/EGR-170 boundaries. Mark only the L3 increment of EGR-169 complete when every success criterion is evidenced.
 
-- [ ] **Step 9: Run final diff and placeholder checks**
+- [x] **Step 9: Run final diff and placeholder checks**
 
 Run:
 
@@ -1129,7 +1129,7 @@ rg -n 'T''BD|T''ODO|implement l''ater|fill i''n|appropriate e''rror|similar t''o
 
 Expected: no diff errors and no placeholders.
 
-- [ ] **Step 10: Commit evidence and documentation**
+- [x] **Step 10: Commit evidence and documentation**
 
 ```bash
 git add CHANGELOG.md docs/findings/echelon-grounded-review-register.md \
@@ -1138,21 +1138,65 @@ git add CHANGELOG.md docs/findings/echelon-grounded-review-register.md \
 git commit -m "docs(re-v2): record L3 semantic closure evidence"
 ```
 
+## Execution Evidence
+
+- Focused protocol-2.5 gate: `241 passed, 1 skipped` in 45.99 seconds. The skip
+  is the new installed-Codex test, deliberately gated by
+  `ECHELON_RUN_LIVE_CODEX=1`.
+- Complete RE v2/provider matrix: `1427 passed, 3 skipped` in 708.02 seconds.
+  The skips are opt-in live provider tests.
+- Compatibility: `git diff bcb9a56e --exit-code --
+  src/harness/re_v2/protocol_24` is empty and the canonical compatibility suite
+  passes `7 passed`. The protocol-2.2 files changed since that baseline are
+  `authorities.py`, `budget.py`, `materialization.py`, `model.py`, and
+  `recovery.py`; none belongs to the pinned implementation-digest module set
+  returned by `_re_schema2_installed_registry()`.
+- Installed clean-Git chain: L1 `re-20260826-195605-208509` completed 18/18;
+  L2 `re-20260826-195940-165143` completed three selected domains with 18
+  adopted and 12 generated artifacts; L3 `re-20260826-204117-628214` adopted
+  30 lower artifacts and generated four audit artifacts for three domains plus
+  one source.
+- The L3 pilot used the installed `echelon.re-validator` and
+  `echelon.re-resolver` Prosaic bytes (`model_tier: strong`, `effort: high`)
+  through provider `codex`; all four captures resolved `gpt-5.6-sol` and had a
+  valid result contract. It froze zero findings and closed without resolution,
+  recheck, or guard calls. This is an honest all-PASS live outcome; deterministic
+  controller/recovery cases cover resolution overlays, rechecks, source guards,
+  closure receipts, retained siblings, deferred observations, plateau, and
+  crash recovery rather than manufacturing a live finding.
+- L3 run-wide usage was four audit calls, 177,133 ms trusted active time, and
+  1,048,576 conservatively charged tokens because Codex-reported token usage
+  was untrusted. The independent semantic pool used zero tokens/time. There
+  were no retries, reservation breaches, deferred observations, unresolved
+  findings, duplicate target audits, or later rounds in which a finding could
+  re-enter. Exact replay retained 63 events and four dispatches, printed the
+  terminal banner, and made no provider call. Both workspace and source
+  `git status --short` remained empty.
+- Full repository gate: `10670 passed, 12 skipped, 1 deselected` in 2,390.03
+  seconds under the installed Echelon Python 3.12 environment. A first bare
+  `pytest` attempt used Homebrew Python 3.11 and stopped during collection with
+  17 import errors for the declared `lark`/`freezegun` dependencies; the exact
+  isolated rerun via `python -m pytest` collected all 10,683 items and passed.
+- Remaining boundaries are explicit: EGR-168 workspace synthesis is not run,
+  the L4 portion of EGR-169 remains open, and EGR-170 atomic lower-artifact
+  repair remains deferred. Protocol 2.5 is opt-in and is not a default-engine
+  or full-workspace-quality claim.
+
 ## Final Acceptance Checklist
 
-- [ ] Protocol 2.5/schema 4 loads exactly; old manifest and authority bytes remain unchanged.
-- [ ] L3 from L1 fills L2 first; L3 from L2 performs zero unnecessary L2 provider calls.
-- [ ] Domain and source audit targets bind exact selected authority and freeze one stable epoch.
-- [ ] Finding identity is insensitive to prose and sensitive to structured authority.
-- [ ] All repair is expressed as L3 overlays; accepted L0/L1/L2 objects remain immutable.
-- [ ] Closure cannot add epoch work, and the source guard prevents provisional target closure from becoming a false source claim.
-- [ ] Deferred observations force `next_epoch_required`; zero-finding epochs close without resolver/recheck calls.
-- [ ] Semantic resources are independent; fixed attempts/rounds/plateau cannot be raised.
-- [ ] Two no-reduction rounds or three total rounds stop closure; closed siblings remain adoptable.
-- [ ] Exact request and guidance reuse issue zero provider calls; guided repair creates immutable successors.
-- [ ] Recovery is at-most-once across all 16 durable boundaries.
-- [ ] L3 materialization is run-local, deterministic, and explicit about lower-layer refinement.
-- [ ] Status ends with one truthful prominent banner and an exact next action.
-- [ ] All model work uses Prosaic and the existing shared provider machinery across configured providers.
-- [ ] Focused, compatibility, full-suite, and real Codex pilot gates pass before merge.
-- [ ] Workspace synthesis, L4, default-engine cutover, and atomic lower-artifact repair remain out of scope.
+- [x] Protocol 2.5/schema 4 loads exactly; old manifest and authority bytes remain unchanged.
+- [x] L3 from L1 fills L2 first; L3 from L2 performs zero unnecessary L2 provider calls.
+- [x] Domain and source audit targets bind exact selected authority and freeze one stable epoch.
+- [x] Finding identity is insensitive to prose and sensitive to structured authority.
+- [x] All repair is expressed as L3 overlays; accepted L0/L1/L2 objects remain immutable.
+- [x] Closure cannot add epoch work, and the source guard prevents provisional target closure from becoming a false source claim.
+- [x] Deferred observations force `next_epoch_required`; zero-finding epochs close without resolver/recheck calls.
+- [x] Semantic resources are independent; fixed attempts/rounds/plateau cannot be raised.
+- [x] Two no-reduction rounds or three total rounds stop closure; closed siblings remain adoptable.
+- [x] Exact request and guidance reuse issue zero provider calls; guided repair creates immutable successors.
+- [x] Recovery is at-most-once across all 16 durable boundaries.
+- [x] L3 materialization is run-local, deterministic, and explicit about lower-layer refinement.
+- [x] Status ends with one truthful prominent banner and an exact next action.
+- [x] All model work uses Prosaic and the existing shared provider machinery across configured providers.
+- [x] Focused, compatibility, full-suite, and real Codex pilot gates pass before merge.
+- [x] Workspace synthesis, L4, default-engine cutover, and atomic lower-artifact repair remain out of scope.
