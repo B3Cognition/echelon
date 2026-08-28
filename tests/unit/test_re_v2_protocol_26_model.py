@@ -90,6 +90,16 @@ def test_checkpoint_manifest_rejects_incomplete_object_byte_counts() -> None:
         CheckpointManifestV1.from_json_dict(raw)
 
 
+def test_selection_bundle_requires_copied_origin_evidence() -> None:
+    raw = checkpoint_selection_bundle_v1().to_json_dict()
+    raw["copied_object_ids"].remove(raw["origin_manifest_hashes"][0])  # type: ignore[union-attr,index]
+    for selected in raw["selected"]:  # type: ignore[union-attr]
+        selected["copied_object_ids"].remove(raw["origin_manifest_hashes"][0])
+
+    with pytest.raises(Protocol26SchemaError, match="origin evidence"):
+        CheckpointSelectionBundleV1.from_json_dict(raw)
+
+
 @pytest.mark.unit
 def test_selection_bundle_round_trips_dependency_order_and_inventory() -> None:
     bundle = checkpoint_selection_bundle_v1()

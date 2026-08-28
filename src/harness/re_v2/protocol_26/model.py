@@ -539,6 +539,9 @@ class CheckpointManifestV1:
                 "CheckpointManifestV1 dependency authority disagrees with work_item"
             )
         required_objects = {
+            self.origin_manifest_hash,
+            self.origin_event_prefix_hash,
+            self.origin_ledger_prefix_hash,
             self.work_item.work_item_id,
             self.artifact_hash,
             self.certification_receipt.identity,
@@ -986,6 +989,15 @@ class CheckpointSelectionBundleV1:
         if union_objects != set(self.copied_object_ids):
             raise Protocol26SchemaError(
                 "CheckpointSelectionBundleV1 copied object inventory disagrees with selection"
+            )
+        origin_evidence = {
+            *self.origin_manifest_hashes,
+            *self.origin_event_prefix_hashes,
+            *self.origin_ledger_prefix_hashes,
+        }
+        if not origin_evidence <= set(self.copied_object_ids):
+            raise Protocol26SchemaError(
+                "CheckpointSelectionBundleV1 origin evidence is not copied"
             )
 
     @property

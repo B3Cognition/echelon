@@ -236,6 +236,8 @@ def create_protocol_25_run_store(
 def load_protocol_25_inputs(
     paths: ReV2Paths,
     manifest: RunManifestV4,
+    *,
+    _embedded_in_outer_manifest: bool = False,
 ) -> ValidatedProtocol25Inputs:
     """Authenticate every schema-4 input without consulting parent state."""
     if not isinstance(paths, ReV2Paths):
@@ -247,16 +249,17 @@ def load_protocol_25_inputs(
         raise Protocol25InputStoreError(
             "input paths do not match the protocol-2.5 manifest run"
         )
-    try:
-        authoritative = load_run_manifest(paths.root.parent)
-    except ReV2RunStoreError as exc:
-        raise Protocol25InputStoreError(
-            f"cannot load authoritative manifest: {exc}"
-        ) from exc
-    if authoritative != manifest:
-        raise Protocol25InputStoreError(
-            "manifest argument does not equal the authoritative manifest"
-        )
+    if not _embedded_in_outer_manifest:
+        try:
+            authoritative = load_run_manifest(paths.root.parent)
+        except ReV2RunStoreError as exc:
+            raise Protocol25InputStoreError(
+                f"cannot load authoritative manifest: {exc}"
+            ) from exc
+        if authoritative != manifest:
+            raise Protocol25InputStoreError(
+                "manifest argument does not equal the authoritative manifest"
+            )
     if paths.inputs.is_symlink() or not paths.inputs.is_dir():
         raise Protocol25InputStoreError(
             f"protocol-2.5 input directory is unsafe or missing: {paths.inputs}"

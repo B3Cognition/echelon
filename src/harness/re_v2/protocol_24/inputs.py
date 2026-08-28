@@ -142,6 +142,8 @@ def create_protocol_24_run_store(
 def load_protocol_24_inputs(
     paths: ReV2Paths,
     manifest: RunManifestV3,
+    *,
+    _embedded_in_outer_manifest: bool = False,
 ) -> ValidatedProtocol24Inputs:
     """Authenticate the four schema-3 inputs and their referenced blobs."""
     if not isinstance(paths, ReV2Paths):
@@ -153,16 +155,17 @@ def load_protocol_24_inputs(
         raise Protocol24InputStoreError(
             "input paths do not match the protocol-2.4 manifest run"
         )
-    try:
-        authoritative = load_run_manifest(paths.root.parent)
-    except ReV2RunStoreError as exc:
-        raise Protocol24InputStoreError(
-            f"cannot load authoritative manifest: {exc}"
-        ) from exc
-    if authoritative != manifest:
-        raise Protocol24InputStoreError(
-            "manifest argument does not equal the authoritative manifest"
-        )
+    if not _embedded_in_outer_manifest:
+        try:
+            authoritative = load_run_manifest(paths.root.parent)
+        except ReV2RunStoreError as exc:
+            raise Protocol24InputStoreError(
+                f"cannot load authoritative manifest: {exc}"
+            ) from exc
+        if authoritative != manifest:
+            raise Protocol24InputStoreError(
+                "manifest argument does not equal the authoritative manifest"
+            )
     if paths.inputs.is_symlink() or not paths.inputs.is_dir():
         raise Protocol24InputStoreError(
             f"protocol-2.4 input directory is unsafe or missing: {paths.inputs}"

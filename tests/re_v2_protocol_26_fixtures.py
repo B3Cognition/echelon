@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Mapping
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.baseline import (
     ArtifactAcceptanceReceiptV2,
     DeterministicAssessmentInputV2,
@@ -176,6 +177,7 @@ def checkpoint_for_item(
     rank_vector: tuple[int, ...] = (1,),
     rank_policy_hash: str | None = None,
     accepted_dependencies: tuple[tuple[str, str], ...] = (),
+    dependency_byte_counts: Mapping[str, int] | None = None,
 ) -> CheckpointManifestV1:
     from harness.re_v2.protocol_26.model import CheckpointArtifactDependencyV1
 
@@ -227,9 +229,19 @@ def checkpoint_for_item(
     non_artifact = tuple(
         sorted(set(item.output_key.dependency_hashes) - accepted_hashes)
     )
+    origin_manifest_hash = digest(f"{origin_run_id}:manifest")
+    origin_event_prefix_hash = digest(
+        f"{origin_run_id}:{artifact_seed}:event-prefix"
+    )
+    origin_ledger_prefix_hash = digest(
+        f"{origin_run_id}:{artifact_seed}:ledger-prefix"
+    )
     object_ids = tuple(
         sorted(
             {
+                origin_manifest_hash,
+                origin_event_prefix_hash,
+                origin_ledger_prefix_hash,
                 artifact_hash,
                 certification.identity,
                 acceptance.identity,
@@ -238,24 +250,34 @@ def checkpoint_for_item(
             }
         )
     )
+    known_payloads = {
+        origin_manifest_hash: f"{origin_run_id}:manifest".encode(),
+        origin_event_prefix_hash: (
+            f"{origin_run_id}:{artifact_seed}:event-prefix".encode()
+        ),
+        origin_ledger_prefix_hash: (
+            f"{origin_run_id}:{artifact_seed}:ledger-prefix".encode()
+        ),
+        artifact_hash: artifact_seed.encode(),
+        certification.identity: canonical_json_bytes(certification.to_json_dict()),
+        acceptance.identity: canonical_json_bytes(acceptance.to_json_dict()),
+        item.work_item_id: canonical_json_bytes(item.to_json_dict()),
+    }
+    supplied_dependency_counts = dependency_byte_counts or {}
     policy_hash = rank_policy_hash or digest("test-rank-policy")
     rank = CheckpointRankV1(1, "test-rank-v1", policy_hash, rank_vector)
     return CheckpointManifestV1(
         schema_version=1,
         origin_run_id=origin_run_id,
-        origin_manifest_hash=digest(f"{origin_run_id}:manifest"),
+        origin_manifest_hash=origin_manifest_hash,
         origin_engine_protocol_version="2.2",
         origin_run_schema_version=2,
         origin_acceptance_event_hash=digest(
             f"{origin_run_id}:{artifact_seed}:event"
         ),
-        origin_event_prefix_hash=digest(
-            f"{origin_run_id}:{artifact_seed}:event-prefix"
-        ),
+        origin_event_prefix_hash=origin_event_prefix_hash,
         origin_ledger_record_hash=ledger_hash,
-        origin_ledger_prefix_hash=digest(
-            f"{origin_run_id}:{artifact_seed}:ledger-prefix"
-        ),
+        origin_ledger_prefix_hash=origin_ledger_prefix_hash,
         work_item=item,
         artifact_key_id=item.output_key.identity,
         artifact_hash=artifact_hash,
@@ -266,7 +288,14 @@ def checkpoint_for_item(
         accepted_artifact_dependencies=dependencies,
         non_artifact_dependency_hashes=non_artifact,
         immutable_object_hashes=object_ids,
-        immutable_object_byte_counts={value: 1 for value in object_ids},
+        immutable_object_byte_counts={
+            value: (
+                len(known_payloads[value])
+                if value in known_payloads
+                else supplied_dependency_counts.get(value, 1)
+            )
+            for value in object_ids
+        },
         audit_epoch_id=None,
         semantic_authority_ids=(),
         rank=rank,
@@ -324,6 +353,9 @@ def l3_checkpoint_manifest_v1(tmp_path: Path) -> CheckpointManifestV1:
         candidate.execution_capture_hash,
         candidate.normalized_authorial_payload_hash,
         result.acceptance.identity,
+        digest("l3-origin-manifest"),
+        digest("l3-event-prefix"),
+        digest("l3-ledger-prefix"),
         epoch.identity,
         *item.output_key.dependency_hashes,
     }
@@ -370,6 +402,7 @@ def l3_checkpoint_manifest_v1(tmp_path: Path) -> CheckpointManifestV1:
 
 def checkpoint_selection_bundle_v1() -> CheckpointSelectionBundleV1:
     checkpoint = checkpoint_manifest_v1()
+    copied_byte_count = sum(checkpoint.immutable_object_byte_counts.values())
     entry = CheckpointSelectionEntryV1(
         schema_version=1,
         expected_work_item_id=checkpoint.work_item.work_item_id,
@@ -378,7 +411,7 @@ def checkpoint_selection_bundle_v1() -> CheckpointSelectionBundleV1:
         adopted_artifact_authority=checkpoint.adopted_artifact_authority,
         dependency_artifact_key_ids=(),
         copied_object_ids=checkpoint.immutable_object_hashes,
-        copied_byte_count=4096,
+        copied_byte_count=copied_byte_count,
         rank=checkpoint.rank,
         origin_run_id=checkpoint.origin_run_id,
         selection_reason="checkpoint_rank_winner",
@@ -405,7 +438,7 @@ def checkpoint_selection_bundle_v1() -> CheckpointSelectionBundleV1:
         ),
         copied_work_item_ids=(checkpoint.work_item.work_item_id,),
         copied_object_ids=checkpoint.immutable_object_hashes,
-        copied_byte_count=4096,
+        copied_byte_count=copied_byte_count,
         alternatives=(),
         rejected=(),
         quarantined=(),

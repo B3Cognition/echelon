@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import fcntl
+import shutil
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 from . import RE_V2_ENGINE, RE_V2_SCHEMA_1_PROTOCOLS, ReV2ModelError
 from .canonical import canonical_json_bytes
@@ -62,6 +65,64 @@ class ReV2Paths:
         )
 
 
+@contextmanager
+def staged_v2_run_store(run_dir: Path) -> Iterator[ReV2Paths]:
+    """Yield a private canonical run store and publish its ``v2`` root atomically."""
+    _ensure_run_directory(run_dir)
+    canonical_run_dir = run_dir.resolve()
+    target = canonical_run_dir / "v2"
+    lock_path = canonical_run_dir / ".v2-create.lock"
+    try:
+        lock_descriptor = os.open(
+            lock_path,
+            os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError as exc:
+        raise ReV2RunStoreError(
+            f"cannot open v2 creation lock {lock_path}: {exc}"
+        ) from exc
+    stage_parent: Path | None = None
+    try:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        if target.exists() or target.is_symlink():
+            if (target / "run.json").exists() or (target / "run.json").is_symlink():
+                raise ReV2RunStoreError(
+                    f"immutable v2 run manifest already exists: {target / 'run.json'}"
+                )
+            raise ReV2RunStoreError(
+                "incomplete v2 run store already exists without an immutable manifest"
+            )
+        stage_parent = Path(
+            tempfile.mkdtemp(
+                prefix=f".{canonical_run_dir.name}.v2-stage.",
+                dir=canonical_run_dir.parent,
+            )
+        )
+        stage_run_dir = stage_parent / canonical_run_dir.name
+        stage_run_dir.mkdir(mode=0o700)
+        paths = ReV2Paths.for_run(stage_run_dir)
+        paths.root.mkdir(mode=0o700)
+        yield paths
+        if not paths.manifest.is_file() or paths.manifest.is_symlink():
+            raise ReV2RunStoreError("staged v2 run store has no immutable manifest")
+        if target.exists() or target.is_symlink():
+            raise ReV2RunStoreError(f"v2 run store already exists: {target}")
+        os.rename(paths.root, target)
+        _fsync_directory(canonical_run_dir)
+    except ReV2RunStoreError:
+        raise
+    except OSError as exc:
+        raise ReV2RunStoreError(f"cannot publish staged v2 run store: {exc}") from exc
+    finally:
+        if stage_parent is not None:
+            shutil.rmtree(stage_parent, ignore_errors=True)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_descriptor)
+
+
 def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
     """Pin *manifest* exactly once under ``run_dir/v2/run.json``."""
     if not isinstance(manifest, RunManifest):
@@ -79,13 +140,17 @@ def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
         if not paths.root.is_dir():
             raise ReV2RunStoreError(f"v2 run store is not a directory: {paths.root}")
         if paths.manifest.exists() or paths.manifest.is_symlink():
-            raise ReV2RunStoreError(f"immutable v2 run manifest already exists: {paths.manifest}")
+            raise ReV2RunStoreError(
+                f"immutable v2 run manifest already exists: {paths.manifest}"
+            )
         raise ReV2RunStoreError("incomplete v2 run store has no immutable manifest")
 
     try:
         paths.root.mkdir(mode=0o700)
     except OSError as exc:
-        raise ReV2RunStoreError(f"cannot create v2 run store {paths.root}: {exc}") from exc
+        raise ReV2RunStoreError(
+            f"cannot create v2 run store {paths.root}: {exc}"
+        ) from exc
     _fsync_directory(run_dir.resolve())
     try:
         paths.objects.mkdir(mode=0o700)
@@ -98,7 +163,9 @@ def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
     payload = canonical_json_bytes(manifest.to_json_dict())
     temp_path: Path | None = None
     try:
-        fd, temporary_name = tempfile.mkstemp(prefix=".run.json.", suffix=".tmp", dir=paths.root)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=".run.json.", suffix=".tmp", dir=paths.root
+        )
         temp_path = Path(temporary_name)
         try:
             _write_all(fd, payload)
@@ -114,9 +181,13 @@ def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
     except ReV2RunStoreError:
         raise
     except FileExistsError as exc:
-        raise ReV2RunStoreError(f"immutable v2 run manifest already exists: {paths.manifest}") from exc
+        raise ReV2RunStoreError(
+            f"immutable v2 run manifest already exists: {paths.manifest}"
+        ) from exc
     except OSError as exc:
-        raise ReV2RunStoreError(f"cannot persist immutable v2 run manifest: {exc}") from exc
+        raise ReV2RunStoreError(
+            f"cannot persist immutable v2 run manifest: {exc}"
+        ) from exc
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -138,7 +209,9 @@ def load_run_manifest(run_dir: Path) -> Manifest:
     except ReV2RunStoreError:
         raise
     except (OSError, ValueError, ReV2ModelError, Protocol22SchemaError) as exc:
-        raise ReV2RunStoreError(f"unsupported or invalid immutable v2 run manifest: {exc}") from exc
+        raise ReV2RunStoreError(
+            f"unsupported or invalid immutable v2 run manifest: {exc}"
+        ) from exc
     if manifest.run_id != run_dir.name:
         raise ReV2RunStoreError(
             f"manifest run_id {manifest.run_id!r} does not match run directory {run_dir.name!r}"
@@ -169,7 +242,9 @@ def _ensure_run_directory(run_dir: Path) -> None:
     try:
         run_dir.mkdir(parents=True, mode=0o700)
     except OSError as exc:
-        raise ReV2RunStoreError(f"cannot create RE run directory {run_dir}: {exc}") from exc
+        raise ReV2RunStoreError(
+            f"cannot create RE run directory {run_dir}: {exc}"
+        ) from exc
     _fsync_directory(run_dir.parent.resolve())
 
 
@@ -194,32 +269,36 @@ def _decode_manifest(raw: object) -> Manifest:
         return RunManifestV4.from_json_dict(raw)
     if pair[0] == 5 and pair[1] in RE_V2_SCHEMA_5_PROTOCOLS:
         return RunManifestV5.from_json_dict(raw)
-    raise ReV2RunStoreError(
-        f"unsupported pinned manifest schema/protocol {pair!r}"
-    )
+    raise ReV2RunStoreError(f"unsupported pinned manifest schema/protocol {pair!r}")
 
 
 def _validate_supported_manifest(manifest: Manifest) -> None:
     valid = (
-        isinstance(manifest, RunManifest)
-        and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version in RE_V2_SCHEMA_1_PROTOCOLS
-    ) or (
-        isinstance(manifest, RunManifestV2)
-        and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version in RE_V2_SCHEMA_2_PROTOCOLS
-    ) or (
-        isinstance(manifest, RunManifestV3)
-        and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version in RE_V2_SCHEMA_3_PROTOCOLS
-    ) or (
-        isinstance(manifest, RunManifestV4)
-        and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version in RE_V2_SCHEMA_4_PROTOCOLS
-    ) or (
-        isinstance(manifest, RunManifestV5)
-        and manifest.engine == RE_V2_ENGINE
-        and manifest.engine_protocol_version in RE_V2_SCHEMA_5_PROTOCOLS
+        (
+            isinstance(manifest, RunManifest)
+            and manifest.engine == RE_V2_ENGINE
+            and manifest.engine_protocol_version in RE_V2_SCHEMA_1_PROTOCOLS
+        )
+        or (
+            isinstance(manifest, RunManifestV2)
+            and manifest.engine == RE_V2_ENGINE
+            and manifest.engine_protocol_version in RE_V2_SCHEMA_2_PROTOCOLS
+        )
+        or (
+            isinstance(manifest, RunManifestV3)
+            and manifest.engine == RE_V2_ENGINE
+            and manifest.engine_protocol_version in RE_V2_SCHEMA_3_PROTOCOLS
+        )
+        or (
+            isinstance(manifest, RunManifestV4)
+            and manifest.engine == RE_V2_ENGINE
+            and manifest.engine_protocol_version in RE_V2_SCHEMA_4_PROTOCOLS
+        )
+        or (
+            isinstance(manifest, RunManifestV5)
+            and manifest.engine == RE_V2_ENGINE
+            and manifest.engine_protocol_version in RE_V2_SCHEMA_5_PROTOCOLS
+        )
     )
     if not valid:
         raise ReV2RunStoreError(

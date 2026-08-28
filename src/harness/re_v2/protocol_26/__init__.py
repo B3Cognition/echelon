@@ -26,5 +26,31 @@ __all__ = (
     "CheckpointSelectionEntryV1",
     "LayerExecutionContractV1",
     "Protocol26SchemaError",
+    "Protocol26InputSet",
+    "Protocol26InputStoreError",
     "RunManifestV5",
+    "ValidatedProtocol26Inputs",
+    "create_protocol_26_run_store",
+    "load_protocol_26_inputs",
 )
+
+
+_LAZY_INPUT_EXPORTS = frozenset(
+    {
+        "Protocol26InputSet",
+        "Protocol26InputStoreError",
+        "ValidatedProtocol26Inputs",
+        "create_protocol_26_run_store",
+        "load_protocol_26_inputs",
+    }
+)
+
+
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
+    if name not in _LAZY_INPUT_EXPORTS:
+        raise AttributeError(name)
+    from . import inputs as module
+
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

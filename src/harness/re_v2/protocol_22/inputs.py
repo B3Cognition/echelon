@@ -225,6 +225,8 @@ def _publish_immutable_run_inputs(
 def load_protocol_22_inputs(
     paths: ReV2Paths,
     manifest: RunManifestV2,
+    *,
+    _embedded_in_outer_manifest: bool = False,
 ) -> ValidatedProtocol22Inputs:
     """Authenticate all protocol-2.2 inputs before replay or execution."""
     if not isinstance(paths, ReV2Paths):
@@ -236,16 +238,17 @@ def load_protocol_22_inputs(
         raise Protocol22InputStoreError(
             "input paths do not match the protocol-2.2 manifest run"
         )
-    try:
-        authoritative = load_run_manifest(paths.root.parent)
-    except ReV2RunStoreError as exc:
-        raise Protocol22InputStoreError(
-            f"cannot load authoritative manifest: {exc}"
-        ) from exc
-    if authoritative != manifest:
-        raise Protocol22InputStoreError(
-            "manifest argument does not equal the authoritative manifest"
-        )
+    if not _embedded_in_outer_manifest:
+        try:
+            authoritative = load_run_manifest(paths.root.parent)
+        except ReV2RunStoreError as exc:
+            raise Protocol22InputStoreError(
+                f"cannot load authoritative manifest: {exc}"
+            ) from exc
+        if authoritative != manifest:
+            raise Protocol22InputStoreError(
+                "manifest argument does not equal the authoritative manifest"
+            )
     if paths.inputs.is_symlink() or not paths.inputs.is_dir():
         raise Protocol22InputStoreError(
             f"protocol-2.2 input directory is unsafe or missing: {paths.inputs}"

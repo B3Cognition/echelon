@@ -129,6 +129,11 @@ def test_downstream_checkpoint_is_dropped_when_dependency_is_missing() -> None:
         artifact_seed="downstream",
         origin_run_id="re-downstream",
         accepted_dependencies=((upstream.artifact_key_id, upstream.artifact_hash),),
+        dependency_byte_counts={
+            upstream.artifact_hash: upstream.immutable_object_byte_counts[
+                upstream.artifact_hash
+            ]
+        },
     )
 
     bundle = select_checkpoints(
@@ -164,6 +169,11 @@ def test_dependency_closure_is_topological_and_input_order_independent() -> None
         artifact_seed="closure-downstream",
         origin_run_id="re-downstream",
         accepted_dependencies=((upstream.artifact_key_id, upstream.artifact_hash),),
+        dependency_byte_counts={
+            upstream.artifact_hash: upstream.immutable_object_byte_counts[
+                upstream.artifact_hash
+            ]
+        },
     )
     graph = selection_graph(upstream_item, downstream_item)
 
@@ -219,6 +229,11 @@ def test_next_ranked_candidate_is_used_when_winner_lacks_dependency() -> None:
         accepted_dependencies=(
             (upstream.artifact_key_id, upstream.artifact_hash),
         ),
+        dependency_byte_counts={
+            upstream.artifact_hash: upstream.immutable_object_byte_counts[
+                upstream.artifact_hash
+            ]
+        },
     )
     registry = RankPolicyRegistryV1(
         {
