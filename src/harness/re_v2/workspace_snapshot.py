@@ -136,7 +136,10 @@ def capture_workspace_snapshot(
                         raise ReV2WorkspaceSourceError(
                             f"source {proof.source_id!r} is missing from its pinned Git tree"
                         )
-                    entries = _inventory(source_tree, (".git",))
+                    entries = _inventory(
+                        source_tree,
+                        (".git", ".echelon/re-v2/checkpoints"),
+                    )
                     target = (
                         prepared
                         if proof.workspace_path == "."

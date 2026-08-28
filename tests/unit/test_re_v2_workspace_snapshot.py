@@ -260,6 +260,28 @@ def test_composite_capture_sorts_flat_paths_across_directory_siblings(
 
 
 @pytest.mark.unit
+def test_workspace_snapshot_excludes_checkpoint_cache(tmp_path: Path) -> None:
+    workspace = _clean_repo(
+        tmp_path / "workspace",
+        {
+            "app.py": "pass\n",
+            ".echelon/re-v2/checkpoints/index-v1.json": '{"cache":true}\n',
+            ".echelon/re-v2/checkpoints/manifests/fake.json": "{}\n",
+        },
+    )
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        (_source("workspace", ".", git_role="primary"),),
+        tmp_path / "snapshots",
+    )
+
+    paths = {entry.path for entry in load_snapshot_manifest(snapshot).entries}
+    assert "app.py" in paths
+    assert not any(path.startswith(".echelon/re-v2/checkpoints/") for path in paths)
+
+
+@pytest.mark.unit
 def test_composite_capture_materializes_shared_repository_subtrees_once(
     tmp_path: Path,
 ) -> None:

@@ -7,6 +7,7 @@
 .prosaic-backups/
 .echelon/cache/
 .echelon/recovery-backups/
+.echelon/re-v2/checkpoints/
 .venv/
 __pycache__/
 *.py[cod]

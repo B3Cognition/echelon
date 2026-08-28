@@ -109,6 +109,13 @@ class CheckpointWorkspace:
             accepted_key_id=None,
         )
 
+    def write_cache_index(self, payload: bytes) -> Path:
+        cache = self.root / ".echelon" / "re-v2" / "checkpoints"
+        cache.mkdir(parents=True, exist_ok=True)
+        index = cache / "index-v1.json"
+        index.write_bytes(payload)
+        return index
+
 
 def layer_manifest(target_layer: str, *, run_id: str = "re-checkpoint-child"):
     if target_layer == "L1":
