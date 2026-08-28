@@ -47,6 +47,11 @@ from harness.re_v2.protocol_22.ledger import (
     Protocol22LedgerView,
 )
 from harness.re_v2.protocol_22.model import RunManifestV2, WorkTemplateV2
+from harness.re_v2.protocol_26.adoption import (
+    FrozenAcceptancePackageV1,
+    Protocol26AdoptionError,
+    import_typed_acceptance,
+)
 
 from .model import (
     AdoptedArtifactAuthorityV1,
@@ -106,6 +111,15 @@ class AdoptionReportV1:
     artifact_key_ids: tuple[str, ...]
     receipt_ids: tuple[str, ...]
 
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "artifact_count": self.artifact_count,
+            "certification_count": self.certification_count,
+            "candidate_assessment_count": self.candidate_assessment_count,
+            "artifact_key_ids": list(self.artifact_key_ids),
+            "receipt_ids": list(self.receipt_ids),
+        }
+
 
 class _UnlimitedBudget:
     def item_attempt_available(self, _work_item: object) -> bool:
@@ -145,7 +159,9 @@ def validate_parent_for_deepening(
         events = EventStore(paths, protocol=PROTOCOL_22_EVENTS).replay()
         event_after = _stable_optional_read(paths.events, "parent event chain")
         if event_before != event_after:
-            raise Protocol24AdoptionError("parent event chain changed during validation")
+            raise Protocol24AdoptionError(
+                "parent event chain changed during validation"
+            )
         _validate_terminal_events(events, manifest)
 
         objects = ObjectStore(paths.objects)
@@ -156,7 +172,9 @@ def validate_parent_for_deepening(
         ).replay_with_history()
         ledger_after = _stable_read(paths.ledger, "parent ledger chain")
         if ledger_before != ledger_after:
-            raise Protocol24AdoptionError("parent ledger chain changed during validation")
+            raise Protocol24AdoptionError(
+                "parent ledger chain changed during validation"
+            )
         accepted_parent = _validate_complete_authority(graph, ledger, events)
         _validate_workspace_sources(workspace_root, manifest)
         return ValidatedParentV1(
@@ -183,7 +201,9 @@ def validate_parent_for_deepening(
         ReV2LedgerError,
         ReV2SnapshotError,
     ) as exc:
-        raise Protocol24AdoptionError(f"cannot validate parent authority: {exc}") from exc
+        raise Protocol24AdoptionError(
+            f"cannot validate parent authority: {exc}"
+        ) from exc
 
 
 def _validate_schema3_parent(
@@ -222,7 +242,9 @@ def _validate_schema3_parent(
     current = _validate_complete_authority(graph, ledger, events)
     accepted_parent = dict(adopted)
     accepted_parent.update(current)
-    accepted_keys = {item.artifact_key_id for _template, item in accepted_parent.values()}
+    accepted_keys = {
+        item.artifact_key_id for _template, item in accepted_parent.values()
+    }
     if accepted_keys != set(ledger.accepted_artifacts):
         raise Protocol24AdoptionError(
             "schema-3 parent accepted closure does not cover its complete ledger"
@@ -272,9 +294,7 @@ def build_parent_authority_bundle(
             raise Protocol24AdoptionError(
                 "accepted parent artifact has ambiguous candidate authority"
             )
-        record = parent.ledger.artifact_acceptance_records.get(
-            acceptance.identity
-        )
+        record = parent.ledger.artifact_acceptance_records.get(acceptance.identity)
         if record is None:
             raise Protocol24AdoptionError(
                 "accepted parent artifact has no ledger record"
@@ -348,17 +368,7 @@ def import_parent_acceptance_closure(
             certification = parent.ledger.certifications[
                 acceptance.certification_receipt_id
             ]
-            work_item = parent.ledger.certification_work_items[
-                certification.identity
-            ]
-            _copy_blob(
-                source_objects,
-                child_objects,
-                acceptance.artifact_hash,
-            )
-            child_ledger.record_certification(certification, work_item)
-            receipt_ids.add(certification.identity)
-
+            work_item = parent.ledger.certification_work_items[certification.identity]
             matches = tuple(
                 candidate
                 for candidate in parent.ledger.candidate_assessments.values()
@@ -369,26 +379,31 @@ def import_parent_acceptance_closure(
                 raise Protocol24AdoptionError(
                     f"ambiguous candidate authority for {artifact_key_id}"
                 )
-            if matches:
-                candidate = matches[0]
-                _copy_blob(
-                    source_objects,
-                    child_objects,
-                    candidate.execution_capture_hash,
-                )
+            candidate = None if not matches else matches[0]
+            object_ids = {acceptance.artifact_hash}
+            if candidate is not None:
+                object_ids.add(candidate.execution_capture_hash)
                 if candidate.normalized_authorial_payload_hash is not None:
-                    _copy_blob(
-                        source_objects,
-                        child_objects,
-                        candidate.normalized_authorial_payload_hash,
-                    )
-                child_ledger.record_candidate_assessment(candidate)
-                receipt_ids.add(candidate.identity)
-                candidates += 1
-            child_ledger.record_artifact_acceptance(acceptance)
-            receipt_ids.add(acceptance.identity)
+                    object_ids.add(candidate.normalized_authorial_payload_hash)
+            package = FrozenAcceptancePackageV1(
+                work_item=work_item,
+                certification=certification,
+                candidate_assessment=candidate,
+                acceptance=acceptance,
+                required_objects={
+                    object_hash: source_objects.read_blob(object_hash)
+                    for object_hash in sorted(object_ids)
+                },
+            )
+            imported = import_typed_acceptance(
+                package,
+                child_objects,
+                child_ledger,
+            )
+            receipt_ids.update(imported.receipt_ids)
+            candidates += candidate is not None
         replayed = child_ledger.replay()
-    except (KeyError, ReV2LedgerError) as exc:
+    except (KeyError, ReV2LedgerError, Protocol26AdoptionError) as exc:
         raise Protocol24AdoptionError(f"cannot import parent authority: {exc}") from exc
     if any(
         replayed.accepted_artifacts.get(key) != receipt
@@ -422,7 +437,9 @@ def _validated_run_path(parent_run: Path, workspace: Path) -> tuple[Path, Path]:
         raise Protocol24AdoptionError("workspace runs directory is missing or unsafe")
     candidate = Path(parent_run)
     if candidate.is_symlink() or not candidate.is_dir():
-        raise Protocol24AdoptionError("parent run must be a real directory, not a symlink")
+        raise Protocol24AdoptionError(
+            "parent run must be a real directory, not a symlink"
+        )
     resolved = candidate.resolve()
     if resolved.parent != runs.resolve() or candidate.absolute() != resolved:
         raise Protocol24AdoptionError(
@@ -444,7 +461,11 @@ def _validate_terminal_events(
     terminal = tuple(
         event for event in events if event.type in {"run_completed", "run_failed"}
     )
-    if len(terminal) != 1 or terminal[0] is not events[-1] or terminal[0].type != "run_completed":
+    if (
+        len(terminal) != 1
+        or terminal[0] is not events[-1]
+        or terminal[0].type != "run_completed"
+    ):
         raise Protocol24AdoptionError(
             "parent must have exactly one authenticated completed terminal state"
         )
@@ -461,8 +482,7 @@ def _validate_complete_authority(
         )
     decision = plan_next_v22(graph, ledger, _UnlimitedBudget())
     if decision.ready or any(
-        explanation.action != "reuse"
-        for explanation in decision.explanations.values()
+        explanation.action != "reuse" for explanation in decision.explanations.values()
     ):
         raise Protocol24AdoptionError(
             "parent completion is partial or does not cover its exact graph"
@@ -656,12 +676,6 @@ def _validate_schema3_lineage(
         )
     visit_payload(root.identity, root_payload, require_bundle=True)
     return MappingProxyType(dict(sorted(retained.items())))
-
-
-def _copy_blob(source: ObjectStore, destination: ObjectStore, object_hash: str) -> None:
-    payload = source.read_blob(object_hash)
-    if destination.put_blob(payload) != object_hash:
-        raise Protocol24AdoptionError(f"copied object changed identity: {object_hash}")
 
 
 def _stable_read(path: Path, label: str) -> bytes:

@@ -9,7 +9,7 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 
 from harness.re_v2.ledger import ObjectStore
-from harness.re_v2.canonical import canonical_json_bytes
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.controller import Protocol22Controller
 from harness.re_v2.protocol_22.ledger import Protocol22Ledger
 from harness.re_v2.protocol_24.adoption import (
@@ -115,6 +115,7 @@ def test_failed_parent_is_rejected(
     with pytest.raises(Protocol24AdoptionError, match="completed"):
         validate_parent_for_deepening(context.paths.root.parent, tmp_path)
 
+
 def test_adoption_replays_exact_receipts_and_survives_parent_deletion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -140,6 +141,28 @@ def test_adoption_replays_exact_receipts_and_survives_parent_deletion(
     assert replayed.certification_work_items == result.ledger.certification_work_items
 
 
+def test_parent_import_ledger_and_report_bytes_are_frozen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_run, _result = _complete_parent(tmp_path, monkeypatch)
+    parent = validate_parent_for_deepening(parent_run, tmp_path)
+    child_root = tmp_path / "byte-compatible-child" / "v2"
+    child_root.mkdir(parents=True)
+    objects = ObjectStore(child_root / "objects")
+    ledger = Protocol22Ledger(child_root / "ledger.jsonl", objects)
+
+    report = import_parent_acceptance_closure(parent, objects, ledger)
+    report_bytes = canonical_json_bytes(report.to_json_dict())
+
+    assert content_digest(ledger.path.read_bytes()) == (
+        "sha256:a9bbb1ff43e5c781fe667c071625d9d76e077b8efcf90511319afadd8d0c3d2d"
+    )
+    assert content_digest(report_bytes) == (
+        "sha256:98a36b4af8f038649039fc551bcb52c65f9263f05e49982d15ae8c45601ed74f"
+    )
+
+
 def test_provider_candidate_assessment_closure_is_imported_exactly(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -162,9 +185,7 @@ def test_provider_candidate_assessment_closure_is_imported_exactly(
     report = import_parent_acceptance_closure(parent, objects, ledger)
     replayed = ledger.replay()
 
-    assert report.candidate_assessment_count == len(
-        result.ledger.candidate_assessments
-    )
+    assert report.candidate_assessment_count == len(result.ledger.candidate_assessments)
     assert replayed.candidate_assessments == result.ledger.candidate_assessments
 
 
@@ -259,7 +280,9 @@ def test_workspace_validation_requires_clean_exact_parent_commits(
     with pytest.raises(Protocol24AdoptionError, match="Commit|stash|revert"):
         adoption_module._validate_workspace_sources(workspace, manifest)
 
-    subprocess.run(["git", "-C", str(workspace), "checkout", "--", "source.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "checkout", "--", "source.py"], check=True
+    )
     source.write_text("VALUE = 3\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(workspace), "add", "source.py"], check=True)
     subprocess.run(
@@ -302,8 +325,12 @@ def test_schema3_lineage_cycle_is_rejected(
         )
 
     payloads = {
-        first_hash: canonical_json_bytes(bundle("re-first", second_hash).to_json_dict()),
-        second_hash: canonical_json_bytes(bundle("re-second", first_hash).to_json_dict()),
+        first_hash: canonical_json_bytes(
+            bundle("re-first", second_hash).to_json_dict()
+        ),
+        second_hash: canonical_json_bytes(
+            bundle("re-second", first_hash).to_json_dict()
+        ),
     }
 
     class _Objects:
