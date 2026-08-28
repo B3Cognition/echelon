@@ -484,10 +484,11 @@ Use a clean Git workspace and the normal Codex provider through Prosaic:
 
 ## Implementation evidence
 
-Protocol 2.6 is implemented for new L1, L2, and L3 runs. The final offline
+Protocol 2.6 is implemented for new L1, L2, and L3 runs. The offline
 compatibility sweep passed 861 tests with 3 expected skips before the live
-pilot; the protocol-2.6 focused gate and final repository gate are recorded in
-the EGR register.
+pilot; the final focused gate passed 106 tests with 1 expected live skip. The
+complete locked-environment repository gate passed 10,776 tests with 13 skips
+and 1 intentional deselection.
 
 The clean installed Codex pilot used source snapshot
 `sha256:7a4cd7a63f3fa58f3add53262ff84f99dc5035d8e6e33d12f8428815798c1cf1`.
