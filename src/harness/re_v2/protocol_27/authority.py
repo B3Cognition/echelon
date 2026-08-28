@@ -248,44 +248,16 @@ def _resolve_embedded_protocol_27(
         raise Protocol27AuthorityError(
             "protocol-2.7 synthesis parent is not terminal complete"
         )
-    objects = ObjectStore(paths.objects)
-    authority_objects: dict[str, bytes] = {}
-    required = {
-        value
-        for source in manifest.accepted_sources
-        for value in (
-            source.source_root_hash,
-            source.debt_manifest_hash,
-            *source.lower_authority_ids,
-        )
-        if value is not None
-    }
-    required.add(manifest.source_overview_catalog_id)
-    for object_hash in sorted(required):
-        try:
-            authority_objects[object_hash] = objects.read_blob(object_hash)
-        except Exception as exc:
-            raise Protocol27AuthorityError(
-                f"embedded synthesis authority object is unavailable: {object_hash}"
-            ) from exc
-    catalog = load_canonical_object(
-        authority_objects[manifest.source_overview_catalog_id],
-        AcceptedSourceOverviewCatalogV1.from_json_dict,
-    )
-    payloads: dict[str, bytes] = {}
-    for projection in catalog.projections:
-        try:
-            payload = objects.read_blob(projection.object_hash)
-        except Exception as exc:
-            raise Protocol27AuthorityError(
-                f"embedded source overview is unavailable: {projection.source_id}"
-            ) from exc
-        if content_digest(payload) != projection.content_hash:
-            raise Protocol27AuthorityError(
-                f"embedded source overview hash mismatch: {projection.source_id}"
-            )
-        authority_objects[projection.object_hash] = payload
-        payloads[projection.object_hash] = payload
+    from .inputs import load_protocol_27_inputs
+
+    try:
+        loaded = load_protocol_27_inputs(run_dir)
+    except Exception as exc:
+        raise Protocol27AuthorityError(
+            f"embedded protocol-2.7 input authority is invalid: {exc}"
+        ) from exc
+    catalog = loaded.source_overview_catalog
+    payloads = dict(loaded.source_overview_bytes)
     summaries = {
         receipt.source_id: receipt.debt_summary_hash
         for receipt in manifest.partial_acceptances
@@ -299,7 +271,7 @@ def _resolve_embedded_protocol_27(
             item.source_id: item.selected_layer for item in catalog.projections
         },
         accepted_sources=manifest.accepted_sources,
-        authority_objects=authority_objects,
+        authority_objects=loaded.parent_authority.authority_objects,
         debt_summary_hashes=summaries,
         _overview_catalog=catalog,
         _overview_payloads=payloads,
@@ -468,6 +440,25 @@ def _resolve_layer_parent(
                 lower_authority_ids=receipt.artifact_key.dependency_hashes,
             )
         )
+    required_authority_hashes = {
+        value
+        for source in outcomes
+        for value in (
+            source.source_root_hash,
+            source.debt_manifest_hash,
+            *source.lower_authority_ids,
+        )
+        if value is not None
+    }
+    for object_hash in sorted(required_authority_hashes):
+        if object_hash in authority_objects:
+            continue
+        try:
+            authority_objects[object_hash] = context.object_store.read_blob(object_hash)
+        except Exception as exc:
+            raise Protocol27AuthorityError(
+                f"source authority object is unavailable: {object_hash}"
+            ) from exc
     return ResolvedSynthesisParentV1(
         parent_run_id=manifest.run_id,
         parent_manifest_hash=manifest.run_manifest_id,

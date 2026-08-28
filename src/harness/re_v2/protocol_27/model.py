@@ -1062,6 +1062,7 @@ class RunManifestV6:
     accepted_sources: tuple[AcceptedSourceOutcomeV1, ...]
     source_overview_catalog_id: str
     partial_acceptances: tuple[PartialSourceAcceptanceV1, ...]
+    input_authority_catalog_id: str
     synthesis_graph_id: str
     synthesis_policy_hash: str
     prosaic_authority_hash: str
@@ -1086,6 +1087,7 @@ class RunManifestV6:
         "accepted_sources",
         "source_overview_catalog_id",
         "partial_acceptances",
+        "input_authority_catalog_id",
         "synthesis_graph_id",
         "synthesis_policy_hash",
         "prosaic_authority_hash",
@@ -1111,6 +1113,7 @@ class RunManifestV6:
             "source_snapshot_id",
             "partition_manifest_id",
             "source_overview_catalog_id",
+            "input_authority_catalog_id",
             "synthesis_graph_id",
             "synthesis_policy_hash",
             "prosaic_authority_hash",
@@ -1194,6 +1197,7 @@ class RunManifestV6:
             "accepted_sources": [item.to_json_dict() for item in self.accepted_sources],
             "source_overview_catalog_id": self.source_overview_catalog_id,
             "partial_acceptances": [item.to_json_dict() for item in self.partial_acceptances],
+            "input_authority_catalog_id": self.input_authority_catalog_id,
             "synthesis_graph_id": self.synthesis_graph_id,
             "synthesis_policy_hash": self.synthesis_policy_hash,
             "prosaic_authority_hash": self.prosaic_authority_hash,
@@ -1234,6 +1238,7 @@ class RunManifestV6:
             partial_acceptances=tuple(
                 PartialSourceAcceptanceV1.from_json_dict(item) for item in acceptances
             ),
+            input_authority_catalog_id=raw["input_authority_catalog_id"],
             synthesis_graph_id=raw["synthesis_graph_id"],
             synthesis_policy_hash=raw["synthesis_policy_hash"],
             prosaic_authority_hash=raw["prosaic_authority_hash"],

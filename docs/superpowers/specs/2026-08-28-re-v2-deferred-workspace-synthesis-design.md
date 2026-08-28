@@ -157,6 +157,8 @@ The immutable schema-6 manifest records:
 - direct parent run ID and authenticated parent manifest hash;
 - protocol-2.6 execution and implementation snapshot authority;
 - exact selected workspace/source/partition identities;
+- one input-authority catalog identity covering every immutable object staged
+  before activation, grouped by closed semantic role;
 - exact accepted source-root records in canonical source-ID order;
 - an accepted source-overview projection catalog binding each selected source's
   highest accepted layer, source-root authority, canonical materializer

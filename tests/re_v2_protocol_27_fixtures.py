@@ -136,6 +136,7 @@ def manifest_v6(*, run_id: str = "re-synthesis-child") -> RunManifestV6:
         accepted_sources=sources,
         source_overview_catalog_id=catalog.identity,
         partial_acceptances=(acceptance,),
+        input_authority_catalog_id=digest("input-authority-catalog"),
         synthesis_graph_id=digest("synthesis-graph"),
         synthesis_policy_hash=digest("synthesis-policy"),
         prosaic_authority_hash=digest("prosaic-authority"),

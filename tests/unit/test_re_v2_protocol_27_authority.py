@@ -9,45 +9,24 @@ from typer.testing import CliRunner
 
 from harness.re_v2.canonical import canonical_json_bytes
 from harness.re_v2.events import EventStore
-from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_27.model import (
-    AcceptedSourceOverviewCatalogV1,
     PartialSourceAcceptanceV1,
     RunManifestV6,
 )
 from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_27_fixtures import (
-    accepted_source_overview_projection_v1,
     digest,
-    manifest_v6,
     synthesis_budget_policy_v1,
 )
 
 
 def _completed_protocol_27_parent(tmp_path: Path) -> tuple[Path, RunManifestV6]:
+    from harness.re_v2.protocol_27.inputs import create_protocol_27_run_store
+    from tests.unit.test_re_v2_protocol_27_inputs import _input_set
+
     run_dir = tmp_path / "runs" / "re-parent"
     paths = ReV2Paths.for_run(run_dir)
-    paths.root.mkdir(parents=True)
-    manifest = manifest_v6(run_id=run_dir.name)
-    paths.manifest.write_bytes(canonical_json_bytes(manifest.to_json_dict()))
-    objects = ObjectStore(paths.objects)
-    for source in manifest.accepted_sources:
-        assert objects.put_blob(f"{source.source_id}:root".encode()) == source.source_root_hash
-        assert objects.put_blob(f"{source.source_id}:lower".encode()) in source.lower_authority_ids
-        if source.debt_manifest_hash is not None:
-            assert objects.put_blob(f"{source.source_id}:debt".encode()) == source.debt_manifest_hash
-    catalog = AcceptedSourceOverviewCatalogV1(
-        schema_version=1,
-        projections=tuple(
-            accepted_source_overview_projection_v1(source.source_id)
-            for source in manifest.accepted_sources
-        ),
-    )
-    assert objects.put_blob(canonical_json_bytes(catalog.to_json_dict())) == catalog.identity
-    assert catalog.identity == manifest.source_overview_catalog_id
-    for source in manifest.accepted_sources:
-        projection = next(item for item in catalog.projections if item.source_id == source.source_id)
-        assert objects.put_blob(f"{source.source_id}:overview-markdown".encode()) == projection.object_hash
+    manifest = create_protocol_27_run_store(run_dir, _input_set(run_dir.name))
     events = EventStore(paths)
     events.append(
         "run_created",

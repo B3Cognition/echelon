@@ -133,6 +133,9 @@ Before editing any shared file, run the installed-authority inventory in Task 1.
 - Produces `SynthesisBudgetPolicyV1(token_limit, active_ms_limit, provider_attempt_limit=2, generation_attempt_limit=2, result_contract_retry_limit=1, artifact_contract_retry_limit=1)` and rejects every other fixed attempt tuple.
 - Produces `SynthesisRootV1` and `PublicationDescriptorV1` with authenticated `input_quality`; the descriptor binds the exact compatibility generation and staged index hash without the compatibility index referring back to the descriptor.
 - Produces `RunManifestV6` pinned to schema 6, protocol 2.7, goal `workspace-synthesis`, exact parent/source/acceptance/catalog/policy/Prosaic/budget/checkpoint authority, expected v2 index hash, and expected compatibility generation.
+- `RunManifestV6.input_authority_catalog_id` binds the exact closed-role object
+  closure that was staged before manifest publication; later execution objects
+  may coexist but cannot be mistaken for immutable creation inputs.
 - Extends `run_store.Manifest`, `_decode_manifest()`, and `_validate_supported_manifest()` only for `(6, "2.7")`.
 
 - [ ] **Step 1: Record frozen compatibility before editing**
@@ -527,8 +530,9 @@ git commit -m "feat(re-v2): define granular synthesis graph"
 - Test: `tests/unit/test_re_v2_protocol_27_authority.py`
 
 **Interfaces:**
-- Produces `Protocol27InputSet(parent, source_overview_catalog, source_overview_bytes, topology, graph, policies, schemas, contexts, prosaic_authority, budget, checkpoint_selection, expected_v2_index_hash, expected_compatibility_generation)`.
-- Produces `ValidatedProtocol27Inputs(paths, manifest, parent_authority, source_overview_catalog, topology, graph, policies, schemas, prosaic_authority, object_hashes)`.
+- Produces `Protocol27InputSet(run_id, created_at, parent, request, partial_acceptances, source_overview_catalog, source_overview_bytes, graph, prosaic_authority_bytes, budget_policy, checkpoint_selection_bytes, authority_objects)`. The exact publication bases live in the request, while topology, policies, response-schema hashes, and context-policy hash live in the graph.
+- Produces `Protocol27InputAuthorityCatalogV1(object_hashes_by_role, object_hashes)` and binds its identity from `RunManifestV6.input_authority_catalog_id`, separating immutable creation inputs from later execution objects in the same store.
+- Produces `ValidatedProtocol27Inputs(paths, manifest, request, parent_authority, input_authority_catalog, source_overview_catalog, source_overview_bytes, graph, prosaic_authority_bytes, checkpoint_selection_bytes, object_hashes)`.
 - `create_protocol_27_run_store(run_dir, inputs, fault_hook=None) -> RunManifestV6` stages every referenced object before publishing `v2/run.json` with no-clobber semantics.
 - `load_protocol_27_inputs(run_dir) -> ValidatedProtocol27Inputs` reconstructs only from manifest references and content-addressed bytes.
 - `prepare_protocol_27_child(workspace_root: Path, run_id: str, inputs: Protocol27InputSet) -> PreparedProtocol27Creation` creates a hidden staged directory and does not mutate the active-run pointer.
