@@ -231,6 +231,32 @@ def test_event_payloads_are_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_work_may_be_planned_in_disjoint_dependency_ready_batches(
+    tmp_path: Path,
+) -> None:
+    inputs, store = _event_store(tmp_path)
+    first, second = inputs.graph.ready_work_items({})[:2]
+
+    store.append(
+        "work_planned",
+        {"work_item_ids": [first.work_item_id]},
+        occurred_at=NOW,
+    )
+    store.append(
+        "work_planned",
+        {"work_item_ids": [second.work_item_id]},
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2EventError, match="disjoint"):
+        store.append(
+            "work_planned",
+            {"work_item_ids": [first.work_item_id]},
+            occurred_at=NOW,
+        )
+
+
+@pytest.mark.unit
 def test_complete_synthesis_event_order_replays_to_publication(tmp_path: Path) -> None:
     from harness.re_v2.protocol_27.events import Protocol27ReplayState
 

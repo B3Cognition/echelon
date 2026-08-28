@@ -22,7 +22,10 @@ from tests.unit.test_re_v2_protocol_27_graph import _inputs as graph_inputs
 
 
 def _input_set(run_id: str = "re-synthesis-child"):
+    from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+    from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.protocol_27.context import default_synthesis_context_policy
+    from harness.re_v2.protocol_27.execution import compose_synthesis_executor
     from harness.re_v2.protocol_27.inputs import Protocol27InputSet
     from harness.re_v2.protocol_27.schemas import (
         canonical_synthesis_response_schema_bytes,
@@ -34,8 +37,43 @@ def _input_set(run_id: str = "re-synthesis-child"):
         for kind in graph_input.response_schema_hashes
     }
     context_policy = default_synthesis_context_policy()
+    prosaic = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            frontmatter={
+                "description": "Bounded RE workspace synthesis",
+                "effort": "high",
+                "model_tier": "strong",
+                "name": "echelon.re-synthesizer",
+                "tools": "write",
+            },
+            body="Generate exactly the authorized synthesis.json artifact.\n",
+        )
+    )
+    from tests.unit.test_re_v2_protocol_22_cli_provider import _cli_executor
+
+    executor = compose_synthesis_executor(
+        _cli_executor(),
+        agent_contract_hash=content_digest(prosaic),
+        response_schema_hashes={
+            kind: content_digest(payload)
+            for kind, payload in response_schema_bytes.items()
+        },
+        renderer_implementation_digest=content_digest(b"synthesis:renderer"),
+        verifier_implementation_digest=(
+            graph_input.policy_catalog.implementation_authority.verifier_authority_hash
+        ),
+    )
+    implementation = replace(
+        graph_input.policy_catalog.implementation_authority,
+        producer_authority_hash=content_digest(prosaic),
+        executor_contract_hash=executor.executor_contract_hash,
+    )
     graph_input = replace(
         graph_input,
+        policy_catalog=replace(
+            graph_input.policy_catalog,
+            implementation_authority=implementation,
+        ),
         response_schema_hashes={
             kind: content_digest(payload)
             for kind, payload in response_schema_bytes.items()
@@ -83,15 +121,6 @@ def _input_set(run_id: str = "re-synthesis-child"):
         expected_compatibility_generation=4,
     )
     partials = partial_acceptances_for(parent, request)
-    prosaic = canonical_json_bytes(
-        {
-            "agent_contract_hash": digest("re-synthesizer-role"),
-            "effort": "high",
-            "model_tier": "best",
-            "schema_version": 1,
-            "tools": [],
-        }
-    )
     from harness.re_v2.protocol_27.model import SynthesisCheckpointSelectionV1
 
     checkpoint = canonical_json_bytes(
@@ -106,8 +135,10 @@ def _input_set(run_id: str = "re-synthesis-child"):
     implementation = graph.policy_catalog.implementation_authority
     graph_objects.update(
         {
-            implementation.producer_authority_hash: b"policy:producer",
-            implementation.executor_contract_hash: b"policy:executor",
+            implementation.producer_authority_hash: prosaic,
+            implementation.executor_contract_hash: canonical_json_bytes(
+                executor.to_json_dict()
+            ),
             implementation.verifier_authority_hash: b"policy:verifier",
         }
     )

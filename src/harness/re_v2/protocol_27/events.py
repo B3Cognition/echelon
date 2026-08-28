@@ -236,9 +236,12 @@ class Protocol27ReplayState(EventReplayState):
         elif event_type == "partial_source_accepted":
             self._accept_partial(payload)
         elif event_type == "work_planned":
-            if self.request_id is None or self.planned_work_item_ids:
-                raise ReV2EventError("work planning requires one frozen synthesis request")
-            self.planned_work_item_ids = set(payload["work_item_ids"])
+            planned = set(payload["work_item_ids"])
+            if self.request_id is None or not planned:
+                raise ReV2EventError("work planning requires a frozen synthesis request")
+            if planned & self.planned_work_item_ids:
+                raise ReV2EventError("synthesis work planning batches must be disjoint")
+            self.planned_work_item_ids.update(planned)
         elif event_type == "dispatch_started":
             self._start_dispatch(payload)
         elif event_type == "dispatch_observed":
