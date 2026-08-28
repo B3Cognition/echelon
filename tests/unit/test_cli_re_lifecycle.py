@@ -1057,7 +1057,9 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
 ) -> None:
     from echelon.cli import _cmd_re_run, _load_re_v2_snapshot
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     _init_clean_v2_source(tmp_path)
@@ -1077,11 +1079,12 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     run_dir = tmp_path / "runs" / run_id
     manifest = load_run_manifest(run_dir)
     events = EventStore(
-        ReV2Paths.for_run(run_dir), protocol=PROTOCOL_22_EVENTS
+        ReV2Paths.for_run(run_dir), protocol=protocol_26_events_for("L1")
     ).replay()
     assert manifest.engine == "re-v2"
-    assert manifest.schema_version == 2
-    assert manifest.engine_protocol_version == "2.3"
+    assert isinstance(manifest, RunManifestV5)
+    assert manifest.schema_version == 5
+    assert manifest.engine_protocol_version == "2.6"
     assert manifest.source_snapshot_kind == "workspace-git-composite"
     from harness.re_v2.snapshot import load_snapshot_manifest
 
@@ -1090,16 +1093,18 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     assert [(component.source_id, component.workspace_path) for component in components] == [
         ("fixture", ".")
     ]
-    assert manifest.requested_goals == ("inventory",)
-    assert manifest.workspace_partition_catalog.relative_path == "workspace-partition.json"
-    assert manifest.artifact_policy_catalog.relative_path == "artifact-policy.json"
-    assert manifest.executor_contract_catalog.relative_path == "executor-contract.json"
-    assert events == ()
+    inputs = load_protocol_26_inputs(ReV2Paths.for_run(run_dir), manifest)
+    inner = inputs.layer_execution_contract.layer_manifest
+    assert inner.requested_goals == ("inventory",)
+    assert inner.workspace_partition_catalog.relative_path == "workspace-partition.json"
+    assert inner.artifact_policy_catalog.relative_path == "artifact-policy.json"
+    assert inner.executor_contract_catalog.relative_path == "executor-contract.json"
+    assert [event.type for event in events] == ["run_created"]
     assert not any(event.type.startswith("dispatch_") for event in events)
     output = capsys.readouterr().out
     assert "SHADOW PLAN" in output
     assert "provider initial dispatches: 0" in output
-    assert "L0 INVENTORY IN PROGRESS" in output
+    assert "checkpoint artifacts adopted: 0" in output
 
 
 @pytest.mark.unit
@@ -1170,10 +1175,10 @@ def test_re_v2_live_creation_certifies_registered_l0_without_synthesis(
     from echelon.cli import _cmd_re_run
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
-    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     _init_clean_v2_source(tmp_path)
@@ -1187,9 +1192,13 @@ def test_re_v2_live_creation_certifies_registered_l0_without_synthesis(
     run_dir = tmp_path / "runs" / run_id
     manifest = load_run_manifest(run_dir)
     paths = ReV2Paths.for_run(run_dir)
-    events = EventStore(paths, protocol=PROTOCOL_22_EVENTS).replay()
-    inputs = load_protocol_22_inputs(paths, manifest)
-    graph = build_protocol_22_graph(manifest, inputs)
+    events = EventStore(paths, protocol=protocol_26_events_for("L1")).replay()
+    outer_inputs = load_protocol_26_inputs(paths, manifest)
+    inputs = outer_inputs.layer_inputs
+    graph = build_protocol_22_graph(
+        outer_inputs.layer_execution_contract.layer_manifest,
+        inputs,
+    )
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
     assert events[-1].type == "run_completed"
     assert len(ledger.accepted_artifacts) == len(graph.templates)
@@ -1209,7 +1218,8 @@ def test_re_v2_continue_authorizes_only_resource_ceiling_and_resumes(
 ) -> None:
     from echelon.cli import _cmd_re_continue, _cmd_re_run
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     _init_clean_v2_source(tmp_path)
@@ -1230,7 +1240,7 @@ def test_re_v2_continue_authorizes_only_resource_ceiling_and_resumes(
     run_id = (tmp_path / "runs" / ".current-re").read_text(encoding="utf-8").strip()
     run_dir = tmp_path / "runs" / run_id
     paths = ReV2Paths.for_run(run_dir)
-    events = EventStore(paths, protocol=PROTOCOL_22_EVENTS)
+    events = EventStore(paths, protocol=protocol_26_events_for("L1"))
     before = load_run_manifest(run_dir)
     assert events.replay()[-1].type == "run_paused"
 
@@ -1250,8 +1260,9 @@ def test_re_v2_continue_authorizes_only_resource_ceiling_and_resumes(
     }
     assert any(event.type == "run_resumed" for event in history)
     assert before == after
-    assert after.initial_budget_policy.provider_attempt_limit == 0
-    assert after.initial_budget_policy.artifact_generation_attempt_limit == 1
+    inner = load_protocol_26_inputs(paths, after).layer_execution_contract.layer_manifest
+    assert inner.initial_budget_policy.provider_attempt_limit == 0
+    assert inner.initial_budget_policy.artifact_generation_attempt_limit == 1
     assert "L0 INVENTORY COMPLETE" in capsys.readouterr().out
 
 

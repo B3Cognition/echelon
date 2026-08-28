@@ -117,8 +117,8 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
             and node.func.id == name
         )
         for name in (
-            "_prepare_re_v22_creation",
-            "create_protocol_22_run_store",
+            "_prepare_re_v26_creation",
+            "create_protocol_26_run_store",
             "_activate_re_v2_run",
         )
     }
@@ -127,8 +127,8 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
     ):
         raise SystemExit("RE v2 creation lifecycle calls are missing or ambiguous")
     if not (
-        creation_calls["_prepare_re_v22_creation"][0]
-        < creation_calls["create_protocol_22_run_store"][0]
+        creation_calls["_prepare_re_v26_creation"][0]
+        < creation_calls["create_protocol_26_run_store"][0]
         < creation_calls["_activate_re_v2_run"][0]
     ):
         raise SystemExit(
