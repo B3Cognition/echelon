@@ -41,6 +41,15 @@ class _CrashNth:
             raise _Crash(observed)
 
 
+class _CrashPrefixOnce:
+    def __init__(self, prefix: str) -> None:
+        self.prefix = prefix
+
+    def __call__(self, observed: str) -> None:
+        if observed.startswith(self.prefix):
+            raise _Crash(observed)
+
+
 class _MarkerProvider(_ScriptedProvider):
     def __init__(self, marker: Path) -> None:
         super().__init__()
@@ -261,3 +270,30 @@ def test_process_death_after_durable_capture_does_not_repeat_provider_call(
         "provider-call"
     ] * 13
     assert len(provider.calls) == 12
+
+
+@pytest.mark.integration
+def test_recovery_repairs_interrupted_materialization_without_provider(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_27.controller import Protocol27Controller
+    from harness.re_v2.protocol_27.lifecycle import run_protocol_27_synthesis
+
+    inputs = _validated_controller_inputs(tmp_path)
+    provider = _ScriptedProvider()
+    with pytest.raises(_Crash, match="materialization_published"):
+        Protocol27Controller(
+            inputs,
+            provider_factory=lambda: provider,  # type: ignore[arg-type]
+            fault_hook=_CrashPrefixOnce("materialization_published:"),
+        ).run_to_closure()
+    calls = len(provider.calls)
+
+    result = run_protocol_27_synthesis(
+        inputs.paths.root.parent,
+        provider_factory=lambda: provider,  # type: ignore[arg-type]
+    )
+
+    assert result.synthesis_closure_complete
+    assert result.terminal_kind == "materialization_complete"
+    assert len(provider.calls) == calls

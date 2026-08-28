@@ -191,6 +191,17 @@ def recover_protocol_27_run(
         _reconcile_root(context, ledger, replay, repaired, fault_hook)
         events = context.events.replay()
         ledger = context.ledger.replay()
+        if ledger.synthesis_root is not None:
+            from .materialization import (
+                validate_or_repair_synthesis_materialization,
+            )
+
+            before_materialization = ledger.materialization
+            validate_or_repair_synthesis_materialization(context, fault_hook)
+            if before_materialization is None:
+                repaired.append("synthesis-materialization")
+            events = context.events.replay()
+            ledger = context.ledger.replay()
     budget = evaluate_synthesis_budget(context.inputs.manifest, events, ledger)
     state = reconstruct_synthesis_controller_state(
         context.inputs,

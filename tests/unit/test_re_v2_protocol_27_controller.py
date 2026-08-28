@@ -185,6 +185,39 @@ def test_planner_dispatches_only_dependency_ready_missing_work(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_planner_materializes_only_after_root_closure(tmp_path: Path) -> None:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_27.controller import (
+        SynthesisControllerStateV1,
+        plan_next_synthesis,
+    )
+
+    inputs = _validated_controller_inputs(tmp_path)
+    accepted = {
+        node.node_id: content_digest(node.node_id.encode("utf-8"))
+        for node in inputs.graph.required_nodes
+    }
+    state = SynthesisControllerStateV1(
+        graph=inputs.graph,
+        accepted_node_hashes=accepted,
+        accepted_work_item_ids=(),
+        adopted_work_item_ids=(),
+        selected_checkpoint_work_item_ids=(),
+        attempts_by_work_item={},
+        last_failure_by_work_item={},
+        pending_capture_work_item_id=None,
+        pending_candidate_work_item_id=None,
+        root_accepted=True,
+        budget_allowed=True,
+    )
+
+    assert plan_next_synthesis(state).kind == "materialize"
+    assert plan_next_synthesis(replace(state, materialization_complete=True)).kind == (
+        "materialization_complete"
+    )
+
+
+@pytest.mark.unit
 def test_controller_closes_graph_with_one_shared_provider_instance(
     tmp_path: Path,
 ) -> None:
@@ -202,7 +235,7 @@ def test_controller_closes_graph_with_one_shared_provider_instance(
     result = Protocol27Controller(inputs, provider_factory=factory).run_to_closure()  # type: ignore[arg-type]
 
     assert result.synthesis_closure_complete
-    assert result.terminal_kind == "closure_complete"
+    assert result.terminal_kind == "materialization_complete"
     assert result.accepted_artifact_count == result.required_artifact_count == 13
     assert result.provider_attempts == 13
     assert result.contract_retries == 0

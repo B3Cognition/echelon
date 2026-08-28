@@ -51,6 +51,8 @@ ActionKind = Literal[
     "accept_candidate",
     "create_root",
     "closure_complete",
+    "materialize",
+    "materialization_complete",
     "incomplete",
 ]
 
@@ -72,6 +74,7 @@ class SynthesisControllerStateV1:
     pending_candidate_work_item_id: str | None
     root_accepted: bool
     budget_allowed: bool
+    materialization_complete: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -155,6 +158,7 @@ def reconstruct_synthesis_controller_state(
         pending_candidate_work_item_id=pending_candidate_work_item_id,
         root_accepted=ledger.synthesis_root is not None,
         budget_allowed=budget.allowed,
+        materialization_complete=ledger.materialization is not None,
     )
 
 
@@ -168,8 +172,12 @@ def plan_next_synthesis(
     if set(state.selected_checkpoint_work_item_ids) - set(state.adopted_work_item_ids):
         return SynthesisControllerActionV1("adopt")
     if len(state.accepted_node_hashes) == len(state.graph.required_nodes):
+        if not state.root_accepted:
+            return SynthesisControllerActionV1("create_root")
         return SynthesisControllerActionV1(
-            "closure_complete" if state.root_accepted else "create_root"
+            "materialization_complete"
+            if state.materialization_complete
+            else "materialize"
         )
     if not state.budget_allowed:
         return SynthesisControllerActionV1(
@@ -254,6 +262,15 @@ class Protocol27Controller:
             if action.kind == "create_root":
                 self._create_root()
                 continue
+            if action.kind == "materialize":
+                from .materialization import materialize_synthesis_closure
+                from .recovery import load_protocol_27_run_context
+
+                materialize_synthesis_closure(
+                    load_protocol_27_run_context(self.inputs.paths.root.parent),
+                    self.fault_hook,
+                )
+                continue
             if action.kind in {"recover_capture", "accept_candidate"}:
                 raise Protocol27ControllerError(
                     "durable boundary recovery is delegated to protocol-2.7 recovery"
@@ -266,7 +283,8 @@ class Protocol27Controller:
             self.inputs.manifest, self.events.replay(), final
         )
         return Protocol27ControllerResult(
-            synthesis_closure_complete=terminal_kind == "closure_complete",
+            synthesis_closure_complete=terminal_kind
+            in {"closure_complete", "materialization_complete"},
             terminal_kind=reason or terminal_kind,
             accepted_artifact_count=len(final.accepted_artifacts),
             required_artifact_count=len(self.inputs.graph.required_nodes),

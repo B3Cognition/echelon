@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import ClassVar, Literal, Mapping
 
@@ -866,6 +867,114 @@ class SynthesisArtifactAuthorityV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SynthesisMaterializationEntryV1:
+    artifact_key_id: str
+    artifact_hash: str
+    authority_id: str
+    relative_path: str
+    content_hash: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "artifact_key_id",
+        "artifact_hash",
+        "authority_id",
+        "relative_path",
+        "content_hash",
+    )
+
+    def __post_init__(self) -> None:
+        for field in ("artifact_key_id", "artifact_hash", "authority_id", "content_hash"):
+            _schema(digest_value, getattr(self, field), field)
+        path = PurePosixPath(self.relative_path)
+        if (
+            path.is_absolute()
+            or path.as_posix() != self.relative_path
+            or "\\" in self.relative_path
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise Protocol27SchemaError("materialization relative path is unsafe")
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.to_json_dict())
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.FIELDS}
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisMaterializationEntryV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisMaterializationManifestV1:
+    schema_version: int
+    entries: tuple[SynthesisMaterializationEntryV1, ...]
+    source_outcomes: tuple[str, ...]
+    input_quality: InputQualityV1
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "entries",
+        "source_outcomes",
+        "input_quality",
+    )
+
+    def __post_init__(self) -> None:
+        _schema(literal, self.schema_version, 1, "materialization manifest schema")
+        entries = _typed_tuple(
+            self.entries,
+            SynthesisMaterializationEntryV1,
+            "materialization entries",
+            sort_attribute="relative_path",
+        )
+        if not entries:
+            raise Protocol27SchemaError("materialization entries must be nonempty")
+        key_ids = tuple(item.artifact_key_id for item in entries)
+        if len(key_ids) != len(set(key_ids)):
+            raise Protocol27SchemaError("materialization artifact keys must be unique")
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(
+            self,
+            "source_outcomes",
+            _schema(
+                sorted_unique_digests,
+                self.source_outcomes,
+                "materialization source outcomes",
+            ),
+        )
+        _schema(one_of, self.input_quality, _INPUT_QUALITIES, "materialization quality")
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.to_json_dict())
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "entries": [item.to_json_dict() for item in self.entries],
+            "source_outcomes": list(self.source_outcomes),
+            "input_quality": self.input_quality,
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisMaterializationManifestV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        if not isinstance(raw["entries"], (list, tuple)):
+            raise Protocol27SchemaError("materialization entries must be an array")
+        return cls(
+            raw["schema_version"],
+            tuple(
+                SynthesisMaterializationEntryV1.from_json_dict(item)
+                for item in raw["entries"]
+            ),
+            tuple(raw["source_outcomes"]),
+            raw["input_quality"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SynthesisRootV1:
     schema_version: int
     accepted_source_outcome_ids: tuple[str, ...]
@@ -1591,6 +1700,8 @@ __all__ = (
     "SynthesisCheckpointSelectionEntryV1",
     "SynthesisCheckpointSelectionV1",
     "SynthesisCheckpointSourceKindV1",
+    "SynthesisMaterializationEntryV1",
+    "SynthesisMaterializationManifestV1",
     "SynthesisRequestV1",
     "SynthesisRootV1",
     "SynthesisScopeKindV1",
