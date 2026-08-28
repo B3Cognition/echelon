@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -12,10 +13,12 @@ import time
 from types import MappingProxyType
 from typing import Callable, Literal, Mapping
 
+from harness.re_v2.candidates import ProcessIdentity
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.events import EventRecord, EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.provider import normalize_captured_provider_usage
+from harness.re_v2.recovery import ProcessInspector
 from harness.squad_provider import SquadCliProvider
 
 from .budget import SynthesisBudgetDecisionV1, evaluate_synthesis_budget
@@ -207,6 +210,7 @@ class Protocol27Controller:
         *,
         provider_factory: Callable[[], SquadCliProvider],
         clock: Callable[[], str] | None = None,
+        fault_hook: Callable[[str], None] | None = None,
     ) -> None:
         if not isinstance(inputs, ValidatedProtocol27Inputs) or not callable(
             provider_factory
@@ -224,6 +228,7 @@ class Protocol27Controller:
         self.clock = clock or (
             lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )
+        self.fault_hook = fault_hook
         self._renderer: SquadCliSynthesisRenderer | None = None
 
     def run_to_closure(self) -> Protocol27ControllerResult:
@@ -350,6 +355,19 @@ class Protocol27Controller:
         ):
             return "synthesis-reservation-exceeds-remaining-budget"
         attempt_index = budget.provider_attempts_by_work_item.get(item.work_item_id, 0) + 1
+        process = _current_process_identity(item, action.attempt_kind, self.clock())
+        self.execution.record_started_lease(
+            prepared,
+            item,  # type: ignore[arg-type]
+            dependencies,
+            process,
+            self.fault_hook,
+        )
+        self.events.append(
+            "dispatch_leased",
+            {"dispatch_id": prepared.dispatch_id, "work_item_id": item.work_item_id},
+            occurred_at=self.clock(),
+        )
         self.events.append(
             "dispatch_started",
             {
@@ -364,6 +382,7 @@ class Protocol27Controller:
             },
             occurred_at=self.clock(),
         )
+        _fault(self.fault_hook, "after_dispatch_reserved")
         candidate_root = Path(
             tempfile.mkdtemp(prefix=f".{prepared.dispatch_id}.", dir=self.inputs.paths.root)
         )
@@ -380,9 +399,11 @@ class Protocol27Controller:
                 retry_diagnostics=dependencies.retry_diagnostics,
             )
             captured = self.execution.capture_provider_result(
-                prepared, candidate_root, raw
+                prepared, candidate_root, raw, self.fault_hook
             )
-            committed = self.execution.commit_capture(captured)
+            _fault(self.fault_hook, "after_provider_capture")
+            committed = self.execution.commit_capture(captured, self.fault_hook)
+            _fault(self.fault_hook, "after_capture_commit")
             closure = committed.closure
             usage = normalize_captured_provider_usage(
                 closure.capture.execution_mode,
@@ -404,6 +425,7 @@ class Protocol27Controller:
                 },
                 occurred_at=self.clock(),
             )
+            _fault(self.fault_hook, "after_dispatch_observed")
             if raw.outcome != "candidate_ready":
                 failure_class = (
                     "result_contract"
@@ -440,13 +462,14 @@ class Protocol27Controller:
                 },
                 occurred_at=self.clock(),
             )
+            _fault(self.fault_hook, "after_candidate_staged")
             try:
                 typed_context = SynthesisContextV1.from_json_dict(
                     json.loads(dependencies.context_bytes)
                 )
                 result = self.runtime.certify_candidate(item, typed_context, payload)
             except (Protocol27RuntimeError, ValueError) as exc:
-                reason = _runtime_failure_reason(exc)
+                reason = synthesis_runtime_failure_reason(exc)
                 self._record_failure(
                     item,
                     "artifact_contract",
@@ -455,8 +478,11 @@ class Protocol27Controller:
                 )
                 return None
             self.ledger.record_candidate_assessment(result.assessment)
+            _fault(self.fault_hook, "after_assessment")
             self.ledger.record_synthesis_certification(result.certification)
+            _fault(self.fault_hook, "after_certification")
             self.ledger.record_synthesis_acceptance(result.acceptance)
+            _fault(self.fault_hook, "after_acceptance_ledger")
             generated = _generated_dependency_key_ids(self.inputs, item)
             self.events.append(
                 "synthesis_candidate_certified",
@@ -471,6 +497,7 @@ class Protocol27Controller:
                 },
                 occurred_at=self.clock(),
             )
+            _fault(self.fault_hook, "after_certification_event")
             self.events.append(
                 "synthesis_artifact_accepted",
                 {
@@ -484,6 +511,7 @@ class Protocol27Controller:
                 },
                 occurred_at=self.clock(),
             )
+            _fault(self.fault_hook, "after_acceptance_event")
             return None
         finally:
             shutil.rmtree(candidate_root, ignore_errors=True)
@@ -534,45 +562,10 @@ class Protocol27Controller:
         view = self.ledger.replay()
         if view.synthesis_root is not None:
             return
-        graph = self.inputs.graph
-        root = SynthesisRootV1(
-            schema_version=1,
-            accepted_source_outcome_ids=tuple(
-                sorted(item.identity for item in self.inputs.manifest.accepted_sources)
-            ),
-            accepted_artifacts=tuple(
-                sorted(
-                    (
-                        SynthesisArtifactAuthorityV1(
-                            key_id,
-                            acceptance.artifact_hash,
-                            acceptance.identity,
-                        )
-                        for key_id, acceptance in view.accepted_artifacts.items()
-                    ),
-                    key=lambda item: item.identity,
-                )
-            ),
-            partial_acceptance_receipt_ids=tuple(
-                sorted(item.receipt_id for item in self.inputs.manifest.partial_acceptances)
-            ),
-            debt_manifest_hashes=graph.root_specification.debt_manifest_hashes,
-            topology_id=graph.topology.identity,
-            graph_id=graph.graph_id,
-            materialization_policy_hash=content_digest(
-                b"protocol-2.7-materialization-v1"
-            ),
-            producer_authority_hash=(
-                graph.policy_catalog.implementation_authority.producer_authority_hash
-            ),
-            verifier_authority_hash=(
-                graph.policy_catalog.implementation_authority.verifier_authority_hash
-            ),
-            synthesis_policy_hash=graph.policy_catalog.identity,
-            input_quality=graph.root_specification.input_quality,
-        )
+        root = build_synthesis_root(self.inputs, view)
         self.objects.put_blob(canonical_json_bytes(root.to_json_dict()))
         self.ledger.record_synthesis_root(root)
+        _fault(self.fault_hook, "after_root_ledger")
         self.events.append(
             "synthesis_root_accepted",
             {
@@ -581,6 +574,7 @@ class Protocol27Controller:
             },
             occurred_at=self.clock(),
         )
+        _fault(self.fault_hook, "after_root")
 
     def _synthesis_renderer(
         self, executor
@@ -601,7 +595,55 @@ def _generated_dependency_key_ids(
     return tuple(sorted(set(item.dependency_key_ids) - fixed))
 
 
-def _runtime_failure_reason(exc: Exception) -> str:
+def build_synthesis_root(
+    inputs: ValidatedProtocol27Inputs,
+    view: Protocol27LedgerView,
+) -> SynthesisRootV1:
+    """Construct the one deterministic root for exact accepted graph closure."""
+    if len(view.accepted_artifacts) != len(inputs.graph.required_nodes):
+        raise Protocol27ControllerError(
+            "synthesis root requires every graph artifact acceptance"
+        )
+    graph = inputs.graph
+    return SynthesisRootV1(
+        schema_version=1,
+        accepted_source_outcome_ids=tuple(
+            sorted(item.identity for item in inputs.manifest.accepted_sources)
+        ),
+        accepted_artifacts=tuple(
+            sorted(
+                (
+                    SynthesisArtifactAuthorityV1(
+                        key_id,
+                        acceptance.artifact_hash,
+                        acceptance.identity,
+                    )
+                    for key_id, acceptance in view.accepted_artifacts.items()
+                ),
+                key=lambda item: item.identity,
+            )
+        ),
+        partial_acceptance_receipt_ids=tuple(
+            sorted(item.receipt_id for item in inputs.manifest.partial_acceptances)
+        ),
+        debt_manifest_hashes=graph.root_specification.debt_manifest_hashes,
+        topology_id=graph.topology.identity,
+        graph_id=graph.graph_id,
+        materialization_policy_hash=content_digest(
+            b"protocol-2.7-materialization-v1"
+        ),
+        producer_authority_hash=(
+            graph.policy_catalog.implementation_authority.producer_authority_hash
+        ),
+        verifier_authority_hash=(
+            graph.policy_catalog.implementation_authority.verifier_authority_hash
+        ),
+        synthesis_policy_hash=graph.policy_catalog.identity,
+        input_quality=graph.root_specification.input_quality,
+    )
+
+
+def synthesis_runtime_failure_reason(exc: Exception) -> str:
     message = str(exc).lower()
     if "byte ceiling" in message or "exceeds" in message:
         return "artifact_bound_exceeded"
@@ -610,12 +652,61 @@ def _runtime_failure_reason(exc: Exception) -> str:
     return "authorial_schema_invalid"
 
 
+def _current_process_identity(
+    item: SynthesisWorkItemV1,
+    attempt_kind: str,
+    now: str,
+) -> ProcessIdentity:
+    pid = os.getpid()
+    identity = ProcessInspector()._probe(pid)
+    if identity is None:
+        raise Protocol27ControllerError("current controller process is not inspectable")
+    return ProcessIdentity(
+        pid=pid,
+        process_start_identity=identity,
+        command_hash=synthesis_process_command_hash(item, attempt_kind),
+        provider_identity=synthesis_provider_identity_hash(item),
+        started_at=now,
+    )
+
+
+def synthesis_process_command_hash(
+    item: SynthesisWorkItemV1,
+    attempt_kind: str,
+) -> str:
+    return content_digest(
+        {
+            "attempt_kind": attempt_kind,
+            "producer_family": "workspace-synthesis",
+            "work_item_id": item.work_item_id,
+        }
+    )
+
+
+def synthesis_provider_identity_hash(item: SynthesisWorkItemV1) -> str:
+    return content_digest(
+        {
+            "executor_contract_hash": item.executor_contract_hash,
+            "producer_protocol_version": "2.7",
+        }
+    )
+
+
+def _fault(fault_hook: Callable[[str], None] | None, boundary: str) -> None:
+    if fault_hook is not None:
+        fault_hook(boundary)
+
+
 __all__ = (
     "Protocol27Controller",
     "Protocol27ControllerError",
     "Protocol27ControllerResult",
     "SynthesisControllerActionV1",
     "SynthesisControllerStateV1",
+    "build_synthesis_root",
     "plan_next_synthesis",
     "reconstruct_synthesis_controller_state",
+    "synthesis_process_command_hash",
+    "synthesis_provider_identity_hash",
+    "synthesis_runtime_failure_reason",
 )

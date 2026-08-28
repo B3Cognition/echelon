@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, Callable
+
+from harness.squad_provider import SquadCliProvider
+
+if TYPE_CHECKING:
+    from .controller import Protocol27ControllerResult
 
 from harness.re_v2.protocol_27.authority import (
     Protocol27AuthorityError,
@@ -143,12 +149,55 @@ def run_synthesis_child(*_args: object, **_kwargs: object) -> None:
     )
 
 
+def run_protocol_27_synthesis(
+    run_dir: Path,
+    provider_factory: Callable[[], SquadCliProvider],
+    fault_hook: Callable[[str], None] | None = None,
+) -> "Protocol27ControllerResult":
+    """Recover first, then execute only unresolved synthesis work."""
+    from .budget import evaluate_synthesis_budget
+    from .controller import Protocol27Controller, Protocol27ControllerResult
+    from .recovery import load_protocol_27_run_context, recover_protocol_27_run
+
+    context = load_protocol_27_run_context(Path(run_dir))
+    recovered = recover_protocol_27_run(context, fault_hook)
+    if recovered.pending_action is not None:
+        ledger = context.ledger.replay()
+        budget = evaluate_synthesis_budget(
+            context.inputs.manifest,
+            context.events.replay(),
+            ledger,
+        )
+        return Protocol27ControllerResult(
+            synthesis_closure_complete=False,
+            terminal_kind=recovered.pending_action,
+            accepted_artifact_count=len(ledger.accepted_artifacts),
+            required_artifact_count=len(context.inputs.graph.required_nodes),
+            provider_attempts=budget.provider_attempts,
+            contract_retries=(
+                sum(budget.result_contract_retries.values())
+                + sum(budget.artifact_contract_retries.values())
+            ),
+            synthesis_root_id=(
+                None
+                if ledger.synthesis_root is None
+                else ledger.synthesis_root.identity
+            ),
+        )
+    return Protocol27Controller(
+        context.inputs,
+        provider_factory=provider_factory,
+        clock=context.clock,
+        fault_hook=fault_hook,
+    ).run_to_closure()
+
+
 __all__ = (
     "Protocol27LifecycleError",
     "find_exact_protocol_27_child",
     "partial_acceptance_for",
     "partial_acceptances_for",
+    "run_protocol_27_synthesis",
     "run_synthesis_child",
     "synthesis_request",
 )
-

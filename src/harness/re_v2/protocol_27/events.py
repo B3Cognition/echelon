@@ -26,6 +26,8 @@ _SHARED_EVENTS = frozenset(
     {
         "run_created",
         "work_planned",
+        "dispatch_leased",
+        "dispatch_lease_retired",
         "dispatch_started",
         "dispatch_observed",
         "dispatch_abandoned",
@@ -205,6 +207,9 @@ class Protocol27ReplayState(EventReplayState):
     partial_acceptances: dict[str, str] = field(default_factory=dict)
     planned_work_item_ids: set[str] = field(default_factory=set)
     attempts_by_work_item: dict[str, int] = field(default_factory=dict)
+    dispatch_ids: set[str] = field(default_factory=set)
+    lease_dispatch_id: str | None = None
+    lease_work_item_id: str | None = None
     active: _ActiveSynthesisDispatch | None = None
     adopted_by_work_item: dict[str, tuple[str, str, str, str]] = field(
         default_factory=dict
@@ -217,7 +222,7 @@ class Protocol27ReplayState(EventReplayState):
 
     @property
     def has_active_dispatch(self) -> bool:
-        return self.active is not None
+        return self.active is not None or self.lease_dispatch_id is not None
 
     def consume(self, event: EventRecord) -> None:
         if self.terminal:
@@ -242,6 +247,10 @@ class Protocol27ReplayState(EventReplayState):
             if planned & self.planned_work_item_ids:
                 raise ReV2EventError("synthesis work planning batches must be disjoint")
             self.planned_work_item_ids.update(planned)
+        elif event_type == "dispatch_leased":
+            self._lease_dispatch(payload)
+        elif event_type == "dispatch_lease_retired":
+            self._retire_lease(payload)
         elif event_type == "dispatch_started":
             self._start_dispatch(payload)
         elif event_type == "dispatch_observed":
@@ -276,11 +285,11 @@ class Protocol27ReplayState(EventReplayState):
                 raise ReV2EventError("publication authority does not match materialization")
             self.publication_descriptor_id = str(payload["publication_descriptor_id"])
         elif event_type == "run_completed":
-            if self.synthesis_root_id is None or self.active is not None:
+            if self.synthesis_root_id is None or self.has_active_dispatch:
                 raise ReV2EventError("run completion requires a closed synthesis root")
             self.terminal = True
         elif event_type == "run_failed":
-            if self.active is not None:
+            if self.has_active_dispatch:
                 raise ReV2EventError("run failure is invalid with active synthesis work")
             self.terminal = True
         elif event_type == "work_item_failed":
@@ -289,7 +298,7 @@ class Protocol27ReplayState(EventReplayState):
             ):
                 self.active = None
         elif event_type == "run_paused":
-            if self.active is not None:
+            if self.has_active_dispatch:
                 raise ReV2EventError("run pause is invalid with active synthesis work")
             self.paused = True
         elif event_type == "run_resumed":
@@ -321,8 +330,14 @@ class Protocol27ReplayState(EventReplayState):
 
     def _start_dispatch(self, payload: Mapping[str, object]) -> None:
         work_item_id = str(payload["work_item_id"])
+        dispatch_id = str(payload["dispatch_id"])
         if self.paused or self.active is not None:
             raise ReV2EventError("dispatch conflicts with synthesis run state")
+        if (
+            self.lease_dispatch_id != dispatch_id
+            or self.lease_work_item_id != work_item_id
+        ):
+            raise ReV2EventError("dispatch start requires its matching durable lease")
         if work_item_id not in self.planned_work_item_ids:
             raise ReV2EventError("dispatch work item was not planned")
         expected = self.attempts_by_work_item.get(work_item_id, 0) + 1
@@ -333,10 +348,37 @@ class Protocol27ReplayState(EventReplayState):
             raise ReV2EventError("synthesis dispatch attempt kind is invalid")
         self.attempts_by_work_item[work_item_id] = expected
         self.active = _ActiveSynthesisDispatch(
-            str(payload["dispatch_id"]),
+            dispatch_id,
             work_item_id,
             "started",
         )
+        self.lease_dispatch_id = None
+        self.lease_work_item_id = None
+
+    def _lease_dispatch(self, payload: Mapping[str, object]) -> None:
+        dispatch_id = str(payload["dispatch_id"])
+        work_item_id = str(payload["work_item_id"])
+        if (
+            self.paused
+            or self.active is not None
+            or self.lease_dispatch_id is not None
+            or work_item_id not in self.planned_work_item_ids
+            or work_item_id in self.accepted_work_item_ids
+            or dispatch_id in self.dispatch_ids
+        ):
+            raise ReV2EventError("dispatch lease conflicts with synthesis run state")
+        self.dispatch_ids.add(dispatch_id)
+        self.lease_dispatch_id = dispatch_id
+        self.lease_work_item_id = work_item_id
+
+    def _retire_lease(self, payload: Mapping[str, object]) -> None:
+        if (
+            payload["dispatch_id"] != self.lease_dispatch_id
+            or payload["work_item_id"] != self.lease_work_item_id
+        ):
+            raise ReV2EventError("dispatch lease retirement conflicts with history")
+        self.lease_dispatch_id = None
+        self.lease_work_item_id = None
 
     def _matching_active(
         self,
@@ -384,7 +426,7 @@ class Protocol27ReplayState(EventReplayState):
 
     def _adopt_checkpoint(self, payload: Mapping[str, object]) -> None:
         work_item_id = str(payload["work_item_id"])
-        if self.active is not None or work_item_id not in self.planned_work_item_ids:
+        if self.has_active_dispatch or work_item_id not in self.planned_work_item_ids:
             raise ReV2EventError("checkpoint adoption requires idle planned work")
         if work_item_id in self.adopted_by_work_item:
             raise ReV2EventError("checkpoint may be adopted once per work item")
@@ -429,7 +471,7 @@ class Protocol27ReplayState(EventReplayState):
             raise ReV2EventError("synthesis artifact requires accepted dependencies")
 
     def _accept_root(self, payload: Mapping[str, object]) -> None:
-        if self.active is not None or self.synthesis_root_id is not None:
+        if self.has_active_dispatch or self.synthesis_root_id is not None:
             raise ReV2EventError("synthesis root requires idle unclosed work")
         if self.accepted_work_item_ids != self.planned_work_item_ids:
             raise ReV2EventError("synthesis root requires complete work closure")

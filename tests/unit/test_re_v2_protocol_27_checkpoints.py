@@ -58,6 +58,11 @@ def _record_nonterminal_origin(tmp_path: Path):
         occurred_at=NOW,
     )
     events.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-1", "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    events.append(
         "dispatch_started",
         {
             "active_ms_reservation": 100,
@@ -206,6 +211,11 @@ def _record_chain_origin(tmp_path: Path):
         dispatch_id = f"dispatch-{index}"
         capture = content_digest(f"capture-{index}".encode())
         generated = sorted(set(work_item.dependency_key_ids) - fixed_keys)
+        events.append(
+            "dispatch_leased",
+            {"dispatch_id": dispatch_id, "work_item_id": work_item.work_item_id},
+            occurred_at=NOW,
+        )
         events.append(
             "dispatch_started",
             {

@@ -54,6 +54,11 @@ def _planned_source(tmp_path: Path):
 def append_dispatch_cycle(store: EventStore, item, index: int, kind: str) -> str:
     dispatch_id = f"dispatch-{index}"
     store.append(
+        "dispatch_leased",
+        {"dispatch_id": dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    store.append(
         "dispatch_started",
         {
             "active_ms_reservation": 100,
@@ -68,6 +73,27 @@ def append_dispatch_cycle(store: EventStore, item, index: int, kind: str) -> str
         occurred_at=NOW,
     )
     return dispatch_id
+
+
+@pytest.mark.unit
+def test_dispatch_start_requires_matching_durable_lease(tmp_path: Path) -> None:
+    _inputs, item, store = _planned_source(tmp_path)
+
+    with pytest.raises(ReV2EventError, match="lease"):
+        store.append(
+            "dispatch_started",
+            {
+                "active_ms_reservation": 100,
+                "attempt_index": 1,
+                "attempt_kind": "initial_generation",
+                "billable_token_reservation": 1000,
+                "dispatch_id": "dispatch-1",
+                "execution_input_hash": digest("execution-1"),
+                "executor_contract_hash": item.executor_contract_hash,
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=NOW,
+        )
 
 
 def append_generated_acceptance(
