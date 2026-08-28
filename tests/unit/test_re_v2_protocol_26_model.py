@@ -69,6 +69,79 @@ def test_checkpoint_manifest_rejects_cross_bound_artifact_hash() -> None:
         CheckpointManifestV1.from_json_dict(raw)
 
 
+def test_checkpoint_manifest_round_trips_exact_l3_epoch_authority(tmp_path) -> None:
+    from dataclasses import replace
+
+    from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+    from harness.re_v2.protocol_26.model import CheckpointRankV1
+    from tests.integration.test_re_v2_protocol_25_recovery import (
+        _context,
+        _semantic_result_work_item,
+    )
+    from tests.re_v2_protocol_22_fixtures import digest
+    from tests.unit.test_re_v2_protocol_25_runtime import _certified_resolution
+
+    context = _context(tmp_path)
+    _audit, epoch, _semantic_context, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    candidate = replace(result.candidate_assessment, work_item_id=item.work_item_id)
+    rank = CheckpointRankV1(1, "semantic-pass-v1", digest("semantic-rank"), (1,))
+    ledger_hash = digest("semantic-ledger-record")
+    authority = AdoptedArtifactAuthorityV1(
+        1,
+        item.output_key.identity,
+        result.acceptance.artifact_hash,
+        item.output_key.dependency_hashes,
+        result.certification.identity,
+        candidate.identity,
+        result.acceptance.identity,
+        "re-l3-origin",
+        ledger_hash,
+    )
+    immutable = {
+        item.work_item_id,
+        result.acceptance.artifact_hash,
+        result.certification.identity,
+        candidate.identity,
+        candidate.execution_capture_hash,
+        candidate.normalized_authorial_payload_hash,
+        result.acceptance.identity,
+        epoch.identity,
+        *item.output_key.dependency_hashes,
+    }
+    checkpoint = CheckpointManifestV1(
+        1,
+        "re-l3-origin",
+        digest("l3-origin-manifest"),
+        "2.5",
+        4,
+        digest("l3-acceptance-event"),
+        digest("l3-event-prefix"),
+        ledger_hash,
+        digest("l3-ledger-prefix"),
+        item,
+        item.output_key.identity,
+        result.acceptance.artifact_hash,
+        result.certification,
+        candidate,
+        result.acceptance,
+        authority,
+        (),
+        item.output_key.dependency_hashes,
+        tuple(sorted(value for value in immutable if value is not None)),
+        epoch.identity,
+        tuple(sorted((result.certification.identity, epoch.identity))),
+        rank,
+        rank.policy_hash,
+    )
+
+    decoded = CheckpointManifestV1.from_json_dict(checkpoint.to_json_dict())
+
+    assert decoded == checkpoint
+    assert decoded.audit_epoch_id == epoch.identity
+    assert epoch.identity in decoded.semantic_authority_ids
+
+
 @pytest.mark.unit
 def test_selection_bundle_round_trips_dependency_order_and_inventory() -> None:
     bundle = checkpoint_selection_bundle_v1()

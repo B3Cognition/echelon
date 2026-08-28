@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
 from harness.re_v2.protocol_22.baseline import (
     ArtifactAcceptanceReceiptV2,
     DeterministicAssessmentInputV2,
@@ -19,6 +23,91 @@ from harness.re_v2.protocol_26.model import (
 from tests.re_v2_protocol_22_fixtures import digest, manifest_v2, work_item_v2
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+
+@dataclass(frozen=True, slots=True)
+class OriginCheckpointFixtureV1:
+    run_dir: Path
+    accepted_key_id: str | None
+
+
+@dataclass(slots=True)
+class CheckpointWorkspace:
+    root: Path
+
+    @classmethod
+    def create(cls, root: Path) -> "CheckpointWorkspace":
+        root.mkdir(parents=True)
+        (root / "runs").mkdir()
+        return cls(root)
+
+    def origin_with_one_accepted_domain(
+        self, origin_state: str
+    ) -> OriginCheckpointFixtureV1:
+        from harness.re_v2.protocol_22.controller import Protocol22Controller
+        from tests.unit.test_re_v2_protocol_22_controller import _inventory_context
+
+        context = _inventory_context(self.root / "runs")
+
+        def stop_after_acceptance(stage: str) -> None:
+            if stage.startswith("artifact_accepted:"):
+                raise RuntimeError("checkpoint fixture stop")
+
+        try:
+            Protocol22Controller(context, stop_after_acceptance).run_until_stopped()
+        except RuntimeError as exc:
+            if str(exc) != "checkpoint fixture stop":
+                raise
+        accepted = context.ledger.replay().accepted_artifacts
+        assert len(accepted) == 1
+        if origin_state == "paused":
+            context.event_store.append(
+                "operator_pause_requested",
+                {"reason": "checkpoint fixture", "requested_by": "test"},
+                occurred_at=context.clock(),
+            )
+            context.event_store.append(
+                "run_paused",
+                {"reason": "checkpoint fixture", "reason_code": "operator_pause"},
+                occurred_at=context.clock(),
+            )
+        elif origin_state == "complete":
+            context.event_store.append(
+                "run_completed",
+                {"reason": "checkpoint fixture"},
+                occurred_at=context.clock(),
+            )
+        elif origin_state == "blocked":
+            (context.paths.root.parent / "state.json").write_text(
+                json.dumps({"status": "blocked"}) + "\n",
+                encoding="utf-8",
+            )
+        elif origin_state != "active":
+            raise ValueError(f"unsupported fixture origin state: {origin_state}")
+        return OriginCheckpointFixtureV1(
+            run_dir=context.paths.root.parent,
+            accepted_key_id=next(iter(accepted)),
+        )
+
+    def origin_with_certification_only(self) -> OriginCheckpointFixtureV1:
+        from harness.re_v2.protocol_22.controller import Protocol22Controller
+        from tests.unit.test_re_v2_protocol_22_controller import _inventory_context
+
+        context = _inventory_context(self.root / "runs")
+
+        def stop_after_certification(stage: str) -> None:
+            if stage.startswith("certification_receipt:"):
+                raise RuntimeError("checkpoint fixture stop")
+
+        try:
+            Protocol22Controller(context, stop_after_certification).run_until_stopped()
+        except RuntimeError as exc:
+            if str(exc) != "checkpoint fixture stop":
+                raise
+        return OriginCheckpointFixtureV1(
+            run_dir=context.paths.root.parent,
+            accepted_key_id=None,
+        )
 
 
 def layer_manifest(target_layer: str, *, run_id: str = "re-checkpoint-child"):
@@ -195,6 +284,8 @@ def manifest_v5(
 
 
 __all__ = (
+    "CheckpointWorkspace",
+    "OriginCheckpointFixtureV1",
     "checkpoint_manifest_v1",
     "checkpoint_rank_v1",
     "checkpoint_selection_bundle_v1",

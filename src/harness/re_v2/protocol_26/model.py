@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         CandidateAssessmentReceiptV1,
         CertificationReceiptV2,
     )
+    from harness.re_v2.protocol_25.artifacts import SemanticCertificationReceiptV1
 
 
 TargetLayerV1 = Literal["L1", "L2", "L3"]
@@ -131,11 +132,13 @@ def _receipt_types():  # type: ignore[no-untyped-def]
         CandidateAssessmentReceiptV1,
         CertificationReceiptV2,
     )
+    from harness.re_v2.protocol_25.artifacts import SemanticCertificationReceiptV1
 
     return (
         CertificationReceiptV2,
         CandidateAssessmentReceiptV1,
         ArtifactAcceptanceReceiptV2,
+        SemanticCertificationReceiptV1,
     )
 
 
@@ -305,7 +308,7 @@ class CheckpointManifestV1:
     work_item: WorkItemV2
     artifact_key_id: str
     artifact_hash: str
-    certification_receipt: CertificationReceiptV2
+    certification_receipt: CertificationReceiptV2 | SemanticCertificationReceiptV1
     candidate_assessment: CandidateAssessmentReceiptV1 | None
     artifact_acceptance_receipt: ArtifactAcceptanceReceiptV2
     adopted_artifact_authority: AdoptedArtifactAuthorityV1
@@ -349,6 +352,7 @@ class CheckpointManifestV1:
             certification_type,
             candidate_type,
             acceptance_type,
+            semantic_certification_type,
         ) = _receipt_types()
         _schema(literal, self.schema_version, 1, f"{label}.schema_version")
         _schema(safe_id, self.origin_run_id, f"{label}.origin_run_id")
@@ -376,7 +380,10 @@ class CheckpointManifestV1:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1.work_item must be WorkItemV2"
             )
-        if not isinstance(self.certification_receipt, certification_type):
+        if not isinstance(
+            self.certification_receipt,
+            (certification_type, semantic_certification_type),
+        ):
             raise Protocol26SchemaError(
                 "CheckpointManifestV1.certification_receipt is invalid"
             )
@@ -434,13 +441,25 @@ class CheckpointManifestV1:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 artifact_key_id disagrees with work_item"
             )
-        certification_key = self.certification_receipt.certification_key
         acceptance = self.artifact_acceptance_receipt
         authority = self.adopted_artifact_authority
+        semantic_certification = isinstance(
+            self.certification_receipt, semantic_certification_type
+        )
+        if semantic_certification:
+            certification_artifact_key_id = self.certification_receipt.artifact_key_id
+            certification_artifact_hash = self.certification_receipt.artifact_hash
+        else:
+            certification_artifact_key_id = (
+                self.certification_receipt.certification_key.artifact_key.identity
+            )
+            certification_artifact_hash = (
+                self.certification_receipt.certification_key.artifact_hash
+            )
         if (
             self.certification_receipt.verdict != "accepted"
-            or certification_key.artifact_key != self.work_item.output_key
-            or certification_key.artifact_hash != self.artifact_hash
+            or certification_artifact_key_id != self.work_item.output_key.identity
+            or certification_artifact_hash != self.artifact_hash
             or acceptance.artifact_key != self.work_item.output_key
             or acceptance.artifact_hash != self.artifact_hash
             or acceptance.certification_receipt_id
@@ -490,6 +509,7 @@ class CheckpointManifestV1:
             required_objects.add(candidate.execution_capture_hash)
             if candidate.normalized_authorial_payload_hash is not None:
                 required_objects.add(candidate.normalized_authorial_payload_hash)
+        required_objects.update(semantic)
         if not required_objects <= set(immutable):
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 immutable object inventory is incomplete"
@@ -498,11 +518,26 @@ class CheckpointManifestV1:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 rank_policy_hash disagrees with rank"
             )
-        if self.work_item.output_key.layer == "L3":
-            if audit_epoch is None:
+        if semantic_certification:
+            if self.work_item.output_key.layer != "L3":
                 raise Protocol26SchemaError(
-                    "CheckpointManifestV1 L3 authority requires audit_epoch_id"
+                    "CheckpointManifestV1 semantic certification requires L3"
                 )
+            if audit_epoch != self.certification_receipt.audit_epoch_id:
+                raise Protocol26SchemaError(
+                    "CheckpointManifestV1 audit_epoch_id disagrees with semantic certification"
+                )
+            required_semantic = {self.certification_receipt.identity}
+            if audit_epoch is not None:
+                required_semantic.add(audit_epoch)
+            if not required_semantic <= set(semantic):
+                raise Protocol26SchemaError(
+                    "CheckpointManifestV1 semantic authority inventory is incomplete"
+                )
+        elif self.work_item.output_key.layer == "L3":
+            raise Protocol26SchemaError(
+                "CheckpointManifestV1 L3 authority requires semantic certification"
+            )
         elif audit_epoch is not None or semantic:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 non-L3 authority cannot carry semantic authority"
@@ -554,6 +589,9 @@ class CheckpointManifestV1:
             CandidateAssessmentReceiptV1,
             CertificationReceiptV2,
         )
+        from harness.re_v2.protocol_25.artifacts import (
+            SemanticCertificationReceiptV1,
+        )
 
         raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
         dependencies = raw["accepted_artifact_dependencies"]
@@ -575,8 +613,13 @@ class CheckpointManifestV1:
             work_item=WorkItemV2.from_json_dict(raw["work_item"]),
             artifact_key_id=raw["artifact_key_id"],
             artifact_hash=raw["artifact_hash"],
-            certification_receipt=CertificationReceiptV2.from_json_dict(
-                raw["certification_receipt"]
+            certification_receipt=(
+                CertificationReceiptV2.from_json_dict(raw["certification_receipt"])
+                if isinstance(raw["certification_receipt"], Mapping)
+                and "certification_key" in raw["certification_receipt"]
+                else SemanticCertificationReceiptV1.from_json_dict(
+                    raw["certification_receipt"]
+                )
             ),
             candidate_assessment=(
                 None
