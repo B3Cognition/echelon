@@ -28,12 +28,7 @@ from harness.re_v2.run_store import (
 )
 
 from .authority import ResolvedSynthesisParentV1
-from .graph import (
-    SynthesisGraph,
-    SynthesisGraphNodeV1,
-    SynthesisRootSpecificationV1,
-    WorkspaceSynthesisTopologyV1,
-)
+from .graph import SynthesisGraph
 from .model import (
     AcceptedSourceOutcomeV1,
     AcceptedSourceOverviewCatalogV1,
@@ -41,9 +36,7 @@ from .model import (
     RunManifestV6,
     SynthesisBudgetPolicyV1,
     SynthesisRequestV1,
-    SynthesisWorkTemplateV1,
 )
-from .policies import SynthesisPolicyCatalogV1
 
 
 FaultHook = Callable[[str], None]
@@ -68,6 +61,7 @@ _INPUT_ROLES = frozenset(
         "synthesis-policy",
         "synthesis-request",
         "synthesis-topology",
+        "topology-component",
         "work-template",
     }
 )
@@ -238,6 +232,7 @@ class Protocol27InputSet:
             self.authority_objects,
             "protocol-2.7 authority objects",
         )
+        _validate_contract_authority(self.graph, authority)
         object.__setattr__(self, "partial_acceptances", partials)
         object.__setattr__(self, "source_overview_bytes", overview_bytes)
         object.__setattr__(self, "prosaic_authority_bytes", prosaic)
@@ -606,6 +601,18 @@ def _build_input_closure(
         inputs.graph.topology.identity,
         canonical_json_bytes(inputs.graph.topology.to_json_dict()),
     )
+    for source in inputs.graph.topology.sources:
+        add(
+            "topology-component",
+            source.identity,
+            canonical_json_bytes(source.to_json_dict()),
+        )
+    for domain in inputs.graph.topology.workspace_domains:
+        add(
+            "topology-component",
+            domain.identity,
+            canonical_json_bytes(domain.to_json_dict()),
+        )
     add(
         "synthesis-policy",
         inputs.graph.policy_catalog.identity,
@@ -722,6 +729,7 @@ def _validate_loaded(
         raise Protocol27InputStoreError("loaded synthesis graph authority mismatch")
     _expect_semantic_authority_roles(catalog, manifest, graph, overview_catalog)
     _expect_component_objects(catalog, payloads, graph)
+    _validate_contract_authority(graph, payloads)
     if _one_hash(catalog, "prosaic-authority") != manifest.prosaic_authority_hash:
         raise Protocol27InputStoreError("loaded Prosaic authority mismatch")
     if _one_hash(catalog, "checkpoint-selection") != manifest.checkpoint_selection_id:
@@ -774,6 +782,16 @@ def _expect_component_objects(
         "synthesis-topology": {
             graph.topology.identity: canonical_json_bytes(graph.topology.to_json_dict())
         },
+        "topology-component": {
+            **{
+                item.identity: canonical_json_bytes(item.to_json_dict())
+                for item in graph.topology.sources
+            },
+            **{
+                item.identity: canonical_json_bytes(item.to_json_dict())
+                for item in graph.topology.workspace_domains
+            },
+        },
         "synthesis-policy": {
             graph.policy_catalog.identity: canonical_json_bytes(
                 graph.policy_catalog.to_json_dict()
@@ -822,6 +840,35 @@ def _validate_graph_overviews(
         for item in catalog.projections
     ):
         raise Protocol27InputStoreError("source overview public paths mismatch")
+
+
+def _validate_contract_authority(
+    graph: SynthesisGraph,
+    payloads: Mapping[str, bytes],
+) -> None:
+    from .context import SynthesisContextPolicyV1
+    from .schemas import canonical_synthesis_response_schema_bytes
+
+    for kind, object_hash in graph.response_schema_hashes.items():
+        expected = canonical_synthesis_response_schema_bytes(kind)
+        if payloads.get(object_hash) != expected or content_digest(expected) != object_hash:
+            raise Protocol27InputStoreError(
+                f"response-schema authority differs from closed contract: {kind}"
+            )
+    context_payload = payloads.get(graph.context_policy_hash)
+    if context_payload is None:
+        raise Protocol27InputStoreError("context-policy authority is unavailable")
+    try:
+        policy = load_canonical_object(
+            context_payload,
+            SynthesisContextPolicyV1.from_json_dict,
+        )
+    except Exception as exc:
+        raise Protocol27InputStoreError(
+            f"context-policy authority is invalid: {exc}"
+        ) from exc
+    if policy.identity != graph.context_policy_hash:
+        raise Protocol27InputStoreError("context-policy authority hash mismatch")
 
 
 def _validated_payload_mapping(

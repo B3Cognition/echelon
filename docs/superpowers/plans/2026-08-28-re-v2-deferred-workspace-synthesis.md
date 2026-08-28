@@ -566,7 +566,7 @@ Expected: collection fails because protocol-2.7 input publication does not exist
 
 - [ ] **Step 3: Implement immutable object staging and exact reference catalogs**
 
-Use `ReV2Paths`, `ObjectStore`, canonical JSON, safe directory creation, fsync, and the existing manifest-last/no-clobber pattern. Stage source outcomes, accepted-overview projection catalog and exact Markdown objects, acceptance receipts, topology, graph, static graph nodes and work templates, policies, schemas, context manifests, Prosaic bytes, budget, checkpoint selection, and publication bases. Concrete work items are persisted when dependency-ready. Verify every supplied mapping key equals `content_digest(payload)` and every overview `content_hash`/`object_hash` matches the staged bytes.
+Use `ReV2Paths`, `ObjectStore`, canonical JSON, safe directory creation, fsync, and the existing manifest-last/no-clobber pattern. Stage source outcomes, accepted-overview projection catalog and exact Markdown objects, acceptance receipts, aggregate topology plus each work-item-addressed source/domain topology component, graph, static graph nodes and work templates, policies, schemas, context manifests, Prosaic bytes, budget, checkpoint selection, and publication bases. Concrete work items are persisted when dependency-ready. Verify every supplied mapping key equals `content_digest(payload)` and every overview `content_hash`/`object_hash` matches the staged bytes.
 
 ```python
 def create_protocol_27_run_store(
@@ -671,7 +671,7 @@ Use `model_tier: strong`, `effort: high`, and the same neutral tool posture supp
 
 - [ ] **Step 4: Implement closed schemas and context construction**
 
-Require bounded section/claim/evidence arrays, exact artifact kind/scope, explicit input quality, exact sorted debt refs, and source/artifact citations authorized by the context manifest. Context serialization contains object identities plus bounded rendered excerpts; it never embeds arbitrary run directories or live paths.
+Require bounded section/claim/evidence arrays, exact artifact kind/scope, explicit input quality, exact sorted debt refs, and source/artifact citations authorized by the context manifest. Sections group claim IDs rather than carrying uncited free-form prose; every authorial factual statement therefore lives in an evidence-bearing claim. Context serialization contains object identities plus bounded rendered excerpts; it never embeds arbitrary run directories or live paths.
 
 - [ ] **Step 5: Implement deterministic candidate validation and certification**
 

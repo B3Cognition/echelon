@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -21,9 +22,26 @@ from tests.unit.test_re_v2_protocol_27_graph import _inputs as graph_inputs
 
 
 def _input_set(run_id: str = "re-synthesis-child"):
+    from harness.re_v2.protocol_27.context import default_synthesis_context_policy
     from harness.re_v2.protocol_27.inputs import Protocol27InputSet
+    from harness.re_v2.protocol_27.schemas import (
+        canonical_synthesis_response_schema_bytes,
+    )
 
     graph_input = graph_inputs(partial_sources=frozenset({"web"}))
+    response_schema_bytes = {
+        kind: canonical_synthesis_response_schema_bytes(kind)
+        for kind in graph_input.response_schema_hashes
+    }
+    context_policy = default_synthesis_context_policy()
+    graph_input = replace(
+        graph_input,
+        response_schema_hashes={
+            kind: content_digest(payload)
+            for kind, payload in response_schema_bytes.items()
+        },
+        context_policy_hash=context_policy.identity,
+    )
     graph = build_synthesis_graph(graph_input)
     authority_objects: dict[str, bytes] = {}
     for source in graph_input.accepted_sources:
@@ -78,10 +96,11 @@ def _input_set(run_id: str = "re-synthesis-child"):
         {"schema_version": 1, "selected": [], "selection_policy": "exact-v1"}
     )
     graph_objects = {
-        schema_hash: f"schema:{kind}".encode()
-        for kind, schema_hash in graph.response_schema_hashes.items()
+        content_digest(payload): payload for payload in response_schema_bytes.values()
     }
-    graph_objects[graph.context_policy_hash] = b"context-policy"
+    graph_objects[graph.context_policy_hash] = canonical_json_bytes(
+        context_policy.to_json_dict()
+    )
     implementation = graph.policy_catalog.implementation_authority
     graph_objects.update(
         {
@@ -126,6 +145,12 @@ def test_create_protocol_27_store_publishes_manifest_last(tmp_path: Path) -> Non
     assert loaded.manifest == manifest
     assert loaded.graph.graph_id == manifest.synthesis_graph_id
     assert loaded.input_authority_catalog.identity == manifest.input_authority_catalog_id
+    assert set(
+        loaded.input_authority_catalog.hashes_for("topology-component")
+    ) == {
+        *(item.identity for item in loaded.graph.topology.sources),
+        *(item.identity for item in loaded.graph.topology.workspace_domains),
+    }
 
 
 @pytest.mark.unit

@@ -418,6 +418,9 @@ live repositories, mutable workspace publication, and arbitrary sibling files.
 Every response schema requires structured claim/evidence entries and explicit
 input-quality/debt fields. Candidate validation fails when output:
 
+- places factual prose outside evidence-bearing claims (sections are structural
+  ordered claim-ID groupings only);
+
 - omits an applicable partial source or debt reference;
 - claims complete/full quality over partial input;
 - cites a source or artifact outside the context manifest;
