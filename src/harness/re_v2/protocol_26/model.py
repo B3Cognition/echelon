@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
@@ -315,6 +316,7 @@ class CheckpointManifestV1:
     accepted_artifact_dependencies: tuple[CheckpointArtifactDependencyV1, ...]
     non_artifact_dependency_hashes: tuple[str, ...]
     immutable_object_hashes: tuple[str, ...]
+    immutable_object_byte_counts: Mapping[str, int]
     audit_epoch_id: str | None
     semantic_authority_ids: tuple[str, ...]
     rank: CheckpointRankV1
@@ -340,6 +342,7 @@ class CheckpointManifestV1:
         "accepted_artifact_dependencies",
         "non_artifact_dependency_hashes",
         "immutable_object_hashes",
+        "immutable_object_byte_counts",
         "audit_epoch_id",
         "semantic_authority_ids",
         "rank",
@@ -423,6 +426,26 @@ class CheckpointManifestV1:
             self.immutable_object_hashes,
             "CheckpointManifestV1.immutable_object_hashes",
         )
+        if not isinstance(self.immutable_object_byte_counts, Mapping):
+            raise Protocol26SchemaError(
+                "CheckpointManifestV1.immutable_object_byte_counts must be an object"
+            )
+        byte_counts: dict[str, int] = {}
+        for object_hash, byte_count in self.immutable_object_byte_counts.items():
+            digest = _schema(
+                digest_value,
+                object_hash,
+                "CheckpointManifestV1.immutable_object_byte_counts key",
+            )
+            byte_counts[digest] = _schema(
+                nonnegative_int,
+                byte_count,
+                "CheckpointManifestV1.immutable_object_byte_counts value",
+            )
+        if set(byte_counts) != set(immutable):
+            raise Protocol26SchemaError(
+                "CheckpointManifestV1 object byte counts disagree with immutable inventory"
+            )
         audit_epoch = _schema(
             optional_digest,
             self.audit_epoch_id,
@@ -436,6 +459,11 @@ class CheckpointManifestV1:
         object.__setattr__(self, "accepted_artifact_dependencies", dependencies)
         object.__setattr__(self, "non_artifact_dependency_hashes", non_artifact)
         object.__setattr__(self, "immutable_object_hashes", immutable)
+        object.__setattr__(
+            self,
+            "immutable_object_byte_counts",
+            MappingProxyType(dict(sorted(byte_counts.items()))),
+        )
         object.__setattr__(self, "semantic_authority_ids", semantic)
         if self.artifact_key_id != self.work_item.output_key.identity:
             raise Protocol26SchemaError(
@@ -456,6 +484,18 @@ class CheckpointManifestV1:
             certification_artifact_hash = (
                 self.certification_receipt.certification_key.artifact_hash
             )
+            certification_key = self.certification_receipt.certification_key
+            if (
+                certification_key.artifact_key != self.work_item.output_key
+                or certification_key.verifier_id != self.work_item.verifier_id
+                or certification_key.verifier_version
+                != self.work_item.verifier_version
+                or certification_key.verifier_implementation_digest
+                != self.work_item.verifier_implementation_digest
+            ):
+                raise Protocol26SchemaError(
+                    "CheckpointManifestV1 certification differs from work item"
+                )
         if (
             self.certification_receipt.verdict != "accepted"
             or certification_artifact_key_id != self.work_item.output_key.identity
@@ -504,6 +544,10 @@ class CheckpointManifestV1:
             self.certification_receipt.identity,
             acceptance.identity,
         }
+        required_objects.update(non_artifact)
+        required_objects.update(
+            dependency.artifact_hash for dependency in dependencies
+        )
         if candidate is not None:
             required_objects.add(candidate.identity)
             required_objects.add(candidate.execution_capture_hash)
@@ -576,6 +620,7 @@ class CheckpointManifestV1:
                 self.non_artifact_dependency_hashes
             ),
             "immutable_object_hashes": list(self.immutable_object_hashes),
+            "immutable_object_byte_counts": dict(self.immutable_object_byte_counts),
             "audit_epoch_id": self.audit_epoch_id,
             "semantic_authority_ids": list(self.semantic_authority_ids),
             "rank": self.rank.to_json_dict(),
@@ -638,6 +683,7 @@ class CheckpointManifestV1:
             ),
             non_artifact_dependency_hashes=raw["non_artifact_dependency_hashes"],
             immutable_object_hashes=raw["immutable_object_hashes"],
+            immutable_object_byte_counts=raw["immutable_object_byte_counts"],
             audit_epoch_id=raw["audit_epoch_id"],
             semantic_authority_ids=raw["semantic_authority_ids"],
             rank=CheckpointRankV1.from_json_dict(raw["rank"]),

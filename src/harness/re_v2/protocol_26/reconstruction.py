@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import stat
@@ -25,19 +25,8 @@ from harness.re_v2.protocol_26.model import (
     CheckpointManifestV1,
     CheckpointRankV1,
 )
+from harness.re_v2.protocol_26.selection import RANK_POLICIES
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
-
-
-_RANK_POLICY_ID = "deterministic-pass-v1"
-_RANK_POLICY_HASH = content_digest(
-    canonical_json_bytes(
-        {
-            "policy_id": _RANK_POLICY_ID,
-            "schema_version": 1,
-            "vector": [1],
-        }
-    )
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,10 +224,10 @@ def _reconstruct_accepted_artifacts(
                 acceptance,
                 tuple(work_item.output_key.dependency_hashes),
             )
-            rank = CheckpointRankV1(
+            provisional_rank = CheckpointRankV1(
                 schema_version=1,
-                policy_id=_RANK_POLICY_ID,
-                policy_hash=_RANK_POLICY_HASH,
+                policy_id="pending-explicit-rank-policy",
+                policy_hash=content_digest("pending-explicit-rank-policy"),
                 vector=(1,),
             )
             audit_epoch_id = getattr(certification, "audit_epoch_id", None)
@@ -273,8 +262,18 @@ def _reconstruct_accepted_artifacts(
                 accepted_artifact_dependencies=dependencies,
                 non_artifact_dependency_hashes=non_artifact,
                 immutable_object_hashes=tuple(sorted(authority_objects)),
+                immutable_object_byte_counts={
+                    object_hash: len(payload)
+                    for object_hash, payload in authority_objects.items()
+                },
                 audit_epoch_id=audit_epoch_id,
                 semantic_authority_ids=semantic_authority_ids,
+                rank=provisional_rank,
+                rank_policy_hash=provisional_rank.policy_hash,
+            )
+            rank = RANK_POLICIES.extract(checkpoint)
+            checkpoint = replace(
+                checkpoint,
                 rank=rank,
                 rank_policy_hash=rank.policy_hash,
             )

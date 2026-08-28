@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.baseline import (
     ArtifactAcceptanceReceiptV2,
     DeterministicAssessmentInputV2,
@@ -117,6 +118,18 @@ class CheckpointWorkspace:
         return index
 
 
+@dataclass(frozen=True, slots=True)
+class SelectionGraphFixtureV1:
+    expected_work_items: tuple[object, ...]
+    source_snapshot_id: str
+    partition_manifest_id: str
+    target_layer: str
+    target_selection_id: str
+    target_graph_id: str
+    available_object_ids: tuple[str, ...] = ()
+    audit_epoch_id: str | None = None
+
+
 def layer_manifest(target_layer: str, *, run_id: str = "re-checkpoint-child"):
     if target_layer == "L1":
         return manifest_v2(run_id=run_id)
@@ -147,8 +160,26 @@ def checkpoint_rank_v1() -> CheckpointRankV1:
 
 
 def checkpoint_manifest_v1() -> CheckpointManifestV1:
-    item = work_item_v2()
-    artifact_hash = digest("accepted-artifact")
+    return checkpoint_for_item(
+        work_item_v2(),
+        artifact_seed="accepted-artifact",
+        origin_run_id="re-origin",
+        rank_policy_hash=digest("deterministic-pass-rank-policy"),
+    )
+
+
+def checkpoint_for_item(
+    item,
+    *,
+    artifact_seed: str,
+    origin_run_id: str,
+    rank_vector: tuple[int, ...] = (1,),
+    rank_policy_hash: str | None = None,
+    accepted_dependencies: tuple[tuple[str, str], ...] = (),
+) -> CheckpointManifestV1:
+    from harness.re_v2.protocol_26.model import CheckpointArtifactDependencyV1
+
+    artifact_hash = digest(artifact_seed)
     certification = certify_deterministic_artifact(
         item,
         artifact_hash,
@@ -171,6 +202,7 @@ def checkpoint_manifest_v1() -> CheckpointManifestV1:
         artifact_hash=artifact_hash,
         certification_receipt_id=certification.identity,
     )
+    ledger_hash = digest(f"{origin_run_id}:{artifact_seed}:ledger")
     authority = AdoptedArtifactAuthorityV1(
         schema_version=1,
         artifact_key_id=item.output_key.identity,
@@ -179,20 +211,51 @@ def checkpoint_manifest_v1() -> CheckpointManifestV1:
         certification_receipt_id=certification.identity,
         candidate_assessment_id=None,
         artifact_acceptance_receipt_id=acceptance.identity,
-        source_run_id="re-origin",
-        source_ledger_entry_hash=digest("acceptance-ledger-entry"),
+        source_run_id=origin_run_id,
+        source_ledger_entry_hash=ledger_hash,
     )
-    rank = checkpoint_rank_v1()
+    dependencies = tuple(
+        sorted(
+            (
+                CheckpointArtifactDependencyV1(1, artifact_key_id, dependency_hash)
+                for artifact_key_id, dependency_hash in accepted_dependencies
+            ),
+            key=lambda value: value.identity,
+        )
+    )
+    accepted_hashes = {value.artifact_hash for value in dependencies}
+    non_artifact = tuple(
+        sorted(set(item.output_key.dependency_hashes) - accepted_hashes)
+    )
+    object_ids = tuple(
+        sorted(
+            {
+                artifact_hash,
+                certification.identity,
+                acceptance.identity,
+                item.work_item_id,
+                *item.output_key.dependency_hashes,
+            }
+        )
+    )
+    policy_hash = rank_policy_hash or digest("test-rank-policy")
+    rank = CheckpointRankV1(1, "test-rank-v1", policy_hash, rank_vector)
     return CheckpointManifestV1(
         schema_version=1,
-        origin_run_id="re-origin",
-        origin_manifest_hash=digest("origin-manifest"),
+        origin_run_id=origin_run_id,
+        origin_manifest_hash=digest(f"{origin_run_id}:manifest"),
         origin_engine_protocol_version="2.2",
         origin_run_schema_version=2,
-        origin_acceptance_event_hash=digest("acceptance-event"),
-        origin_event_prefix_hash=digest("acceptance-event-prefix"),
-        origin_ledger_record_hash=digest("acceptance-ledger-entry"),
-        origin_ledger_prefix_hash=digest("acceptance-ledger-prefix"),
+        origin_acceptance_event_hash=digest(
+            f"{origin_run_id}:{artifact_seed}:event"
+        ),
+        origin_event_prefix_hash=digest(
+            f"{origin_run_id}:{artifact_seed}:event-prefix"
+        ),
+        origin_ledger_record_hash=ledger_hash,
+        origin_ledger_prefix_hash=digest(
+            f"{origin_run_id}:{artifact_seed}:ledger-prefix"
+        ),
         work_item=item,
         artifact_key_id=item.output_key.identity,
         artifact_hash=artifact_hash,
@@ -200,22 +263,108 @@ def checkpoint_manifest_v1() -> CheckpointManifestV1:
         candidate_assessment=None,
         artifact_acceptance_receipt=acceptance,
         adopted_artifact_authority=authority,
-        accepted_artifact_dependencies=(),
-        non_artifact_dependency_hashes=(),
-        immutable_object_hashes=tuple(
-            sorted(
-                {
-                    artifact_hash,
-                    certification.identity,
-                    acceptance.identity,
-                    item.work_item_id,
-                }
-            )
-        ),
+        accepted_artifact_dependencies=dependencies,
+        non_artifact_dependency_hashes=non_artifact,
+        immutable_object_hashes=object_ids,
+        immutable_object_byte_counts={value: 1 for value in object_ids},
         audit_epoch_id=None,
         semantic_authority_ids=(),
         rank=rank,
         rank_policy_hash=rank.policy_hash,
+    )
+
+
+def selection_graph(  # type: ignore[no-untyped-def]
+    *items,
+    target_layer: str = "L1",
+    audit_epoch_id: str | None = None,
+) -> SelectionGraphFixtureV1:
+    return SelectionGraphFixtureV1(
+        expected_work_items=tuple(items),
+        source_snapshot_id=digest("selection-snapshot"),
+        partition_manifest_id=digest("selection-partition"),
+        target_layer=target_layer,
+        target_selection_id=digest("selection-id"),
+        target_graph_id=digest("selection-graph"),
+        audit_epoch_id=audit_epoch_id,
+    )
+
+
+def l3_checkpoint_manifest_v1(tmp_path: Path) -> CheckpointManifestV1:
+    from dataclasses import replace
+
+    from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+    from tests.integration.test_re_v2_protocol_25_recovery import (
+        _context,
+        _semantic_result_work_item,
+    )
+    from tests.unit.test_re_v2_protocol_25_runtime import _certified_resolution
+
+    context = _context(tmp_path)
+    _audit, epoch, _semantic_context, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    candidate = replace(result.candidate_assessment, work_item_id=item.work_item_id)
+    ledger_hash = digest("semantic-ledger-record")
+    authority = AdoptedArtifactAuthorityV1(
+        1,
+        item.output_key.identity,
+        result.acceptance.artifact_hash,
+        item.output_key.dependency_hashes,
+        result.certification.identity,
+        candidate.identity,
+        result.acceptance.identity,
+        "re-l3-origin",
+        ledger_hash,
+    )
+    immutable = {
+        item.work_item_id,
+        result.acceptance.artifact_hash,
+        result.certification.identity,
+        candidate.identity,
+        candidate.execution_capture_hash,
+        candidate.normalized_authorial_payload_hash,
+        result.acceptance.identity,
+        epoch.identity,
+        *item.output_key.dependency_hashes,
+    }
+    rank = CheckpointRankV1(
+        1,
+        "semantic-certified-pass-v1",
+        content_digest(
+            {
+                "components": ["accepted_semantic_certification"],
+                "ordering": "larger-is-better",
+                "policy_id": "semantic-certified-pass-v1",
+                "schema_version": 1,
+            }
+        ),
+        (1,),
+    )
+    return CheckpointManifestV1(
+        1,
+        "re-l3-origin",
+        digest("l3-origin-manifest"),
+        "2.5",
+        4,
+        digest("l3-acceptance-event"),
+        digest("l3-event-prefix"),
+        ledger_hash,
+        digest("l3-ledger-prefix"),
+        item,
+        item.output_key.identity,
+        result.acceptance.artifact_hash,
+        result.certification,
+        candidate,
+        result.acceptance,
+        authority,
+        (),
+        item.output_key.dependency_hashes,
+        tuple(sorted(value for value in immutable if value is not None)),
+        {value: 1 for value in immutable if value is not None},
+        epoch.identity,
+        tuple(sorted((result.certification.identity, epoch.identity))),
+        rank,
+        rank.policy_hash,
     )
 
 
@@ -293,10 +442,14 @@ def manifest_v5(
 __all__ = (
     "CheckpointWorkspace",
     "OriginCheckpointFixtureV1",
+    "SelectionGraphFixtureV1",
+    "checkpoint_for_item",
     "checkpoint_manifest_v1",
     "checkpoint_rank_v1",
     "checkpoint_selection_bundle_v1",
     "layer_execution_contract_v1",
     "layer_manifest",
+    "l3_checkpoint_manifest_v1",
     "manifest_v5",
+    "selection_graph",
 )
