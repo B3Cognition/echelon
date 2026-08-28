@@ -1096,51 +1096,7 @@ def _dispatch_land_to_spec_targets(
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
 
-def _cmd_harness(args: list[str]) -> None:
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: echelon harness <subcommand> [args...]\n"
-            "Compatibility alias for: echelon delivery <subcommand> [args...]\n\n"
-            "Subcommands:\n"
-            "  init                              Initialize delivery environment — config, mirror, verify\n"
-            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
-            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
-            "                                     Run build→verify→PR loop\n"
-            "                                     mode: semi (default) | banzai | guided\n"
-            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked run with a human answer\n"
-            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Continue a blocked/checkpointed run without a new answer\n"
-            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
-            "Examples:\n"
-            "  echelon delivery init\n"
-            "  echelon delivery init https://github.com/org/repo\n"
-            "  echelon delivery run 001\n"
-            "  echelon delivery run 001 strategy=codegen\n"
-            "  echelon delivery run 001 strategy=default mode=banzai max_outer=3\n"
-            "  echelon delivery continue 001\n"
-            "  echelon delivery resume 001 \"Use the simpler option\"\n"
-        )
-        return
-
-    subcmd = args[0]
-    if subcmd == "init":
-        _cmd_harness_init(args[1:])
-    elif subcmd == "run":
-        _cmd_harness_run(args[1:])
-    elif subcmd == "resume":
-        _cmd_harness_resume(args[1:])
-    elif subcmd == "continue":
-        _cmd_harness_continue(args[1:])
-    elif subcmd == "land":
-        _cmd_land(args[1:])
-    else:
-        print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
-        sys.exit(1)
-
-
-def _cmd_delivery(args: list[str]) -> None:
+def _removed_cmd_delivery(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon delivery <subcommand> [args...]\n\n"
