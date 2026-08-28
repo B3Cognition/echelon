@@ -138,6 +138,15 @@ def validate_parent_for_deepening(
     try:
         paths = ReV2Paths.for_run(run_dir)
         manifest = load_run_manifest(run_dir)
+        from harness.re_v2.protocol_26.model import RunManifestV5
+
+        if isinstance(manifest, RunManifestV5):
+            return _validate_schema5_parent(
+                run_dir,
+                workspace_root,
+                paths,
+                manifest,
+            )
         if isinstance(manifest, RunManifestV3):
             return _validate_schema3_parent(
                 run_dir,
@@ -204,6 +213,93 @@ def validate_parent_for_deepening(
         raise Protocol24AdoptionError(
             f"cannot validate parent authority: {exc}"
         ) from exc
+
+
+def _validate_schema5_parent(
+    run_dir: Path,
+    workspace_root: Path,
+    paths: ReV2Paths,
+    manifest: object,
+) -> ValidatedParentV1:
+    """Authenticate a completed self-contained protocol-2.6 L1/L2 parent."""
+    from harness.re_v2.protocol_22.graph import build_protocol_22_graph
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+
+    if not isinstance(manifest, RunManifestV5) or manifest.target_layer not in {
+        "L1",
+        "L2",
+    }:
+        raise Protocol24AdoptionError(
+            "deepening requires a completed protocol-2.6 L1 or L2 parent"
+        )
+    manifest_bytes = _stable_read(paths.manifest, "parent manifest")
+    if manifest_bytes != canonical_json_bytes(manifest.to_json_dict()):
+        raise Protocol24AdoptionError("parent manifest changed during validation")
+    outer_inputs = load_protocol_26_inputs(paths, manifest)
+    layer_manifest = outer_inputs.layer_execution_contract.layer_manifest
+    inputs = outer_inputs.layer_inputs
+    if isinstance(layer_manifest, RunManifestV3):
+        ancestor_objects = _validate_schema3_lineage(paths, layer_manifest, inputs)
+    elif isinstance(layer_manifest, RunManifestV2):
+        ancestor_objects = MappingProxyType({})
+    else:
+        raise Protocol24AdoptionError(
+            "protocol-2.6 parent layer contract is not eligible for deepening"
+        )
+
+    event_before = _stable_optional_read(paths.events, "parent event chain")
+    events = EventStore(
+        paths,
+        protocol=protocol_26_events_for(manifest.target_layer),
+    ).replay()
+    event_after = _stable_optional_read(paths.events, "parent event chain")
+    if event_before != event_after:
+        raise Protocol24AdoptionError("parent event chain changed during validation")
+    _validate_terminal_events(events, manifest)
+
+    objects = ObjectStore(paths.objects)
+    ledger_before = _stable_read(paths.ledger, "parent ledger chain")
+    ledger_history, ledger = Protocol22Ledger(paths, objects).replay_with_history()
+    ledger_after = _stable_read(paths.ledger, "parent ledger chain")
+    if ledger_before != ledger_after:
+        raise Protocol24AdoptionError("parent ledger chain changed during validation")
+
+    if isinstance(layer_manifest, RunManifestV3):
+        adopted = reconstruct_adopted_parent_closure(
+            inputs.parent_authority_bundle,
+            ledger,
+        )
+        graph = build_protocol_24_graph(layer_manifest, inputs, adopted)
+        current = _validate_complete_authority(graph, ledger, events)
+        accepted_parent = dict(adopted)
+        accepted_parent.update(current)
+    else:
+        graph = build_protocol_22_graph(layer_manifest, inputs)
+        accepted_parent = dict(_validate_complete_authority(graph, ledger, events))
+    if set(ledger.accepted_artifacts) != {
+        artifact.artifact_key_id for _template, artifact in accepted_parent.values()
+    }:
+        raise Protocol24AdoptionError(
+            "protocol-2.6 parent accepted closure does not cover its ledger"
+        )
+    _validate_workspace_sources(workspace_root, manifest)
+    return ValidatedParentV1(
+        run_dir=run_dir,
+        paths=paths,
+        manifest=manifest,
+        inputs=inputs,
+        graph=graph,
+        events=events,
+        ledger=ledger,
+        ledger_history=ledger_history,
+        manifest_bytes=manifest_bytes,
+        event_chain_bytes=event_after,
+        ledger_chain_bytes=ledger_after,
+        accepted_parent=accepted_parent,
+        ancestor_objects=ancestor_objects,
+    )
 
 
 def _validate_schema3_parent(
@@ -491,7 +587,7 @@ def _validate_complete_authority(
     for event in events:
         if event.type == "artifact_accepted":
             acceptance_events[str(event.payload["artifact_key_id"])] = event
-        elif event.type == "artifact_adopted":
+        elif event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}:
             authority = AdoptedArtifactAuthorityV1.from_json_dict(
                 event.payload["adopted_artifact_authority"]
             )
@@ -522,7 +618,7 @@ def _validate_complete_authority(
             raise Protocol24AdoptionError("accepted parent artifact is missing")
         event = acceptance_events[artifact.artifact_key_id]
         acceptance = ledger.accepted_artifacts[artifact.artifact_key_id]
-        if event.type == "artifact_adopted":
+        if event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}:
             authority = AdoptedArtifactAuthorityV1.from_json_dict(
                 event.payload["adopted_artifact_authority"]
             )

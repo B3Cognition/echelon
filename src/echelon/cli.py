@@ -12238,6 +12238,256 @@ class _Protocol22Creation:
     inputs: object
 
 
+@dataclass(frozen=True, slots=True)
+class _LayerCreationAuthorityV1:
+    snapshot: object
+    layer_manifest: object
+    layer_inputs: object
+    graph: object
+    direct_parent_authority: tuple[object, ...]
+    authority_objects: Mapping[str, Mapping[str, bytes]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Protocol26Creation:
+    snapshot: object
+    manifest: object
+    inputs: object
+    graph: object
+    direct_parent: object | None
+
+
+def _build_protocol_26_creation(
+    layer_creation: _LayerCreationAuthorityV1,
+    contract: object,
+    bundle: object,
+    direct_parent: object | None,
+) -> _Protocol26Creation:
+    """Build one outer schema-5 value from already-prepared layer authority."""
+    from harness.re_v2.protocol_22.model import CatalogReferenceV1
+    from harness.re_v2.protocol_26.inputs import Protocol26InputSet
+    from harness.re_v2.protocol_26.model import (
+        LayerExecutionContractV1,
+        RunManifestV5,
+    )
+
+    if not isinstance(contract, LayerExecutionContractV1):
+        raise ValueError("protocol-2.6 creation requires a layer contract")
+    selected_objects: dict[str, bytes] = {}
+    for selected in bundle.selected:
+        authority_key = (
+            selected.checkpoint_manifest_id
+            if selected.source_kind == "workspace_checkpoint"
+            else selected.expected_work_item_id
+        )
+        candidate_objects = layer_creation.authority_objects.get(authority_key)
+        if candidate_objects is None:
+            raise ValueError("selected checkpoint has no reconstructed object authority")
+        for object_hash in selected.copied_object_ids:
+            payload = candidate_objects.get(object_hash)
+            if payload is None:
+                raise ValueError("selected checkpoint object authority is incomplete")
+            existing = selected_objects.get(object_hash)
+            if existing is not None and existing != payload:
+                raise ValueError("selected checkpoint objects conflict")
+            selected_objects[object_hash] = payload
+
+    inner = contract.layer_manifest
+    outer = RunManifestV5(
+        schema_version=5,
+        engine="re-v2",
+        engine_protocol_version="2.6",
+        run_id=inner.run_id,
+        created_at=inner.created_at,
+        source_snapshot_id=inner.source_snapshot_id,
+        source_snapshot_kind=inner.source_snapshot_kind,
+        partition_manifest_id=inner.partition_manifest_id,
+        target_layer=contract.target_layer,
+        layer_execution_contract=CatalogReferenceV1(
+            contract.identity,
+            "layer-execution-contract.json",
+        ),
+        checkpoint_selection=CatalogReferenceV1(
+            bundle.identity,
+            "checkpoint-selection.json",
+        ),
+    )
+    inputs = Protocol26InputSet(
+        manifest=outer,
+        layer_execution_contract=contract,
+        layer_inputs=layer_creation.layer_inputs,
+        checkpoint_selection=bundle,
+        authority_objects=selected_objects,
+    )
+    return _Protocol26Creation(
+        layer_creation.snapshot,
+        outer,
+        inputs,
+        layer_creation.graph,
+        direct_parent,
+    )
+
+
+def _prepare_re_v26_creation(
+    workspace_root: Path,
+    *,
+    target_layer: str,
+    parent_run: Path | None,
+    goal: str,
+    deepen_options: object | None,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> _Protocol26Creation:
+    """Compose protocol 2.6 over the existing pure layer preparation paths."""
+    from types import SimpleNamespace
+
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.protocol_22.graph import build_protocol_22_graph
+    from harness.re_v2.protocol_26.cache import rebuild_checkpoint_cache
+    from harness.re_v2.protocol_26.model import LayerExecutionContractV1
+    from harness.re_v2.protocol_26.selection import select_checkpoints
+
+    if target_layer == "L1":
+        if parent_run is not None or deepen_options is not None:
+            raise ValueError("protocol-2.6 L1 creation cannot have a direct parent")
+        prepared = _prepare_re_v22_creation(
+            workspace_root,
+            goal=goal,
+            token_limit=token_limit,
+            time_limit_minutes=time_limit_minutes,
+            engine_protocol_version="2.3",
+        )
+        graph = build_protocol_22_graph(prepared.manifest, prepared.inputs)
+        layer_manifest = prepared.manifest
+        layer_inputs = prepared.inputs
+        snapshot = prepared.snapshot
+        direct_parent = None
+        direct_candidates: tuple[object, ...] = ()
+        direct_objects: dict[str, Mapping[str, bytes]] = {}
+    elif target_layer == "L2":
+        from dataclasses import replace
+
+        from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
+        from harness.re_v2.protocol_26.reconstruction import (
+            reconstruct_origin_checkpoints,
+        )
+
+        if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
+            raise ValueError("protocol-2.6 L2 creation requires deepening authority")
+        direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
+        prepared_l2 = _prepare_re_v24_creation(
+            workspace_root,
+            direct_parent,
+            deepen_options,
+        )
+        layer_manifest = replace(
+            prepared_l2.manifest,
+            run_id=_new_re_v2_run_id(workspace_root),
+            created_at=_re_v2_now(),
+        )
+        layer_inputs = prepared_l2.inputs
+        graph = prepared_l2.graph
+        # Deepening reuses the already authenticated parent snapshot identity.
+        # The runtime reconstructs its pinned snapshot only after publication;
+        # preparation must not introduce a second snapshot read.
+        snapshot = None
+        reconstructed = reconstruct_origin_checkpoints(workspace_root, parent_run)
+        direct_candidates = tuple(reconstructed.manifests)
+        direct_objects = {
+            checkpoint.work_item.work_item_id: reconstructed.authority_objects[
+                checkpoint.identity
+            ]
+            for checkpoint in direct_candidates
+        }
+    elif target_layer == "L3":
+        from dataclasses import replace
+
+        from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
+        from harness.re_v2.protocol_26.reconstruction import (
+            reconstruct_origin_checkpoints,
+        )
+
+        if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
+            raise ValueError("protocol-2.6 L3 creation requires deepening authority")
+        direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
+        prepared_l3 = _prepare_re_v25_creation(
+            workspace_root,
+            direct_parent,
+            deepen_options,
+        )
+        layer_manifest = replace(
+            prepared_l3.manifest,
+            run_id=_new_re_v2_run_id(workspace_root),
+            created_at=_re_v2_now(),
+        )
+        layer_inputs = prepared_l3.inputs
+        graph = prepared_l3.graph
+        snapshot = None
+        reconstructed = reconstruct_origin_checkpoints(workspace_root, parent_run)
+        direct_candidates = tuple(reconstructed.manifests)
+        direct_objects = {
+            checkpoint.work_item.work_item_id: reconstructed.authority_objects[
+                checkpoint.identity
+            ]
+            for checkpoint in direct_candidates
+        }
+    else:
+        raise ValueError(f"unsupported protocol-2.6 target layer: {target_layer!r}")
+    cache = rebuild_checkpoint_cache(workspace_root)
+    layer = _LayerCreationAuthorityV1(
+        snapshot,
+        layer_manifest,
+        layer_inputs,
+        graph,
+        direct_candidates,
+        {**dict(cache.authority_objects), **direct_objects},
+    )
+    contract = LayerExecutionContractV1.from_layer_manifest(layer_manifest)
+    target_selection_id = (
+        layer_manifest.selection.identity
+        if hasattr(layer_manifest, "selection")
+        else content_digest(
+            {
+                "requested_goals": list(layer_manifest.requested_goals),
+                "schema_version": 1,
+            }
+        )
+    )
+    selection_templates = (
+        (*graph.prerequisite_graph.templates, *graph.audit_templates)
+        if target_layer == "L3"
+        else graph.templates
+    )
+    selection_graph = SimpleNamespace(
+        templates=selection_templates,
+        _inputs=layer_inputs,
+        source_snapshot_id=layer_manifest.source_snapshot_id,
+        partition_manifest_id=layer_manifest.partition_manifest_id,
+        target_layer=target_layer,
+        target_selection_id=target_selection_id,
+        target_graph_id=content_digest(
+            {
+                "schema_version": 1,
+                "template_ids": [
+                    item.template_id for item in selection_templates
+                ],
+            }
+        ),
+        audit_epoch_id=(
+            layer_manifest.frozen_audit_epoch.object_hash
+            if target_layer == "L3"
+            and layer_manifest.frozen_audit_epoch is not None
+            else None
+        ),
+    )
+    bundle = select_checkpoints(
+        selection_graph,
+        cache.manifests.values(),
+        direct_parent=direct_candidates,
+    )
+    return _build_protocol_26_creation(layer, contract, bundle, direct_parent)
+
+
 def _prepare_re_v22_creation(
     workspace_root: Path,
     *,
@@ -12566,11 +12816,27 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     )
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
 
-    if not isinstance(manifest, RunManifestV2):
-        raise ValueError("protocol-2.2 context requires a schema-2 manifest")
+    active_manifest = manifest
     paths = ReV2Paths.for_run(run_dir)
-    inputs = load_protocol_22_inputs(paths, manifest)
+    if isinstance(manifest, RunManifestV5):
+        if manifest.target_layer != "L1":
+            raise ValueError("protocol-2.6 L1 context received another target layer")
+        outer_inputs = load_protocol_26_inputs(paths, manifest)
+        layer_manifest = outer_inputs.layer_execution_contract.layer_manifest
+        if not isinstance(layer_manifest, RunManifestV2):
+            raise ValueError("protocol-2.6 L1 contract has no schema-2 manifest")
+        manifest = layer_manifest
+        inputs = outer_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L1")
+    elif isinstance(manifest, RunManifestV2):
+        inputs = load_protocol_22_inputs(paths, manifest)
+        event_protocol = PROTOCOL_22_EVENTS
+    else:
+        raise ValueError("protocol-2.2 context requires a schema-2 manifest")
     graph = build_protocol_22_graph(manifest, inputs)
     objects = ObjectStore(paths.objects)
     if manifest.engine_protocol_version == "2.3":
@@ -12594,7 +12860,7 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         )
     else:
         registry, _agent, _schemas = _re_v22_installed_registry(project_root)
-    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot = _load_re_v2_snapshot(project_root, active_manifest)
     snapshot_reader = PinnedSnapshotReaderV1(snapshot, inputs.workspace_partition)
     ledger = Protocol22Ledger(paths, objects)
     runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
@@ -12695,7 +12961,7 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         paths=paths,
         inputs=inputs,
         graph=graph,
-        event_store=EventStore(paths, protocol=PROTOCOL_22_EVENTS),
+        event_store=EventStore(paths, protocol=event_protocol),
         object_store=objects,
         ledger=ledger,
         execution_store=Protocol22ExecutionStore(paths, objects),
@@ -12753,11 +13019,27 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
 
-    if not isinstance(manifest, RunManifestV3):
-        raise ValueError("protocol-2.4 context requires a schema-3 manifest")
+    active_manifest = manifest
     paths = ReV2Paths.for_run(run_dir)
-    inputs = load_protocol_24_inputs(paths, manifest)
+    if isinstance(manifest, RunManifestV5):
+        if manifest.target_layer != "L2":
+            raise ValueError("protocol-2.6 L2 context received another target layer")
+        outer_inputs = load_protocol_26_inputs(paths, manifest)
+        layer_manifest = outer_inputs.layer_execution_contract.layer_manifest
+        if not isinstance(layer_manifest, RunManifestV3):
+            raise ValueError("protocol-2.6 L2 contract has no schema-3 manifest")
+        manifest = layer_manifest
+        inputs = outer_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L2")
+    elif isinstance(manifest, RunManifestV3):
+        inputs = load_protocol_24_inputs(paths, manifest)
+        event_protocol = PROTOCOL_24_EVENTS
+    else:
+        raise ValueError("protocol-2.4 context requires a schema-3 manifest")
     objects = ObjectStore(paths.objects)
     ledger = Protocol22Ledger(paths, objects)
     ledger_view = ledger.replay()
@@ -12766,7 +13048,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         ledger_view,
     )
     graph = build_protocol_24_graph(manifest, inputs, accepted_parent)
-    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot = _load_re_v2_snapshot(project_root, active_manifest)
     snapshot_reader = PinnedSnapshotReaderV1(
         snapshot,
         inputs.workspace_partition,
@@ -12915,7 +13197,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         paths=paths,
         inputs=inputs,
         graph=graph,
-        event_store=EventStore(paths, protocol=PROTOCOL_24_EVENTS),
+        event_store=EventStore(paths, protocol=event_protocol),
         object_store=objects,
         ledger=ledger,
         execution_store=Protocol22ExecutionStore(paths, objects),
@@ -12985,13 +13267,29 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         SquadCliSemanticRenderer,
     )
     from harness.re_v2.protocol_25.policies import SEMANTIC_RENDERER_ID
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
 
-    if not isinstance(manifest, RunManifestV4):
-        raise ValueError("protocol-2.5 context requires a schema-4 manifest")
+    active_manifest = manifest
     paths = ReV2Paths.for_run(run_dir)
-    semantic_inputs = load_protocol_25_inputs(paths, manifest)
+    if isinstance(manifest, RunManifestV5):
+        if manifest.target_layer != "L3":
+            raise ValueError("protocol-2.6 L3 context received another target layer")
+        protocol_26_inputs = load_protocol_26_inputs(paths, manifest)
+        layer_manifest = protocol_26_inputs.layer_execution_contract.layer_manifest
+        if not isinstance(layer_manifest, RunManifestV4):
+            raise ValueError("protocol-2.6 L3 contract has no schema-4 manifest")
+        manifest = layer_manifest
+        semantic_inputs = protocol_26_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L3")
+    elif isinstance(manifest, RunManifestV4):
+        semantic_inputs = load_protocol_25_inputs(paths, manifest)
+        event_protocol = PROTOCOL_25_EVENTS
+    else:
+        raise ValueError("protocol-2.5 context requires a schema-4 manifest")
     objects = ObjectStore(paths.objects)
     ledger = Protocol25Ledger(paths, objects)
     ledger_view = ledger.replay()
@@ -13006,7 +13304,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     )
     inputs = semantic_graph.inputs
     graph = semantic_graph.prerequisite_graph
-    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    snapshot = _load_re_v2_snapshot(project_root, active_manifest)
     snapshot_reader = PinnedSnapshotReaderV1(
         snapshot,
         semantic_inputs.workspace_partition,
@@ -13229,7 +13527,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         paths=paths,
         inputs=inputs,
         graph=graph,
-        event_store=EventStore(paths, protocol=PROTOCOL_25_EVENTS),
+        event_store=EventStore(paths, protocol=event_protocol),
         object_store=objects,
         ledger=ledger,
         execution_store=Protocol25ExecutionStore(paths, objects),
@@ -13264,6 +13562,7 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.protocol_22.model import RunManifestV2
     from harness.re_v2.protocol_24.model import RunManifestV3
     from harness.re_v2.protocol_25.model import RunManifestV4
+    from harness.re_v2.protocol_26.model import RunManifestV5
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
@@ -13271,6 +13570,14 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
         return _re_v24_context(project_root, run_dir, manifest)
     if isinstance(manifest, RunManifestV4):
         return _re_v25_context(project_root, run_dir, manifest)
+    if isinstance(manifest, RunManifestV5):
+        if manifest.target_layer == "L1":
+            return _re_v22_context(project_root, run_dir, manifest)
+        if manifest.target_layer == "L2":
+            return _re_v24_context(project_root, run_dir, manifest)
+        if manifest.target_layer == "L3":
+            return _re_v25_context(project_root, run_dir, manifest)
+        raise ValueError("unsupported protocol-2.6 target layer")
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -13495,9 +13802,15 @@ def _run_re_v22_shadow(context: object) -> None:
             * entry.limits.max_active_ms_per_dispatch
         )
 
-    manifest = load_run_manifest(context.paths.root.parent)
+    active_manifest = load_run_manifest(context.paths.root.parent)
+    manifest = active_manifest
+    if getattr(active_manifest, "engine_protocol_version", None) == "2.6":
+        from harness.re_v2.protocol_26.authority import resolve_run_authority
+
+        manifest = resolve_run_authority(context).layer_manifest
     print(
-        f"RE V2 — PROTOCOL {manifest.engine_protocol_version} SHADOW PLAN"
+        "RE V2 — PROTOCOL "
+        f"{active_manifest.engine_protocol_version} SHADOW PLAN"
     )
     print(f"deterministic initial dispatches: {deterministic_count}")
     print(f"provider initial dispatches: {len(provider_templates)}")
@@ -13566,6 +13879,14 @@ def _run_re_v22_shadow(context: object) -> None:
     else:
         print("authorization: ceilings cover the whole-run worst case")
     print("provider requests issued: 0")
+    if getattr(active_manifest, "engine_protocol_version", None) == "2.6":
+        checkpoint_events = tuple(
+            event
+            for event in context.event_store.replay()
+            if event.type == "checkpoint_artifact_adopted"
+        )
+        print(f"checkpoint artifacts adopted: {len(checkpoint_events)}")
+        return
     print(render_protocol_22_status(context.paths.root.parent, context=context), end="")
 
 
@@ -13595,10 +13916,14 @@ def _run_re_v2_live(context: object) -> None:
     if isinstance(context, Protocol22RunContext):
         from harness.re_v2.protocol_24.model import RunManifestV3
         from harness.re_v2.protocol_25.model import RunManifestV4
+        from harness.re_v2.protocol_26.model import RunManifestV5
         from harness.re_v2.run_store import load_run_manifest
 
         manifest = load_run_manifest(context.paths.root.parent)
-        if isinstance(manifest, RunManifestV4):
+        target_layer = (
+            manifest.target_layer if isinstance(manifest, RunManifestV5) else None
+        )
+        if isinstance(manifest, RunManifestV4) or target_layer == "L3":
             from harness.re_v2.protocol_25.controller import Protocol25Controller
             from harness.re_v2.protocol_25.materialization import (
                 materialize_accepted_l3,
@@ -13607,37 +13932,46 @@ def _run_re_v2_live(context: object) -> None:
 
             Protocol25Controller(context).run_until_stopped()
             materialize_accepted_l3(context)
-            print(
-                render_protocol_25_status(
-                    context.paths.root.parent,
-                    context=context,
-                ),
-                end="",
-            )
-        elif isinstance(manifest, RunManifestV3):
+            if isinstance(manifest, RunManifestV5):
+                print("RE V2 protocol 2.6 target L3 execution stopped")
+            else:
+                print(
+                    render_protocol_25_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
+        elif isinstance(manifest, RunManifestV3) or target_layer == "L2":
             from harness.re_v2.protocol_24.controller import Protocol24Controller
             from harness.re_v2.protocol_24.status import render_protocol_24_status
 
             Protocol24Controller(context).run_until_stopped()
-            print(
-                render_protocol_24_status(
-                    context.paths.root.parent,
-                    context=context,
-                ),
-                end="",
-            )
+            if isinstance(manifest, RunManifestV5):
+                print("RE V2 protocol 2.6 target L2 execution stopped")
+            else:
+                print(
+                    render_protocol_24_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
         else:
             from harness.re_v2.protocol_22.controller import Protocol22Controller
             from harness.re_v2.protocol_22.status import render_protocol_22_status
 
             Protocol22Controller(context).run_until_stopped()
-            print(
-                render_protocol_22_status(
-                    context.paths.root.parent,
-                    context=context,
-                ),
-                end="",
-            )
+            if isinstance(manifest, RunManifestV5):
+                print("RE V2 protocol 2.6 target L1 execution stopped")
+            else:
+                print(
+                    render_protocol_22_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
         return
     from harness.re_v2.controller import ReV2Controller
     from harness.re_v2.status import render_v2_status
@@ -13654,26 +13988,31 @@ def _run_re_v2_create(
     shadow: bool,
     goal: str,
 ) -> None:
-    from harness.re_v2.protocol_22.inputs import create_protocol_22_run_store
+    from harness.re_v2.protocol_26.adoption import initialize_protocol_26_run
+    from harness.re_v2.protocol_26.inputs import create_protocol_26_run_store
 
     if goal not in {"baseline", "inventory"}:
         raise ValueError("protocol-2.2 goal must be baseline or inventory")
     workspace_root = project_root.resolve()
-    prepared = _prepare_re_v22_creation(
+    prepared = _prepare_re_v26_creation(
         workspace_root,
+        target_layer="L1",
+        parent_run=None,
         goal=goal,
+        deepen_options=None,
         token_limit=token_limit,
         time_limit_minutes=time_limit_minutes,
     )
     run_id = str(getattr(prepared.manifest, "run_id"))
     run_dir = workspace_root / "runs" / run_id
-    create_protocol_22_run_store(
+    create_protocol_26_run_store(
         run_dir,
         prepared.manifest,
         prepared.inputs,
     )
-    _activate_re_v2_run(workspace_root, run_id)
     context = _re_v2_context(workspace_root, run_dir)
+    initialize_protocol_26_run(context)
+    _activate_re_v2_run(workspace_root, run_id)
     if shadow:
         _run_re_v2_shadow(context)
     else:
@@ -14628,7 +14967,9 @@ def _find_re_v24_semantic_child(
     semantic_request_id: str,
 ) -> Path | None:
     from harness.re_v2.protocol_24.model import RunManifestV3
-    from harness.re_v2.run_store import load_run_manifest
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     runs = workspace_root.resolve() / "runs"
     for candidate in sorted(runs.iterdir(), key=lambda path: path.name):
@@ -14640,9 +14981,17 @@ def _find_re_v24_semantic_child(
         ):
             continue
         manifest = load_run_manifest(candidate)
+        candidate_manifest = manifest
+        if isinstance(manifest, RunManifestV5) and manifest.target_layer == "L2":
+            protocol_26_inputs = load_protocol_26_inputs(
+                ReV2Paths.for_run(candidate), manifest
+            )
+            candidate_manifest = (
+                protocol_26_inputs.layer_execution_contract.layer_manifest
+            )
         if (
-            isinstance(manifest, RunManifestV3)
-            and manifest.semantic_request_id == semantic_request_id
+            isinstance(candidate_manifest, RunManifestV3)
+            and candidate_manifest.semantic_request_id == semantic_request_id
         ):
             return candidate
     return None
@@ -14673,31 +15022,39 @@ def _run_re_v24_deepen(
     from harness.re_v2.protocol_24.adoption import (
         validate_parent_for_deepening,
     )
-    from harness.re_v2.protocol_24.inputs import create_protocol_24_run_store
+    from harness.re_v2.protocol_26.adoption import initialize_protocol_26_run_store
+    from harness.re_v2.protocol_26.inputs import create_protocol_26_run_store
+    from harness.re_v2.run_store import load_run_manifest
 
     workspace = workspace_root.resolve()
     parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
     # Clean/exact-source validation deliberately precedes every child mutation.
     parent = validate_parent_for_deepening(parent_path, workspace)
-    prepared = _prepare_re_v24_creation(workspace, parent, options)
     created = False
     with _re_v24_creation_lock(workspace):
+        prepared = _prepare_re_v26_creation(
+            workspace,
+            target_layer="L2",
+            parent_run=parent_path,
+            goal="baseline",
+            deepen_options=options,
+            token_limit=options.token_limit,
+            time_limit_minutes=(
+                options.active_ms_limit // 60_000
+                if options.active_ms_limit is not None
+                else None
+            ),
+        )
+        inner_manifest = prepared.inputs.layer_execution_contract.layer_manifest
         existing = _find_re_v24_semantic_child(
             workspace,
-            prepared.manifest.semantic_request_id,
+            inner_manifest.semantic_request_id,
         )
         if existing is None:
-            from dataclasses import replace
-
-            manifest = replace(
-                prepared.manifest,
-                run_id=_new_re_v2_run_id(workspace),
-                created_at=_re_v2_now(),
-            )
-            run_dir = workspace / "runs" / manifest.run_id
-            paths = create_protocol_24_run_store(
+            run_dir = workspace / "runs" / prepared.manifest.run_id
+            create_protocol_26_run_store(
                 run_dir,
-                manifest,
+                prepared.manifest,
                 prepared.inputs,
                 fault_hook=creation_fault_hook,
             )
@@ -14705,6 +15062,10 @@ def _run_re_v24_deepen(
                 run_dir,
                 parent,
                 creation_fault_hook=creation_fault_hook,
+            )
+            initialize_protocol_26_run_store(
+                run_dir,
+                fault_hook=creation_fault_hook,
             )
             created = True
         else:
@@ -14714,6 +15075,14 @@ def _run_re_v24_deepen(
                 parent,
                 creation_fault_hook=creation_fault_hook,
             )
+            manifest = load_run_manifest(run_dir)
+            from harness.re_v2.protocol_26.model import RunManifestV5
+
+            if isinstance(manifest, RunManifestV5):
+                initialize_protocol_26_run_store(
+                    run_dir,
+                    fault_hook=creation_fault_hook,
+                )
         _activate_re_v2_run(workspace, run_dir.name)
         _re_v24_creation_fault(creation_fault_hook, "active_pointer_published")
     context = _re_v2_context(workspace, run_dir)
@@ -14734,6 +15103,12 @@ def _run_or_report_re_v25_child(
     if execute:
         _run_re_v2_live(_re_v2_context(workspace, run_dir))
         return
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.run_store import load_run_manifest
+
+    if isinstance(load_run_manifest(run_dir), RunManifestV5):
+        print("RE V2 protocol 2.6 exact L3 child reused")
+        return
     from harness.re_v2.status import render_v2_status
 
     print(render_v2_status(run_dir), end="")
@@ -14744,14 +15119,13 @@ def _run_re_v25_deepen(
     options: _ReDeepenOptions,
 ) -> Path:
     """Create or reuse an authenticated protocol-2.5 semantic child."""
-    from dataclasses import replace
-
     from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
-    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
     from harness.re_v2.protocol_25.lifecycle import (
         find_exact_protocol_25_child,
         initialize_protocol_25_child,
     )
+    from harness.re_v2.protocol_26.adoption import initialize_protocol_26_run_store
+    from harness.re_v2.protocol_26.inputs import create_protocol_26_run_store
 
     workspace = workspace_root.resolve()
     parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
@@ -14770,26 +15144,44 @@ def _run_re_v25_deepen(
             )
         return _run_re_v25_next_epoch(workspace, parent_path, options)
     parent = validate_parent_for_deepening(parent_path, workspace)
-    prepared = _prepare_re_v25_creation(workspace, parent, options)
     created = False
     with _re_v24_creation_lock(workspace):
+        prepared = _prepare_re_v26_creation(
+            workspace,
+            target_layer="L3",
+            parent_run=parent_path,
+            goal="baseline",
+            deepen_options=options,
+            token_limit=options.token_limit,
+            time_limit_minutes=(
+                options.active_ms_limit // 60_000
+                if options.active_ms_limit is not None
+                else None
+            ),
+        )
+        inner_manifest = prepared.inputs.layer_execution_contract.layer_manifest
         existing = find_exact_protocol_25_child(
             workspace,
-            prepared.manifest.semantic_request_id,
+            inner_manifest.semantic_request_id,
         )
         if existing is None:
-            manifest = replace(
+            run_dir = workspace / "runs" / prepared.manifest.run_id
+            create_protocol_26_run_store(
+                run_dir,
                 prepared.manifest,
-                run_id=_new_re_v2_run_id(workspace),
-                created_at=_re_v2_now(),
+                prepared.inputs,
             )
-            run_dir = workspace / "runs" / manifest.run_id
-            create_protocol_25_run_store(run_dir, manifest, prepared.inputs)
             initialize_protocol_25_child(run_dir, parent)
+            initialize_protocol_26_run_store(run_dir)
             created = True
         else:
             run_dir = existing
             initialize_protocol_25_child(run_dir, parent)
+            existing_manifest = load_run_manifest(run_dir)
+            from harness.re_v2.protocol_26.model import RunManifestV5
+
+            if isinstance(existing_manifest, RunManifestV5):
+                initialize_protocol_26_run_store(run_dir)
         _activate_re_v2_run(workspace, run_dir.name)
     _run_or_report_re_v25_child(workspace, run_dir, execute=created)
     return run_dir
@@ -15144,18 +15536,35 @@ def _initialize_re_v24_child(
         RunManifestV3,
     )
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
 
     if not isinstance(parent, ValidatedParentV1):
         raise ValueError("deepening child initialization requires validated parent")
-    manifest = load_run_manifest(run_dir)
-    if not isinstance(manifest, RunManifestV3):
-        raise ValueError("deepening child initialization requires schema-3 manifest")
+    active_manifest = load_run_manifest(run_dir)
     paths = ReV2Paths.for_run(run_dir)
-    inputs = load_protocol_24_inputs(paths, manifest)
+    if isinstance(active_manifest, RunManifestV5):
+        if active_manifest.target_layer != "L2":
+            raise ValueError("deepening child initialization requires target L2")
+        protocol_26_inputs = load_protocol_26_inputs(paths, active_manifest)
+        manifest = protocol_26_inputs.layer_execution_contract.layer_manifest
+        if not isinstance(manifest, RunManifestV3):
+            raise ValueError("protocol-2.6 L2 contract has no schema-3 manifest")
+        inputs = protocol_26_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L2")
+    elif isinstance(active_manifest, RunManifestV3):
+        manifest = active_manifest
+        inputs = load_protocol_24_inputs(paths, manifest)
+        event_protocol = PROTOCOL_24_EVENTS
+    else:
+        raise ValueError("deepening child initialization requires schema 3 or 5")
     objects = ObjectStore(paths.objects)
     ledger = Protocol22Ledger(paths, objects)
-    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS)
-    if _re_v24_child_adoption_complete(manifest, inputs, objects, ledger, events):
+    events = EventStore(paths, protocol=event_protocol)
+    if _re_v24_child_adoption_complete(
+        active_manifest, inputs, objects, ledger, events
+    ):
         return
     if manifest.parent_lineage.direct_parent_run_id != parent.manifest.run_id:
         raise ValueError(
@@ -15172,15 +15581,15 @@ def _initialize_re_v24_child(
     if not replayed_events:
         events.append(
             "run_created",
-            {"run_manifest_id": manifest.run_manifest_id},
-            occurred_at=manifest.created_at,
+            {"run_manifest_id": active_manifest.run_manifest_id},
+            occurred_at=active_manifest.created_at,
         )
         _re_v24_creation_fault(creation_fault_hook, "run_created")
         replayed_events = events.replay()
     elif (
         replayed_events[0].type != "run_created"
         or replayed_events[0].payload.get("run_manifest_id")
-        != manifest.run_manifest_id
+        != active_manifest.run_manifest_id
     ):
         raise ValueError("existing deepening child has invalid creation authority")
 
@@ -15225,7 +15634,7 @@ def _initialize_re_v24_child(
             f"artifact_adopted:{authority.artifact_key_id}",
         )
     if not _re_v24_child_adoption_complete(
-        manifest,
+        active_manifest,
         inputs,
         objects,
         ledger,

@@ -272,7 +272,9 @@ def find_exact_protocol_25_child(
     semantic_request_id: str,
 ) -> Path | None:
     """Return an exact immutable semantic request regardless of mutable state."""
-    from harness.re_v2.run_store import load_run_manifest
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     from .model import RunManifestV4
 
@@ -294,9 +296,15 @@ def find_exact_protocol_25_child(
         ):
             continue
         manifest = load_run_manifest(candidate)
+        candidate_manifest = manifest
+        if isinstance(manifest, RunManifestV5) and manifest.target_layer == "L3":
+            outer_inputs = load_protocol_26_inputs(
+                ReV2Paths.for_run(candidate), manifest
+            )
+            candidate_manifest = outer_inputs.layer_execution_contract.layer_manifest
         if (
-            isinstance(manifest, RunManifestV4)
-            and manifest.semantic_request_id == semantic_request_id
+            isinstance(candidate_manifest, RunManifestV4)
+            and candidate_manifest.semantic_request_id == semantic_request_id
         ):
             return candidate
     return None
@@ -323,6 +331,7 @@ def prepare_new_audit_epoch(
         build_parent_authority_bundle,
     )
     from harness.re_v2.protocol_24.model import ParentLineageV1, RunManifestV3
+    from harness.re_v2.protocol_26.model import RunManifestV5
 
     from .adoption import (
         ParentSemanticAuthorityV1,
@@ -348,7 +357,13 @@ def prepare_new_audit_epoch(
         raise ValueError("new audit epoch requires semantic executor contract")
 
     lower_bundle, lower_objects = build_parent_authority_bundle(parent)
-    parent_layer = "L2" if isinstance(parent.manifest, RunManifestV3) else "L1"
+    parent_layer = (
+        parent.manifest.target_layer
+        if isinstance(parent.manifest, RunManifestV5)
+        else "L2"
+        if isinstance(parent.manifest, RunManifestV3)
+        else "L1"
+    )
     candidate = Protocol25ParentCandidateV1(
         schema_version=1,
         parent_layer=parent_layer,
@@ -370,10 +385,16 @@ def prepare_new_audit_epoch(
     )
     bundle = build_parent_authority_bundle_v2(validated_parent)
     parent_manifest_hash = content_digest(parent.manifest_bytes)
-    if isinstance(parent.manifest, RunManifestV3):
-        lineage_root_run_id = parent.manifest.parent_lineage.lineage_root_run_id
+    lineage_manifest = (
+        parent.graph.manifest
+        if isinstance(parent.manifest, RunManifestV5)
+        and parent.manifest.target_layer == "L2"
+        else parent.manifest
+    )
+    if isinstance(lineage_manifest, RunManifestV3):
+        lineage_root_run_id = lineage_manifest.parent_lineage.lineage_root_run_id
         lineage_root_manifest_hash = (
-            parent.manifest.parent_lineage.lineage_root_manifest_hash
+            lineage_manifest.parent_lineage.lineage_root_manifest_hash
         )
     else:
         lineage_root_run_id = parent.manifest.run_id
@@ -1069,7 +1090,7 @@ def _prepare_protocol_25_l3_child(
 
 
 def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
-    """Idempotently import lower-layer authority into a published schema-4 run."""
+    """Idempotently import lower-layer authority into a published L3 run."""
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_24.adoption import (
@@ -1078,6 +1099,9 @@ def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
         import_parent_acceptance_closure,
     )
     from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     from .events import PROTOCOL_25_EVENTS
@@ -1087,13 +1111,25 @@ def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
 
     if not isinstance(parent, ValidatedParentV1):
         raise ValueError("schema-4 initialization requires authenticated parent")
-    manifest = load_run_manifest(run_dir)
-    if not isinstance(manifest, RunManifestV4):
-        raise ValueError("schema-4 initialization requires RunManifestV4")
+    active_manifest = load_run_manifest(run_dir)
+    paths = ReV2Paths.for_run(run_dir)
+    if isinstance(active_manifest, RunManifestV5):
+        if active_manifest.target_layer != "L3":
+            raise ValueError("L3 initialization requires protocol-2.6 target L3")
+        protocol_26_inputs = load_protocol_26_inputs(paths, active_manifest)
+        manifest = protocol_26_inputs.layer_execution_contract.layer_manifest
+        if not isinstance(manifest, RunManifestV4):
+            raise ValueError("protocol-2.6 L3 contract has no schema-4 manifest")
+        inputs = protocol_26_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L3")
+    elif isinstance(active_manifest, RunManifestV4):
+        manifest = active_manifest
+        inputs = load_protocol_25_inputs(paths, manifest)
+        event_protocol = PROTOCOL_25_EVENTS
+    else:
+        raise ValueError("L3 initialization requires schema 4 or 5")
     if manifest.run_mode != "new-audit-epoch":
         raise ValueError("lower-parent initialization requires new-audit-epoch mode")
-    paths = ReV2Paths.for_run(run_dir)
-    inputs = load_protocol_25_inputs(paths, manifest)
     expected_lower, _objects = build_parent_authority_bundle(parent)
     if inputs.parent_authority_bundle.lower_authority_bundle != expected_lower:
         raise ValueError("existing schema-4 child parent authority does not match")
@@ -1102,19 +1138,20 @@ def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
 
     objects = ObjectStore(paths.objects)
     ledger = Protocol25Ledger(paths, objects)
-    events = EventStore(paths, protocol=PROTOCOL_25_EVENTS)
+    events = EventStore(paths, protocol=event_protocol)
     import_parent_acceptance_closure(parent, objects, ledger)
     replayed = events.replay()
     if not replayed:
         events.append(
             "run_created",
-            {"run_manifest_id": manifest.run_manifest_id},
-            occurred_at=manifest.created_at,
+            {"run_manifest_id": active_manifest.run_manifest_id},
+            occurred_at=active_manifest.created_at,
         )
         replayed = events.replay()
     elif (
         replayed[0].type != "run_created"
-        or replayed[0].payload.get("run_manifest_id") != manifest.run_manifest_id
+        or replayed[0].payload.get("run_manifest_id")
+        != active_manifest.run_manifest_id
     ):
         raise ValueError("existing schema-4 child has invalid creation authority")
 
@@ -1154,7 +1191,7 @@ def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
         events.append(
             "artifact_adopted",
             payload,
-            occurred_at=manifest.created_at,
+            occurred_at=active_manifest.created_at,
         )
 
     final_events = events.replay()

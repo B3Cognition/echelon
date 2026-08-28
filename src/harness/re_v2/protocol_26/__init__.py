@@ -38,6 +38,8 @@ __all__ = (
     "load_protocol_26_inputs",
     "import_frozen_checkpoint_closure",
     "import_typed_acceptance",
+    "initialize_protocol_26_run",
+    "initialize_protocol_26_run_store",
 )
 
 
@@ -58,6 +60,8 @@ _LAZY_ADOPTION_EXPORTS = frozenset(
         "Protocol26AdoptionError",
         "import_frozen_checkpoint_closure",
         "import_typed_acceptance",
+        "initialize_protocol_26_run",
+        "initialize_protocol_26_run_store",
     }
 )
 

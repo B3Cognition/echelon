@@ -219,6 +219,7 @@ class CheckpointCacheGenerationV1:
     manifests: Mapping[str, CheckpointManifestV1]
     quarantine: tuple[OriginCheckpointRejectionV1, ...]
     reconstructed_manifest_ids: tuple[str, ...]
+    authority_objects: Mapping[str, Mapping[str, bytes]]
 
     def __post_init__(self) -> None:
         manifests = MappingProxyType(dict(sorted(self.manifests.items())))
@@ -232,6 +233,20 @@ class CheckpointCacheGenerationV1:
         object.__setattr__(self, "manifests", manifests)
         object.__setattr__(self, "quarantine", tuple(self.quarantine))
         object.__setattr__(self, "reconstructed_manifest_ids", reconstructed)
+        authority = {
+            manifest_id: MappingProxyType(dict(sorted(objects.items())))
+            for manifest_id, objects in sorted(self.authority_objects.items())
+        }
+        if set(authority) != set(manifests):
+            raise CheckpointCacheError(
+                "cache authority objects differ from reconstructed manifests"
+            )
+        for manifest_id, objects in authority.items():
+            if set(objects) != set(manifests[manifest_id].immutable_object_hashes):
+                raise CheckpointCacheError(
+                    "cache authority object inventory differs from checkpoint"
+                )
+        object.__setattr__(self, "authority_objects", MappingProxyType(authority))
 
 
 def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV1:
@@ -240,6 +255,7 @@ def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV
     _ensure_cache_layout(paths)
     with _checkpoint_cache_lock(paths.lock):
         manifests: dict[str, CheckpointManifestV1] = {}
+        authority_objects: dict[str, Mapping[str, bytes]] = {}
         quarantine: list[OriginCheckpointRejectionV1] = []
         for origin in _enumerate_origins(paths.root.parents[2]):
             if origin.is_symlink() or not origin.is_dir():
@@ -263,6 +279,9 @@ def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV
                     )
                     continue
                 manifests[checkpoint.identity] = checkpoint
+                authority_objects[checkpoint.identity] = result.authority_objects[
+                    checkpoint.identity
+                ]
         ordered_manifests = dict(sorted(manifests.items()))
         ordered_quarantine = tuple(
             sorted(quarantine, key=lambda item: (item.origin_run_id, item.reason))
@@ -279,6 +298,7 @@ def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV
             paths,
             expected_index=index,
             reconstructed_manifest_ids=tuple(ordered_manifests),
+            authority_objects=authority_objects,
         )
 
 
@@ -407,6 +427,7 @@ def _load_published_generation(
     *,
     expected_index: CheckpointCacheIndexV1,
     reconstructed_manifest_ids: tuple[str, ...],
+    authority_objects: Mapping[str, Mapping[str, bytes]],
 ) -> CheckpointCacheGenerationV1:
     index = CheckpointCacheIndexV1.from_json_dict(_load_canonical(paths.index))
     if index != expected_index or index.manifest_ids != reconstructed_manifest_ids:
@@ -425,6 +446,7 @@ def _load_published_generation(
         manifests=manifests,
         quarantine=quarantine,
         reconstructed_manifest_ids=reconstructed_manifest_ids,
+        authority_objects=authority_objects,
     )
 
 

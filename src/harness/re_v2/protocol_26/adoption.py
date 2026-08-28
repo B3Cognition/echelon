@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Callable, Mapping
 
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError, TREE_OBJECT_MAGIC
@@ -299,6 +300,135 @@ def checkpoint_adoption_report(
     return CheckpointAdoptionReportV1(tuple(imports))
 
 
+def initialize_protocol_26_run(
+    context: object,
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> CheckpointAdoptionReportV1:
+    """Complete the schema-5 creation transaction before normal planning."""
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.protocol_22.recovery import (
+        Protocol22RunContext,
+        protocol_22_run_lock,
+    )
+    if not isinstance(context, Protocol22RunContext):
+        raise Protocol26AdoptionError(
+            "checkpoint initialization requires a shared RE v2 run context"
+        )
+    if fault_hook is not None and not callable(fault_hook):
+        raise Protocol26AdoptionError("checkpoint fault hook must be callable or null")
+    if not isinstance(context.event_store, EventStore):
+        raise Protocol26AdoptionError("checkpoint initialization has no event store")
+
+    with protocol_22_run_lock(context.paths):
+        return _initialize_protocol_26_components(
+            context.paths,
+            context.event_store,
+            context.object_store,
+            context.ledger,
+            context.clock,
+            fault_hook,
+        )
+
+
+def initialize_protocol_26_run_store(
+    run_dir: Path,
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> CheckpointAdoptionReportV1:
+    """Initialize frozen checkpoint authority without constructing a runtime."""
+    from datetime import datetime, timezone
+
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    paths = ReV2Paths.for_run(run_dir)
+    manifest = load_run_manifest(run_dir)
+    if not isinstance(manifest, RunManifestV5):
+        raise Protocol26AdoptionError(
+            "checkpoint initialization requires schema-5 protocol 2.6"
+        )
+    objects = ObjectStore(paths.objects)
+    ledger = Protocol22Ledger(paths, objects)
+    events = EventStore(paths, protocol=protocol_26_events_for(manifest.target_layer))
+    clock = lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    with protocol_22_run_lock(paths):
+        return _initialize_protocol_26_components(
+            paths,
+            events,
+            objects,
+            ledger,
+            clock,
+            fault_hook,
+        )
+
+
+def _initialize_protocol_26_components(
+    paths: object,
+    event_store: object,
+    object_store: object,
+    ledger: object,
+    clock: Callable[[], str],
+    fault_hook: Callable[[str], None] | None,
+) -> CheckpointAdoptionReportV1:
+    """Apply one idempotent checkpoint transaction to authenticated stores."""
+    from harness.re_v2.protocol_26.events import append_missing_checkpoint_events
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.run_store import load_run_manifest
+
+    manifest = load_run_manifest(paths.root.parent)
+    if not isinstance(manifest, RunManifestV5):
+        raise Protocol26AdoptionError(
+            "checkpoint initialization requires schema-5 protocol 2.6"
+        )
+    inputs = load_protocol_26_inputs(paths, manifest)
+    events = event_store.replay()
+    if not events:
+        event_store.append(
+            "run_created",
+            {"run_manifest_id": manifest.run_manifest_id},
+            occurred_at=manifest.created_at,
+        )
+        _adoption_fault(fault_hook, "run_created")
+        events = event_store.replay()
+    if (
+        events[0].type != "run_created"
+        or events[0].payload.get("run_manifest_id") != manifest.run_manifest_id
+    ):
+        raise Protocol26AdoptionError(
+            "checkpoint run_created disagrees with outer manifest authority"
+        )
+
+    report = import_frozen_checkpoint_closure(inputs, object_store, ledger)
+    _adoption_fault(fault_hook, "checkpoint_receipts_imported")
+    appended = append_missing_checkpoint_events(
+        inputs,
+        event_store,
+        ledger,
+        clock,
+    )
+    _adoption_fault(fault_hook, "checkpoint_events_appended")
+    if appended != report:
+        raise Protocol26AdoptionError(
+            "checkpoint receipt and event adoption reports disagree"
+        )
+    return report
+
+
+def _adoption_fault(
+    hook: Callable[[str], None] | None,
+    boundary: str,
+) -> None:
+    if hook is not None:
+        hook(boundary)
+
+
 def _frozen_package(
     inputs: ValidatedProtocol26Inputs,
     selection: CheckpointSelectionEntryV1,
@@ -389,6 +519,7 @@ __all__ = (
     "ImportedAcceptanceV1",
     "Protocol26AdoptionError",
     "checkpoint_adoption_report",
+    "initialize_protocol_26_run",
     "import_frozen_checkpoint_closure",
     "import_typed_acceptance",
 )

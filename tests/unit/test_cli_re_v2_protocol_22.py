@@ -132,8 +132,8 @@ def test_shared_cli_baseline_pins_protocol_23_without_shadow_provider_constructi
     assert result.exit_code == 0, result.output
     run_dir = probe.run_directories()[0]
     manifest = load_run_manifest(run_dir)
-    assert manifest.schema_version == 2
-    assert manifest.engine_protocol_version == "2.3"
+    assert manifest.schema_version == 5
+    assert manifest.engine_protocol_version == "2.6"
     assert probe.active_pointer_bytes() == (run_dir.name + "\n").encode()
 
 
@@ -169,9 +169,15 @@ def test_inventory_goal_pins_protocol_23_and_constructs_no_provider(
     assert result.exit_code == 0, result.output
     run_dir = probe.run_directories()[0]
     manifest = load_run_manifest(run_dir)
-    assert manifest.schema_version == 2
-    assert manifest.engine_protocol_version == "2.3"
-    assert manifest.requested_goals == ("inventory",)
+    assert manifest.schema_version == 5
+    assert manifest.engine_protocol_version == "2.6"
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.run_store import ReV2Paths
+
+    inputs = load_protocol_26_inputs(ReV2Paths.for_run(run_dir), manifest)
+    assert inputs.layer_execution_contract.layer_manifest.requested_goals == (
+        "inventory",
+    )
     assert probe.active_pointer_bytes() == (run_dir.name + "\n").encode()
     assert "provider initial dispatches: 0" in result.output
 
