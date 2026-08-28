@@ -112,6 +112,11 @@ class Protocol26ReplayState(EventReplayState):
     artifact_keys: set[str] = field(default_factory=set)
     acceptance_receipts: set[str] = field(default_factory=set)
 
+    @property
+    def shared(self) -> EventReplayState:
+        """Expose the established replay-composition seam to budget consumers."""
+        return self.delegate
+
     def consume(self, event: EventRecord) -> None:
         if event.type != _CHECKPOINT_EVENT:
             self.delegate.consume(event)

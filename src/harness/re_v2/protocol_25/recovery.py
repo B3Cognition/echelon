@@ -21,7 +21,11 @@ from harness.re_v2.protocol_22.recovery import (
     Protocol22RunContext,
 )
 from harness.re_v2.protocol_22.schema import load_canonical_object
-from harness.re_v2.run_store import load_run_manifest
+from harness.re_v2.protocol_26.authority import (
+    Protocol26AuthorityError,
+    resolve_run_authority,
+)
+from harness.re_v2.protocol_26.events import Protocol26ReplayState
 
 from .artifacts import AuditCandidateV1, AuditEpochV1
 from .controller import (
@@ -32,7 +36,7 @@ from .controller import (
     SemanticTargetControllerStateV1,
     plan_next_protocol_25,
 )
-from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .events import Protocol25ReplayState
 from .graph import Protocol25Graph, Protocol25GraphError
 from .inputs import ValidatedProtocol25Inputs
 from .ledger import Protocol25LedgerView
@@ -424,10 +428,17 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
     """Authenticate and reconcile a protocol-2.5 run before controller routing."""
     if not isinstance(context, Protocol25RunContext):
         raise Protocol25RecoveryError("recovery requires Protocol25RunContext")
-    manifest = load_run_manifest(context.paths.root.parent)
-    if manifest != context.semantic_graph.manifest:
+    try:
+        authority = resolve_run_authority(context)
+    except Protocol26AuthorityError as exc:
+        raise Protocol25RecoveryError(str(exc)) from exc
+    manifest = authority.active_manifest
+    if (
+        authority.semantic_graph != context.semantic_graph
+        or authority.semantic_inputs != context.semantic_inputs
+    ):
         raise Protocol25RecoveryError(
-            "context graph differs from immutable schema-4 manifest authority"
+            "context graph differs from immutable semantic authority"
         )
     if context.snapshot_validator is not None:
         context.snapshot_validator()
@@ -443,9 +454,18 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
     ledger = context.ledger.replay()
     if not isinstance(ledger, Protocol25LedgerView):
         raise Protocol25RecoveryError("schema-4 run has no protocol-2.5 ledger")
-    replay = Protocol25ReplayState()
+    replay_state = context.event_store.protocol.new_state()
     for event in events:
-        replay.consume(event)
+        replay_state.consume(event)
+    replay = (
+        replay_state.delegate
+        if isinstance(replay_state, Protocol26ReplayState)
+        else replay_state
+    )
+    if not isinstance(replay, Protocol25ReplayState):
+        raise Protocol25RecoveryError(
+            "semantic recovery requires protocol-2.5 replay authority"
+        )
 
     accepted = _accepted_prerequisites(context, ledger)
     decision = plan_next_v2(
@@ -1151,7 +1171,7 @@ def _shared_action_recovery(
         recovered.events,
         (),
         context.clock(),
-        event_protocol=PROTOCOL_25_EVENTS,
+        event_protocol=context.event_store.protocol,
     )
     return Protocol22RecoveryResult(
         manifest=manifest,  # type: ignore[arg-type]

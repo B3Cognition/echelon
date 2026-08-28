@@ -23,7 +23,13 @@ from harness.re_v2.recovery import ProcessInspector, ProcessState
 from harness.re_v2.run_store import (
     ReV2Paths,
     ReV2RunStoreError,
-    load_run_manifest,
+)
+from harness.re_v2.protocol_24.model import RunManifestV3
+from harness.re_v2.protocol_25.model import RunManifestV4
+from harness.re_v2.protocol_26.authority import (
+    Protocol26AuthorityError,
+    ResolvedRunAuthorityV1,
+    resolve_run_authority,
 )
 
 from .authorities import (
@@ -62,7 +68,6 @@ from .graph import (
     PlanDecisionV2,
     Protocol22Graph,
     Protocol22GraphError,
-    build_protocol_22_graph,
     instantiate_ready_item,
     is_shared_planning_graph_v2,
     plan_next_v22,
@@ -70,7 +75,6 @@ from .graph import (
 from .inputs import (
     Protocol22InputStoreError,
     ValidatedProtocol22Inputs,
-    load_protocol_22_inputs,
 )
 from .ledger import (
     ExecutorFailureReceiptV1,
@@ -234,7 +238,7 @@ class Protocol22RunContext:
 
 @dataclass(frozen=True, slots=True)
 class Protocol22RecoveryResult:
-    manifest: RunManifestV2
+    manifest: RunManifestV2 | RunManifestV3 | RunManifestV4
     inputs: ValidatedProtocol22Inputs
     graph: Protocol22Graph
     events: tuple[EventRecord, ...]
@@ -274,7 +278,10 @@ def recover_protocol_22_run(
     if not isinstance(context, Protocol22RunContext):
         raise Protocol22RecoveryError("recovery requires Protocol22RunContext")
     try:
-        manifest, inputs, graph = _validate_immutable_authority(context)
+        authority = _validate_immutable_authority(context)
+        manifest = authority.layer_manifest
+        inputs = authority.shared_inputs
+        graph = authority.shared_graph
         _fault(fault_hook, "immutable_authority_validated")
         mismatches = _installed_mismatches(inputs, context.installed_authorities)
     except Protocol22RecoveryError:
@@ -284,6 +291,7 @@ def recover_protocol_22_run(
         Protocol22GraphError,
         Protocol22InputStoreError,
         Protocol22SchemaError,
+        Protocol26AuthorityError,
         ReV2RunStoreError,
     ) as exc:
         raise Protocol22RecoveryError(
@@ -308,9 +316,7 @@ def recover_protocol_22_run(
 
     return _recover_with_valid_authority(
         context,
-        manifest,
-        inputs,
-        graph,
+        authority,
         fault_hook,
     )
 
@@ -344,7 +350,10 @@ def recover_protocol_22_run_locked(
     if not isinstance(context, Protocol22RunContext):
         raise Protocol22RecoveryError("recovery requires Protocol22RunContext")
     try:
-        manifest, inputs, graph = _validate_immutable_authority(context)
+        authority = _validate_immutable_authority(context)
+        manifest = authority.layer_manifest
+        inputs = authority.shared_inputs
+        graph = authority.shared_graph
         mismatches = _installed_mismatches(inputs, context.installed_authorities)
         if mismatches:
             unavailable = PinnedAuthorityUnavailable(mismatches)
@@ -359,7 +368,7 @@ def recover_protocol_22_run_locked(
                 operational_state="pinned_authority_unavailable",
                 unavailable=unavailable,
             )
-        return _recover_locked(context, manifest, inputs, graph, fault_hook)
+        return _recover_locked(context, authority, fault_hook)
     except Protocol22RecoveryError:
         raise
     except (
@@ -373,6 +382,7 @@ def recover_protocol_22_run_locked(
         Protocol22InputStoreError,
         Protocol22ProviderError,
         Protocol22SchemaError,
+        Protocol26AuthorityError,
         ReV2RunStoreError,
         ValueError,
     ) as exc:
@@ -383,14 +393,12 @@ def recover_protocol_22_run_locked(
 
 def _recover_with_valid_authority(
     context: Protocol22RunContext,
-    manifest: RunManifestV2,
-    inputs: ValidatedProtocol22Inputs,
-    graph: Protocol22Graph,
+    authority: ResolvedRunAuthorityV1,
     fault_hook: FaultHook | None,
 ) -> Protocol22RecoveryResult:
     try:
         with _exclusive_run_lock(context.paths):
-            return _recover_locked(context, manifest, inputs, graph, fault_hook)
+            return _recover_locked(context, authority, fault_hook)
     except Protocol22RecoveryError:
         raise
     except (
@@ -402,6 +410,7 @@ def _recover_with_valid_authority(
         Protocol22GraphError,
         Protocol22ProviderError,
         Protocol22SchemaError,
+        Protocol26AuthorityError,
         ValueError,
     ) as exc:
         raise Protocol22RecoveryError(
@@ -411,12 +420,14 @@ def _recover_with_valid_authority(
 
 def _recover_locked(
     context: Protocol22RunContext,
-    manifest: RunManifestV2,
-    inputs: ValidatedProtocol22Inputs,
-    graph: Protocol22Graph,
+    authority: ResolvedRunAuthorityV1,
     fault_hook: FaultHook | None,
 ) -> Protocol22RecoveryResult:
     """Run the mutating half while one process owns the run lock."""
+    manifest = authority.layer_manifest
+    inputs = authority.shared_inputs
+    graph = authority.shared_graph
+    active_manifest = authority.active_manifest
     try:
         events = context.event_store.replay()
         ledger = context.ledger.replay()
@@ -424,11 +435,11 @@ def _recover_locked(
         if not events:
             context.event_store.append(
                 "run_created",
-                {"run_manifest_id": manifest.run_manifest_id},
-                occurred_at=manifest.created_at,
+                {"run_manifest_id": authority.run_manifest_id},
+                occurred_at=active_manifest.created_at,
             )
             events = context.event_store.replay()
-        _validate_manifest_event(manifest, events)
+        _validate_manifest_event(active_manifest, events)
         known_items = _validate_graph_ledger(graph, inputs, ledger, events)
         _validate_event_work_items(events, known_items)
         _validate_materialization(context)
@@ -532,48 +543,15 @@ def protocol_22_run_lock(paths: ReV2Paths) -> Iterator[None]:
 
 def _validate_immutable_authority(
     context: Protocol22RunContext,
-) -> tuple[RunManifestV2, ValidatedProtocol22Inputs, Protocol22Graph]:
-    manifest = load_run_manifest(context.paths.root.parent)
-    if isinstance(manifest, RunManifestV2):
-        inputs = load_protocol_22_inputs(context.paths, manifest)
-        if inputs != context.inputs:
-            raise Protocol22RecoveryError(
-                "context inputs differ from immutable catalog authority"
-            )
-        graph = build_protocol_22_graph(manifest, inputs)
-        if graph != context.graph:
-            raise Protocol22RecoveryError(
-                "context graph differs from immutable protocol-2.2 graph"
-            )
-    else:
-        from harness.re_v2.protocol_24.graph import (
-            Protocol24Graph,
-            validate_protocol_24_graph_authority,
-        )
-        from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
-        from harness.re_v2.protocol_24.model import RunManifestV3
-
-        if not isinstance(manifest, RunManifestV3):
-            raise Protocol22RecoveryError(
-                "shared recovery requires a schema-2 or schema-3 manifest"
-            )
-        if not isinstance(context.graph, Protocol24Graph):
-            raise Protocol22RecoveryError(
-                "schema-3 recovery requires a protocol-2.4 graph"
-            )
-        inputs = load_protocol_24_inputs(context.paths, manifest)
-        if inputs != context.inputs:
-            raise Protocol22RecoveryError(
-                "context inputs differ from immutable catalog authority"
-            )
-        graph = validate_protocol_24_graph_authority(
-            manifest,
-            inputs,
-            context.graph,
-        )
+) -> ResolvedRunAuthorityV1:
+    authority = resolve_run_authority(context)
     if context.snapshot_validator is not None:
         context.snapshot_validator()
-    return manifest, inputs, graph
+    if not _event_protocol_matches_authority(context.event_store.protocol, authority):
+        raise Protocol22RecoveryError(
+            "event protocol does not match immutable run authority"
+        )
+    return authority
 
 
 def _is_supported_event_protocol(protocol: object) -> bool:
@@ -589,7 +567,30 @@ def _is_supported_event_protocol(protocol: object) -> bool:
         from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
     except ImportError:
         return False
-    return protocol is PROTOCOL_25_EVENTS
+    if protocol is PROTOCOL_25_EVENTS:
+        return True
+    return getattr(protocol, "PROTOCOL_VERSION", None) == "2.6"
+
+
+def _event_protocol_matches_authority(
+    protocol: object,
+    authority: ResolvedRunAuthorityV1,
+) -> bool:
+    active = authority.active_manifest
+    if getattr(active, "engine_protocol_version", None) == "2.6":
+        from harness.re_v2.protocol_26.events import protocol_26_events_for
+
+        return protocol == protocol_26_events_for(active.target_layer)
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
+    from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+
+    expected = {
+        "2.2": PROTOCOL_22_EVENTS,
+        "2.3": PROTOCOL_22_EVENTS,
+        "2.4": PROTOCOL_24_EVENTS,
+        "2.5": PROTOCOL_25_EVENTS,
+    }.get(getattr(active, "engine_protocol_version", None))
+    return protocol is expected
 
 
 def _installed_mismatches(
@@ -622,13 +623,16 @@ def _installed_mismatches(
 
 
 def _validate_manifest_event(
-    manifest: RunManifestV2,
+    manifest: object,
     events: tuple[EventRecord, ...],
 ) -> None:
     if (
         not events
         or events[0].type != "run_created"
-        or (events[0].payload["run_manifest_id"] != manifest.run_manifest_id)
+        or (
+            events[0].payload["run_manifest_id"]
+            != getattr(manifest, "run_manifest_id", None)
+        )
     ):
         raise Protocol22RecoveryError(
             "run_created does not match immutable run manifest"
@@ -707,7 +711,7 @@ def _adopted_graph_exceptions(
     work_ids: set[str] = set()
     artifact_keys: set[str] = set()
     for event in events:
-        if event.type != "artifact_adopted":
+        if event.type not in {"artifact_adopted", "checkpoint_artifact_adopted"}:
             continue
         from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
 
@@ -1389,21 +1393,52 @@ def _validate_existing_receipt_events(
     adopted_acceptances: set[str] = set()
     for event in events:
         payload = event.payload
-        if event.type == "artifact_adopted":
+        if event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}:
             from harness.re_v2.protocol_24.model import AdoptedArtifactAuthorityV1
 
             authority = AdoptedArtifactAuthorityV1.from_json_dict(
                 payload["adopted_artifact_authority"]
             )
-            bundle = getattr(context.inputs, "parent_authority_bundle", None)
-            if (
-                bundle is None
-                or payload["parent_authority_bundle_hash"] != bundle.identity
-                or authority not in bundle.artifacts
-            ):
-                raise Protocol22RecoveryError(
-                    "artifact_adopted is outside immutable parent authority"
+            if event.type == "artifact_adopted":
+                bundle = getattr(context.inputs, "parent_authority_bundle", None)
+                if (
+                    bundle is None
+                    or payload["parent_authority_bundle_hash"] != bundle.identity
+                    or authority not in bundle.artifacts
+                ):
+                    raise Protocol22RecoveryError(
+                        "artifact_adopted is outside immutable parent authority"
+                    )
+            else:
+                from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+                from harness.re_v2.protocol_26.model import RunManifestV5
+                from harness.re_v2.run_store import load_run_manifest
+
+                outer = load_run_manifest(context.paths.root.parent)
+                if not isinstance(outer, RunManifestV5):
+                    raise Protocol22RecoveryError(
+                        "checkpoint adoption requires schema-5 authority"
+                    )
+                frozen = load_protocol_26_inputs(context.paths, outer)
+                expected = next(
+                    (
+                        selected
+                        for selected in frozen.checkpoint_selection.selected
+                        if selected.source_kind == "workspace_checkpoint"
+                        and selected.expected_work_item_id == payload["work_item_id"]
+                    ),
+                    None,
                 )
+                if (
+                    expected is None
+                    or expected.to_event_payload(
+                        frozen.checkpoint_selection.identity
+                    )
+                    != event.to_json_dict()["payload"]
+                ):
+                    raise Protocol22RecoveryError(
+                        "checkpoint adoption is outside immutable selection authority"
+                    )
             receipt = ledger.accepted_artifacts.get(authority.artifact_key_id)
             certification = ledger.certifications.get(
                 authority.certification_receipt_id
@@ -1435,7 +1470,7 @@ def _validate_existing_receipt_events(
                 )
             ):
                 raise Protocol22RecoveryError(
-                    "artifact_adopted disagrees with imported receipt authority"
+                    f"{event.type} disagrees with imported receipt authority"
                 )
             adopted_acceptances.add(receipt.identity)
             if assessment is not None:
