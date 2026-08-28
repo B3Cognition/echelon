@@ -428,14 +428,19 @@ git commit -m "feat(re-v2): freeze synthesis source outcomes"
 - Produces `WorkspaceSynthesisTopologyV1` from authenticated partition/source/domain authority only.
 - Produces `SynthesisGraphInputsV1(accepted_sources, topology, policy_catalog, response_schema_hashes, context_policy_hash)`.
 - `build_synthesis_graph(inputs) -> SynthesisGraph` returns canonical templates/items, dependency order, public path mapping, and one controller-root specification.
-- `SynthesisGraph.required_work_items`, `.ready_work_items(accepted_key_hashes)`, `.required_artifact_key_ids`, `.graph_id`, and `.affected_by_source(source_id)` are deterministic.
+- `SynthesisGraph.required_nodes`, `.ready_work_items(accepted_node_hashes)`,
+  `.required_node_ids`, `.graph_id`, and `.affected_by_source(source_id)` are
+  deterministic. The static graph freezes node identities and dependency edges;
+  exact `SynthesisWorkItemV1` values are instantiated only when all generated
+  dependency hashes are accepted, because downstream artifact keys bind those
+  hashes and cannot truthfully exist beforehand.
 
 - [ ] **Step 1: Write failing policy and graph shape tests**
 
 ```python
 def test_graph_has_granular_source_domain_and_workspace_nodes() -> None:
     graph = build_synthesis_graph(graph_inputs(sources=("api", "web")))
-    kinds = tuple(item.output_key.artifact_kind for item in graph.required_work_items)
+    kinds = tuple(item.artifact_kind for item in graph.required_nodes)
     assert kinds.count("source-architecture") == 2
     assert kinds.count("source-contracts") == 2
     assert kinds.count("source-components") == 2
@@ -557,7 +562,7 @@ Expected: collection fails because protocol-2.7 input publication does not exist
 
 - [ ] **Step 3: Implement immutable object staging and exact reference catalogs**
 
-Use `ReV2Paths`, `ObjectStore`, canonical JSON, safe directory creation, fsync, and the existing manifest-last/no-clobber pattern. Stage source outcomes, accepted-overview projection catalog and exact Markdown objects, acceptance receipts, topology, graph, work templates/items, policies, schemas, context manifests, Prosaic bytes, budget, checkpoint selection, and publication bases. Verify every supplied mapping key equals `content_digest(payload)` and every overview `content_hash`/`object_hash` matches the staged bytes.
+Use `ReV2Paths`, `ObjectStore`, canonical JSON, safe directory creation, fsync, and the existing manifest-last/no-clobber pattern. Stage source outcomes, accepted-overview projection catalog and exact Markdown objects, acceptance receipts, topology, graph, static graph nodes and work templates, policies, schemas, context manifests, Prosaic bytes, budget, checkpoint selection, and publication bases. Concrete work items are persisted when dependency-ready. Verify every supplied mapping key equals `content_digest(payload)` and every overview `content_hash`/`object_hash` matches the staged bytes.
 
 ```python
 def create_protocol_27_run_store(

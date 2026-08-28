@@ -359,16 +359,18 @@ frozen publication manifest or index schemas.
 2. Validate terminal source outcomes and exact repeated partial acceptances.
 3. Capture the current compatibility-registry generation and v2
    published-index hash.
-4. Stage every immutable authority object, input catalog, receipt, work item,
-   accepted overview projection, policy, and manifest, then publish the
-   schema-6 manifest last.
+4. Stage every immutable authority object, input catalog, receipt, static graph
+   node, work template, accepted overview projection, policy, and manifest,
+   then publish the schema-6 manifest last. A concrete work item is instantiated
+   only when every generated dependency has an accepted artifact hash; downstream
+   artifact keys therefore never contain placeholders for not-yet-produced bytes.
 5. Reconstruct the synthesis graph deterministically from the manifest.
 6. Discover and select exact-compatible synthesis checkpoints with direct-parent
    precedence and protocol-2.6 deterministic dependency-closure behavior.
 7. Copy and authenticate the selected closure into the child before recording
    adoption events.
-8. Dispatch only dependency-ready missing work through the existing
-   Prosaic/provider executor.
+8. Instantiate exact dependency-key/hash-bound work items and dispatch only
+   dependency-ready missing work through the existing Prosaic/provider executor.
 9. Validate, assess, certify, accept, and event each artifact independently.
 10. Compute the synthesis root when the graph closes.
 11. Materialize the immutable closure to run-local compatibility paths.
