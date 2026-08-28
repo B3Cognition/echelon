@@ -148,6 +148,16 @@ class ReEngine(str, Enum):
     V2 = "v2"
 
 
+class ReGoal(str, Enum):
+    BASELINE = "baseline"
+    INVENTORY = "inventory"
+
+
+class ReDeepeningLayer(str, Enum):
+    L2 = "L2"
+    L3 = "L3"
+
+
 re_memory_app = typer.Typer(
     add_completion=False,
     help="Mine workspace reverse-engineering memory in MemPalace.",
@@ -856,8 +866,18 @@ def re_run(
         "--shadow",
         help="For v2 only, explain the authoritative plan without dispatching work.",
     ),
+    goal: list[ReGoal] = typer.Option(
+        [],
+        "--goal",
+        case_sensitive=True,
+        help="For v2 only: baseline (default) or inventory.",
+    ),
 ) -> None:
     """Run or resume workspace reverse engineering; publish explicitly afterward."""
+    if len(goal) > 1:
+        raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
+    if goal and engine is not ReEngine.V2:
+        raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
     args = ["--re-policy", re_policy]
     _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
@@ -869,6 +889,8 @@ def re_run(
         args.append("--no-reuse")
     if engine is ReEngine.V2:
         args.extend(["--engine", engine.value])
+    if goal:
+        args.extend(["--goal", goal[0].value])
     if shadow:
         args.append("--shadow")
     _legacy_cli()._cmd_re_run(args)
@@ -884,6 +906,106 @@ def re_refresh(
 ) -> None:
     """Refresh and publish semantic RE and topology for one source."""
     _legacy_cli()._cmd_re_refresh(["--source", source])
+
+
+@re_app.command("deepen")
+def re_deepen(
+    target_layer: ReDeepeningLayer = typer.Option(
+        ...,
+        "--to",
+        case_sensitive=True,
+        help="Registered deeper layer to generate: L2 or L3.",
+    ),
+    all_sources: bool = typer.Option(
+        False,
+        "--all",
+        help="Deepen every source and domain from the completed parent.",
+    ),
+    source: list[str] = typer.Option(
+        [],
+        "--source",
+        help="Repeat for each source ID to deepen.",
+    ),
+    domain: list[str] = typer.Option(
+        [],
+        "--domain",
+        help="Repeat for a domain ID within exactly one selected source.",
+    ),
+    from_run: Optional[str] = typer.Option(
+        None,
+        "--from-run",
+        help="Completed RE v2 parent run; defaults to the active RE run.",
+    ),
+    token_limit: Optional[int] = typer.Option(
+        None,
+        "--token-limit",
+        min=1,
+        help="Authorize the child run's token ceiling.",
+    ),
+    active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--active-ms-limit",
+        min=1,
+        help="Authorize the child run's active-time ceiling in milliseconds.",
+    ),
+    semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-token-limit",
+        min=1,
+        help="For L3, authorize the independent semantic token ceiling.",
+    ),
+    semantic_active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-active-ms-limit",
+        min=1,
+        help="For L3, authorize the independent semantic active-time ceiling.",
+    ),
+    new_audit_epoch: bool = typer.Option(
+        False,
+        "--new-audit-epoch",
+        help="For L3, explicitly create the next audit epoch from an eligible parent.",
+    ),
+) -> None:
+    """Create or reuse a self-contained selected-scope RE v2 child run."""
+    if all_sources and (source or domain):
+        raise typer.BadParameter(
+            "--all cannot be combined with --source or --domain",
+            param_hint="--all",
+        )
+    if not all_sources and not source:
+        raise typer.BadParameter(
+            "exactly one selector form is required: --all or --source",
+            param_hint="--source",
+        )
+    if domain and len(source) != 1:
+        raise typer.BadParameter(
+            "--domain requires exactly one --source",
+            param_hint="--domain",
+        )
+    if target_layer is not ReDeepeningLayer.L3 and (
+        semantic_token_limit is not None
+        or semantic_active_ms_limit is not None
+        or new_audit_epoch
+    ):
+        raise typer.BadParameter(
+            "semantic limits and --new-audit-epoch are valid only for L3",
+            param_hint="--to",
+        )
+    args = ["--to", target_layer.value]
+    if all_sources:
+        args.append("--all")
+    for source_id in source:
+        args.extend(["--source", source_id])
+    for domain_id in domain:
+        args.extend(["--domain", domain_id])
+    _extend_option(args, "--from-run", from_run)
+    _extend_option(args, "--token-limit", token_limit)
+    _extend_option(args, "--active-ms-limit", active_ms_limit)
+    _extend_option(args, "--semantic-token-limit", semantic_token_limit)
+    _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
+    if new_audit_epoch:
+        args.append("--new-audit-epoch")
+    _legacy_cli()._cmd_re_deepen(args)
 
 
 @re_app.command("status")
@@ -918,12 +1040,30 @@ def re_continue(
         min=1,
         help="Raise the active run's active-time ceiling without resetting it.",
     ),
+    re_semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-token-limit",
+        min=1,
+        help="Raise the active L3 run's independent semantic token ceiling.",
+    ),
+    re_semantic_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-time-limit-minutes",
+        min=1,
+        help="Raise the active L3 run's independent semantic time ceiling.",
+    ),
 ) -> None:
     """Continue the active RE run without a human answer."""
     args: list[str] = []
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
+    _extend_option(
+        args,
+        "--re-semantic-time-limit-minutes",
+        re_semantic_time_limit_minutes,
+    )
     _legacy_cli()._cmd_re_continue(args)
 
 

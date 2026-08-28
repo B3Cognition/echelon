@@ -1582,6 +1582,38 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 
+def test_assemble_prompt_injects_selected_stack_contract_before_discovery(tmp_path):
+    """Phase A discovery receives the same selected stack constraints as delivery."""
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir()
+    (config_dir / "config.yml").write_text(
+        "stacks:\n"
+        "  selected:\n"
+        "    - statsperform-stark-webapp\n"
+        "  target_archetypes:\n"
+        "    - web_app\n",
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, tmp_path / "extension", tmp_path, squad_dir)
+    prompt = executor._assemble_prompt(
+        PhaseNode(id="phase1-discover", type="agent"),
+        {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
+    )
+
+    assert "## Echelon Stack Contract" in prompt
+    assert "Declared target archetypes: web_app" in prompt
+    assert "Selected-stack archetypes: web_app" in prompt
+    assert "# Resolved Echelon Stacks" in prompt
+    assert "Use the Opta Stark Nx/Next.js archetype" in prompt
+
+
 def test_assemble_prompt_strips_agent_frontmatter_before_model_prompt(tmp_path):
     """Agent YAML frontmatter is runtime metadata, not prompt text."""
     squad_dir = tmp_path / "squad" / "run-test"

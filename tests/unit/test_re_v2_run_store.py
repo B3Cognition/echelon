@@ -7,15 +7,30 @@ from pathlib import Path
 
 import pytest
 
-from harness.re_v2 import RE_V2_ENGINE, RE_V2_PROTOCOL
+import harness.re_v2 as re_v2
+from harness.re_v2 import (
+    RE_V2_ENGINE,
+    RE_V2_PROTOCOL,
+    RE_V2_SCHEMA_3_PROTOCOLS,
+    RE_V2_SUPPORTED_PROTOCOLS,
+)
 from harness.re_v2.canonical import canonical_json_bytes
 from harness.re_v2.model import BudgetPolicy, RunManifest
+from harness.re_v2.protocol_22.model import RunManifestV2
+from harness.re_v2.protocol_24.model import RunManifestV3
+from harness.re_v2.protocol_25.model import RunManifestV4
+from harness.re_v2.protocol_26.model import RunManifestV5
 from harness.re_v2.run_store import (
+    ReV2Paths,
     ReV2RunStoreError,
     create_run_store,
     detect_re_engine,
     load_run_manifest,
 )
+from tests.re_v2_protocol_22_fixtures import manifest_v2, manifest_v2_dict
+from tests.re_v2_protocol_24_fixtures import manifest_v3
+from tests.re_v2_protocol_25_fixtures import manifest_v4
+from tests.re_v2_protocol_26_fixtures import manifest_v5
 
 
 def _manifest(*, run_id: str) -> RunManifest:
@@ -165,6 +180,128 @@ def test_load_rejects_manifest_with_unsupported_pinned_protocol(tmp_path: Path) 
     raw = json.loads(paths.manifest.read_text(encoding="utf-8"))
     raw["engine_protocol_version"] = "999.0"
     paths.manifest.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ReV2RunStoreError, match="unsupported"):
+        load_run_manifest(run_dir)
+
+
+@pytest.mark.unit
+def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
+    assert RE_V2_PROTOCOL == "2.3"
+    assert RE_V2_SCHEMA_3_PROTOCOLS == ("2.4",)
+    assert getattr(re_v2, "RE_V2_SCHEMA_4_PROTOCOLS", None) == ("2.5",)
+    assert getattr(re_v2, "RE_V2_SCHEMA_5_PROTOCOLS", None) == ("2.6",)
+    assert RE_V2_SUPPORTED_PROTOCOLS == (
+        "2.0",
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5",
+        "2.6",
+    )
+
+
+@pytest.mark.unit
+def test_run_store_loads_canonical_schema_2_manifest(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v22"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    expected = manifest_v2(run_id=run_dir.name)
+    paths.manifest.write_bytes(canonical_json_bytes(expected.to_json_dict()))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV2)
+    assert loaded == expected
+
+
+@pytest.mark.unit
+def test_run_store_loads_protocol_23_with_schema_2(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v23"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    raw = manifest_v2_dict(run_id=run_dir.name)
+    raw["engine_protocol_version"] = "2.3"
+    paths.manifest.write_bytes(canonical_json_bytes(raw))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV2)
+    assert loaded.to_json_dict() == raw
+
+
+@pytest.mark.unit
+def test_run_store_loads_protocol_24_with_schema_3(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v24"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    expected = manifest_v3(run_id=run_dir.name)
+    paths.manifest.write_bytes(canonical_json_bytes(expected.to_json_dict()))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV3)
+    assert loaded == expected
+
+
+@pytest.mark.unit
+def test_run_store_loads_protocol_25_with_schema_4(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v25"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    expected = manifest_v4(run_id=run_dir.name)
+    paths.manifest.write_bytes(canonical_json_bytes(expected.to_json_dict()))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV4)
+    assert loaded == expected
+
+
+@pytest.mark.unit
+def test_run_store_loads_protocol_26_with_schema_5(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v26"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    expected = manifest_v5(run_id=run_dir.name)
+    paths.manifest.write_bytes(canonical_json_bytes(expected.to_json_dict()))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV5)
+    assert loaded == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema_version", "protocol_version"),
+    (
+        (1, "2.2"),
+        (2, "2.1"),
+        (2, "2.0"),
+        (3, "2.2"),
+        (3, "2.3"),
+        (2, "2.4"),
+        (4, "2.4"),
+        (3, "2.5"),
+        (5, "2.5"),
+        (4, "2.6"),
+        (2, "999"),
+    ),
+)
+def test_run_store_rejects_unsupported_schema_protocol_pairs(
+    tmp_path: Path,
+    schema_version: int,
+    protocol_version: str,
+) -> None:
+    run_dir = tmp_path / "runs" / f"re-{schema_version}-{protocol_version.replace('.', '-')}"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    raw = manifest_v2_dict(run_id=run_dir.name)
+    raw["schema_version"] = schema_version
+    raw["engine_protocol_version"] = protocol_version
+    paths.manifest.write_bytes(canonical_json_bytes(raw))
 
     with pytest.raises(ReV2RunStoreError, match="unsupported"):
         load_run_manifest(run_dir)

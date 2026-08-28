@@ -120,6 +120,15 @@ def test_append_builds_a_canonical_hash_chain(tmp_path: Path) -> None:
     assert store.path.read_bytes() == b"".join(
         canonical_json_bytes(event.to_json_dict()) for event in (first, second)
     )
+    assert first.event_hash == (
+        "sha256:c0793338b9ad23b6664b9f0fbf93b7d59018f48bdadfa5e60221612c426855e4"
+    )
+    assert second.event_hash == (
+        "sha256:3fb132eaec952e1809d535ffe676cd9b51d77305843cf5d70bd59d5c7652894b"
+    )
+    assert content_digest(store.path.read_bytes()) == (
+        "sha256:a6fb50282fc11ce5ce427623c7ebe98673a3185348a842b6c50ab678dd4f1494"
+    )
 
 
 def test_event_chain_rejects_a_modified_middle_record(tmp_path: Path) -> None:

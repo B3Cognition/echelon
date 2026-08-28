@@ -12,11 +12,12 @@ from .canonical import content_digest
 from .budget import BudgetDecision, evaluate_budget
 from .events import EventRecord, EventStore
 from .ledger import Ledger, LedgerView, ObjectStore
+from .model import RE_V2_SCHEMA_2_PROTOCOLS, RE_V2_SCHEMA_3_PROTOCOLS
 from .planner import PlanDecision, WorkGraph, build_initial_inventory_graph, plan_next
 from .projection import rebuild_projection
 from . import publication as publication_store
 from .publication import GenerationManifest
-from .run_store import ReV2Paths, ReV2RunStoreError, detect_re_engine, load_run_manifest
+from .run_store import ReV2Paths, detect_re_engine, load_run_manifest
 
 
 class ReV2StatusError(RuntimeError):
@@ -62,6 +63,22 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
         if detect_re_engine(run_path) != "v2":
             raise ReV2StatusError(f"RE run is not pinned to v2: {run_path.name}")
         manifest = load_run_manifest(run_path)
+        if getattr(manifest, "engine_protocol_version", None) == "2.6":
+            from .protocol_26.status import render_protocol_26_status
+
+            return render_protocol_26_status(run_path, as_json=as_json)
+        if getattr(manifest, "engine_protocol_version", None) == "2.5":
+            from .protocol_25.status import render_protocol_25_status
+
+            return render_protocol_25_status(run_path, as_json=as_json)
+        if getattr(manifest, "engine_protocol_version", None) in RE_V2_SCHEMA_3_PROTOCOLS:
+            from .protocol_24.status import render_protocol_24_status
+
+            return render_protocol_24_status(run_path, as_json=as_json)
+        if getattr(manifest, "engine_protocol_version", None) in RE_V2_SCHEMA_2_PROTOCOLS:
+            from .protocol_22.status import render_protocol_22_status
+
+            return render_protocol_22_status(run_path, as_json=as_json)
         paths = ReV2Paths.for_run(run_path)
         graph = build_initial_inventory_graph(
             manifest.source_snapshot_id,
@@ -96,7 +113,9 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
     except ReV2StatusError:
         raise
     except Exception as exc:
-        raise ReV2StatusError(f"cannot replay RE v2 status for {run_path.name}: {exc}") from exc
+        raise ReV2StatusError(
+            f"cannot replay RE v2 status for {run_path.name}: {exc}"
+        ) from exc
     if as_json:
         return json.dumps(status, indent=2, sort_keys=True) + "\n"
     return _render_human(status)
@@ -174,9 +193,7 @@ def _status_document(
         }
 
     current_work_item_id = projection.get("current_work_item_id")
-    next_work_item_id = (
-        plan.ready[0].work_item_id if plan.ready else None
-    )
+    next_work_item_id = plan.ready[0].work_item_id if plan.ready else None
     return {
         "artifact_counts": {
             "adopted": 0,
@@ -200,7 +217,9 @@ def _status_document(
         "next_work_item_id": next_work_item_id,
         "partition_manifest_id": getattr(manifest, "partition_manifest_id"),
         "plan_counts": {
-            "blocked_budget": sum(item.action == "blocked_budget" for item in explanations),
+            "blocked_budget": sum(
+                item.action == "blocked_budget" for item in explanations
+            ),
             "blocked_dependency": sum(
                 item.action == "blocked_dependency" for item in explanations
             ),
@@ -468,14 +487,17 @@ def _used_authorized(value: Mapping[str, object]) -> str:
 def _attempts_text(value: Mapping[str, object]) -> str:
     by_work_item = value["by_work_item"]
     assert isinstance(by_work_item, Mapping)
-    item_text = ", ".join(
-        (
-            f"{work_item_id}={details['used']}/{details['authorized']} "
-            f"({details['remaining']} remaining)"
+    item_text = (
+        ", ".join(
+            (
+                f"{work_item_id}={details['used']}/{details['authorized']} "
+                f"({details['remaining']} remaining)"
+            )
+            for work_item_id, details in by_work_item.items()
+            if isinstance(details, Mapping)
         )
-        for work_item_id, details in by_work_item.items()
-        if isinstance(details, Mapping)
-    ) or "none"
+        or "none"
+    )
     return (
         f"aggregate used={value['aggregate_used']}; authorized per work item="
         f"{value['authorized_per_work_item']}; work items={item_text}"

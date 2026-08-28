@@ -99,6 +99,42 @@ def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_pat
     assert result.raw_output.startswith("echelon_result:")
 
 
+def test_squad_provider_forwards_isolated_workspace_request_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    captured: dict[str, object] = {}
+
+    def fake_run_agent_result(
+        project_root,
+        prompt,
+        timeout_ms=None,
+        request_metadata=None,
+    ):
+        captured.update(request_metadata or {})
+        return CliRunResult(
+            exit_code=0,
+            stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    provider.exec_agent(
+        str(tmp_path),
+        "prompt",
+        isolated_workspace=True,
+    )
+
+    assert captured == {"isolated_workspace": True}
+
+
 def test_squad_provider_repairs_missing_echelon_result_after_clean_exit(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",

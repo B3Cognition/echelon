@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import sys
-from dataclasses import replace
 from pathlib import Path
 from typing import Mapping
 
@@ -13,7 +12,7 @@ from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_ba
 from harness.ai_cli_backends.claude import (
     host_workspace_synthesis_boundary_available,
 )
-from harness.config import HarnessConfig
+from harness.config import HarnessConfig, effective_llm_config
 from harness.llm_tool_policy import build_llm_cli_command
 from harness.provider_capability import (
     ARTIFACT_PROVIDER_CAPABILITIES,
@@ -37,11 +36,8 @@ class AICodingCliProvider:
     """
 
     def __init__(self, config: HarnessConfig) -> None:
-        self._cli = os.environ.get("ECHELON_LLM", config.llm.cli)
-        effective_config = config
-        if self._cli != config.llm.cli:
-            effective_config = replace(config, llm=replace(config.llm, cli=self._cli))
-
+        effective_config = effective_llm_config(config)
+        self._cli = effective_config.llm.cli
         self._config = effective_config
         self._timeout_s = effective_config.llm.timeout_ms / 1000.0
         self._config_dir = effective_config.llm.config_dir

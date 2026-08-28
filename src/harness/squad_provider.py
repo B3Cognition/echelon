@@ -387,12 +387,18 @@ class SquadCliProvider(AICodingCliProvider):
         prompt_metadata: Optional[dict[str, object]] = None,
         allow_result_repair: bool = True,
         strict_result_envelope: bool = False,
+        isolated_workspace: bool = False,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
         run_kwargs: dict[str, object] = {"timeout_ms": timeout_ms}
+        request_metadata: dict[str, object] = {}
         if prompt_metadata:
-            run_kwargs["request_metadata"] = {"prompt_metadata": prompt_metadata}
+            request_metadata["prompt_metadata"] = prompt_metadata
+        if isolated_workspace:
+            request_metadata["isolated_workspace"] = True
+        if request_metadata:
+            run_kwargs["request_metadata"] = request_metadata
         backend_result = self.run_agent_result(project_root, prompt, **run_kwargs)
         _verify_git_boundary(project_root, git_before)
         duration_ms = int((time.monotonic() - start) * 1000)

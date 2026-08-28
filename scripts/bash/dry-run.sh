@@ -82,16 +82,32 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
     ]
     if len(creation_functions) != 1:
         raise SystemExit("RE v2 creation function is missing or ambiguous")
+    preparation_functions = [
+        node
+        for node in legacy_cli_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_prepare_re_v22_creation"
+    ]
+    if len(preparation_functions) != 1:
+        raise SystemExit("RE protocol-2.2 preparation function is missing or ambiguous")
     creation_function = creation_functions[0]
+    preparation_function = preparation_functions[0]
     workspace_imports = [
         node
-        for node in ast.walk(creation_function)
+        for node in ast.walk(preparation_function)
         if isinstance(node, ast.ImportFrom)
         and node.module == "harness.re_v2.workspace_snapshot"
         and any(alias.name == "capture_workspace_snapshot" for alias in node.names)
     ]
     if len(workspace_imports) != 1:
         raise SystemExit("RE v2 creation must import capture_workspace_snapshot")
+    preparation_calls = sorted(
+        node.lineno
+        for node in ast.walk(preparation_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "capture_workspace_snapshot"
+    )
     creation_calls = {
         name: sorted(
             node.lineno
@@ -101,16 +117,18 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
             and node.func.id == name
         )
         for name in (
-            "capture_workspace_snapshot",
-            "create_run_store",
+            "_prepare_re_v26_creation",
+            "create_protocol_26_run_store",
             "_activate_re_v2_run",
         )
     }
-    if any(len(lines) != 1 for lines in creation_calls.values()):
+    if len(preparation_calls) != 1 or any(
+        len(lines) != 1 for lines in creation_calls.values()
+    ):
         raise SystemExit("RE v2 creation lifecycle calls are missing or ambiguous")
     if not (
-        creation_calls["capture_workspace_snapshot"][0]
-        < creation_calls["create_run_store"][0]
+        creation_calls["_prepare_re_v26_creation"][0]
+        < creation_calls["create_protocol_26_run_store"][0]
         < creation_calls["_activate_re_v2_run"][0]
     ):
         raise SystemExit(

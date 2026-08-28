@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Protocol
 
 from .canonical import canonical_json_bytes, content_digest
 from .model import ExecutionObservation
@@ -29,6 +29,23 @@ _RFC3339_RE = re.compile(
 
 class ReV2EventError(RuntimeError):
     """Raised when event history cannot be trusted or extended safely."""
+
+
+class EventReplayState(Protocol):
+    def consume(self, event: "EventRecord") -> None:
+        raise NotImplementedError
+
+
+class EventProtocol(Protocol):
+    def canonical_payload(
+        self,
+        event_type: str,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        raise NotImplementedError
+
+    def new_state(self) -> EventReplayState:
+        raise NotImplementedError
 
 
 def _thaw_json(value: object) -> object:
@@ -527,19 +544,45 @@ class _ReplayState:
         self.last_type = event_type
 
 
+class _LegacyEventProtocol:
+    def canonical_payload(
+        self,
+        event_type: str,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        canonical = _canonical_payload(_thaw_json(payload))
+        _validate_payload(event_type, canonical)
+        return canonical
+
+    def new_state(self) -> EventReplayState:
+        return _ReplayState()
+
+
+LEGACY_EVENT_PROTOCOL: EventProtocol = _LegacyEventProtocol()
+
+
 class EventStore:
     """Serialize durable appends and replay the complete validated history."""
 
-    def __init__(self, path: Path | ReV2Paths):
+    def __init__(
+        self,
+        path: Path | ReV2Paths,
+        *,
+        protocol: EventProtocol = LEGACY_EVENT_PROTOCOL,
+    ):
         self.path = path.events if isinstance(path, ReV2Paths) else Path(path)
         self.lock_path = self.path.with_name("events.lock")
+        if not callable(getattr(protocol, "canonical_payload", None)) or not callable(
+            getattr(protocol, "new_state", None)
+        ):
+            raise ReV2EventError("event protocol does not implement the replay seam")
+        self.protocol = protocol
 
     def append(
         self, event_type: str, payload: Mapping[str, object], *, occurred_at: str
     ) -> EventRecord:
         timestamp = _validate_rfc3339(occurred_at)
-        canonical_payload = _canonical_payload(payload)
-        _validate_payload(event_type, canonical_payload)
+        canonical_payload = self.protocol.canonical_payload(event_type, payload)
         self._validate_parent()
 
         lock_fd = self._open_lock()
@@ -564,7 +607,7 @@ class EventStore:
                 seq=len(history) + 1,
                 type=event_type,
             )
-            state = _replay_state(history)
+            state = _replay_state(history, protocol=self.protocol)
             state.consume(event)
             existed = self.path.exists()
             fd = self._open_events_for_append()
@@ -642,7 +685,7 @@ class EventStore:
             if canonical != line + b"\n":
                 raise ReV2EventError(f"event record {index} is not canonical JSON")
             events.append(event)
-        return validate_event_history(events)
+        return validate_event_history(events, protocol=self.protocol)
 
     def _validate_parent(self) -> None:
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():
@@ -700,13 +743,17 @@ def _record_from_raw(raw: object, index: int) -> EventRecord:
     )
 
 
-def validate_event_history(events: Iterable[EventRecord]) -> tuple[EventRecord, ...]:
+def validate_event_history(
+    events: Iterable[EventRecord],
+    *,
+    protocol: EventProtocol = LEGACY_EVENT_PROTOCOL,
+) -> tuple[EventRecord, ...]:
     """Validate the complete immutable event history before any projection reads it."""
     history = tuple(events)
-    state = _ReplayState()
+    state = protocol.new_state()
     previous: str | None = None
     for index, event in enumerate(history, start=1):
-        _validate_event_record(event, index)
+        _validate_event_record(event, index, protocol=protocol)
         if event.seq != index:
             raise ReV2EventError(
                 f"event record {index} has nonconsecutive sequence {event.seq}"
@@ -718,7 +765,12 @@ def validate_event_history(events: Iterable[EventRecord]) -> tuple[EventRecord, 
     return history
 
 
-def _validate_event_record(event: object, index: int) -> None:
+def _validate_event_record(
+    event: object,
+    index: int,
+    *,
+    protocol: EventProtocol,
+) -> None:
     if not isinstance(event, EventRecord):
         raise ReV2EventError(f"event record {index} must be an EventRecord")
     if event.schema_version != EVENT_SCHEMA_VERSION or isinstance(
@@ -735,7 +787,9 @@ def _validate_event_record(event: object, index: int) -> None:
     _digest(event.event_hash, "event_hash")
     if event.event_hash != _event_hash(event.identity_dict()):
         raise ReV2EventError(f"event record {index} has invalid event hash")
-    _validate_payload(event.type, event.payload)
+    canonical = protocol.canonical_payload(event.type, event.payload)
+    if _thaw_json(canonical) != _thaw_json(event.payload):
+        raise ReV2EventError(f"event record {index} has noncanonical payload")
 
 
 def _reject_json_constant(value: str) -> object:
@@ -749,8 +803,12 @@ def _finite_json_float(value: str) -> float:
     return parsed
 
 
-def _replay_state(events: tuple[EventRecord, ...]) -> _ReplayState:
-    state = _ReplayState()
+def _replay_state(
+    events: tuple[EventRecord, ...],
+    *,
+    protocol: EventProtocol = LEGACY_EVENT_PROTOCOL,
+) -> EventReplayState:
+    state = protocol.new_state()
     for event in events:
         state.consume(event)
     return state
@@ -787,8 +845,11 @@ def _fsync_directory(path: Path) -> None:
 
 __all__ = (
     "EVENT_SCHEMA_VERSION",
+    "EventProtocol",
     "EventRecord",
+    "EventReplayState",
     "EventStore",
+    "LEGACY_EVENT_PROTOCOL",
     "ReV2EventError",
     "validate_event_history",
 )

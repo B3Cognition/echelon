@@ -38,6 +38,7 @@ from harness.agent_context import (
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
 from harness.stack_contract import render_stack_contract
 from harness.state_transaction_namespace import store_owned_update_keys
+from harness.stacks.context import build_stack_context
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
 
@@ -1683,6 +1684,21 @@ class PhaseExecutor(ABC):
             "- Use only explicit `.echelon/runtime/...` paths for deployed runtime assets.\n\n"
         )
 
+    def _stack_context(self, spec_dir_ref: str) -> str:
+        """Resolve explicit project stacks before every Phase A agent dispatch."""
+        from harness.config import load_config
+
+        config = load_config(self._project_root, squad_only=True)
+        spec_dir = Path(spec_dir_ref) if spec_dir_ref else None
+        if spec_dir is not None and not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        return build_stack_context(
+            self._project_root,
+            selected_stacks=config.stacks.selected,
+            target_archetypes=config.stacks.target_archetypes,
+            spec_dir=spec_dir,
+        )
+
     def _render_context_pack_item(
         self,
         *,
@@ -1881,6 +1897,7 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
+            f"{self._stack_context(spec_dir_ref)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
@@ -2019,6 +2036,10 @@ class PhaseExecutor(ABC):
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
         context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(),
+            self._project_root,
+        )
         return (
             _shared_agent_contract()
             + agent_text
@@ -2028,6 +2049,7 @@ class PhaseExecutor(ABC):
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + self._stack_context(spec_dir_ref)
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
@@ -2814,6 +2836,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
+            f"{self._stack_context(spec_dir_ref)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
