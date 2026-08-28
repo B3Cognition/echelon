@@ -16011,8 +16011,99 @@ def _cmd_re_finalize(args: list[str]) -> None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ReSynthesizeV2Options:
+    from_run: str
+    accepted_partial_sources: tuple[str, ...]
+    token_limit: int | None
+    active_ms_limit: int | None
+
+
+def _parse_re_synthesize_v2_options(args: list[str]) -> _ReSynthesizeV2Options:
+    values: dict[str, object] = {
+        "from_run": None,
+        "accepted_partial_sources": [],
+        "token_limit": None,
+        "active_ms_limit": None,
+    }
+    scalar = {
+        "--from-run": "from_run",
+        "--token-limit": "token_limit",
+        "--active-ms-limit": "active_ms_limit",
+    }
+    repeatable = {"--accept-partial": "accepted_partial_sources"}
+    index = 0
+    while index < len(args):
+        option = args[index]
+        name, separator, inline = option.partition("=")
+        if name not in scalar and name not in repeatable:
+            raise ValueError(f"unknown option {option!r}")
+        if not separator:
+            if index + 1 >= len(args):
+                raise ValueError(f"{name} requires a value")
+            inline = args[index + 1]
+            index += 2
+        else:
+            index += 1
+        value = inline.strip()
+        if not value:
+            raise ValueError(f"{name} requires a nonempty value")
+        if name in repeatable:
+            selected = values[repeatable[name]]
+            assert isinstance(selected, list)
+            if value in selected:
+                raise ValueError(f"duplicate {name} selector {value!r}")
+            selected.append(value)
+            continue
+        field = scalar[name]
+        if values[field] is not None:
+            raise ValueError(f"{name} may be supplied only once")
+        if name in {"--token-limit", "--active-ms-limit"}:
+            try:
+                parsed = int(value)
+            except ValueError as exc:
+                raise ValueError(f"{name} must be a positive integer") from exc
+            if parsed <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+            values[field] = parsed
+        else:
+            values[field] = value
+    if not isinstance(values["from_run"], str):
+        raise ValueError("--from-run is required for RE v2 synthesis")
+    selected = values["accepted_partial_sources"]
+    assert isinstance(selected, list)
+    return _ReSynthesizeV2Options(
+        from_run=values["from_run"],
+        accepted_partial_sources=tuple(sorted(selected)),
+        token_limit=(values["token_limit"] if isinstance(values["token_limit"], int) else None),
+        active_ms_limit=(
+            values["active_ms_limit"]
+            if isinstance(values["active_ms_limit"], int)
+            else None
+        ),
+    )
+
+
+def _cmd_re_synthesize_v2(args: list[str]) -> None:
+    from harness.re_v2.protocol_27.authority import Protocol27AuthorityError
+    from harness.re_v2.protocol_27.lifecycle import (
+        Protocol27LifecycleError,
+        run_synthesis_child,
+    )
+
+    try:
+        options = _parse_re_synthesize_v2_options(args)
+        run_synthesis_child(Path.cwd(), options)
+    except (OSError, Protocol27AuthorityError, Protocol27LifecycleError, ValueError) as exc:
+        print(f"echelon re synthesize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def _cmd_re_synthesize(args: list[str]) -> None:
     """Regenerate only workspace synthesis from accepted partial source results."""
+    if any(arg == "--from-run" or arg.startswith("--from-run=") for arg in args):
+        _cmd_re_synthesize_v2(args)
+        return
     from harness.config import load_config
     from harness.re_finalization import (
         ReFinalizationError,
