@@ -15,6 +15,7 @@ from tests.re_v2_protocol_22_fixtures import (
     work_template_v2,
 )
 from tests.re_v2_protocol_24_fixtures import manifest_v3
+from tests.re_v2_protocol_25_fixtures import manifest_v4
 from tests.unit.test_re_v2_model import (
     valid_artifact_key,
     valid_run_manifest_dict,
@@ -83,13 +84,19 @@ def test_schema_3_manifest_identity_remains_frozen() -> None:
     )
 
 
+def test_schema_4_manifest_identity_remains_frozen() -> None:
+    assert manifest_v4().run_manifest_id == (
+        "sha256:a5d1f7139906cbaf4a3973e9732f81faaa5dfdd777c5147a3aa42fb3ddce001d"
+    )
+
+
 def test_protocol_22_pinned_executor_module_bytes_remain_frozen() -> None:
     expected = {
         cli_provider_module: (
-            "sha256:ceb4c22161a441f29ce7a36231cf31bd813f0549ab9afce7deddea9dcc0d7c66"
+            "sha256:7f6632a922ec91dd7d18825208e8b107405d137ad0555ccbef44579bbeb5b405"
         ),
         controller_module: (
-            "sha256:3b212dc11fb1170f6431e96a7aecc671e640993b2fbb6cf8cb7cb84a36935254"
+            "sha256:0ab9dc425245bbd43e20d713742d32216988afd46416bc71061d687aa28587d2"
         ),
     }
 
