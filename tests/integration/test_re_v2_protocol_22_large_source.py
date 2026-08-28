@@ -38,13 +38,13 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_22.artifacts import EvidencePackV1
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
-    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
     from harness.re_v2.protocol_22.inventory import InventoryArtifactV1
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.policies import policy_for
     from harness.re_v2.protocol_22.schema import load_canonical_object
     from harness.re_v2.protocol_22.status import protocol_22_status_document
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "large-source")
@@ -90,7 +90,7 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
     assert status["telemetry"]["unknown_token_dispatches"] == 2
     assert status["budget"]["tokens"]["trusted_observed"] == 0
 
-    events = EventStore(paths, protocol=PROTOCOL_22_EVENTS).replay()
+    events = EventStore(paths, protocol=protocol_26_events_for("L1")).replay()
     reserved_tokens = sum(
         event.payload["billable_token_reservation"]
         for event in events
@@ -99,7 +99,7 @@ def test_large_pathological_source_is_bounded_debt_explicit_and_restart_stable(
     assert status["budget"]["tokens"]["charged"] == reserved_tokens > 0
 
     manifest = load_run_manifest(run_dir)
-    inputs = load_protocol_22_inputs(paths, manifest)
+    inputs = load_protocol_26_inputs(paths, manifest).layer_inputs
     objects = ObjectStore(paths.objects)
     ledger = Protocol22Ledger(paths, objects).replay()
     artifacts = tuple(ledger.accepted_artifacts.values())

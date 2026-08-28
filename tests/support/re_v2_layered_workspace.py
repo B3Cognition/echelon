@@ -143,7 +143,10 @@ class ScriptedSharedProvider:
             token_usage = 300_001
             token_usage_details = {
                 "input_tokens": 300_000,
+                "cached_input_tokens": 0,
                 "output_tokens": 1,
+                "reasoning_output_tokens": 0,
+                "total_tokens": 300_001,
             }
         elif self.scenario == "large-source":
             token_usage = 0

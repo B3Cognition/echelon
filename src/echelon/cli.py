@@ -13930,7 +13930,12 @@ def _run_re_v2_live(context: object) -> None:
             )
             from harness.re_v2.protocol_25.status import render_protocol_25_status
 
-            Protocol25Controller(context).run_until_stopped()
+            controller_type = Protocol25Controller
+            if isinstance(manifest, RunManifestV5):
+                from harness.re_v2.protocol_26.controller import Protocol26L3Controller
+
+                controller_type = Protocol26L3Controller
+            controller_type(context).run_until_stopped()
             materialize_accepted_l3(context)
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.status import render_protocol_26_status
@@ -13954,7 +13959,12 @@ def _run_re_v2_live(context: object) -> None:
             from harness.re_v2.protocol_24.controller import Protocol24Controller
             from harness.re_v2.protocol_24.status import render_protocol_24_status
 
-            Protocol24Controller(context).run_until_stopped()
+            controller_type = Protocol24Controller
+            if isinstance(manifest, RunManifestV5):
+                from harness.re_v2.protocol_26.controller import Protocol26L2Controller
+
+                controller_type = Protocol26L2Controller
+            controller_type(context).run_until_stopped()
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.status import render_protocol_26_status
 
@@ -13977,7 +13987,12 @@ def _run_re_v2_live(context: object) -> None:
             from harness.re_v2.protocol_22.controller import Protocol22Controller
             from harness.re_v2.protocol_22.status import render_protocol_22_status
 
-            Protocol22Controller(context).run_until_stopped()
+            controller_type = Protocol22Controller
+            if isinstance(manifest, RunManifestV5):
+                from harness.re_v2.protocol_26.controller import Protocol26L1Controller
+
+                controller_type = Protocol26L1Controller
+            controller_type(context).run_until_stopped()
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.status import render_protocol_26_status
 
@@ -15768,8 +15783,7 @@ def _continue_re_v24_semantic_child(
     options: _ReDeepenOptions,
 ) -> None:
     from harness.re_v2.protocol_22.budget import evaluate_budget_v22
-    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
-    from harness.re_v2.run_store import load_run_manifest
+    from harness.re_v2.protocol_26.authority import resolve_run_authority
 
     if options.token_limit is None and options.active_ms_limit is None:
         _run_re_v2_live(context)
@@ -15783,13 +15797,13 @@ def _continue_re_v24_semantic_child(
         # the shared controller will either progress it or expose a pause.
         _run_re_v2_live(context)
         return
-    manifest = load_run_manifest(context.paths.root.parent)
+    manifest = resolve_run_authority(context).layer_manifest
     budget = evaluate_budget_v22(
         manifest.initial_budget_policy,
         events,
         (),
         _re_v2_now(),
-        event_protocol=PROTOCOL_24_EVENTS,
+        event_protocol=context.event_store.protocol,
     )
     token_limit = (
         options.token_limit
