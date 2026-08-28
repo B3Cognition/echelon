@@ -329,6 +329,7 @@ class SynthesisAssessmentV1:
 @dataclass(frozen=True, slots=True)
 class SynthesisCertificationV1:
     schema_version: int
+    work_item_id: str
     artifact_key_id: str
     artifact_hash: str
     candidate_hash: str
@@ -340,6 +341,7 @@ class SynthesisCertificationV1:
 
     FIELDS: ClassVar[tuple[str, ...]] = (
         "schema_version",
+        "work_item_id",
         "artifact_key_id",
         "artifact_hash",
         "candidate_hash",
@@ -354,6 +356,7 @@ class SynthesisCertificationV1:
         _schema(literal, self.schema_version, 1, "synthesis certification schema")
         for field in (
             "artifact_key_id",
+            "work_item_id",
             "artifact_hash",
             "candidate_hash",
             "context_id",
@@ -371,6 +374,7 @@ class SynthesisCertificationV1:
     def to_json_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
+            "work_item_id": self.work_item_id,
             "artifact_key_id": self.artifact_key_id,
             "artifact_hash": self.artifact_hash,
             "candidate_hash": self.candidate_hash,
@@ -508,6 +512,7 @@ class Protocol27DeterministicRuntime:
         )
         certification = SynthesisCertificationV1(
             1,
+            work_item.work_item_id,
             work_item.output_key.artifact_key_id,
             artifact_hash,
             candidate_hash,
