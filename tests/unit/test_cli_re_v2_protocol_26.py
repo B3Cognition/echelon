@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 from typer.testing import CliRunner
@@ -61,3 +62,29 @@ def test_dirty_source_blocks_before_checkpoint_cache_or_run_creation(
     assert result.exit_code != 0
     assert not probe.run_directories()
     assert not (probe.root / ".echelon" / "re-v2" / "checkpoints").exists()
+
+
+@pytest.mark.unit
+def test_protocol_26_status_json_uses_frozen_child_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    probe = create_cli_workspace(tmp_path, llm_cli="codex")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.chdir(probe.root)
+    runner = CliRunner()
+    created = runner.invoke(
+        app,
+        ["re", "run", "--engine", "v2", "--goal", "inventory", "--shadow"],
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(app, ["re", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    status = json.loads(result.output)
+    assert status["engine_protocol_version"] == "2.6"
+    assert status["target_layer"] == "L1"
+    assert status["checkpoints"]["reconstruction_state"] == "frozen_self_contained"

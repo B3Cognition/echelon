@@ -20,14 +20,15 @@ def test_live_cli_completes_multi_source_compact_baseline_once(
     from echelon.cli_app import app
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
     from harness.re_v2.protocol_22.execution import CandidateInventoryV1
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
-    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.model import PersistedCandidateV2
     from harness.re_v2.protocol_22.schema import load_canonical_object
-    from harness.re_v2.protocol_22.status import protocol_22_status_document
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "complete")
@@ -56,10 +57,13 @@ def test_live_cli_completes_multi_source_compact_baseline_once(
 
     run_dir = fixture.run_directories()[0]
     manifest = load_run_manifest(run_dir)
-    assert manifest.engine_protocol_version == "2.3"
+    assert isinstance(manifest, RunManifestV5)
+    assert manifest.engine_protocol_version == "2.6"
     paths = ReV2Paths.for_run(run_dir)
-    inputs = load_protocol_22_inputs(paths, manifest)
-    graph = build_protocol_22_graph(manifest, inputs)
+    outer_inputs = load_protocol_26_inputs(paths, manifest)
+    inputs = outer_inputs.layer_inputs
+    inner_manifest = outer_inputs.layer_execution_contract.layer_manifest
+    graph = build_protocol_22_graph(inner_manifest, inputs)
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
     provider_templates = tuple(
         template
@@ -75,9 +79,10 @@ def test_live_cli_completes_multi_source_compact_baseline_once(
         for request in fixture.provider.requests
     )
 
-    status = protocol_22_status_document(run_dir)
+    status = protocol_26_status_document(run_dir)
     assert status["status"] == "complete"
-    assert status["banner"] == "L1 COMPACT BASELINE COMPLETE"
+    assert status["banner"].startswith("L1 COMPACT BASELINE COMPLETE")
+    assert status["checkpoints"]["adopted_count"] == 0
     assert status["telemetry"]["provider_observations"] == [
         {
             "dispatches": len(provider_templates),
@@ -101,7 +106,7 @@ def test_live_cli_completes_multi_source_compact_baseline_once(
     assert all(path.with_suffix(".md").is_file() for path in materialized_baselines)
     provider_observations = [
         event
-        for event in EventStore(paths, protocol=PROTOCOL_22_EVENTS).replay()
+        for event in EventStore(paths, protocol=protocol_26_events_for("L1")).replay()
         if event.type == "dispatch_observed"
         and event.payload["reported_token_usage"] != 0
     ]

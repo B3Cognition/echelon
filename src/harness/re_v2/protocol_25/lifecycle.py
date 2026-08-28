@@ -385,12 +385,18 @@ def prepare_new_audit_epoch(
     )
     bundle = build_parent_authority_bundle_v2(validated_parent)
     parent_manifest_hash = content_digest(parent.manifest_bytes)
-    lineage_manifest = (
-        parent.graph.manifest
-        if isinstance(parent.manifest, RunManifestV5)
+    if (
+        isinstance(parent.manifest, RunManifestV5)
         and parent.manifest.target_layer == "L2"
-        else parent.manifest
-    )
+    ):
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+
+        lineage_manifest = load_protocol_26_inputs(
+            parent.paths,
+            parent.manifest,
+        ).layer_execution_contract.layer_manifest
+    else:
+        lineage_manifest = parent.manifest
     if isinstance(lineage_manifest, RunManifestV3):
         lineage_root_run_id = lineage_manifest.parent_lineage.lineage_root_run_id
         lineage_root_manifest_hash = (

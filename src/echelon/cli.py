@@ -13933,7 +13933,15 @@ def _run_re_v2_live(context: object) -> None:
             Protocol25Controller(context).run_until_stopped()
             materialize_accepted_l3(context)
             if isinstance(manifest, RunManifestV5):
-                print("RE V2 protocol 2.6 target L3 execution stopped")
+                from harness.re_v2.protocol_26.status import render_protocol_26_status
+
+                print(
+                    render_protocol_26_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
             else:
                 print(
                     render_protocol_25_status(
@@ -13948,7 +13956,15 @@ def _run_re_v2_live(context: object) -> None:
 
             Protocol24Controller(context).run_until_stopped()
             if isinstance(manifest, RunManifestV5):
-                print("RE V2 protocol 2.6 target L2 execution stopped")
+                from harness.re_v2.protocol_26.status import render_protocol_26_status
+
+                print(
+                    render_protocol_26_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
             else:
                 print(
                     render_protocol_24_status(
@@ -13963,7 +13979,15 @@ def _run_re_v2_live(context: object) -> None:
 
             Protocol22Controller(context).run_until_stopped()
             if isinstance(manifest, RunManifestV5):
-                print("RE V2 protocol 2.6 target L1 execution stopped")
+                from harness.re_v2.protocol_26.status import render_protocol_26_status
+
+                print(
+                    render_protocol_26_status(
+                        context.paths.root.parent,
+                        context=context,
+                    ),
+                    end="",
+                )
             else:
                 print(
                     render_protocol_22_status(
@@ -14298,6 +14322,8 @@ def _run_re_v25_continue(
     from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
     from harness.re_v2.protocol_25.budget import evaluate_semantic_budget
     from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.protocol_25.recovery import (
         Protocol25RunContext,
         recover_protocol_25_run,
@@ -14345,17 +14371,28 @@ def _run_re_v25_continue(
                 "paused protocol-2.5 continuation requires a strictly higher "
                 "run-wide or semantic ceiling"
             )
-        manifest = load_run_manifest(context.paths.root.parent)
+        active_manifest = load_run_manifest(context.paths.root.parent)
+        manifest = (
+            context.semantic_graph.manifest
+            if isinstance(active_manifest, RunManifestV5)
+            else active_manifest
+        )
+        event_protocol = (
+            protocol_26_events_for("L3")
+            if isinstance(active_manifest, RunManifestV5)
+            else PROTOCOL_25_EVENTS
+        )
         run_budget = evaluate_budget_v22(
             manifest.initial_budget_policy,
             recovered.events,
             (),
             _re_v2_now(),
-            event_protocol=PROTOCOL_25_EVENTS,
+            event_protocol=event_protocol,
         )
         semantic_budget = evaluate_semantic_budget(
             manifest.semantic_closure_policy,
             recovered.events,
+            event_protocol=event_protocol,
         )
         validated: list[tuple[str, str, int, int | None]] = []
         for pool, dimension, value in changes:
@@ -14771,6 +14808,7 @@ def _prepare_re_v24_creation(
     from harness.re_v2.protocol_24.graph import build_protocol_24_graph
     from harness.re_v2.protocol_24.inputs import Protocol24InputSet
     from harness.re_v2.protocol_24.model import ParentLineageV1, RunManifestV3
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 
     if not isinstance(parent, ValidatedParentV1):
@@ -14838,10 +14876,22 @@ def _prepare_re_v24_creation(
 
     bundle, authority_objects = build_parent_authority_bundle(parent)
     parent_manifest_hash = content_digest(parent.manifest_bytes)
-    if isinstance(parent.manifest, RunManifestV3):
-        lineage_root_run_id = parent.manifest.parent_lineage.lineage_root_run_id
+    if (
+        isinstance(parent.manifest, RunManifestV5)
+        and parent.manifest.target_layer == "L2"
+    ):
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+
+        lineage_manifest = load_protocol_26_inputs(
+            parent.paths,
+            parent.manifest,
+        ).layer_execution_contract.layer_manifest
+    else:
+        lineage_manifest = parent.manifest
+    if isinstance(lineage_manifest, RunManifestV3):
+        lineage_root_run_id = lineage_manifest.parent_lineage.lineage_root_run_id
         lineage_root_manifest_hash = (
-            parent.manifest.parent_lineage.lineage_root_manifest_hash
+            lineage_manifest.parent_lineage.lineage_root_manifest_hash
         )
     else:
         lineage_root_run_id = parent.manifest.run_id
@@ -15030,27 +15080,27 @@ def _run_re_v24_deepen(
     parent_path = _resolve_re_v24_parent_path(workspace, options.from_run)
     # Clean/exact-source validation deliberately precedes every child mutation.
     parent = validate_parent_for_deepening(parent_path, workspace)
+    request = _prepare_re_v24_creation(workspace, parent, options)
     created = False
     with _re_v24_creation_lock(workspace):
-        prepared = _prepare_re_v26_creation(
-            workspace,
-            target_layer="L2",
-            parent_run=parent_path,
-            goal="baseline",
-            deepen_options=options,
-            token_limit=options.token_limit,
-            time_limit_minutes=(
-                options.active_ms_limit // 60_000
-                if options.active_ms_limit is not None
-                else None
-            ),
-        )
-        inner_manifest = prepared.inputs.layer_execution_contract.layer_manifest
         existing = _find_re_v24_semantic_child(
             workspace,
-            inner_manifest.semantic_request_id,
+            request.manifest.semantic_request_id,
         )
         if existing is None:
+            prepared = _prepare_re_v26_creation(
+                workspace,
+                target_layer="L2",
+                parent_run=parent_path,
+                goal="baseline",
+                deepen_options=options,
+                token_limit=options.token_limit,
+                time_limit_minutes=(
+                    options.active_ms_limit // 60_000
+                    if options.active_ms_limit is not None
+                    else None
+                ),
+            )
             run_dir = workspace / "runs" / prepared.manifest.run_id
             create_protocol_26_run_store(
                 run_dir,
@@ -15103,12 +15153,6 @@ def _run_or_report_re_v25_child(
     if execute:
         _run_re_v2_live(_re_v2_context(workspace, run_dir))
         return
-    from harness.re_v2.protocol_26.model import RunManifestV5
-    from harness.re_v2.run_store import load_run_manifest
-
-    if isinstance(load_run_manifest(run_dir), RunManifestV5):
-        print("RE V2 protocol 2.6 exact L3 child reused")
-        return
     from harness.re_v2.status import render_v2_status
 
     print(render_v2_status(run_dir), end="")
@@ -15144,27 +15188,27 @@ def _run_re_v25_deepen(
             )
         return _run_re_v25_next_epoch(workspace, parent_path, options)
     parent = validate_parent_for_deepening(parent_path, workspace)
+    request = _prepare_re_v25_creation(workspace, parent, options)
     created = False
     with _re_v24_creation_lock(workspace):
-        prepared = _prepare_re_v26_creation(
-            workspace,
-            target_layer="L3",
-            parent_run=parent_path,
-            goal="baseline",
-            deepen_options=options,
-            token_limit=options.token_limit,
-            time_limit_minutes=(
-                options.active_ms_limit // 60_000
-                if options.active_ms_limit is not None
-                else None
-            ),
-        )
-        inner_manifest = prepared.inputs.layer_execution_contract.layer_manifest
         existing = find_exact_protocol_25_child(
             workspace,
-            inner_manifest.semantic_request_id,
+            request.manifest.semantic_request_id,
         )
         if existing is None:
+            prepared = _prepare_re_v26_creation(
+                workspace,
+                target_layer="L3",
+                parent_run=parent_path,
+                goal="baseline",
+                deepen_options=options,
+                token_limit=options.token_limit,
+                time_limit_minutes=(
+                    options.active_ms_limit // 60_000
+                    if options.active_ms_limit is not None
+                    else None
+                ),
+            )
             run_dir = workspace / "runs" / prepared.manifest.run_id
             create_protocol_26_run_store(
                 run_dir,

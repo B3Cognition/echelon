@@ -19,10 +19,10 @@ def test_live_cli_layers_selective_l2_and_reuses_lineal_authority(
 ) -> None:
     from echelon.cli_app import app
     from harness.re_v2.ledger import ObjectStore
-    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
-    from harness.re_v2.protocol_24.model import RunManifestV3
-    from harness.re_v2.protocol_24.status import protocol_24_status_document
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "complete")
@@ -39,10 +39,11 @@ def test_live_cli_layers_selective_l2_and_reuses_lineal_authority(
         assert baseline.exit_code == 0, baseline.output
         parent_dir = fixture.run_directories()[0]
         parent_manifest = load_run_manifest(parent_dir)
-        parent_inputs = load_protocol_22_inputs(
+        parent_outer_inputs = load_protocol_26_inputs(
             ReV2Paths.for_run(parent_dir),
             parent_manifest,
         )
+        parent_inputs = parent_outer_inputs.layer_inputs
         api = next(
             item
             for item in parent_inputs.workspace_partition.sources
@@ -104,19 +105,26 @@ def test_live_cli_layers_selective_l2_and_reuses_lineal_authority(
     children = [
         path
         for path in run_dirs
-        if isinstance(load_run_manifest(path), RunManifestV3)
+        if isinstance(load_run_manifest(path), RunManifestV5)
+        and load_run_manifest(path).target_layer == "L2"
     ]
     assert len(children) == 2
     latest = next(
         path
         for path in children
-        if load_run_manifest(path).selection.domain_keys
+        if load_protocol_26_inputs(
+            ReV2Paths.for_run(path), load_run_manifest(path)
+        ).layer_execution_contract.layer_manifest.selection.domain_keys
         == (second_domain.domain_key,)
     )
     latest_manifest = load_run_manifest(latest)
-    assert isinstance(latest_manifest, RunManifestV3)
-    assert latest_manifest.parent_lineage.lineage_root_run_id == parent_manifest.run_id
-    status = protocol_24_status_document(latest)
+    assert isinstance(latest_manifest, RunManifestV5)
+    latest_inputs = load_protocol_26_inputs(
+        ReV2Paths.for_run(latest), latest_manifest
+    )
+    latest_layer_manifest = latest_inputs.layer_execution_contract.layer_manifest
+    assert latest_layer_manifest.parent_lineage.lineage_root_run_id == parent_manifest.run_id
+    status = protocol_26_status_document(latest)
     assert status["status"] == "complete"
     assert status["artifact_counts"]["adopted_by_layer"]["L2"] > 0
     assert status["artifact_counts"]["generated_l2"] == 6

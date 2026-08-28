@@ -256,15 +256,16 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
 
 
 @pytest.mark.integration
-def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
+def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon import cli as legacy_cli
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
-    from harness.re_v2.protocol_25.inputs import load_protocol_25_inputs
     from harness.re_v2.protocol_25.model import RunManifestV4
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
@@ -311,12 +312,15 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
 
     assert first == second
     manifest = load_run_manifest(first)
-    assert isinstance(manifest, RunManifestV4)
-    assert manifest.run_mode == "new-audit-epoch"
+    assert isinstance(manifest, RunManifestV5)
+    outer_inputs = load_protocol_26_inputs(ReV2Paths.for_run(first), manifest)
+    layer_manifest = outer_inputs.layer_execution_contract.layer_manifest
+    assert isinstance(layer_manifest, RunManifestV4)
+    assert layer_manifest.run_mode == "new-audit-epoch"
     assert live == [first]
     events = EventStore(
         ReV2Paths.for_run(first),
-        protocol=PROTOCOL_25_EVENTS,
+        protocol=protocol_26_events_for("L3"),
     ).replay()
     assert events[0].type == "run_created"
     assert sum(event.type == "artifact_adopted" for event in events) == len(
@@ -324,7 +328,7 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
     )
     assert (workspace / "runs" / ".current-re").read_text() == first.name + "\n"
 
-    loaded_inputs = load_protocol_25_inputs(ReV2Paths.for_run(first), manifest)
+    loaded_inputs = outer_inputs.layer_inputs
     payloads = {
         (source.source_id, record.source_relative_path): b"print('ok')\n"
         for source in loaded_inputs.workspace_partition.sources
@@ -342,8 +346,8 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
     )
     rebuilt = legacy_cli._re_v25_context(workspace, first, manifest)
 
-    assert rebuilt.semantic_graph.manifest == manifest
-    assert rebuilt.event_store.protocol is PROTOCOL_25_EVENTS
+    assert rebuilt.semantic_graph.manifest == layer_manifest
+    assert rebuilt.event_store.protocol.PROTOCOL_VERSION == "2.6"
     assert tuple(rebuilt.executors) == ("shared-ai-cli-baseline-v1",)
 
     rebuilt.event_store.append(
@@ -390,7 +394,7 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
     from harness.re_v2.status import render_v2_status
 
     routed = json.loads(render_v2_status(first, as_json=True))
-    assert routed["engine_protocol_version"] == "2.5"
+    assert routed["engine_protocol_version"] == "2.6"
     assert routed["run_id"] == first.name
 
 

@@ -380,7 +380,8 @@ def test_baseline_shadow_reports_closed_worst_case_without_provider_calls(
 ) -> None:
     from echelon.cli_app import app
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     probe = create_cli_workspace(tmp_path, llm_cli="openai-compatible")
@@ -399,7 +400,10 @@ def test_baseline_shadow_reports_closed_worst_case_without_provider_calls(
     assert result.exit_code == 0, result.output
     run_dir = probe.run_directories()[0]
     manifest = load_run_manifest(run_dir)
-    assert manifest.requested_goals == ("baseline",)
+    inputs = load_protocol_26_inputs(ReV2Paths.for_run(run_dir), manifest)
+    assert inputs.layer_execution_contract.layer_manifest.requested_goals == (
+        "baseline",
+    )
     output = result.output
     assert "provider initial dispatches:" in output
     assert "maximum shared-retry dispatches:" in output
@@ -410,9 +414,10 @@ def test_baseline_shadow_reports_closed_worst_case_without_provider_calls(
     assert "whole-run shared-retry reservation:" in output
     assert "authorized ceilings:" in output
     assert "provider requests issued: 0" in output
-    assert EventStore(
-        ReV2Paths.for_run(run_dir), protocol=PROTOCOL_22_EVENTS
-    ).replay() == ()
+    events = EventStore(
+        ReV2Paths.for_run(run_dir), protocol=protocol_26_events_for("L1")
+    ).replay()
+    assert [event.type for event in events] == ["run_created"]
 
 
 @pytest.mark.unit
@@ -522,12 +527,14 @@ def test_storage_failure_leaves_incomplete_store_inactive(
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
     monkeypatch.chdir(probe.root)
 
-    def fail_after_unique_store(run_dir: Path, *_args: object) -> None:
+    def fail_after_unique_store(
+        run_dir: Path, *_args: object, **_kwargs: object
+    ) -> None:
         (run_dir / "v2").mkdir(parents=True)
         raise RuntimeError("durable publication interrupted")
 
     monkeypatch.setattr(
-        "harness.re_v2.protocol_22.inputs.create_protocol_22_run_store",
+        "harness.re_v2.protocol_26.inputs.create_protocol_26_run_store",
         fail_after_unique_store,
     )
 
@@ -542,7 +549,7 @@ def test_storage_failure_leaves_incomplete_store_inactive(
     incomplete = probe.run_directories()
     assert len(incomplete) == 1
     assert (incomplete[0] / "v2").is_dir()
-    assert not (incomplete[0] / "v2" / "run-manifest.json").exists()
+    assert not (incomplete[0] / "v2" / "run.json").exists()
 
 
 @pytest.mark.unit

@@ -217,7 +217,12 @@ def build_and_commit_fixture(
         ),
     )
     if scenario != "live-codex":
-        for agent_name in ("echelon.re-baseliner.md", "echelon.re-deepener.md"):
+        for agent_name in (
+            "echelon.re-baseliner.md",
+            "echelon.re-deepener.md",
+            "echelon.re-validator.md",
+            "echelon.re-resolver.md",
+        ):
             agent_source = (
                 Path(__file__).resolve().parents[2]
                 / "prosaic"

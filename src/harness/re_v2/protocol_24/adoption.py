@@ -416,6 +416,29 @@ def build_parent_authority_bundle(
     manifest_hash = content_digest(parent.manifest_bytes)
     event_chain_hash = content_digest(parent.event_chain_bytes)
     ledger_chain_hash = content_digest(parent.ledger_chain_bytes)
+    from harness.re_v2.protocol_26.model import RunManifestV5
+
+    if (
+        isinstance(parent.manifest, RunManifestV5)
+        and parent.manifest.target_layer == "L2"
+    ):
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+
+        inner_manifest = load_protocol_26_inputs(
+            parent.paths,
+            parent.manifest,
+        ).layer_execution_contract.layer_manifest
+        if not isinstance(inner_manifest, RunManifestV3):
+            raise Protocol24AdoptionError(
+                "protocol-2.6 L2 parent has no schema-3 lineage authority"
+            )
+        lineage_root_run_id = inner_manifest.parent_lineage.lineage_root_run_id
+    else:
+        lineage_root_run_id = (
+            parent.manifest.parent_lineage.lineage_root_run_id
+            if isinstance(parent.manifest, RunManifestV3)
+            else parent.manifest.run_id
+        )
     bundle = ParentAuthorityBundleV1(
         schema_version=1,
         direct_parent_run_id=parent.manifest.run_id,
@@ -423,11 +446,7 @@ def build_parent_authority_bundle(
         source_event_chain_hash=event_chain_hash,
         source_terminal_event_hash=parent.events[-1].event_hash,
         source_ledger_chain_hash=ledger_chain_hash,
-        lineage_root_run_id=(
-            parent.manifest.parent_lineage.lineage_root_run_id
-            if isinstance(parent.manifest, RunManifestV3)
-            else parent.manifest.run_id
-        ),
+        lineage_root_run_id=lineage_root_run_id,
         ancestor_bundle_hashes=tuple(sorted(parent.ancestor_objects)),
         artifacts=tuple(artifacts),
     )

@@ -86,13 +86,29 @@ def protocol_24_status_document(
     """Replay manifest, adoption, ledger, graph, budget, and projections."""
     run_path = Path(run_dir)
     try:
-        manifest = load_run_manifest(run_path)
+        active_manifest = load_run_manifest(run_path)
+        paths = ReV2Paths.for_run(run_path)
+        from harness.re_v2.protocol_26.events import protocol_26_events_for
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+        from harness.re_v2.protocol_26.model import RunManifestV5
+
+        if isinstance(active_manifest, RunManifestV5):
+            if active_manifest.target_layer != "L2":
+                raise Protocol24StatusError(
+                    f"RE run is not protocol-2.6 L2: {run_path.name}"
+                )
+            outer_inputs = load_protocol_26_inputs(paths, active_manifest)
+            manifest = outer_inputs.layer_execution_contract.layer_manifest
+            inputs = outer_inputs.layer_inputs
+            event_protocol = protocol_26_events_for("L2")
+        else:
+            manifest = active_manifest
+            inputs = load_protocol_24_inputs(paths, manifest)
+            event_protocol = PROTOCOL_24_EVENTS
         if not isinstance(manifest, RunManifestV3):
             raise Protocol24StatusError(
                 f"RE run is not schema-3 protocol 2.4: {run_path.name}"
             )
-        paths = ReV2Paths.for_run(run_path)
-        inputs = load_protocol_24_inputs(paths, manifest)
         objects = context.object_store if context is not None else ObjectStore(paths.objects)
         ledger_store = (
             context.ledger if context is not None else Protocol22Ledger(paths, objects)
@@ -105,7 +121,7 @@ def protocol_24_status_document(
         graph = build_protocol_24_graph(manifest, inputs, parent)
         mismatches = _validate_context(context, paths, inputs, graph)
         events = _read_events_without_creating_lock(
-            EventStore(paths, protocol=PROTOCOL_24_EVENTS)
+            EventStore(paths, protocol=event_protocol)
         )
         raw_status = _run_status(events)
         status = "blocked" if raw_status == "failed" else raw_status
@@ -116,7 +132,7 @@ def protocol_24_status_document(
             events,
             _open_dispatch_ids(events),
             context.clock() if context is not None else _utc_now(),
-            event_protocol=PROTOCOL_24_EVENTS,
+            event_protocol=event_protocol,
         )
         plan = plan_next_v2(graph, ledger, budget)
         return _status_document(

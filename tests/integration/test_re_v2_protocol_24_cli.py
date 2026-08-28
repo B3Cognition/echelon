@@ -12,6 +12,9 @@ from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.ledger import Protocol22Ledger
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
 from harness.re_v2.protocol_24.model import RunManifestV3
+from harness.re_v2.protocol_26.events import protocol_26_events_for
+from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+from harness.re_v2.protocol_26.model import RunManifestV5
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 from tests.integration.test_re_v2_protocol_24_controller import (
     _child_context,
@@ -74,12 +77,15 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     assert first == second
     assert children == (first,)
     manifest = load_run_manifest(first)
-    assert isinstance(manifest, RunManifestV3)
-    assert manifest.parent_run_id == parent.manifest.run_id
-    assert manifest.selection.source_ids == ("api",)
+    assert isinstance(manifest, RunManifestV5)
+    outer_inputs = load_protocol_26_inputs(ReV2Paths.for_run(first), manifest)
+    layer_manifest = outer_inputs.layer_execution_contract.layer_manifest
+    assert isinstance(layer_manifest, RunManifestV3)
+    assert layer_manifest.parent_run_id == parent.manifest.run_id
+    assert layer_manifest.selection.source_ids == ("api",)
     assert (workspace / "runs" / ".current-re").read_text() == first.name + "\n"
     paths = ReV2Paths.for_run(first)
-    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS).replay()
+    events = EventStore(paths, protocol=protocol_26_events_for("L2")).replay()
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
     assert events[0].type == "run_created"
     assert sum(event.type == "artifact_adopted" for event in events) == len(
@@ -95,7 +101,7 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
 @pytest.mark.parametrize(
     "boundary",
     (
-        "inputs_fsynced",
+        "manifest_published",
         "parent_closure_imported",
         "run_created",
         "artifact_adopted:",
@@ -160,9 +166,9 @@ def test_deepen_creation_faults_recover_the_same_authoritative_child(
 
     recovered = legacy_cli._run_re_v24_deepen(workspace, options)
     manifest = load_run_manifest(recovered)
-    assert isinstance(manifest, RunManifestV3)
+    assert isinstance(manifest, RunManifestV5)
     paths = ReV2Paths.for_run(recovered)
-    events = EventStore(paths, protocol=PROTOCOL_24_EVENTS).replay()
+    events = EventStore(paths, protocol=protocol_26_events_for("L2")).replay()
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
 
     assert (workspace / "runs" / ".current-re").read_text() == recovered.name + "\n"

@@ -95,15 +95,31 @@ def protocol_22_status_document(
     """Build JSON-safe status exclusively from immutable and durable authority."""
     run_path = Path(run_dir)
     try:
-        manifest = load_run_manifest(run_path)
+        active_manifest = load_run_manifest(run_path)
+        paths = ReV2Paths.for_run(run_path)
+        from harness.re_v2.protocol_26.events import protocol_26_events_for
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+        from harness.re_v2.protocol_26.model import RunManifestV5
+
+        if isinstance(active_manifest, RunManifestV5):
+            if active_manifest.target_layer != "L1":
+                raise Protocol22StatusError(
+                    f"RE run is not protocol-2.6 L1: {run_path.name}"
+                )
+            outer_inputs = load_protocol_26_inputs(paths, active_manifest)
+            manifest = outer_inputs.layer_execution_contract.layer_manifest
+            inputs = outer_inputs.layer_inputs
+            event_protocol = protocol_26_events_for("L1")
+        else:
+            manifest = active_manifest
+            inputs = load_protocol_22_inputs(paths, manifest)
+            event_protocol = PROTOCOL_22_EVENTS
         if not isinstance(manifest, RunManifestV2) or (
             manifest.engine_protocol_version not in {"2.2", "2.3"}
         ):
             raise Protocol22StatusError(
                 f"RE run is not schema-2 protocol 2.2/2.3: {run_path.name}"
             )
-        paths = ReV2Paths.for_run(run_path)
-        inputs = load_protocol_22_inputs(paths, manifest)
         graph = build_protocol_22_graph(manifest, inputs)
         if context is not None:
             if not isinstance(context, Protocol22RunContext):
@@ -125,7 +141,7 @@ def protocol_22_status_document(
         else:
             mismatches = ()
 
-        event_store = EventStore(paths, protocol=PROTOCOL_22_EVENTS)
+        event_store = EventStore(paths, protocol=event_protocol)
         events = _read_events_without_creating_lock(event_store)
         terminal = _terminal_event(events)
         if mismatches and terminal is None:
@@ -145,6 +161,7 @@ def protocol_22_status_document(
             events,
             open_dispatches,
             now,
+            event_protocol=event_protocol,
         )
         plan = plan_next_v22(graph, ledger, budget)
         status = _run_status(events)

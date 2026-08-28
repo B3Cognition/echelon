@@ -87,12 +87,14 @@ def evaluate_semantic_budget(
     policy: SemanticClosurePolicyV1,
     events: Iterable[EventRecord],
     open_dispatches: Iterable[str] | Mapping[str, object] | None = None,
+    *,
+    event_protocol: object = PROTOCOL_25_EVENTS,
 ) -> SemanticBudgetDecisionV1:
     """Charge only L3 resolution, recheck, and composition-guard dispatches."""
     if not isinstance(policy, SemanticClosurePolicyV1):
         raise ReV2SemanticBudgetError("policy must be SemanticClosurePolicyV1")
     try:
-        history = validate_event_history(tuple(events), protocol=PROTOCOL_25_EVENTS)
+        history = validate_event_history(tuple(events), protocol=event_protocol)
     except ReV2EventError as exc:
         raise ReV2SemanticBudgetError(
             f"validated protocol-2.5 EventRecord history required: {exc}"

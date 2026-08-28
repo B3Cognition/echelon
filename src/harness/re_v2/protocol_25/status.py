@@ -114,28 +114,48 @@ def _authority(
             recovered.controller_state,
         )
 
-    manifest = load_run_manifest(run_path)
+    active_manifest = load_run_manifest(run_path)
+    paths = ReV2Paths.for_run(run_path)
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+
+    if isinstance(active_manifest, RunManifestV5):
+        if active_manifest.target_layer != "L3":
+            raise Protocol25StatusError(
+                f"RE run is not protocol-2.6 L3: {run_path.name}"
+            )
+        outer_inputs = load_protocol_26_inputs(paths, active_manifest)
+        manifest = outer_inputs.layer_execution_contract.layer_manifest
+        inputs = outer_inputs.layer_inputs
+        event_protocol = protocol_26_events_for("L3")
+    else:
+        manifest = active_manifest
+        inputs = load_protocol_25_inputs(paths, manifest)
+        event_protocol = PROTOCOL_25_EVENTS
     if not isinstance(manifest, RunManifestV4):
         raise Protocol25StatusError(
             f"RE run is not schema-4 protocol 2.5: {run_path.name}"
         )
-    paths = ReV2Paths.for_run(run_path)
-    inputs = load_protocol_25_inputs(paths, manifest)
     objects = ObjectStore(paths.objects)
     ledger = _read_ledger_without_creating_lock(Protocol25Ledger(paths, objects))
     if not isinstance(ledger, Protocol25LedgerView):
         raise Protocol25StatusError("schema-4 status requires protocol-2.5 ledger")
     events = _read_events_without_creating_lock(
-        EventStore(paths, protocol=PROTOCOL_25_EVENTS)
+        EventStore(paths, protocol=event_protocol)
     )
     adopted = reconstruct_adopted_parent_closure(
         inputs.parent_authority_bundle.lower_authority_bundle,
         ledger,
     )
     graph = build_protocol_25_graph(manifest, inputs.graph_inputs, adopted)
-    replay = Protocol25ReplayState()
+    replay = event_protocol.new_state()
     for event in events:
         replay.consume(event)
+    if not isinstance(replay, Protocol25ReplayState):
+        replay = getattr(replay, "delegate", None)
+    if not isinstance(replay, Protocol25ReplayState):
+        raise Protocol25StatusError("L3 status replay has no protocol-2.5 delegate")
     facade = SimpleNamespace(semantic_graph=graph, object_store=objects)
     accepted = _accepted_prerequisites(facade, ledger)
     plan = plan_next_v2(graph.prerequisite_graph, ledger, _AvailableBudget())
