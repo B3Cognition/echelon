@@ -35,6 +35,7 @@ from .model import (
     PartialSourceAcceptanceV1,
     RunManifestV6,
     SynthesisBudgetPolicyV1,
+    SynthesisCheckpointSelectionV1,
     SynthesisRequestV1,
 )
 
@@ -45,6 +46,7 @@ _INPUT_ROLES = frozenset(
     {
         "accepted-source-outcome",
         "budget-policy",
+        "checkpoint-authority",
         "checkpoint-selection",
         "context-policy",
         "graph-node",
@@ -174,6 +176,7 @@ class Protocol27InputSet:
     budget_policy: SynthesisBudgetPolicyV1
     checkpoint_selection_bytes: bytes
     authority_objects: Mapping[str, bytes]
+    checkpoint_objects: Mapping[str, bytes]
 
     def __post_init__(self) -> None:
         _schema(safe_id, self.run_id, "protocol-2.7 run ID")
@@ -228,6 +231,25 @@ class Protocol27InputSet:
             self.checkpoint_selection_bytes,
             "checkpoint selection",
         )
+        try:
+            checkpoint_selection = load_canonical_object(
+                checkpoint,
+                SynthesisCheckpointSelectionV1.from_json_dict,
+            )
+        except Exception as exc:
+            raise Protocol27InputStoreError(
+                f"checkpoint selection authority is invalid: {exc}"
+            ) from exc
+        if checkpoint_selection.graph_id != self.graph.graph_id:
+            raise Protocol27InputStoreError("checkpoint selection graph mismatch")
+        checkpoint_objects = _validated_payload_mapping(
+            self.checkpoint_objects,
+            "protocol-2.7 checkpoint objects",
+        )
+        if set(checkpoint_objects) != set(checkpoint_selection.copied_object_ids):
+            raise Protocol27InputStoreError(
+                "checkpoint object closure differs from frozen selection"
+            )
         authority = _validated_payload_mapping(
             self.authority_objects,
             "protocol-2.7 authority objects",
@@ -238,6 +260,7 @@ class Protocol27InputSet:
         object.__setattr__(self, "prosaic_authority_bytes", prosaic)
         object.__setattr__(self, "checkpoint_selection_bytes", checkpoint)
         object.__setattr__(self, "authority_objects", authority)
+        object.__setattr__(self, "checkpoint_objects", checkpoint_objects)
         _build_input_closure(self)
 
 
@@ -253,6 +276,8 @@ class ValidatedProtocol27Inputs:
     graph: SynthesisGraph
     prosaic_authority_bytes: bytes
     checkpoint_selection_bytes: bytes
+    checkpoint_selection: SynthesisCheckpointSelectionV1
+    checkpoint_objects: Mapping[str, bytes]
     object_hashes: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -260,6 +285,11 @@ class ValidatedProtocol27Inputs:
             self,
             "source_overview_bytes",
             MappingProxyType(dict(sorted(self.source_overview_bytes.items()))),
+        )
+        object.__setattr__(
+            self,
+            "checkpoint_objects",
+            MappingProxyType(dict(sorted(self.checkpoint_objects.items()))),
         )
 
 
@@ -458,6 +488,20 @@ def load_protocol_27_inputs(run_dir: Path) -> ValidatedProtocol27Inputs:
         checkpoint_bytes = _canonical_object_bytes(
             payloads[checkpoint_hash], "loaded checkpoint selection"
         )
+        checkpoint_selection = load_canonical_object(
+            checkpoint_bytes,
+            SynthesisCheckpointSelectionV1.from_json_dict,
+        )
+        if checkpoint_selection.graph_id != graph.graph_id:
+            raise Protocol27InputStoreError("loaded checkpoint selection graph mismatch")
+        checkpoint_objects = {
+            object_hash: payloads[object_hash]
+            for object_hash in catalog.hashes_for("checkpoint-authority")
+        }
+        if set(checkpoint_objects) != set(checkpoint_selection.copied_object_ids):
+            raise Protocol27InputStoreError(
+                "loaded checkpoint object closure differs from selection"
+            )
         return ValidatedProtocol27Inputs(
             paths=paths,
             manifest=manifest,
@@ -469,6 +513,8 @@ def load_protocol_27_inputs(run_dir: Path) -> ValidatedProtocol27Inputs:
             graph=graph,
             prosaic_authority_bytes=prosaic_bytes,
             checkpoint_selection_bytes=checkpoint_bytes,
+            checkpoint_selection=checkpoint_selection,
+            checkpoint_objects=checkpoint_objects,
             object_hashes=catalog.object_hashes,
         )
     except Protocol27InputStoreError:
@@ -642,6 +688,8 @@ def _build_input_closure(
         content_digest(inputs.checkpoint_selection_bytes),
         inputs.checkpoint_selection_bytes,
     )
+    for object_hash, payload in inputs.checkpoint_objects.items():
+        add("checkpoint-authority", object_hash, payload)
     frozen_roles = MappingProxyType(
         {role: tuple(sorted(values)) for role, values in sorted(roles.items())}
     )

@@ -92,8 +92,10 @@ def _input_set(run_id: str = "re-synthesis-child"):
             "tools": [],
         }
     )
+    from harness.re_v2.protocol_27.model import SynthesisCheckpointSelectionV1
+
     checkpoint = canonical_json_bytes(
-        {"schema_version": 1, "selected": [], "selection_policy": "exact-v1"}
+        SynthesisCheckpointSelectionV1.empty(graph.graph_id).to_json_dict()
     )
     graph_objects = {
         content_digest(payload): payload for payload in response_schema_bytes.values()
@@ -122,6 +124,7 @@ def _input_set(run_id: str = "re-synthesis-child"):
         budget_policy=budget,
         checkpoint_selection_bytes=checkpoint,
         authority_objects={**authority_objects, **graph_objects},
+        checkpoint_objects={},
     )
 
 

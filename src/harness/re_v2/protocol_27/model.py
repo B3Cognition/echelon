@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import ClassVar, Literal, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
@@ -24,11 +25,17 @@ from harness.re_v2.protocol_22.schema import (
 SourceOutcomeV1 = Literal["complete", "partial"]
 SynthesisScopeKindV1 = Literal["source", "workspace-domain", "workspace"]
 InputQualityV1 = Literal["complete", "partial"]
+SynthesisCheckpointSourceKindV1 = Literal["direct_parent", "workspace_checkpoint"]
+SynthesisCheckpointDispositionKindV1 = Literal[
+    "not_selected", "rejected", "quarantined"
+]
 
 _SOURCE_OUTCOMES = frozenset({"complete", "partial"})
 _SCOPE_KINDS = frozenset({"source", "workspace-domain", "workspace"})
 _INPUT_QUALITIES = frozenset({"complete", "partial"})
 _LAYERS = frozenset({"L1", "L2", "L3"})
+_CHECKPOINT_SOURCE_KINDS = frozenset({"direct_parent", "workspace_checkpoint"})
+_CHECKPOINT_DISPOSITIONS = frozenset({"not_selected", "rejected", "quarantined"})
 
 
 class Protocol27SchemaError(Protocol22SchemaError):
@@ -1046,6 +1053,321 @@ class PublicationDescriptorV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SynthesisCheckpointOriginPrefixV1:
+    schema_version: int
+    origin_run_id: str
+    origin_manifest_hash: str
+    origin_event_prefix_hash: str
+    origin_ledger_prefix_hash: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "origin_run_id",
+        "origin_manifest_hash",
+        "origin_event_prefix_hash",
+        "origin_ledger_prefix_hash",
+    )
+
+    def __post_init__(self) -> None:
+        _schema(literal, self.schema_version, 1, "checkpoint origin prefix schema")
+        _schema(safe_id, self.origin_run_id, "checkpoint origin run ID")
+        for field in self.FIELDS[2:]:
+            _schema(digest_value, getattr(self, field), f"checkpoint origin {field}")
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.to_json_dict())
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.FIELDS}
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisCheckpointOriginPrefixV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisCheckpointSelectionEntryV1:
+    schema_version: int
+    source_kind: SynthesisCheckpointSourceKindV1
+    checkpoint_manifest_id: str
+    origin_run_id: str
+    work_item_id: str
+    artifact_key_id: str
+    artifact_kind: str
+    artifact_hash: str
+    dependency_artifact_key_ids: tuple[str, ...]
+    copied_object_ids: tuple[str, ...]
+    certified_rank: tuple[int, ...]
+    selection_reason: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "source_kind",
+        "checkpoint_manifest_id",
+        "origin_run_id",
+        "work_item_id",
+        "artifact_key_id",
+        "artifact_kind",
+        "artifact_hash",
+        "dependency_artifact_key_ids",
+        "copied_object_ids",
+        "certified_rank",
+        "selection_reason",
+    )
+
+    def __post_init__(self) -> None:
+        label = type(self).__name__
+        _schema(literal, self.schema_version, 1, f"{label}.schema_version")
+        _schema(one_of, self.source_kind, _CHECKPOINT_SOURCE_KINDS, f"{label}.source_kind")
+        _schema(safe_id, self.origin_run_id, f"{label}.origin_run_id")
+        _schema(safe_id, self.artifact_kind, f"{label}.artifact_kind")
+        for field in (
+            "checkpoint_manifest_id",
+            "work_item_id",
+            "artifact_key_id",
+            "artifact_hash",
+        ):
+            _schema(digest_value, getattr(self, field), f"{label}.{field}")
+        for field in ("dependency_artifact_key_ids", "copied_object_ids"):
+            object.__setattr__(
+                self,
+                field,
+                _schema(sorted_unique_digests, getattr(self, field), f"{label}.{field}"),
+            )
+        if self.checkpoint_manifest_id not in self.copied_object_ids:
+            raise Protocol27SchemaError(
+                "checkpoint selection must copy its checkpoint manifest"
+            )
+        if (
+            not isinstance(self.certified_rank, (list, tuple))
+            or not self.certified_rank
+            or len(self.certified_rank) > 16
+            or any(
+                not isinstance(item, int) or isinstance(item, bool) or item < 0
+                for item in self.certified_rank
+            )
+        ):
+            raise Protocol27SchemaError(
+                "checkpoint certified rank must be a bounded nonnegative vector"
+            )
+        object.__setattr__(self, "certified_rank", tuple(self.certified_rank))
+        _schema(safe_id, self.selection_reason, f"{label}.selection_reason")
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.to_json_dict())
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "source_kind": self.source_kind,
+            "checkpoint_manifest_id": self.checkpoint_manifest_id,
+            "origin_run_id": self.origin_run_id,
+            "work_item_id": self.work_item_id,
+            "artifact_key_id": self.artifact_key_id,
+            "artifact_kind": self.artifact_kind,
+            "artifact_hash": self.artifact_hash,
+            "dependency_artifact_key_ids": list(self.dependency_artifact_key_ids),
+            "copied_object_ids": list(self.copied_object_ids),
+            "certified_rank": list(self.certified_rank),
+            "selection_reason": self.selection_reason,
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisCheckpointSelectionEntryV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisCheckpointDispositionV1:
+    schema_version: int
+    checkpoint_manifest_id: str
+    origin_run_id: str
+    work_item_id: str
+    artifact_kind: str
+    disposition: SynthesisCheckpointDispositionKindV1
+    reason: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "checkpoint_manifest_id",
+        "origin_run_id",
+        "work_item_id",
+        "artifact_kind",
+        "disposition",
+        "reason",
+    )
+
+    def __post_init__(self) -> None:
+        label = type(self).__name__
+        _schema(literal, self.schema_version, 1, f"{label}.schema_version")
+        for field in ("checkpoint_manifest_id", "work_item_id"):
+            _schema(digest_value, getattr(self, field), f"{label}.{field}")
+        _schema(safe_id, self.origin_run_id, f"{label}.origin_run_id")
+        _schema(safe_id, self.artifact_kind, f"{label}.artifact_kind")
+        _schema(one_of, self.disposition, _CHECKPOINT_DISPOSITIONS, f"{label}.disposition")
+        _schema(safe_id, self.reason, f"{label}.reason")
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.to_json_dict())
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {field: getattr(self, field) for field in self.FIELDS}
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisCheckpointDispositionV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisCheckpointSelectionV1:
+    schema_version: int
+    graph_id: str
+    entries: tuple[SynthesisCheckpointSelectionEntryV1, ...]
+    dispositions: tuple[SynthesisCheckpointDispositionV1, ...]
+    copied_object_ids: tuple[str, ...]
+    origin_prefixes: tuple[SynthesisCheckpointOriginPrefixV1, ...]
+    _copied_objects: Mapping[str, bytes] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        "schema_version",
+        "graph_id",
+        "entries",
+        "dispositions",
+        "copied_object_ids",
+        "origin_prefixes",
+    )
+
+    def __post_init__(self) -> None:
+        label = type(self).__name__
+        _schema(literal, self.schema_version, 1, f"{label}.schema_version")
+        _schema(digest_value, self.graph_id, f"{label}.graph_id")
+        entries = tuple(self.entries)
+        if any(not isinstance(item, SynthesisCheckpointSelectionEntryV1) for item in entries):
+            raise Protocol27SchemaError("checkpoint selection entries are invalid")
+        keys = tuple(item.artifact_key_id for item in entries)
+        works = tuple(item.work_item_id for item in entries)
+        if len(keys) != len(set(keys)) or len(works) != len(set(works)):
+            raise Protocol27SchemaError("checkpoint selection entries must be unique")
+        seen: set[str] = set()
+        for entry in entries:
+            if not set(entry.dependency_artifact_key_ids).issubset(seen):
+                raise Protocol27SchemaError(
+                    "checkpoint selection entries are not in dependency order"
+                )
+            seen.add(entry.artifact_key_id)
+        if not isinstance(self.dispositions, (list, tuple)) or any(
+            not isinstance(item, SynthesisCheckpointDispositionV1)
+            for item in self.dispositions
+        ):
+            raise Protocol27SchemaError("checkpoint dispositions are invalid")
+        dispositions = tuple(sorted(self.dispositions, key=lambda item: item.identity))
+        if len(dispositions) != len({item.identity for item in dispositions}):
+            raise Protocol27SchemaError("checkpoint dispositions must be unique")
+        copied = _schema(
+            sorted_unique_digests,
+            self.copied_object_ids,
+            f"{label}.copied_object_ids",
+        )
+        expected_copied = tuple(
+            sorted({value for entry in entries for value in entry.copied_object_ids})
+        )
+        if copied != expected_copied:
+            raise Protocol27SchemaError(
+                "checkpoint copied-object inventory disagrees with selection"
+            )
+        if not isinstance(self.origin_prefixes, (list, tuple)) or any(
+            not isinstance(item, SynthesisCheckpointOriginPrefixV1)
+            for item in self.origin_prefixes
+        ):
+            raise Protocol27SchemaError("checkpoint origin prefixes are invalid")
+        prefixes = tuple(sorted(self.origin_prefixes, key=lambda item: item.identity))
+        if len(prefixes) != len({item.identity for item in prefixes}) or {
+            item.origin_run_id for item in prefixes
+        } != {
+            entry.origin_run_id for entry in entries
+        }:
+            raise Protocol27SchemaError(
+                "checkpoint origin prefixes disagree with selected origins"
+            )
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(self, "dispositions", dispositions)
+        object.__setattr__(self, "copied_object_ids", copied)
+        object.__setattr__(self, "origin_prefixes", prefixes)
+        if not isinstance(self._copied_objects, Mapping):
+            raise Protocol27SchemaError("checkpoint copied object bytes must be a mapping")
+        supplied = dict(self._copied_objects)
+        if supplied and (
+            set(supplied) != set(copied)
+            or any(
+                not isinstance(payload, bytes) or content_digest(payload) != object_id
+                for object_id, payload in supplied.items()
+            )
+        ):
+            raise Protocol27SchemaError("checkpoint copied object bytes are invalid")
+        object.__setattr__(
+            self,
+            "_copied_objects",
+            MappingProxyType(dict(sorted(supplied.items()))),
+        )
+
+    @classmethod
+    def empty(cls, graph_id: str) -> "SynthesisCheckpointSelectionV1":
+        return cls(1, graph_id, (), (), (), ())
+
+    @property
+    def selection_id(self) -> str:
+        return _identity(self.to_json_dict())
+
+    @property
+    def identity(self) -> str:
+        return self.selection_id
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "graph_id": self.graph_id,
+            "entries": [item.to_json_dict() for item in self.entries],
+            "dispositions": [item.to_json_dict() for item in self.dispositions],
+            "copied_object_ids": list(self.copied_object_ids),
+            "origin_prefixes": [item.to_json_dict() for item in self.origin_prefixes],
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SynthesisCheckpointSelectionV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        for field in ("entries", "dispositions", "origin_prefixes"):
+            if not isinstance(raw[field], (list, tuple)):
+                raise Protocol27SchemaError(f"{cls.__name__}.{field} must be an array")
+        return cls(
+            schema_version=raw["schema_version"],
+            graph_id=raw["graph_id"],
+            entries=tuple(
+                SynthesisCheckpointSelectionEntryV1.from_json_dict(item)
+                for item in raw["entries"]
+            ),
+            dispositions=tuple(
+                SynthesisCheckpointDispositionV1.from_json_dict(item)
+                for item in raw["dispositions"]
+            ),
+            copied_object_ids=raw["copied_object_ids"],
+            origin_prefixes=tuple(
+                SynthesisCheckpointOriginPrefixV1.from_json_dict(item)
+                for item in raw["origin_prefixes"]
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RunManifestV6:
     schema_version: int
     engine: Literal["re-v2"]
@@ -1263,6 +1585,12 @@ __all__ = (
     "SynthesisArtifactDependencyV1",
     "SynthesisArtifactKeyV1",
     "SynthesisBudgetPolicyV1",
+    "SynthesisCheckpointDispositionKindV1",
+    "SynthesisCheckpointDispositionV1",
+    "SynthesisCheckpointOriginPrefixV1",
+    "SynthesisCheckpointSelectionEntryV1",
+    "SynthesisCheckpointSelectionV1",
+    "SynthesisCheckpointSourceKindV1",
     "SynthesisRequestV1",
     "SynthesisRootV1",
     "SynthesisScopeKindV1",

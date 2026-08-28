@@ -139,6 +139,7 @@ class Protocol27LedgerView:
     candidate_assessments: Mapping[str, SynthesisAssessmentV1]
     certifications: Mapping[str, SynthesisCertificationV1]
     accepted_artifacts: Mapping[str, SynthesisArtifactAcceptanceV1]
+    accepted_work_items: Mapping[str, SynthesisWorkItemV1]
     checkpoint_adoptions: Mapping[str, SynthesisCheckpointAdoptionReceiptV1]
     synthesis_root: SynthesisRootV1 | None
     materialization: SynthesisMaterializationReceiptV1 | None
@@ -153,6 +154,7 @@ class _Protocol27LedgerState:
     candidate_assessments: dict[str, SynthesisAssessmentV1]
     certifications: dict[str, SynthesisCertificationV1]
     accepted_artifacts: dict[str, SynthesisArtifactAcceptanceV1]
+    accepted_work_items: dict[str, SynthesisWorkItemV1]
     checkpoint_adoptions: dict[str, SynthesisCheckpointAdoptionReceiptV1]
     synthesis_root: SynthesisRootV1 | None
     materialization: SynthesisMaterializationReceiptV1 | None
@@ -162,7 +164,7 @@ class _Protocol27LedgerState:
 
     @classmethod
     def empty(cls, inputs: ValidatedProtocol27Inputs) -> "_Protocol27LedgerState":
-        return cls(inputs, {}, {}, {}, {}, {}, None, None, None, {}, {})
+        return cls(inputs, {}, {}, {}, {}, {}, {}, None, None, None, {}, {})
 
     def consume(self, record: LedgerRecord, object_store: ObjectStore) -> None:
         try:
@@ -250,6 +252,7 @@ class _Protocol27LedgerState:
             self._validate_dependencies(acceptance, object_store)
             object_store.verify(acceptance.artifact_hash)
             self.accepted_artifacts[key_id] = acceptance
+            self.accepted_work_items[key_id] = expected_work_item
             return
         if record_type == "synthesis_checkpoint_adoption_v1":
             adoption = model
@@ -444,6 +447,7 @@ class _Protocol27LedgerState:
             candidate_assessments=MappingProxyType(dict(self.candidate_assessments)),
             certifications=MappingProxyType(dict(self.certifications)),
             accepted_artifacts=MappingProxyType(dict(self.accepted_artifacts)),
+            accepted_work_items=MappingProxyType(dict(self.accepted_work_items)),
             checkpoint_adoptions=MappingProxyType(dict(self.checkpoint_adoptions)),
             synthesis_root=self.synthesis_root,
             materialization=self.materialization,
