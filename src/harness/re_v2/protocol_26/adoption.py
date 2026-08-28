@@ -21,6 +21,7 @@ from harness.re_v2.protocol_25.artifacts import SemanticCertificationReceiptV1
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 
 from .inputs import ValidatedProtocol26Inputs
+from .model import CheckpointSelectionEntryV1
 
 
 CertificationAuthorityV1 = CertificationReceiptV2 | SemanticCertificationReceiptV1
@@ -259,37 +260,7 @@ def import_frozen_checkpoint_closure(
         if selection.source_kind != "workspace_checkpoint":
             continue
         try:
-            work_item = load_canonical_object(
-                inputs.authority_objects[selection.expected_work_item_id],
-                WorkItemV2.from_json_dict,
-            )
-            authority = selection.adopted_artifact_authority
-            certification = _load_certification(
-                inputs.authority_objects[authority.certification_receipt_id]
-            )
-            candidate = (
-                None
-                if authority.candidate_assessment_id is None
-                else load_canonical_object(
-                    inputs.authority_objects[authority.candidate_assessment_id],
-                    CandidateAssessmentReceiptV1.from_json_dict,
-                )
-            )
-            acceptance = load_canonical_object(
-                inputs.authority_objects[authority.artifact_acceptance_receipt_id],
-                ArtifactAcceptanceReceiptV2.from_json_dict,
-            )
-            required = {
-                object_hash: inputs.authority_objects[object_hash]
-                for object_hash in selection.copied_object_ids
-            }
-            package = FrozenAcceptancePackageV1(
-                work_item,
-                certification,
-                candidate,
-                acceptance,
-                required,
-            )
+            package = _frozen_package(inputs, selection)
             imported.append(import_typed_acceptance(package, objects, ledger))
         except Protocol26AdoptionError:
             raise
@@ -298,6 +269,71 @@ def import_frozen_checkpoint_closure(
                 f"frozen checkpoint authority is incomplete: {exc}"
             ) from exc
     return CheckpointAdoptionReportV1(tuple(imported))
+
+
+def checkpoint_adoption_report(
+    inputs: ValidatedProtocol26Inputs,
+    ledger: Protocol22Ledger,
+) -> CheckpointAdoptionReportV1:
+    """Prove every frozen workspace checkpoint already exists in the target ledger."""
+    if not isinstance(inputs, ValidatedProtocol26Inputs) or not isinstance(
+        ledger, Protocol22Ledger
+    ):
+        raise Protocol26AdoptionError(
+            "checkpoint report requires validated inputs and a typed ledger"
+        )
+    imports: list[ImportedAcceptanceV1] = []
+    try:
+        for selection in inputs.checkpoint_selection.selected:
+            if selection.source_kind != "workspace_checkpoint":
+                continue
+            package = _frozen_package(inputs, selection)
+            _verify_imported_acceptance(package, ledger)
+            imports.append(ImportedAcceptanceV1.from_package(package))
+    except Protocol26AdoptionError:
+        raise
+    except (KeyError, ReV2LedgerError, ValueError) as exc:
+        raise Protocol26AdoptionError(
+            f"checkpoint ledger import is incomplete: {exc}"
+        ) from exc
+    return CheckpointAdoptionReportV1(tuple(imports))
+
+
+def _frozen_package(
+    inputs: ValidatedProtocol26Inputs,
+    selection: CheckpointSelectionEntryV1,
+) -> FrozenAcceptancePackageV1:
+    work_item = load_canonical_object(
+        inputs.authority_objects[selection.expected_work_item_id],
+        WorkItemV2.from_json_dict,
+    )
+    authority = selection.adopted_artifact_authority
+    certification = _load_certification(
+        inputs.authority_objects[authority.certification_receipt_id]
+    )
+    candidate = (
+        None
+        if authority.candidate_assessment_id is None
+        else load_canonical_object(
+            inputs.authority_objects[authority.candidate_assessment_id],
+            CandidateAssessmentReceiptV1.from_json_dict,
+        )
+    )
+    acceptance = load_canonical_object(
+        inputs.authority_objects[authority.artifact_acceptance_receipt_id],
+        ArtifactAcceptanceReceiptV2.from_json_dict,
+    )
+    required = {
+        object_hash: inputs.authority_objects[object_hash]
+        for object_hash in selection.copied_object_ids
+    }
+    return FrozenAcceptancePackageV1(
+        work_item,
+        certification,
+        candidate,
+        acceptance,
+        required,
+    )
 
 
 def _load_certification(payload: bytes) -> CertificationAuthorityV1:
@@ -352,6 +388,7 @@ __all__ = (
     "FrozenAcceptancePackageV1",
     "ImportedAcceptanceV1",
     "Protocol26AdoptionError",
+    "checkpoint_adoption_report",
     "import_frozen_checkpoint_closure",
     "import_typed_acceptance",
 )

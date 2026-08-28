@@ -46,9 +46,7 @@ _FAILURE_REASON_BY_CLASS = {
     "execution_indeterminate": frozenset({"execution_outcome_indeterminate"}),
 }
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed"})
-_PAUSED_CONTROL_EVENTS = frozenset(
-    {"budget_authorized", "operator_pause_requested"}
-)
+_PAUSED_CONTROL_EVENTS = frozenset({"budget_authorized", "operator_pause_requested"})
 _PAUSED_RECOVERY_EVENTS = frozenset(
     {
         "dispatch_lease_retired",
@@ -107,9 +105,7 @@ def _nullable_nonnegative(value: object, field_name: str) -> None:
 def _choice(choices: frozenset[str]) -> PayloadValidator:
     def validate(value: object, field_name: str) -> None:
         if not isinstance(value, str) or value not in choices:
-            raise ReV2EventError(
-                f"{field_name} must be one of {sorted(choices)}"
-            )
+            raise ReV2EventError(f"{field_name} must be one of {sorted(choices)}")
 
     return validate
 
@@ -306,6 +302,33 @@ class Protocol22ReplayState(EventReplayState):
     retry_eligibility: dict[str, str] = field(default_factory=dict)
     indeterminate_work_items: set[str] = field(default_factory=set)
 
+    @property
+    def has_active_dispatch(self) -> bool:
+        """Whether replay currently owns a lease or a started dispatch."""
+        return self.active is not None or self.lease_dispatch_id is not None
+
+    def mark_imported_work_accepted(
+        self,
+        work_item_id: str,
+        event_type: str,
+    ) -> None:
+        """Apply the shared accepted-work transition for an authenticated import."""
+        _digest(work_item_id, "work_item_id")
+        if self.terminal:
+            raise ReV2EventError("event appears after terminal run state")
+        if self.seen == 0:
+            raise ReV2EventError("run_created must be the first event")
+        if self.paused or self.pause_requested:
+            raise ReV2EventError(f"{event_type} is not allowed while pausing or paused")
+        if self.has_active_dispatch:
+            raise ReV2EventError(f"{event_type} is invalid during an active dispatch")
+        if work_item_id in self.accepted_work_items:
+            raise ReV2EventError("work item is already adopted or accepted")
+        if work_item_id in self.failed_work_items:
+            raise ReV2EventError("accepted imported work conflicts with failed work")
+        self.accepted_work_items.add(work_item_id)
+        self._finish(event_type)
+
     def consume(self, event: EventRecord) -> None:
         event_type = event.type
         payload = event.payload
@@ -329,9 +352,7 @@ class Protocol22ReplayState(EventReplayState):
                 self._finish(event_type)
                 return
             if event_type not in _PAUSED_RECOVERY_EVENTS:
-                raise ReV2EventError(
-                    f"{event_type} is not allowed while run is paused"
-                )
+                raise ReV2EventError(f"{event_type} is not allowed while run is paused")
 
         if self.pause_requested and event_type != "run_paused":
             raise ReV2EventError(
@@ -394,7 +415,10 @@ class Protocol22ReplayState(EventReplayState):
             self.active = None
         if dispatch_id in self.dispatch_ids:
             raise ReV2EventError("dispatch_id must be globally unique")
-        if work_item_id in self.accepted_work_items or work_item_id in self.failed_work_items:
+        if (
+            work_item_id in self.accepted_work_items
+            or work_item_id in self.failed_work_items
+        ):
             raise ReV2EventError("dispatch_leased cannot reopen terminal work")
         self.dispatch_ids.add(dispatch_id)
         self.lease_dispatch_id = dispatch_id
@@ -423,9 +447,7 @@ class Protocol22ReplayState(EventReplayState):
             or self.lease_work_item_id != work_item_id
             or self.active is not None
         ):
-            raise ReV2EventError(
-                "dispatch_started requires its matching active lease"
-            )
+            raise ReV2EventError("dispatch_started requires its matching active lease")
         executor_contract_hash = str(payload["executor_contract_hash"])
         if executor_contract_hash in self.failed_executors:
             raise ReV2EventError(
@@ -507,9 +529,7 @@ class Protocol22ReplayState(EventReplayState):
         if not active.provider_backed:
             raise ReV2EventError("deterministic execution cannot persist a candidate")
         if payload["execution_capture_hash"] != active.capture_hash:
-            raise ReV2EventError(
-                "candidate_persisted does not match execution capture"
-            )
+            raise ReV2EventError("candidate_persisted does not match execution capture")
         candidate_id = str(payload["candidate_id"])
         if candidate_id in self.candidate_ids:
             raise ReV2EventError("candidate_id must be globally unique")
@@ -618,7 +638,10 @@ class Protocol22ReplayState(EventReplayState):
         work_item_id = str(payload["work_item_id"])
         failure_class = str(payload["failure_class"])
         eligible = self.retry_eligibility.get(work_item_id)
-        if work_item_id in self.accepted_work_items or work_item_id in self.failed_work_items:
+        if (
+            work_item_id in self.accepted_work_items
+            or work_item_id in self.failed_work_items
+        ):
             raise ReV2EventError("work_item_failed conflicts with terminal work")
         if failure_class == "execution_indeterminate":
             authorized = work_item_id in self.indeterminate_work_items
@@ -640,9 +663,13 @@ class Protocol22ReplayState(EventReplayState):
         executor_hash = str(payload["executor_contract_hash"])
         trigger = str(payload["trigger_work_item_id"])
         if executor_hash in self.failed_executors:
-            raise ReV2EventError("executor contract is already failed; receipt must be unique")
+            raise ReV2EventError(
+                "executor contract is already failed; receipt must be unique"
+            )
         if trigger in self.accepted_work_items:
-            raise ReV2EventError("executor_failed cannot invalidate accepted trigger work")
+            raise ReV2EventError(
+                "executor_failed cannot invalidate accepted trigger work"
+            )
         self.failed_executors.add(executor_hash)
         if self.active is not None and self.active.work_item_id == trigger:
             if self.active.executor_contract_hash != executor_hash:

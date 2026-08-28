@@ -60,13 +60,17 @@ def _digest(value: object, field_name: str) -> None:
     if not isinstance(value, str) or not value.startswith(_DIGEST_PREFIX):
         raise ReV2EventError(f"{field_name} must be a lowercase sha256 digest")
     suffix = value[len(_DIGEST_PREFIX) :]
-    if len(suffix) != 64 or any(character not in "0123456789abcdef" for character in suffix):
+    if len(suffix) != 64 or any(
+        character not in "0123456789abcdef" for character in suffix
+    ):
         raise ReV2EventError(f"{field_name} must be a lowercase sha256 digest")
 
 
 def _safe_id(value: object, field_name: str) -> None:
-    if not isinstance(value, str) or not value or any(
-        not (character.isalnum() or character in "._:-") for character in value
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(not (character.isalnum() or character in "._:-") for character in value)
     ):
         raise ReV2EventError(f"{field_name} must be a nonempty safe ID")
 
@@ -249,9 +253,7 @@ class _SourceCycle:
     participating_targets: tuple[str, ...] = ()
     source_assessment_id: str | None = None
     guard_passed: bool | None = None
-    closure_verdicts_by_target: dict[str, dict[str, str]] = field(
-        default_factory=dict
-    )
+    closure_verdicts_by_target: dict[str, dict[str, str]] = field(default_factory=dict)
     progress_targets: set[str] = field(default_factory=set)
 
     @property
@@ -279,6 +281,20 @@ class Protocol25ReplayState(EventReplayState):
     audit_closure_roots: set[str] = field(default_factory=set)
     l3_source_root_states: dict[str, str] = field(default_factory=dict)
 
+    @property
+    def has_active_dispatch(self) -> bool:
+        return self.shared.has_active_dispatch
+
+    def mark_imported_work_accepted(
+        self,
+        work_item_id: str,
+        event_type: str,
+    ) -> None:
+        """Apply the shared accepted-work transition before L3 semantic activity."""
+        if self.pending_semantic_binding or self.semantic_operation is not None:
+            raise ReV2EventError(f"{event_type} conflicts with active semantic work")
+        self.shared.mark_imported_work_accepted(work_item_id, event_type)
+
     def consume(self, event: EventRecord) -> None:
         if self.shared.shared.terminal:
             raise ReV2EventError("event appears after terminal run state")
@@ -286,14 +302,19 @@ class Protocol25ReplayState(EventReplayState):
             raise ReV2EventError(
                 "dispatch after audit epoch freeze must be bound to a semantic operation"
             )
-        if self.semantic_operation is not None and self.semantic_operation.stage == "accepted":
+        if (
+            self.semantic_operation is not None
+            and self.semantic_operation.stage == "accepted"
+        ):
             expected = {
                 "semantic_resolution_started": "semantic_resolution_accepted",
                 "closure_recheck_started": "target_closure_assessed",
                 "source_composition_guard_started": "source_composition_assessed",
             }[self.semantic_operation.event_type]
             if event.type != expected:
-                raise ReV2EventError(f"accepted semantic artifact must be followed by {expected}")
+                raise ReV2EventError(
+                    f"accepted semantic artifact must be followed by {expected}"
+                )
 
         if event.type in _SEMANTIC_EVENTS:
             self._consume_semantic(event)
@@ -305,7 +326,9 @@ class Protocol25ReplayState(EventReplayState):
             if not self.l3_source_root_states:
                 raise ReV2EventError("run completion requires an L3 source root")
             if any(not cycle.complete for cycle in self.source_cycles.values()):
-                raise ReV2EventError("run completion conflicts with an incomplete source cycle")
+                raise ReV2EventError(
+                    "run completion conflicts with an incomplete source cycle"
+                )
 
         ceiling_targets = {
             target
@@ -335,7 +358,9 @@ class Protocol25ReplayState(EventReplayState):
             self.pending_semantic_binding = True
         if event.type == "artifact_accepted" and self.semantic_operation is not None:
             if event.payload["work_item_id"] != self.semantic_operation.work_item_id:
-                raise ReV2EventError("semantic artifact acceptance does not match active operation")
+                raise ReV2EventError(
+                    "semantic artifact acceptance does not match active operation"
+                )
             self.semantic_operation.stage = "accepted"
 
     def semantic_state(self, *, prerequisites_complete: bool) -> SemanticStateV1:
@@ -345,12 +370,16 @@ class Protocol25ReplayState(EventReplayState):
             return "paused_resource"
         if shared.terminal:
             if shared.last_type == "run_failed":
-                return "blocked_plateau" if self.plateau_targets else "blocked_incomplete"
+                return (
+                    "blocked_plateau" if self.plateau_targets else "blocked_incomplete"
+                )
             if "next_epoch_required" in self.l3_source_root_states.values():
                 return "next_epoch_required"
             return "complete"
         unresolved_targets = {
-            target for target, unresolved in self.unresolved_by_target.items() if unresolved
+            target
+            for target, unresolved in self.unresolved_by_target.items()
+            if unresolved
         }
         if unresolved_targets and unresolved_targets <= self.plateau_targets:
             return "blocked_plateau"
@@ -365,7 +394,9 @@ class Protocol25ReplayState(EventReplayState):
             if operation.event_type == "closure_recheck_started":
                 return "running_closure_recheck"
             return "running_source_guard"
-        incomplete = [cycle for cycle in self.source_cycles.values() if not cycle.complete]
+        incomplete = [
+            cycle for cycle in self.source_cycles.values() if not cycle.complete
+        ]
         if incomplete:
             cycle = incomplete[-1]
             if cycle.guard_passed is None:
@@ -412,10 +443,15 @@ class Protocol25ReplayState(EventReplayState):
 
     def _accept_audit_candidate(self, payload: Mapping[str, object]) -> None:
         if self.audit_epoch_id is not None:
-            raise ReV2EventError("audit candidate cannot be accepted after epoch freeze")
+            raise ReV2EventError(
+                "audit candidate cannot be accepted after epoch freeze"
+            )
         target = str(payload["audit_target_id"])
         authority = str(payload["audit_candidate_authority_id"])
-        if target in self.audit_candidates or authority in self.audit_candidates.values():
+        if (
+            target in self.audit_candidates
+            or authority in self.audit_candidates.values()
+        ):
             raise ReV2EventError("audit candidate target and authority must be unique")
         self.audit_candidates[target] = authority
 
@@ -424,7 +460,9 @@ class Protocol25ReplayState(EventReplayState):
             raise ReV2EventError("audit epoch may freeze only once")
         targets = tuple(payload["audit_target_ids"])
         if not targets or set(targets) != set(self.audit_candidates):
-            raise ReV2EventError("audit epoch must contain exactly the accepted audit targets")
+            raise ReV2EventError(
+                "audit epoch must contain exactly the accepted audit targets"
+            )
         self.audit_epoch_id = str(payload["audit_epoch_id"])
         self.audit_target_ids = targets
 
@@ -432,22 +470,26 @@ class Protocol25ReplayState(EventReplayState):
         if self.audit_epoch_id is None:
             raise ReV2EventError("semantic operation requires a frozen audit epoch")
         if not self.pending_semantic_binding:
-            raise ReV2EventError("semantic operation must bind the active shared dispatch")
+            raise ReV2EventError(
+                "semantic operation must bind the active shared dispatch"
+            )
         active = self.shared.shared.active
         if active is None or active.stage != "started":
-            raise ReV2EventError("semantic operation requires active started provider work")
+            raise ReV2EventError(
+                "semantic operation requires active started provider work"
+            )
         if (
             payload["dispatch_id"] != active.dispatch_id
             or payload["work_item_id"] != active.work_item_id
         ):
-            raise ReV2EventError("semantic operation does not match active shared dispatch")
+            raise ReV2EventError(
+                "semantic operation does not match active shared dispatch"
+            )
         cycle_id = str(payload["source_cycle_id"])
         source_id = str(payload["source_id"])
         round_index = int(payload["semantic_round"])
         target = (
-            str(payload["audit_target_id"])
-            if "audit_target_id" in payload
-            else None
+            str(payload["audit_target_id"]) if "audit_target_id" in payload else None
         )
         existing = self.semantic_operation
         if existing is not None:
@@ -487,12 +529,16 @@ class Protocol25ReplayState(EventReplayState):
             or cycle.semantic_round != round_index
             or cycle.complete
         ):
-            raise ReV2EventError("source cycle identity is inconsistent or already complete")
+            raise ReV2EventError(
+                "source cycle identity is inconsistent or already complete"
+            )
 
         if event_type == "semantic_resolution_started":
             assert target is not None
             if target not in self.audit_target_ids:
-                raise ReV2EventError("resolution target is outside the frozen audit epoch")
+                raise ReV2EventError(
+                    "resolution target is outside the frozen audit epoch"
+                )
             if (
                 target in self.plateau_targets
                 or self.no_reduction_rounds_by_target.get(target, 0) >= 2
@@ -506,14 +552,20 @@ class Protocol25ReplayState(EventReplayState):
                 )
             expected = self.rounds_by_target.get(target, 0) + 1
             if round_index != expected:
-                raise ReV2EventError("semantic round must be consecutive per audit target")
+                raise ReV2EventError(
+                    "semantic round must be consecutive per audit target"
+                )
             if target in cycle.resolution_targets:
-                raise ReV2EventError("audit target resolution already started in this cycle")
+                raise ReV2EventError(
+                    "audit target resolution already started in this cycle"
+                )
             cycle.resolution_targets.add(target)
         elif event_type == "closure_recheck_started":
             assert target is not None
             if target not in cycle.accepted_resolution_targets:
-                raise ReV2EventError("closure recheck requires an accepted resolution first")
+                raise ReV2EventError(
+                    "closure recheck requires an accepted resolution first"
+                )
             if target in cycle.target_assessments:
                 raise ReV2EventError("audit target was already rechecked in this cycle")
         else:
@@ -541,7 +593,11 @@ class Protocol25ReplayState(EventReplayState):
         self, expected_type: str, payload: Mapping[str, object]
     ) -> tuple[_SemanticOperation, _SourceCycle]:
         operation = self.semantic_operation
-        if operation is None or operation.event_type != expected_type or operation.stage != "accepted":
+        if (
+            operation is None
+            or operation.event_type != expected_type
+            or operation.stage != "accepted"
+        ):
             raise ReV2EventError(f"event requires accepted {expected_type} artifact")
         fields = (
             ("work_item_id", operation.work_item_id),
@@ -558,7 +614,9 @@ class Protocol25ReplayState(EventReplayState):
         return operation, self.source_cycles[operation.source_cycle_id]
 
     def _accept_resolution(self, payload: Mapping[str, object]) -> None:
-        operation, cycle = self._matching_operation("semantic_resolution_started", payload)
+        operation, cycle = self._matching_operation(
+            "semantic_resolution_started", payload
+        )
         assert operation.audit_target_id is not None
         cycle.accepted_resolution_targets.add(operation.audit_target_id)
         self.semantic_operation = None
@@ -597,33 +655,52 @@ class Protocol25ReplayState(EventReplayState):
     def _record_closure(self, payload: Mapping[str, object]) -> None:
         cycle = self._cycle_for_payload(payload)
         if cycle.guard_passed is not True:
-            raise ReV2EventError("closure receipt requires a passing source composition guard")
+            raise ReV2EventError(
+                "closure receipt requires a passing source composition guard"
+            )
         if payload["source_composition_assessment_id"] != cycle.source_assessment_id:
-            raise ReV2EventError("closure receipt does not match source composition assessment")
+            raise ReV2EventError(
+                "closure receipt does not match source composition assessment"
+            )
         target = str(payload["audit_target_id"])
         if target not in cycle.participating_targets:
-            raise ReV2EventError("closure receipt target did not participate in the source cycle")
+            raise ReV2EventError(
+                "closure receipt target did not participate in the source cycle"
+            )
         finding = str(payload["finding_key_id"])
         findings = cycle.closure_verdicts_by_target.setdefault(target, {})
         if finding in findings:
-            raise ReV2EventError("finding closure may be recorded only once per source cycle")
+            raise ReV2EventError(
+                "finding closure may be recorded only once per source cycle"
+            )
         findings[finding] = str(payload["verdict"])
 
     def _record_progress(self, payload: Mapping[str, object]) -> None:
         cycle = self._cycle_for_payload(payload)
         if cycle.guard_passed is None:
-            raise ReV2EventError("semantic progress requires a source composition assessment")
+            raise ReV2EventError(
+                "semantic progress requires a source composition assessment"
+            )
         target = str(payload["audit_target_id"])
-        if target not in cycle.participating_targets or target in cycle.progress_targets:
-            raise ReV2EventError("semantic progress must occur once per participating target")
+        if (
+            target not in cycle.participating_targets
+            or target in cycle.progress_targets
+        ):
+            raise ReV2EventError(
+                "semantic progress must occur once per participating target"
+            )
         expected_round = self.rounds_by_target.get(target, 0) + 1
         if cycle.semantic_round != expected_round:
-            raise ReV2EventError("semantic progress round must be consecutive per target")
+            raise ReV2EventError(
+                "semantic progress round must be consecutive per target"
+            )
         before = frozenset(payload["unresolved_before_ids"])
         after = frozenset(payload["unresolved_after_ids"])
         previous = self.unresolved_by_target.get(target)
         if previous is not None and before != previous:
-            raise ReV2EventError("unresolved-before IDs do not match replayed target state")
+            raise ReV2EventError(
+                "unresolved-before IDs do not match replayed target state"
+            )
         if not after <= before:
             raise ReV2EventError("semantic progress cannot add unresolved finding IDs")
         if cycle.guard_passed:
@@ -640,7 +717,9 @@ class Protocol25ReplayState(EventReplayState):
                     "semantic progress unresolved IDs must match closure verdicts"
                 )
         elif after != before:
-            raise ReV2EventError("failed source guard cannot reduce unresolved findings")
+            raise ReV2EventError(
+                "failed source guard cannot reduce unresolved findings"
+            )
         self.rounds_by_target[target] = expected_round
         if after < before:
             self.no_reduction_rounds_by_target[target] = 0
@@ -656,8 +735,12 @@ class Protocol25ReplayState(EventReplayState):
         if self.no_reduction_rounds_by_target.get(target, 0) < 2:
             raise ReV2EventError("semantic plateau requires two no-reduction rounds")
         if payload["semantic_round"] != self.rounds_by_target.get(target):
-            raise ReV2EventError("semantic plateau round does not match target progress")
-        if frozenset(payload["unresolved_finding_ids"]) != self.unresolved_by_target.get(target):
+            raise ReV2EventError(
+                "semantic plateau round does not match target progress"
+            )
+        if frozenset(
+            payload["unresolved_finding_ids"]
+        ) != self.unresolved_by_target.get(target):
             raise ReV2EventError("semantic plateau unresolved IDs do not match replay")
         self.plateau_targets.add(target)
 
@@ -667,7 +750,9 @@ class Protocol25ReplayState(EventReplayState):
         if self.semantic_operation is not None or any(
             not cycle.complete for cycle in self.source_cycles.values()
         ):
-            raise ReV2EventError("audit closure root requires completed semantic cycles")
+            raise ReV2EventError(
+                "audit closure root requires completed semantic cycles"
+            )
         root = str(payload["audit_closure_root_id"])
         if root in self.audit_closure_roots:
             raise ReV2EventError("audit closure root must be unique")

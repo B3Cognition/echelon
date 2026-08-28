@@ -69,6 +69,18 @@ class Protocol24ReplayState(EventReplayState):
     adopted_artifact_keys: set[str] = field(default_factory=set)
     adopted_acceptance_receipts: set[str] = field(default_factory=set)
 
+    @property
+    def has_active_dispatch(self) -> bool:
+        return self.shared.has_active_dispatch
+
+    def mark_imported_work_accepted(
+        self,
+        work_item_id: str,
+        event_type: str,
+    ) -> None:
+        """Apply the shared accepted-work transition without forging an L2 event."""
+        self.shared.mark_imported_work_accepted(work_item_id, event_type)
+
     def consume(self, event: EventRecord) -> None:
         if event.type != "artifact_adopted":
             self.shared.consume(event)
@@ -85,7 +97,9 @@ class Protocol24ReplayState(EventReplayState):
         if self.shared.seen == 0:
             raise ReV2EventError("run_created must be the first event")
         if self.shared.paused or self.shared.pause_requested:
-            raise ReV2EventError("artifact_adopted is not allowed while pausing or paused")
+            raise ReV2EventError(
+                "artifact_adopted is not allowed while pausing or paused"
+            )
         if (
             work_item_id in self.dispatched_work_items
             or self.shared.lease_work_item_id == work_item_id

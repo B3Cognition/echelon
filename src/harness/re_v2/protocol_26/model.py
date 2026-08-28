@@ -58,7 +58,7 @@ _ORIGIN_SCHEMA_PROTOCOLS = frozenset(
         (5, "2.6"),
     }
 )
-_CONTROLLED_REASONS = frozenset(
+CHECKPOINT_SELECTION_REASONS = frozenset(
     {
         "direct_parent_precedence",
         "checkpoint_rank_winner",
@@ -178,8 +178,15 @@ class LayerExecutionContractV1:
     )
 
     def __post_init__(self) -> None:
-        _schema(literal, self.schema_version, 1, f"{type(self).__name__}.schema_version")
-        target = _schema(one_of, self.target_layer, _TARGET_LAYERS, f"{type(self).__name__}.target_layer")
+        _schema(
+            literal, self.schema_version, 1, f"{type(self).__name__}.schema_version"
+        )
+        target = _schema(
+            one_of,
+            self.target_layer,
+            _TARGET_LAYERS,
+            f"{type(self).__name__}.target_layer",
+        )
         observed = _target_layer_for_manifest(self.layer_manifest)
         if target != observed:
             raise Protocol26SchemaError(
@@ -187,7 +194,9 @@ class LayerExecutionContractV1:
             )
 
     @classmethod
-    def from_layer_manifest(cls, layer_manifest: LayerManifestV1) -> "LayerExecutionContractV1":
+    def from_layer_manifest(
+        cls, layer_manifest: LayerManifestV1
+    ) -> "LayerExecutionContractV1":
         return cls(
             schema_version=1,
             target_layer=_target_layer_for_manifest(layer_manifest),
@@ -230,7 +239,9 @@ class CheckpointRankV1:
     )
 
     def __post_init__(self) -> None:
-        _schema(literal, self.schema_version, 1, f"{type(self).__name__}.schema_version")
+        _schema(
+            literal, self.schema_version, 1, f"{type(self).__name__}.schema_version"
+        )
         _schema(safe_id, self.policy_id, f"{type(self).__name__}.policy_id")
         _schema(digest_value, self.policy_hash, f"{type(self).__name__}.policy_hash")
         if (
@@ -278,9 +289,15 @@ class CheckpointArtifactDependencyV1:
     )
 
     def __post_init__(self) -> None:
-        _schema(literal, self.schema_version, 1, f"{type(self).__name__}.schema_version")
-        _schema(digest_value, self.artifact_key_id, f"{type(self).__name__}.artifact_key_id")
-        _schema(digest_value, self.artifact_hash, f"{type(self).__name__}.artifact_hash")
+        _schema(
+            literal, self.schema_version, 1, f"{type(self).__name__}.schema_version"
+        )
+        _schema(
+            digest_value, self.artifact_key_id, f"{type(self).__name__}.artifact_key_id"
+        )
+        _schema(
+            digest_value, self.artifact_hash, f"{type(self).__name__}.artifact_hash"
+        )
 
     @property
     def identity(self) -> str:
@@ -396,15 +413,11 @@ class CheckpointManifestV1:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1.candidate_assessment is invalid"
             )
-        if not isinstance(
-            self.artifact_acceptance_receipt, acceptance_type
-        ):
+        if not isinstance(self.artifact_acceptance_receipt, acceptance_type):
             raise Protocol26SchemaError(
                 "CheckpointManifestV1.artifact_acceptance_receipt is invalid"
             )
-        if not isinstance(
-            self.adopted_artifact_authority, AdoptedArtifactAuthorityV1
-        ):
+        if not isinstance(self.adopted_artifact_authority, AdoptedArtifactAuthorityV1):
             raise Protocol26SchemaError(
                 "CheckpointManifestV1.adopted_artifact_authority is invalid"
             )
@@ -488,8 +501,7 @@ class CheckpointManifestV1:
             if (
                 certification_key.artifact_key != self.work_item.output_key
                 or certification_key.verifier_id != self.work_item.verifier_id
-                or certification_key.verifier_version
-                != self.work_item.verifier_version
+                or certification_key.verifier_version != self.work_item.verifier_version
                 or certification_key.verifier_implementation_digest
                 != self.work_item.verifier_implementation_digest
             ):
@@ -506,8 +518,7 @@ class CheckpointManifestV1:
             != self.certification_receipt.identity
             or authority.artifact_key_id != self.artifact_key_id
             or authority.artifact_hash != self.artifact_hash
-            or authority.certification_receipt_id
-            != self.certification_receipt.identity
+            or authority.certification_receipt_id != self.certification_receipt.identity
             or authority.artifact_acceptance_receipt_id != acceptance.identity
             or authority.source_run_id != self.origin_run_id
             or authority.source_ledger_entry_hash != self.origin_ledger_record_hash
@@ -531,9 +542,9 @@ class CheckpointManifestV1:
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 candidate authority is cross-bound"
             )
-        dependency_hashes = {
-            item.artifact_hash for item in dependencies
-        } | set(non_artifact)
+        dependency_hashes = {item.artifact_hash for item in dependencies} | set(
+            non_artifact
+        )
         if dependency_hashes != set(self.work_item.output_key.dependency_hashes):
             raise Protocol26SchemaError(
                 "CheckpointManifestV1 dependency authority disagrees with work_item"
@@ -548,9 +559,7 @@ class CheckpointManifestV1:
             acceptance.identity,
         }
         required_objects.update(non_artifact)
-        required_objects.update(
-            dependency.artifact_hash for dependency in dependencies
-        )
+        required_objects.update(dependency.artifact_hash for dependency in dependencies)
         if candidate is not None:
             required_objects.add(candidate.identity)
             required_objects.add(candidate.execution_capture_hash)
@@ -619,9 +628,7 @@ class CheckpointManifestV1:
             "accepted_artifact_dependencies": [
                 item.to_json_dict() for item in self.accepted_artifact_dependencies
             ],
-            "non_artifact_dependency_hashes": list(
-                self.non_artifact_dependency_hashes
-            ),
+            "non_artifact_dependency_hashes": list(self.non_artifact_dependency_hashes),
             "immutable_object_hashes": list(self.immutable_object_hashes),
             "immutable_object_byte_counts": dict(self.immutable_object_byte_counts),
             "audit_epoch_id": self.audit_epoch_id,
@@ -725,12 +732,16 @@ class CheckpointSelectionEntryV1:
     def __post_init__(self) -> None:
         label = type(self).__name__
         _schema(literal, self.schema_version, 1, f"{label}.schema_version")
-        _schema(digest_value, self.expected_work_item_id, f"{label}.expected_work_item_id")
+        _schema(
+            digest_value, self.expected_work_item_id, f"{label}.expected_work_item_id"
+        )
         kind = _schema(one_of, self.source_kind, _SOURCE_KINDS, f"{label}.source_kind")
-        manifest_id = _schema(optional_digest, self.checkpoint_manifest_id, f"{label}.checkpoint_manifest_id")
-        if not isinstance(
-            self.adopted_artifact_authority, AdoptedArtifactAuthorityV1
-        ):
+        manifest_id = _schema(
+            optional_digest,
+            self.checkpoint_manifest_id,
+            f"{label}.checkpoint_manifest_id",
+        )
+        if not isinstance(self.adopted_artifact_authority, AdoptedArtifactAuthorityV1):
             raise Protocol26SchemaError(
                 "CheckpointSelectionEntryV1.adopted_artifact_authority is invalid"
             )
@@ -748,7 +759,12 @@ class CheckpointSelectionEntryV1:
         if self.rank is not None and not isinstance(self.rank, CheckpointRankV1):
             raise Protocol26SchemaError("CheckpointSelectionEntryV1.rank is invalid")
         _schema(safe_id, self.origin_run_id, f"{label}.origin_run_id")
-        _schema(one_of, self.selection_reason, _CONTROLLED_REASONS, f"{label}.selection_reason")
+        _schema(
+            one_of,
+            self.selection_reason,
+            CHECKPOINT_SELECTION_REASONS,
+            f"{label}.selection_reason",
+        )
         if self.origin_run_id != self.adopted_artifact_authority.source_run_id:
             raise Protocol26SchemaError(
                 "CheckpointSelectionEntryV1 origin disagrees with adopted authority"
@@ -775,7 +791,10 @@ class CheckpointSelectionEntryV1:
             selection_bundle_id,
             "checkpoint_selection_bundle_id",
         )
-        if self.source_kind != "workspace_checkpoint" or self.checkpoint_manifest_id is None:
+        if (
+            self.source_kind != "workspace_checkpoint"
+            or self.checkpoint_manifest_id is None
+        ):
             raise Protocol26SchemaError(
                 "only workspace checkpoint selections emit checkpoint events"
             )
@@ -845,10 +864,19 @@ class CheckpointDispositionV1:
     def __post_init__(self) -> None:
         label = type(self).__name__
         _schema(literal, self.schema_version, 1, f"{label}.schema_version")
-        _schema(digest_value, self.checkpoint_manifest_id, f"{label}.checkpoint_manifest_id")
-        _schema(digest_value, self.expected_work_item_id, f"{label}.expected_work_item_id")
+        _schema(
+            digest_value, self.checkpoint_manifest_id, f"{label}.checkpoint_manifest_id"
+        )
+        _schema(
+            digest_value, self.expected_work_item_id, f"{label}.expected_work_item_id"
+        )
         _schema(one_of, self.disposition, _DISPOSITIONS, f"{label}.disposition")
-        _schema(one_of, self.reason, _CONTROLLED_REASONS, f"{label}.reason")
+        _schema(
+            one_of,
+            self.reason,
+            CHECKPOINT_SELECTION_REASONS,
+            f"{label}.reason",
+        )
         if self.rank is not None and not isinstance(self.rank, CheckpointRankV1):
             raise Protocol26SchemaError("CheckpointDispositionV1.rank is invalid")
 
@@ -962,7 +990,9 @@ class CheckpointSelectionBundleV1:
             object.__setattr__(
                 self,
                 field,
-                _schema(sorted_unique_digests, getattr(self, field), f"{label}.{field}"),
+                _schema(
+                    sorted_unique_digests, getattr(self, field), f"{label}.{field}"
+                ),
             )
         _schema(nonnegative_int, self.copied_byte_count, f"{label}.copied_byte_count")
         for field, expected_disposition in (
@@ -1101,23 +1131,36 @@ class RunManifestV5:
         label = type(self).__name__
         _schema(literal, self.schema_version, 5, f"{label}.schema_version")
         _schema(literal, self.engine, "re-v2", f"{label}.engine")
-        _schema(literal, self.engine_protocol_version, "2.6", f"{label}.engine_protocol_version")
+        _schema(
+            literal,
+            self.engine_protocol_version,
+            "2.6",
+            f"{label}.engine_protocol_version",
+        )
         _schema(safe_id, self.run_id, f"{label}.run_id")
         _schema(utc_timestamp, self.created_at, f"{label}.created_at")
         _schema(digest_value, self.source_snapshot_id, f"{label}.source_snapshot_id")
-        _schema(literal, self.source_snapshot_kind, "workspace-git-composite", f"{label}.source_snapshot_kind")
-        _schema(digest_value, self.partition_manifest_id, f"{label}.partition_manifest_id")
+        _schema(
+            literal,
+            self.source_snapshot_kind,
+            "workspace-git-composite",
+            f"{label}.source_snapshot_kind",
+        )
+        _schema(
+            digest_value, self.partition_manifest_id, f"{label}.partition_manifest_id"
+        )
         _schema(one_of, self.target_layer, _TARGET_LAYERS, f"{label}.target_layer")
         references = (self.layer_execution_contract, self.checkpoint_selection)
         if any(not isinstance(item, CatalogReferenceV1) for item in references):
             raise Protocol26SchemaError(
                 "RunManifestV5 catalog references must be CatalogReferenceV1 values"
             )
-        if (
-            len({item.object_hash for item in references}) != len(references)
-            or len({item.relative_path for item in references}) != len(references)
-        ):
-            raise Protocol26SchemaError("RunManifestV5 catalog references must be distinct")
+        if len({item.object_hash for item in references}) != len(references) or len(
+            {item.relative_path for item in references}
+        ) != len(references):
+            raise Protocol26SchemaError(
+                "RunManifestV5 catalog references must be distinct"
+            )
 
     @property
     def run_manifest_id(self) -> str:
@@ -1165,6 +1208,7 @@ class RunManifestV5:
 
 
 __all__ = (
+    "CHECKPOINT_SELECTION_REASONS",
     "CheckpointArtifactDependencyV1",
     "CheckpointDispositionV1",
     "CheckpointManifestV1",
