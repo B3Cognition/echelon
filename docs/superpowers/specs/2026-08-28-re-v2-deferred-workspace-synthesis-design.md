@@ -80,8 +80,8 @@ primitives. EGR-168 must compose those parts rather than revive the v1 loop.
 - No implicit acceptance of partial, blocked, missing, stale, or unauthenticated
   sources.
 - No regeneration of accepted lower-layer source overviews.
-- No provider adapter, direct provider request, alternate prompt renderer, or
-  provider-specific orchestration path.
+- No provider adapter, direct API request, provider-specific prompt renderer,
+  model map, credential branch, or provider-specific orchestration path.
 - No cross-workspace or remote checkpoint exchange.
 - No publication overwrite when the workspace generation changed after child
   creation.
@@ -151,10 +151,16 @@ source is an error. A global `--allow-partial` remains v1-only.
 The immutable schema-6 manifest records:
 
 - run ID, creation time, engine protocol, schema version, and goal;
+- a deterministic synthesis-request identity over parent manifest, canonical
+  selected source outcomes, accepted partial source IDs, synthesis resource
+  policy, and both captured publication bases;
 - direct parent run ID and authenticated parent manifest hash;
 - protocol-2.6 execution and implementation snapshot authority;
 - exact selected workspace/source/partition identities;
 - exact accepted source-root records in canonical source-ID order;
+- an accepted source-overview projection catalog binding each selected source's
+  highest accepted layer, source-root authority, canonical materializer
+  authority, exact Markdown content hash, and child object hash;
 - per-source outcome: `complete` or `partial`;
 - the debt-manifest object hash for every partial source and null for every
   complete source;
@@ -165,7 +171,8 @@ The immutable schema-6 manifest records:
 - the independent synthesis budget policy;
 - the checkpoint selection snapshot and cache policy;
 - the publication synthesis-policy hash; and
-- the expected published-index hash captured at child creation.
+- the expected v2 published-index hash and compatibility-registry generation
+  captured at child creation.
 
 Manifest publication remains manifest-last and no-clobber. Every referenced
 object, catalog, policy, response schema, context input, source authority, and
@@ -191,6 +198,15 @@ Blocked, running, missing, stale, or dependency-incomplete sources are not
 terminal inputs and make child creation fail before a run directory is
 published.
 
+Before child activation, the controller invokes the existing public
+materializer for each source's selected highest accepted L1, L2, or L3
+authority, validates the resulting overview projection against that authority,
+and copies the exact Markdown bytes into the child's object store. A typed
+`AcceptedSourceOverviewProjectionV1` binds source/layer/root, materializer
+authority, content hash, and child object hash. Later synthesis and publication
+read only these child-owned bytes; they neither read a mutable parent projection
+nor reimplement a frozen layer renderer.
+
 ### `PartialSourceAcceptanceV1`
 
 Each repeated `--accept-partial <source-id>` produces one immutable receipt
@@ -201,7 +217,7 @@ binding:
 - source-root artifact key and hash;
 - debt-manifest hash;
 - canonical debt summary hash;
-- accepting operation and command authority; and
+- the deterministic synthesis-request ID as accepting operation authority; and
 - deterministic receipt identity.
 
 The receipt records acceptance of the exact debt-bearing source outcome for
@@ -326,7 +342,8 @@ materialization validates. It binds:
 - `input_quality`;
 - every complete/partial source outcome;
 - every debt-manifest and partial-acceptance receipt identity;
-- the materialization-manifest identity; and
+- the materialization-manifest identity;
+- the exact staged compatibility-index hash and generation; and
 - the run and synthesis-policy authority.
 
 The descriptor hash is the accepted root supplied to the existing immutable
@@ -336,12 +353,15 @@ frozen publication manifest or index schemas.
 
 ## Execution flow
 
-1. Resolve the explicit parent and require a stable protocol-2.6-or-newer
-   manifest with reconstructable accepted source authority.
+1. Resolve the explicit parent and require either a stable protocol-2.6 source
+   child or a terminal protocol-2.7 synthesis child whose embedded
+   protocol-2.6 source authority is reconstructable.
 2. Validate terminal source outcomes and exact repeated partial acceptances.
-3. Capture the current publication-index hash.
+3. Capture the current compatibility-registry generation and v2
+   published-index hash.
 4. Stage every immutable authority object, input catalog, receipt, work item,
-   policy, and manifest, then publish the schema-6 manifest last.
+   accepted overview projection, policy, and manifest, then publish the
+   schema-6 manifest last.
 5. Reconstruct the synthesis graph deterministically from the manifest.
 6. Discover and select exact-compatible synthesis checkpoints with direct-parent
    precedence and protocol-2.6 deterministic dependency-closure behavior.
@@ -352,7 +372,8 @@ frozen publication manifest or index schemas.
 9. Validate, assess, certify, accept, and event each artifact independently.
 10. Compute the synthesis root when the graph closes.
 11. Materialize the immutable closure to run-local compatibility paths.
-12. Attempt publication using the manifest's captured compare-and-swap base.
+12. Attempt compatibility and v2 publication using both captured
+    compare-and-swap bases.
 13. Render machine-readable status and a prominent terminal banner.
 
 Continuation reconstructs all state from the manifest, events, ledgers,
@@ -371,8 +392,17 @@ response schema, dependency manifest, and allowed artifact destination per
 dispatch. Provider output returns the existing structured execution envelope;
 the controller alone validates, stages, accepts, records, and materializes it.
 
-No protocol-2.7 code calls a provider directly, maps provider models, constructs
-provider CLI arguments, or interprets provider-specific output.
+The frozen protocol-2.2 baseline renderer accepts only `ContextBundleV1`, so it
+cannot truthfully validate a synthesis context. Protocol 2.7 follows the
+existing protocol-2.5 extension pattern: a synthesis-scoped deterministic
+request renderer validates `SynthesisContextV1`, renders the neutral Prosaic
+body plus canonical context/schema, and delegates the call to the same
+`SquadCliProvider`. It reuses the shared result contract, provider factory,
+frontmatter interpretation, reservation, normalized usage, capture, and
+telemetry primitives. It adds no provider selection or provider-specific code.
+
+No protocol-2.7 code calls a provider API directly, maps provider models,
+constructs provider CLI arguments, or interprets provider-specific output.
 
 ## Context and claim safety
 
@@ -477,24 +507,57 @@ self-contained child.
 ## Publication
 
 Publication begins only after the synthesis closure and run-local
-materialization validate. It reuses the existing v2 immutable generation and
-published-index compare-and-swap primitive.
+materialization validate. Protocol 2.7 acquires the existing workspace
+`RePublishLock`, verifies both creation-time bases, and prepares the existing
+rollback-capable `PublicationTransaction` for the compatibility files and
+`re/index.json`. The transaction installs files first and the compatibility
+index last, so that index always names a self-consistent physical projection.
+
+The compatibility candidate is built before `PublicationDescriptorV1`: its
+canonical index bytes determine the exact generation and index hash recorded by
+the descriptor. The compatibility index does not refer back to the descriptor,
+so the authority graph is acyclic. Its already-supported `quality` object
+records the protocol-2.7 input-quality and debt summary; the registry reader
+exposes that existing metadata without changing the index schema version.
+
+While retaining the publication journal and lock, protocol 2.7 then calls the
+existing v2 immutable generation and published-index compare-and-swap primitive
+with `PublicationDescriptorV1` as the accepted root. The v2 index is the final
+protocol-2.7 authority point. Only after both validated indexes name the same
+descriptor/run does recovery mark publication terminal and remove rollback
+state.
+
+The compatibility rollback journal remains deliberately nonterminal after its
+files are installed and until the v2 index plus protocol-2.7 publication receipt
+are durable. A protocol-2.7 marker lets the existing interrupted-publication
+entrypoint dispatch this journal to protocol-2.7 recovery. Recovery validates
+both current indexes: it completes an already-installed matching pair, finishes
+a still-valid v2 CAS, or rolls back only compatibility bytes owned by the
+transaction. The legacy publication recovery path remains unchanged for
+unmarked journals.
+
+This composes existing publication building blocks without changing either
+index schema. A crash between the two index writes leaves a valid compatibility
+generation plus a durable journal and owned publication lock. Recovery either
+completes the still-valid v2 CAS or rolls the compatibility transaction back
+before releasing the lock. A v2 CAS conflict also rolls back the compatibility
+transaction; it never leaves the child reported as published.
 
 The generation manifest binds the accepted source roots, synthesis root, and
 synthesis-policy hash. Publication status is:
 
 - `published_complete` when all frozen sources are complete;
 - `published_partial` when at least one source has an exact partial acceptance;
-- `conflict` when the current index hash differs from the creation-time base;
-  or
+- `conflict` when either current publication base differs from its
+  creation-time value; or
 - `not_attempted` before a complete synthesis closure exists.
 
-A conflict never overwrites newer authority. The synthesis child remains
-complete and self-contained. Status reads the current published index's run ID
-and prints an exact successor command using that run as `--from-run`, including
-the required source-specific partial acceptances. Protocol 2.7 does not retry
-publication against a new compare-and-swap base and does not silently refresh
-its frozen inputs.
+A conflict at either creation-time base never overwrites newer authority. The
+synthesis child remains complete and self-contained. Status reads the current
+published run ID and prints an exact successor command using that run as
+`--from-run`, including the required source-specific partial acceptances.
+Protocol 2.7 does not retry publication against a new compare-and-swap base and
+does not silently refresh its frozen inputs.
 
 Downstream consumers receive the existing registry paths plus explicit
 complete/partial input quality and debt manifests. No consumer may infer full
@@ -534,8 +597,11 @@ Deterministic recovery tests cover crashes after each durable mutation:
 - artifact-accepted event;
 - synthesis-root creation;
 - each materialized file and materialization manifest;
-- immutable generation creation; and
-- published-index compare-and-swap.
+- compatibility candidate and rollback-journal staging;
+- each compatibility backup/install plus compatibility-index replacement;
+- v2 immutable generation creation and v2-index compare-and-swap;
+- protocol-2.7 publication receipt; and
+- rollback-journal finalization and cleanup.
 
 Recovery either completes the pending idempotent step or resumes from the last
 authenticated boundary. It never issues a duplicate provider call after a
