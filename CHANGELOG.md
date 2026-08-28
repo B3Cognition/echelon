@@ -45,6 +45,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-166 adoptable RE checkpoints** — New opt-in RE v2 L1/L2/L3 runs use
+  protocol `2.6` to reconstruct exact controller-certified artifacts from
+  workspace sibling runs, select a deterministic dependency-closed set, copy
+  its complete authority into the staged child, and record adoption before any
+  dispatch. The disposable cache can be rebuilt from schema-2-through-schema-5
+  origins; self-contained adopted children remain reusable after their origin
+  and cache disappear. Status reports adopted/generated counts, origins,
+  rejections, and avoided reservations. A clean installed Codex pilot adopted
+  14/14 artifacts with zero provider calls and zero charged tokens while all
+  provider execution remained on the existing Prosaic/shared-provider path.
+
 - **RE v2 declared-source snapshots** — New opt-in v2 runs use protocol `2.1`
   and atomically snapshot only declared, clean Git source roots at pinned
   commits. Dirty, non-Git, conflicted, or divergent-submodule sources now fail

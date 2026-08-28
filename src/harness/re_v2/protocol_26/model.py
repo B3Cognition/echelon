@@ -63,6 +63,7 @@ CHECKPOINT_SELECTION_REASONS = frozenset(
         "direct_parent_precedence",
         "checkpoint_rank_winner",
         "checkpoint_rank_hash_tiebreak",
+        "checkpoint_dependency_closure",
         "checkpoint_incompatible",
         "checkpoint_dependency_missing",
         "checkpoint_origin_unstable",

@@ -24,6 +24,7 @@ from harness.re_v2.protocol_26.model import (
     CheckpointArtifactDependencyV1,
     CheckpointManifestV1,
     CheckpointRankV1,
+    RunManifestV5,
 )
 from harness.re_v2.protocol_26.selection import RANK_POLICIES
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
@@ -86,6 +87,8 @@ class _StableOriginV1:
     history: tuple[LedgerRecord, ...]
     ledger: Protocol22LedgerView
     objects: ObjectStore
+    origin_engine_protocol_version: str
+    origin_run_schema_version: int
 
 
 def reconstruct_origin_checkpoints(
@@ -124,8 +127,11 @@ def _stable_chain_pair(paths: ReV2Paths) -> _StableOriginV1 | None:
         _safe_optional_regular_read(paths.events),
         _safe_regular_read(paths.ledger),
     )
-    manifest = load_run_manifest(paths.root.parent)
-    event_protocol, ledger_type = _protocol_facades(manifest)
+    active_manifest = load_run_manifest(paths.root.parent)
+    event_protocol, ledger_type, manifest = _protocol_facades(
+        paths,
+        active_manifest,
+    )
     if not isinstance(manifest, (RunManifestV2, RunManifestV3, RunManifestV4)):
         raise ValueError("checkpoint origin manifest protocol is unsupported")
     objects = ObjectStore(paths.objects)
@@ -148,6 +154,8 @@ def _stable_chain_pair(paths: ReV2Paths) -> _StableOriginV1 | None:
         history=history,
         ledger=ledger,
         objects=objects,
+        origin_engine_protocol_version=active_manifest.engine_protocol_version,
+        origin_run_schema_version=active_manifest.schema_version,
     )
 
 
@@ -246,8 +254,8 @@ def _reconstruct_accepted_artifacts(
                 schema_version=1,
                 origin_run_id=origin_id,
                 origin_manifest_hash=content_digest(origin.manifest_bytes),
-                origin_engine_protocol_version=manifest.engine_protocol_version,
-                origin_run_schema_version=manifest.schema_version,
+                origin_engine_protocol_version=origin.origin_engine_protocol_version,
+                origin_run_schema_version=origin.origin_run_schema_version,
                 origin_acceptance_event_hash=event.event_hash,
                 origin_event_prefix_hash=content_digest(event_prefix),
                 origin_ledger_record_hash=ledger_record.record_hash,
@@ -292,13 +300,27 @@ def _reconstruct_accepted_artifacts(
     )
 
 
-def _protocol_facades(manifest: object):  # type: ignore[no-untyped-def]
+def _protocol_facades(paths: ReV2Paths, manifest: object):  # type: ignore[no-untyped-def]
     if isinstance(manifest, RunManifestV2):
-        return PROTOCOL_22_EVENTS, Protocol22Ledger
+        return PROTOCOL_22_EVENTS, Protocol22Ledger, manifest
     if isinstance(manifest, RunManifestV3):
-        return PROTOCOL_24_EVENTS, Protocol22Ledger
+        return PROTOCOL_24_EVENTS, Protocol22Ledger, manifest
     if isinstance(manifest, RunManifestV4):
-        return PROTOCOL_25_EVENTS, Protocol25Ledger
+        return PROTOCOL_25_EVENTS, Protocol25Ledger, manifest
+    if isinstance(manifest, RunManifestV5):
+        from harness.re_v2.protocol_26.events import protocol_26_events_for
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+
+        inputs = load_protocol_26_inputs(paths, manifest)
+        layer_manifest = inputs.layer_execution_contract.layer_manifest
+        ledger_type = (
+            Protocol25Ledger if manifest.target_layer == "L3" else Protocol22Ledger
+        )
+        return (
+            protocol_26_events_for(manifest.target_layer),
+            ledger_type,
+            layer_manifest,
+        )
     raise ValueError("checkpoint origin manifest protocol is unsupported")
 
 
@@ -317,7 +339,7 @@ def _acceptance_event(events, acceptance, work_item_id):  # type: ignore[no-unty
                 and event.payload.get("work_item_id") == work_item_id
             ):
                 matches.append(event)
-        elif event.type == "artifact_adopted":
+        elif event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}:
             authority = AdoptedArtifactAuthorityV1.from_json_dict(
                 event.payload["adopted_artifact_authority"]
             )
@@ -367,7 +389,13 @@ def _semantic_work_item(origin: _StableOriginV1, acceptance):  # type: ignore[no
     if not isinstance(origin.manifest, RunManifestV4):
         raise ValueError("semantic acceptance requires a schema-4 origin")
     paths = ReV2Paths.for_run(origin.run_dir)
-    inputs = load_protocol_25_inputs(paths, origin.manifest)
+    active_manifest = load_run_manifest(origin.run_dir)
+    if isinstance(active_manifest, RunManifestV5):
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+
+        inputs = load_protocol_26_inputs(paths, active_manifest).layer_inputs
+    else:
+        inputs = load_protocol_25_inputs(paths, origin.manifest)
     accepted_parent = reconstruct_adopted_parent_closure(
         inputs.parent_authority_bundle.lower_authority_bundle,
         origin.ledger,

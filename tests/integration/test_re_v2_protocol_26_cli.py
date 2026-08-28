@@ -1,11 +1,56 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 import pytest
 from typer.testing import CliRunner
 
 from tests.support.re_v2_layered_workspace import build_and_commit_fixture
+
+
+@pytest.mark.integration
+def test_completed_protocol_26_l1_is_reconstructed_for_zero_call_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
+
+    fixture = build_and_commit_fixture(tmp_path, "complete")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.chdir(fixture.root)
+    runner = CliRunner()
+
+    with fixture.provider:
+        origin = runner.invoke(app, ["re", "run", "--engine", "v2"])
+        assert origin.exit_code == 0, origin.output
+        calls_after_origin = len(fixture.provider.requests)
+        sibling = runner.invoke(app, ["re", "run", "--engine", "v2"])
+
+    assert sibling.exit_code == 0, sibling.output
+    assert len(fixture.provider.requests) == calls_after_origin
+    run_dirs = fixture.run_directories()
+    assert len(run_dirs) == 2
+    status = protocol_26_status_document(run_dirs[-1])
+    assert status["status"] == "complete"
+    assert status["checkpoints"]["adopted_count"] > 0
+    assert status["checkpoints"]["generated_count"] == 0
+
+    origin_run, sibling_run = run_dirs
+    shutil.move(str(origin_run), tmp_path / "hidden-origin")
+    shutil.rmtree(fixture.root / ".echelon" / "re-v2" / "checkpoints")
+    with fixture.provider:
+        repeated = runner.invoke(app, ["re", "run", "--engine", "v2"])
+
+    assert repeated.exit_code == 0, repeated.output
+    assert len(fixture.provider.requests) == calls_after_origin
+    remaining = fixture.run_directories()
+    assert len(remaining) == 2
+    assert sibling_run in remaining
+    repeated_status = protocol_26_status_document(remaining[-1])
+    assert repeated_status["checkpoints"]["adopted_count"] > 0
+    assert repeated_status["checkpoints"]["generated_count"] == 0
 
 
 @pytest.mark.integration

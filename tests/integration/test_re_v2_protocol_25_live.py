@@ -25,9 +25,9 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
     from harness.prosaic_prompt_loader import ProsaicPromptLoader
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
-    from harness.re_v2.protocol_25.inputs import load_protocol_25_inputs
-    from harness.re_v2.protocol_25.model import RunManifestV4
-    from harness.re_v2.protocol_25.status import protocol_25_status_document
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "live-codex")
@@ -71,7 +71,7 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
         timeout=1800,
     )
     assert "L1 COMPACT BASELINE COMPLETE" in baseline.stdout
-    l1 = _only_run(fixture.root, protocol="2.3")
+    l1 = _only_run(fixture.root, layer="L1")
     deepen_l2 = _run(
         [
             "echelon",
@@ -92,7 +92,7 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
         timeout=1800,
     )
     assert "L2 SELECTED SCOPE COMPLETE" in deepen_l2.stdout
-    l2 = _only_run(fixture.root, protocol="2.4")
+    l2 = _only_run(fixture.root, layer="L2")
     l3_command = [
         "echelon",
         "re",
@@ -118,7 +118,7 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
         timeout=2400,
     )
     assert "L3 SELECTED SCOPE COMPLETE" in deepen_l3.stdout
-    l3 = _only_run(fixture.root, protocol="2.5")
+    l3 = _only_run(fixture.root, layer="L3")
     paths = ReV2Paths.for_run(l3)
     dispatches_before = _dispatch_count(paths)
     repeated = _run(
@@ -131,9 +131,9 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
     assert _dispatch_count(paths) == dispatches_before
 
     manifest = load_run_manifest(l3)
-    assert isinstance(manifest, RunManifestV4)
+    assert isinstance(manifest, RunManifestV5)
     objects = ObjectStore(paths.objects)
-    inputs = load_protocol_25_inputs(paths, manifest)
+    inputs = load_protocol_26_inputs(paths, manifest).layer_inputs
     for family, role_id in (
         ("semantic-audit", "echelon.re-validator"),
         ("semantic-resolution", "echelon.re-resolver"),
@@ -142,7 +142,7 @@ def test_installed_codex_completes_and_exactly_reuses_l3_pilot(
         assert renderer is not None
         assert objects.read_blob(renderer.agent_contract_hash) == role_bytes[role_id]
 
-    status = protocol_25_status_document(l3)
+    status = protocol_26_status_document(l3)
     assert status["status"] == "complete"
     assert status["banner"] == "L3 SELECTED SCOPE COMPLETE"
     assert status["selection"]["selected_domains"] >= 2
@@ -176,13 +176,15 @@ def _run(
     return result
 
 
-def _only_run(workspace: Path, *, protocol: str) -> Path:
+def _only_run(workspace: Path, *, layer: str) -> Path:
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import load_run_manifest
 
     matches = tuple(
         path
         for path in workspace.joinpath("runs").glob("re-*")
-        if getattr(load_run_manifest(path), "engine_protocol_version", None) == protocol
+        if isinstance((manifest := load_run_manifest(path)), RunManifestV5)
+        and manifest.target_layer == layer
     )
     assert len(matches) == 1
     return matches[0]
@@ -190,9 +192,11 @@ def _only_run(workspace: Path, *, protocol: str) -> Path:
 
 def _dispatch_count(paths: object) -> int:
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
 
     return sum(
         event.type == "dispatch_started"
-        for event in EventStore(paths, protocol=PROTOCOL_25_EVENTS).replay()
+        for event in EventStore(
+            paths, protocol=protocol_26_events_for("L3")
+        ).replay()
     )

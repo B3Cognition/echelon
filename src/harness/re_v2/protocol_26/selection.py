@@ -283,8 +283,7 @@ def select_checkpoints(
         if existing is None or parent.artifact_hash < existing.artifact_hash:
             parent_by_key[parent.artifact_key_id] = parent
 
-    alternatives: list[CheckpointDispositionV1] = []
-    dependency_rejected: list[CheckpointDispositionV1] = []
+    discovery_rejected = list(rejected)
     choices: dict[str, list[CheckpointManifestV1]] = {}
     selection_reasons: dict[str, str] = {}
     selected: dict[str, tuple[CheckpointManifestV1, str]] = {
@@ -293,6 +292,51 @@ def select_checkpoints(
     for key, values in sorted(compatible.items()):
         expected_id = expected_by_key[key].work_item_id
         ordered = sorted(values, key=_winner_key)
+        if key in parent_by_key:
+            choices[key] = ordered
+            continue
+        choices[key] = ordered
+        selected[key] = (ordered[0], "workspace_checkpoint")
+        top_vector = ordered[0].rank.vector
+        tied = [item for item in ordered if item.rank.vector == top_vector]
+        selection_reasons[key] = (
+            "checkpoint_rank_hash_tiebreak"
+            if len(tied) > 1
+            else "checkpoint_rank_winner"
+        )
+    selected, removed = _prune_selection(selected, choices)
+    origin_ids = sorted(
+        {
+            item.origin_run_id
+            for values in choices.values()
+            for item in values
+        }
+    )
+    for origin_id in origin_ids:
+        coherent = {
+            key: value
+            for key, value in selected.items()
+            if value[1] == "direct_parent"
+        }
+        for key, ordered in sorted(choices.items()):
+            if key in coherent:
+                continue
+            candidate = next(
+                (item for item in ordered if item.origin_run_id == origin_id),
+                None,
+            )
+            if candidate is not None:
+                coherent[key] = (candidate, "workspace_checkpoint")
+        coherent, coherent_removed = _prune_selection(coherent, choices)
+        if len(coherent) > len(selected):
+            selected = coherent
+            removed = coherent_removed
+
+    alternatives: list[CheckpointDispositionV1] = []
+    rejected = discovery_rejected
+    for key, ordered in sorted(choices.items()):
+        expected_id = expected_by_key[key].work_item_id
+        chosen = selected.get(key)
         if key in parent_by_key:
             alternatives.extend(
                 _disposition(
@@ -304,85 +348,37 @@ def select_checkpoints(
                 for item in ordered
             )
             continue
-        choices[key] = ordered
-        selected[key] = (ordered[0], "workspace_checkpoint")
-        top_vector = ordered[0].rank.vector
-        tied = [item for item in ordered if item.rank.vector == top_vector]
-        selection_reasons[key] = (
-            "checkpoint_rank_hash_tiebreak"
-            if len(tied) > 1
-            else "checkpoint_rank_winner"
-        )
-        for loser in ordered[1:]:
+        if chosen is None:
+            reason = removed.get(key, "checkpoint_dependency_missing")
+            rejected.extend(
+                _disposition(item, expected_id, "rejected", reason)
+                for item in ordered
+            )
+            continue
+        winner = chosen[0]
+        if winner is not ordered[0]:
+            selection_reasons[key] = "checkpoint_dependency_closure"
+        for candidate in ordered:
+            if candidate.identity == winner.identity:
+                continue
+            if not _dependencies_satisfied(candidate, selected):
+                rejected.append(
+                    _disposition(
+                        candidate,
+                        expected_id,
+                        "rejected",
+                        "checkpoint_dependency_missing",
+                    )
+                )
+                continue
             reason = (
                 "checkpoint_rank_hash_tiebreak"
-                if loser.rank.vector == top_vector
+                if candidate.rank.vector == winner.rank.vector
                 else "checkpoint_rank_winner"
             )
             alternatives.append(
-                _disposition(loser, expected_id, "not_selected", reason)
+                _disposition(candidate, expected_id, "not_selected", reason)
             )
-
-    removed: dict[str, str] = {}
-    while True:
-        changed = False
-        cyclic = _cyclic_selected_keys(selected)
-        if cyclic:
-            for key in sorted(cyclic):
-                removed[key] = "checkpoint_cycle_detected"
-                selected.pop(key, None)
-            changed = True
-        for key in sorted(tuple(selected)):
-            candidate, kind = selected[key]
-            if _dependencies_satisfied(candidate, selected):
-                continue
-            if kind == "workspace_checkpoint":
-                replacement = next(
-                    (
-                        item
-                        for item in choices.get(key, ())[1:]
-                        if _dependencies_satisfied(item, selected)
-                    ),
-                    None,
-                )
-                if replacement is not None:
-                    dependency_rejected.append(
-                        _disposition(
-                            candidate,
-                            expected_by_key[key].work_item_id,
-                            "rejected",
-                            "checkpoint_dependency_missing",
-                        )
-                    )
-                    selected[key] = (replacement, kind)
-                    changed = True
-                    continue
-            removed[key] = "checkpoint_dependency_missing"
-            selected.pop(key, None)
-            changed = True
-        if not changed:
-            break
-
-    for key, reason in sorted(removed.items()):
-        expected_id = expected_by_key[key].work_item_id
-        rejected.extend(
-            _disposition(item, expected_id, "rejected", reason)
-            for item in choices.get(key, ())
-        )
-    rejected.extend(dependency_rejected)
-
-    rejected_manifest_ids = {item.checkpoint_manifest_id for item in rejected}
-    selected_manifest_ids = {
-        item.identity
-        for item, source_kind in selected.values()
-        if source_kind == "workspace_checkpoint"
-    }
-    alternatives = [
-        item
-        for item in alternatives
-        if item.checkpoint_manifest_id
-        not in rejected_manifest_ids | selected_manifest_ids
-    ]
 
     ordered_keys = _topological_keys(selected)
     selected_entries = tuple(
@@ -515,6 +511,49 @@ def _dependencies_satisfied(
         object_hash in candidate.immutable_object_byte_counts
         for object_hash in candidate.non_artifact_dependency_hashes
     )
+
+
+def _prune_selection(
+    initial: Mapping[str, tuple[CheckpointManifestV1, str]],
+    choices: Mapping[str, Sequence[CheckpointManifestV1]],
+) -> tuple[
+    dict[str, tuple[CheckpointManifestV1, str]],
+    dict[str, str],
+]:
+    """Close one deterministic candidate set, trying valid same-key fallbacks."""
+    selected = dict(initial)
+    removed: dict[str, str] = {}
+    while True:
+        changed = False
+        cyclic = _cyclic_selected_keys(selected)
+        if cyclic:
+            for key in sorted(cyclic):
+                removed[key] = "checkpoint_cycle_detected"
+                selected.pop(key, None)
+            changed = True
+        for key in sorted(tuple(selected)):
+            candidate, source_kind = selected[key]
+            if _dependencies_satisfied(candidate, selected):
+                continue
+            if source_kind == "workspace_checkpoint":
+                replacement = next(
+                    (
+                        item
+                        for item in choices.get(key, ())
+                        if item.identity != candidate.identity
+                        and _dependencies_satisfied(item, selected)
+                    ),
+                    None,
+                )
+                if replacement is not None:
+                    selected[key] = (replacement, source_kind)
+                    changed = True
+                    continue
+            removed[key] = "checkpoint_dependency_missing"
+            selected.pop(key, None)
+            changed = True
+        if not changed:
+            return selected, removed
 
 
 def _cyclic_selected_keys(

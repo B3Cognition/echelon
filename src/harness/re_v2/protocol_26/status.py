@@ -119,7 +119,15 @@ class CheckpointStatusV1:
                     "artifact_kind": key[3],
                     "adopted_count": count,
                 }
-                for key, count in sorted(grouped.items())
+                for key, count in sorted(
+                    grouped.items(),
+                    key=lambda item: (
+                        item[0][0],
+                        item[0][1] or "",
+                        item[0][2],
+                        item[0][3],
+                    ),
+                )
             ],
             "avoided_dispatch_count": len(adopted_work_ids),
             "avoided_token_reservation": avoided_tokens,

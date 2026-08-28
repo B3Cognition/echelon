@@ -106,7 +106,7 @@ Before editing a shared file, run the installed-authority inventory test added i
 - Produces `RunManifestV5` with exact fields `schema_version`, `engine`, `engine_protocol_version`, `run_id`, `created_at`, `source_snapshot_id`, `source_snapshot_kind`, `partition_manifest_id`, `target_layer`, `layer_execution_contract`, and `checkpoint_selection`.
 - Extends `run_store.Manifest`, `_decode_manifest()`, and `_validate_supported_manifest()` only for the exact pair `(5, "2.6")`.
 
-- [ ] **Step 1: Record the compatibility baseline and prove planned shared seams are not implementation-digest inputs**
+- [x] **Step 1: Record the compatibility baseline and prove planned shared seams are not implementation-digest inputs**
 
 Run:
 
@@ -118,7 +118,7 @@ git diff --exit-code -- src/harness/re_v2/protocol_22 src/harness/re_v2/protocol
 
 Expected: tests pass; the `rg` result does not place `recovery.py`, `run_store.py`, `workspace_snapshot.py`, or protocol-2.4 `adoption.py` in an installed implementation digest; existing protocol source trees are clean.
 
-- [ ] **Step 2: Write failing model and run-store tests**
+- [x] **Step 2: Write failing model and run-store tests**
 
 ```python
 def test_manifest_v5_round_trips_and_pins_2_6() -> None:
@@ -143,13 +143,13 @@ def test_run_store_rejects_schema_5_with_old_protocol(tmp_path: Path) -> None:
         load_run_manifest(tmp_path)
 ```
 
-- [ ] **Step 3: Run the focused tests and confirm RED**
+- [x] **Step 3: Run the focused tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: collection fails because `protocol_26` and `RunManifestV5` do not exist.
 
-- [ ] **Step 4: Implement the closed models and exact schema router**
+- [x] **Step 4: Implement the closed models and exact schema router**
 
 Use this public shape and the existing `exact_object`, `safe_id`, `digest_value`, `sorted_unique_digests`, `canonical_json_bytes`, and `content_digest` helpers:
 
@@ -197,13 +197,13 @@ class RunManifestV5:
 
 Validate every nested layer manifest against its declared target and against the repeated schema-5 identity fields. Validate sorted/unique model arrays at construction and decode; reject unknown fields.
 
-- [ ] **Step 5: Run canonical, mutation, and compatibility tests**
+- [x] **Step 5: Run canonical, mutation, and compatibility tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py`
 
 Expected: all pass and old schema fixture digests remain exact.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/model.py src/harness/re_v2/run_store.py \
@@ -231,7 +231,7 @@ git commit -m "feat(re-v2): register protocol 2.6 checkpoint authority"
 - A reconstructed manifest identifies the exact acceptance event and ledger record, embeds exact work-item/receipt bytes, classifies accepted-artifact versus non-artifact dependencies, and includes the immutable object inventory needed for later self-contained import.
 - Controlled rejections use the spec reason codes and never mutate the origin.
 
-- [ ] **Step 1: Write failing eligibility and torn-prefix tests**
+- [x] **Step 1: Write failing eligibility and torn-prefix tests**
 
 ```python
 @pytest.mark.parametrize("origin_state", ["active", "paused", "blocked", "complete"])
@@ -265,13 +265,13 @@ def test_origin_append_during_read_is_bounded_and_skipped(
     assert result.rejected[0].reason == "checkpoint_origin_unstable"
 ```
 
-- [ ] **Step 2: Run the reconstruction tests and confirm RED**
+- [x] **Step 2: Run the reconstruction tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_reconstruction.py`
 
 Expected: FAIL because the reconstruction API is absent.
 
-- [ ] **Step 3: Implement stable origin replay and exact acceptance joins**
+- [x] **Step 3: Implement stable origin replay and exact acceptance joins**
 
 Implement the bounded sequence exactly:
 
@@ -297,7 +297,7 @@ return OriginCheckpointResultV1.unstable(run_dir.name)
 
 For each accepted artifact, require exactly one matching `artifact_accepted`, `artifact_adopted`, or `checkpoint_artifact_adopted` event; require its certification, optional certified assessment, work item, acceptance receipt, and ledger record; verify every referenced object by digest. Hash the authenticated event prefix ending at that acceptance event and the ledger prefix ending at that acceptance record, rather than the mutable later chain tail. Resolve artifact dependencies by exact accepted artifact hash and reject ambiguity, cycles, or missing objects.
 
-- [ ] **Step 4: Add unsafe path, symlink, corrupted object, and L3 epoch tests**
+- [x] **Step 4: Add unsafe path, symlink, corrupted object, and L3 epoch tests**
 
 ```python
 def test_reconstruction_rejects_symlinked_origin(checkpoint_workspace: CheckpointWorkspace) -> None:
@@ -315,13 +315,13 @@ def test_l3_checkpoint_preserves_exact_epoch_authority(
     assert manifest.semantic_authority_ids == origin.semantic_authority_ids
 ```
 
-- [ ] **Step 5: Run tests and verify GREEN**
+- [x] **Step 5: Run tests and verify GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_reconstruction.py`
 
 Expected: all eligibility, integrity, stable-read, and path-safety cases pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_26/reconstruction.py \
@@ -347,7 +347,7 @@ git commit -m "feat(re-v2): reconstruct accepted artifact checkpoints"
 - Index entries reference canonical manifest IDs and contain projection-only query fields. Consumers must load and revalidate the canonical manifest projection before selection.
 - Writes use an `fcntl.flock` regular-file lock, private staging directory, fsync, and atomic `os.replace`; malformed cache state is discarded and rebuilt from runs.
 
-- [ ] **Step 1: Write failing cache replacement and snapshot-exclusion tests**
+- [x] **Step 1: Write failing cache replacement and snapshot-exclusion tests**
 
 ```python
 def test_cache_rebuild_is_deterministic_and_disposable(
@@ -374,13 +374,13 @@ def test_workspace_snapshot_excludes_checkpoint_cache(tmp_path: Path) -> None:
     assert ".echelon/re-v2/checkpoints/index-v1.json" not in snapshot_paths(snapshot)
 ```
 
-- [ ] **Step 2: Run cache and snapshot tests and confirm RED**
+- [x] **Step 2: Run cache and snapshot tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_cache.py tests/unit/test_re_v2_workspace_snapshot.py`
 
 Expected: checkpoint cache API and exclusion assertion fail.
 
-- [ ] **Step 3: Implement confined enumeration, locking, quarantine, and atomic replacement**
+- [x] **Step 3: Implement confined enumeration, locking, quarantine, and atomic replacement**
 
 Use direct-child discovery and reject symlinks:
 
@@ -399,7 +399,7 @@ return load_checkpoint_cache(workspace_root)
 
 Keep `index-v1.lock` in the persistent cache root; never replace or unlink the directory containing the held lock. Write canonical manifests into a staged `manifests` generation, publish every referenced manifest and quarantine file first, and publish `index-v1.json` last with `os.replace` plus directory fsync. Retire unreferenced projection files only after the new index is durable. Put invalid-origin diagnostics in `quarantine-v1.json`, and ensure a cache file alone never constructs a checkpoint absent successful origin reconstruction during that generation.
 
-- [ ] **Step 4: Add `.gitignore` and snapshot exclusion for the exact cache root**
+- [x] **Step 4: Add `.gitignore` and snapshot exclusion for the exact cache root**
 
 Add this repository pattern and the equivalent deterministic workspace-snapshot exclusion:
 
@@ -407,13 +407,13 @@ Add this repository pattern and the equivalent deterministic workspace-snapshot 
 .echelon/re-v2/checkpoints/
 ```
 
-- [ ] **Step 5: Run cache, concurrency, path, and snapshot tests**
+- [x] **Step 5: Run cache, concurrency, path, and snapshot tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_cache.py tests/unit/test_re_v2_workspace_snapshot.py`
 
 Expected: deterministic rebuild, malformed recovery, concurrent lock, symlink rejection, quarantine, and exclusion cases pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .gitignore src/harness/re_v2/workspace_snapshot.py \
@@ -439,7 +439,7 @@ git commit -m "feat(re-v2): add reconstructable checkpoint cache"
 - Selection evaluates direct-parent coverage first, then computes the maximal workspace dependency closure, then orders selected imports topologically by artifact-key identity.
 - Every valid loser, incompatibility, quarantine, dependency miss, and tie-break is recorded with a controlled reason code.
 
-- [ ] **Step 1: Write failing exact-compatibility and ranking tests**
+- [x] **Step 1: Write failing exact-compatibility and ranking tests**
 
 ```python
 def test_candidate_must_equal_expected_work_item_bytes() -> None:
@@ -465,13 +465,13 @@ def test_direct_parent_precedes_stronger_sibling() -> None:
     assert bundle.selected[0].source_kind == "direct_parent"
 ```
 
-- [ ] **Step 2: Run selection tests and confirm RED**
+- [x] **Step 2: Run selection tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_selection.py`
 
 Expected: FAIL because compatibility, rank registry, and selector are absent.
 
-- [ ] **Step 3: Implement exact candidate filtering and deterministic rank extraction**
+- [x] **Step 3: Implement exact candidate filtering and deterministic rank extraction**
 
 Implement registration and winner ordering explicitly:
 
@@ -492,7 +492,7 @@ def _choose(candidates: Iterable[CheckpointManifestV1]) -> CheckpointManifestV1:
 
 Do not derive any component from timestamps, run IDs, file ordering, prose, unknown-count guesses, or observed token use. Unknown counts enter a vector only when the frozen artifact policy explicitly registers their ordering. Persist the rank-policy ID/hash and the complete comparable vector.
 
-- [ ] **Step 4: Implement dependency closure, topological ordering, and cycles**
+- [x] **Step 4: Implement dependency closure, topological ordering, and cycles**
 
 Use exact artifact key/hash edges and fixed-point pruning:
 
@@ -513,7 +513,7 @@ ordered = _topological_artifact_order(selected, direct_parent)
 
 Reject cycles rather than pruning an arbitrary node. Re-evaluate the next-ranked candidate for a key when the current candidate loses dependency closure, so the result is the maximal valid set rather than a first-choice-only set.
 
-- [ ] **Step 5: Add closure, incompatible policy, missing object, cycle, and L3 non-remapping tests**
+- [x] **Step 5: Add closure, incompatible policy, missing object, cycle, and L3 non-remapping tests**
 
 ```python
 def test_downstream_checkpoint_is_dropped_when_dependency_is_missing() -> None:
@@ -530,13 +530,13 @@ def test_l3_epoch_is_never_remapped() -> None:
     assert bundle.rejected[0].reason == "checkpoint_incompatible"
 ```
 
-- [ ] **Step 6: Run tests and verify GREEN**
+- [x] **Step 6: Run tests and verify GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_selection.py tests/unit/test_re_v2_protocol_26_model.py`
 
 Expected: all ordering, maximal-closure, precedence, and compatibility matrices pass deterministically under randomized input ordering.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_26/model.py \
@@ -562,7 +562,7 @@ git commit -m "feat(re-v2): select dependency-closed checkpoints"
 - Creation stages `v2` as a private sibling, writes the existing layer catalogs plus protocol-2.6 catalogs and all objects, validates the complete staged store, publishes `run.json` last, then atomically renames the staged root into place.
 - Existing `create_run_store` semantics for schemas 1–4 remain unchanged.
 
-- [ ] **Step 1: Write failing self-contained and manifest-last tests**
+- [x] **Step 1: Write failing self-contained and manifest-last tests**
 
 ```python
 def test_schema5_store_contains_every_selected_object_before_manifest(
@@ -594,13 +594,13 @@ def test_fault_before_manifest_publication_leaves_no_active_run(
     assert not ReV2Paths.for_run(tmp_path / protocol26_input_set.manifest.run_id).manifest.exists()
 ```
 
-- [ ] **Step 2: Run input-store tests and confirm RED**
+- [x] **Step 2: Run input-store tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_inputs.py tests/unit/test_re_v2_run_store.py`
 
 Expected: FAIL because schema-5 staged creation is absent.
 
-- [ ] **Step 3: Implement canonical catalog persistence and staged publication**
+- [x] **Step 3: Implement canonical catalog persistence and staged publication**
 
 Use the existing protocol-2.2/2.4/2.5 catalog writers based on `target_layer`, then add the two schema-5 catalogs:
 
@@ -620,7 +620,7 @@ _publish_stage_no_clobber(paths.root, run_dir / "v2")
 
 The layer writer must persist the inner manifest's referenced catalogs without publishing the inner manifest as `run.json`. Validate that all IDs and bytes in the frozen selection bundle are local before outer publication.
 
-- [ ] **Step 4: Add crash-seam, no-clobber, missing-object, and origin-deletion tests**
+- [x] **Step 4: Add crash-seam, no-clobber, missing-object, and origin-deletion tests**
 
 ```python
 @pytest.mark.parametrize(
@@ -641,13 +641,13 @@ def test_loaded_child_does_not_require_origin_or_cache(protocol26_store: Protoco
     assert loaded.checkpoint_selection == protocol26_store.selection
 ```
 
-- [ ] **Step 5: Run store tests and verify GREEN**
+- [x] **Step 5: Run store tests and verify GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_inputs.py tests/unit/test_re_v2_run_store.py`
 
 Expected: all staged-publication, retry, no-clobber, and self-containment cases pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/run_store.py \
@@ -675,7 +675,7 @@ git commit -m "feat(re-v2): publish self-contained checkpoint runs"
 - The primitive imports one certification/work-item pair, optional candidate assessment and capture/payload objects, artifact object, and artifact acceptance receipt idempotently, then verifies exact replay equality.
 - `import_parent_acceptance_closure()` keeps its public signature, result bytes, ordering, and error semantics.
 
-- [ ] **Step 1: Strengthen parent byte-compatibility and write failing checkpoint import tests**
+- [x] **Step 1: Strengthen parent byte-compatibility and write failing checkpoint import tests**
 
 ```python
 def test_parent_import_report_and_ledger_bytes_are_unchanged(parent_fixture: ParentFixture) -> None:
@@ -701,13 +701,13 @@ def test_checkpoint_import_uses_only_child_copied_objects(
     assert report.artifact_key_ids == protocol26_store.selection.selected_key_ids
 ```
 
-- [ ] **Step 2: Run adoption tests and confirm RED**
+- [x] **Step 2: Run adoption tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py tests/unit/test_re_v2_protocol_25_adoption.py tests/unit/test_re_v2_protocol_26_adoption.py`
 
 Expected: parent tests pass and checkpoint tests fail because the shared primitive/importer is absent.
 
-- [ ] **Step 3: Extract and reuse the one-artifact typed import primitive**
+- [x] **Step 3: Extract and reuse the one-artifact typed import primitive**
 
 Implement the exact operation order:
 
@@ -728,7 +728,7 @@ def import_typed_acceptance(
 
 Refactor direct-parent adoption to construct `FrozenAcceptancePackageV1` from its already validated parent state and call this primitive in the same sorted artifact-key order. Construct checkpoint packages only from the child's frozen selection and copied object store.
 
-- [ ] **Step 4: Add idempotence and conflict tests**
+- [x] **Step 4: Add idempotence and conflict tests**
 
 ```python
 def test_checkpoint_import_is_idempotent(protocol26_store: Protocol26Store) -> None:
@@ -751,13 +751,13 @@ def test_frozen_checkpoint_conflict_blocks_without_fallback(protocol26_store: Pr
         )
 ```
 
-- [ ] **Step 5: Run all adoption tests and verify GREEN**
+- [x] **Step 5: Run all adoption tests and verify GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_24_adoption.py tests/unit/test_re_v2_protocol_25_adoption.py tests/unit/test_re_v2_protocol_26_adoption.py`
 
 Expected: all pass and direct-parent ledger/report fixtures remain byte-identical.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_24/adoption.py \
@@ -783,7 +783,7 @@ git commit -m "refactor(re-v2): share typed acceptance import"
 - Canonical `checkpoint_artifact_adopted` fields are exactly `checkpoint_selection_bundle_id`, `checkpoint_manifest_id`, `adopted_artifact_authority`, `origin_run_id`, `work_item_id`, and `selection_reason`.
 - `append_missing_checkpoint_events(inputs: ValidatedProtocol26Inputs, event_store: EventStore, ledger: Protocol22Ledger, clock: Callable[[], str]) -> CheckpointAdoptionReportV1` appends in the frozen dependency order after the matching typed receipt exists and is idempotent across crashes.
 
-- [ ] **Step 1: Write failing event-schema and ordering tests**
+- [x] **Step 1: Write failing event-schema and ordering tests**
 
 ```python
 @pytest.mark.parametrize("target_layer", ["L1", "L2", "L3"])
@@ -815,13 +815,13 @@ def test_checkpoint_adoption_is_invalid_during_any_active_dispatch() -> None:
         state.consume(checkpoint_adopted_event("work-1"))
 ```
 
-- [ ] **Step 2: Run event tests and confirm RED**
+- [x] **Step 2: Run event tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_events.py`
 
 Expected: FAIL because protocol-2.6 event composition is absent.
 
-- [ ] **Step 3: Implement event delegation and checkpoint replay state**
+- [x] **Step 3: Implement event delegation and checkpoint replay state**
 
 Use composition, not copies of the layer schemas:
 
@@ -848,7 +848,7 @@ def consume(self, event: EventRecord) -> None:
 
 The shared-accepted update must follow the existing `artifact_adopted` transition semantics for each delegated replay state; expose a narrow helper rather than mutating private nested state from adoption callers.
 
-- [ ] **Step 4: Implement idempotent event append after ledger import**
+- [x] **Step 4: Implement idempotent event append after ledger import**
 
 ```python
 for selected in inputs.checkpoint_selection.selected:
@@ -865,13 +865,13 @@ for selected in inputs.checkpoint_selection.selected:
     )
 ```
 
-- [ ] **Step 5: Run event and adoption tests**
+- [x] **Step 5: Run event and adoption tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_events.py tests/unit/test_re_v2_protocol_26_adoption.py`
 
 Expected: all delegated-layer, pre-dispatch, duplicate, pause/terminal, and idempotence cases pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_26/events.py \
@@ -900,7 +900,7 @@ git commit -m "feat(re-v2): authenticate checkpoint adoption events"
 - Shared recovery authenticates `run_created` against `active_manifest.run_manifest_id`, but budget, planning, graph, and controller execution consume `layer_manifest` and existing layer inputs.
 - Protocol-2.5 semantic recovery uses the same authority result and still requires `Protocol25RunContext`; no controller API changes.
 
-- [ ] **Step 1: Write failing authority and old-run non-regression tests**
+- [x] **Step 1: Write failing authority and old-run non-regression tests**
 
 ```python
 @pytest.mark.parametrize("target_layer", ["L1", "L2", "L3"])
@@ -926,13 +926,13 @@ def test_schema2_recovery_result_is_unchanged(protocol22_context) -> None:
     assert recover_protocol_22_run(protocol22_context) == protocol22_context.expected_recovery
 ```
 
-- [ ] **Step 2: Run authority and recovery tests and confirm RED**
+- [x] **Step 2: Run authority and recovery tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_authority.py tests/unit/test_re_v2_protocol_22_recovery.py tests/integration/test_re_v2_protocol_24_recovery.py tests/integration/test_re_v2_protocol_25_recovery.py`
 
 Expected: schema-5 cases fail at immutable manifest validation; old recovery tests pass.
 
-- [ ] **Step 3: Implement the additive authority resolver**
+- [x] **Step 3: Implement the additive authority resolver**
 
 Use this result instead of teaching controllers about schema 5:
 
@@ -960,7 +960,7 @@ def resolve_run_authority(context: Protocol22RunContext) -> ResolvedRunAuthority
 
 Keep the legacy branch's loaders, errors, graph comparisons, return data, and mutation order byte-for-byte equivalent. Change recovery internals to read `authority.layer_manifest.initial_budget_policy` and `authority.active_manifest.created_at`, and validate `run_created` with `authority.run_manifest_id`.
 
-- [ ] **Step 4: Add protocol-2.6 event protocol to the existing supported-protocol guard**
+- [x] **Step 4: Add protocol-2.6 event protocol to the existing supported-protocol guard**
 
 ```python
 if isinstance(manifest, RunManifestV5):
@@ -971,13 +971,13 @@ if isinstance(manifest, RunManifestV5):
 
 Define value equality for `_Protocol26Events` by target layer or return cached singleton instances so context validation is deterministic.
 
-- [ ] **Step 5: Run old and new recovery tests**
+- [x] **Step 5: Run old and new recovery tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_recovery.py tests/integration/test_re_v2_protocol_24_recovery.py tests/integration/test_re_v2_protocol_25_recovery.py tests/unit/test_re_v2_protocol_26_authority.py`
 
 Expected: all pass; schemas 2–4 produce their previous events/results and schema 5 authenticates the outer identity while using the old layer graph.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_22/recovery.py \
@@ -1012,7 +1012,7 @@ git commit -m "feat(re-v2): bridge checkpoint authority into layer recovery"
 - `_activate_re_v2_run()` is called only after schema-5 staged publication and successful initialization.
 - Exact frozen-import conflicts block the child without calling the provider; ordinary discovery misses leave work ready for normal generation.
 
-- [ ] **Step 1: Write failing zero-dispatch, partial-adoption, and conflict tests**
+- [x] **Step 1: Write failing zero-dispatch, partial-adoption, and conflict tests**
 
 ```python
 def test_fully_adopted_l1_run_completes_without_provider_call(
@@ -1053,13 +1053,13 @@ def test_adoption_consumes_no_execution_or_semantic_budget(protocol26_context) -
     assert after.semantic_rounds == before.semantic_rounds
 ```
 
-- [ ] **Step 2: Run the integration tests and confirm RED**
+- [x] **Step 2: Run the integration tests and confirm RED**
 
 Run: `pytest -q tests/integration/test_re_v2_protocol_26_recovery.py tests/unit/test_cli_re_v2_protocol_26.py`
 
 Expected: FAIL because creation and initialization are not routed.
 
-- [ ] **Step 3: Implement schema-5 preparation by composing current builders**
+- [x] **Step 3: Implement schema-5 preparation by composing current builders**
 
 Use existing preparation results as immutable input, not copied policy logic:
 
@@ -1082,7 +1082,7 @@ return _build_protocol_26_creation(layer_creation, contract, bundle, validated_p
 
 Extract `_prepare_re_v24_layer_contract` from the current `_prepare_re_v24_creation` body and the corresponding pure L3 preparation seam from the current protocol-2.5 lifecycle helper. Their existing schema-3/schema-4 wrappers continue calling those seams with the old validated-parent types and must retain exact output. The protocol-2.6 parent adapter exposes the same accepted-authority inputs from its self-contained child store and enforces the current completed-parent/complete-closure gate; partial schema-5 authority remains a workspace-checkpoint candidate, not a direct parent. Do not duplicate L2/L3 policy or graph construction.
 
-- [ ] **Step 4: Implement idempotent initialization before normal recovery**
+- [x] **Step 4: Implement idempotent initialization before normal recovery**
 
 ```python
 with protocol_22_run_lock(context.paths):
@@ -1104,7 +1104,7 @@ return report
 
 After initialization, pass the existing `Protocol22RunContext` or `Protocol25RunContext` to its existing controller. Do not wrap provider execution or intercept provider results.
 
-- [ ] **Step 5: Add crash recovery at every import boundary**
+- [x] **Step 5: Add crash recovery at every import boundary**
 
 ```python
 @pytest.mark.parametrize(
@@ -1126,13 +1126,13 @@ def test_schema5_parent_is_valid_direct_parent(protocol26_parent_workspace, to_l
     assert child.workspace_checkpoint_count_for_parent_keys == 0
 ```
 
-- [ ] **Step 6: Run recovery and CLI unit tests**
+- [x] **Step 6: Run recovery and CLI unit tests**
 
 Run: `pytest -q tests/integration/test_re_v2_protocol_26_recovery.py tests/unit/test_cli_re_v2_protocol_26.py`
 
 Expected: full adoption is zero-call, partial adoption calls only missing work, fault retries are exact, and post-freeze conflicts do not dispatch.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/echelon/cli.py \
@@ -1162,7 +1162,7 @@ git commit -m "feat(re-v2): initialize checkpoint runs before dispatch"
 - Direct-parent precedence is frozen before workspace candidates and remains visible as existing `artifact_adopted` events; sibling reuse uses `checkpoint_artifact_adopted`.
 - No new user flag is added. Adoption is automatic.
 
-- [ ] **Step 1: Write failing CLI routing and old-run continuation tests**
+- [x] **Step 1: Write failing CLI routing and old-run continuation tests**
 
 ```python
 def test_new_v2_l1_run_uses_protocol_2_6(cli_workspace) -> None:
@@ -1186,13 +1186,13 @@ def test_existing_run_continues_with_recorded_protocol(cli_workspace, schema: in
     assert run.manifest_bytes == cli_workspace.frozen_manifest_bytes(schema)
 ```
 
-- [ ] **Step 2: Run CLI tests and confirm RED**
+- [x] **Step 2: Run CLI tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_cli_re_v2_protocol_22.py tests/unit/test_cli_re_v2_protocol_24.py tests/unit/test_cli_re_v2_protocol_25.py tests/unit/test_cli_re_v2_protocol_26.py tests/integration/test_re_v2_protocol_26_cli.py`
 
 Expected: new-run schema expectations fail; old-run cases pass.
 
-- [ ] **Step 3: Route creation, context, live execution, and continuation by pinned manifest**
+- [x] **Step 3: Route creation, context, live execution, and continuation by pinned manifest**
 
 Add exact dispatch without changing CLI syntax:
 
@@ -1213,7 +1213,7 @@ For schema 5, `_run_re_v2_live()` chooses the existing controller from `manifest
 
 After the clean-source check but before checkpoint-cache reconstruction, run the existing exact-request lookup over both legacy manifests and schema-5 inner layer contracts. If an exact terminal schema-5 child exists, return it immediately without rebuilding the cache, appending events, or dispatching; if an exact paused child exists, retain the existing continuation/resource-authorization semantics.
 
-- [ ] **Step 4: Enforce clean source preflight before cache discovery**
+- [x] **Step 4: Enforce clean source preflight before cache discovery**
 
 ```python
 source_plan = plan_clean_workspace_sources(project_root, workspace_manifest.sources)
@@ -1223,7 +1223,7 @@ creation = _prepare_re_v26_creation(project_root, target_layer=target_layer, req
 
 Map `ReV2WorkspaceSourceError` to the existing message: `Commit, stash (including untracked files), or revert the source changes, then retry.` Confirm no cache directory or run directory is created on dirty-source failure.
 
-- [ ] **Step 5: Add direct-parent precedence and exact-reuse integration cases**
+- [x] **Step 5: Add direct-parent precedence and exact-reuse integration cases**
 
 ```python
 def test_direct_parent_event_wins_over_stronger_workspace_candidate(layered_workspace) -> None:
@@ -1241,13 +1241,13 @@ def test_exact_terminal_request_adds_no_events_or_dispatches(layered_workspace) 
     assert reused.snapshot_activity() == before
 ```
 
-- [ ] **Step 6: Run full CLI routing matrix**
+- [x] **Step 6: Run full CLI routing matrix**
 
 Run: `pytest -q tests/unit/test_cli_re_v2_protocol_22.py tests/unit/test_cli_re_v2_protocol_24.py tests/unit/test_cli_re_v2_protocol_25.py tests/unit/test_cli_re_v2_protocol_26.py tests/integration/test_re_v2_protocol_26_cli.py`
 
 Expected: new L1/L2/L3 runs pin 2.6, old runs retain recorded routing, source dirt blocks before discovery, parent precedence is exact, and terminal reuse is no-call.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/echelon/cli.py tests/support/re_v2_layered_workspace.py \
@@ -1280,7 +1280,7 @@ git commit -m "feat(re-v2): adopt checkpoints in new layered runs"
 - Avoided resources come from existing conservative reservation calculations and are labeled `avoided_*_reservation`, never observed usage.
 - `echelon re status --json` returns the same data as human status without reading origins or cache.
 
-- [ ] **Step 1: Write failing JSON and banner tests**
+- [x] **Step 1: Write failing JSON and banner tests**
 
 ```python
 def test_status_reports_checkpoint_origins_and_avoided_reservations(protocol26_status_fixture) -> None:
@@ -1299,13 +1299,13 @@ def test_banner_does_not_overclaim_partial_authority(protocol26_status_fixture) 
         assert forbidden not in banner
 ```
 
-- [ ] **Step 2: Run status tests and confirm RED**
+- [x] **Step 2: Run status tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_26_status.py tests/unit/test_cli_re_v2_protocol_26.py`
 
 Expected: FAIL because status decoration is absent.
 
-- [ ] **Step 3: Implement status entirely from frozen child authority**
+- [x] **Step 3: Implement status entirely from frozen child authority**
 
 ```python
 def decorate_protocol_26_status(base, manifest, inputs, events):
@@ -1320,7 +1320,7 @@ def decorate_protocol_26_status(base, manifest, inputs, events):
 
 Resolve the active schema-5 manifest once, call the pure status seam selected by `target_layer` with the inner manifest/input/graph and schema-5 event protocol, then decorate the resulting document. Use selection rejection/quarantine records frozen in the child, not the current cache. Group deterministically by source/domain/layer/artifact kind and redact raw provider output/guidance.
 
-- [ ] **Step 4: Add cache-deleted, origin-deleted, zero-dispatch, and partial-generation cases**
+- [x] **Step 4: Add cache-deleted, origin-deleted, zero-dispatch, and partial-generation cases**
 
 ```python
 def test_status_survives_deleted_cache_and_origin(protocol26_status_fixture) -> None:
@@ -1333,13 +1333,13 @@ def test_zero_dispatch_completion_is_explicit(protocol26_status_fixture) -> None
     assert status["checkpoints"]["zero_dispatch_reuse"] is True
 ```
 
-- [ ] **Step 5: Run status and legacy status tests**
+- [x] **Step 5: Run status and legacy status tests**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_22_status.py tests/unit/test_re_v2_protocol_24_status.py tests/unit/test_re_v2_protocol_25_status.py tests/unit/test_re_v2_protocol_26_status.py tests/unit/test_cli_re_v2_protocol_26.py`
 
 Expected: all pass and old human/JSON status fixtures remain exact.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/status.py src/echelon/cli.py \
@@ -1370,7 +1370,7 @@ git commit -m "feat(re-v2): report checkpoint adoption and savings"
 - Proves schemas 1–4 and v1 routing are unchanged and provider execution remains the existing Prosaic/shared-provider path.
 - Marks EGR-166 fixed only after a real Codex sibling-run pilot demonstrates automatic partial adoption and zero calls for adopted work.
 
-- [ ] **Step 1: Add the complete fault and compatibility matrices**
+- [x] **Step 1: Add the complete fault and compatibility matrices**
 
 ```python
 @pytest.mark.parametrize("origin_state", ["active", "paused", "blocked", "failed_unrelated", "complete"])
@@ -1392,7 +1392,7 @@ def test_protocol_2_2_through_2_5_fixtures_remain_exact(frozen_protocol_fixtures
         assert fixture.continue_without_changes().activity == fixture.expected_activity
 ```
 
-- [ ] **Step 2: Run the offline protocol-2.6 and compatibility suite**
+- [x] **Step 2: Run the offline protocol-2.6 and compatibility suite**
 
 Run:
 
@@ -1416,7 +1416,7 @@ pytest -q \
 
 Expected: all pass without network or provider access.
 
-- [ ] **Step 3: Run the existing L0-through-L3 regression matrix**
+- [x] **Step 3: Run the existing L0-through-L3 regression matrix**
 
 Run:
 
@@ -1433,7 +1433,7 @@ pytest -q \
 
 Expected: all pass; provider/runtime authority digests and legacy canonical fixture bytes remain unchanged.
 
-- [ ] **Step 4: Install the checkout and create a clean real Codex pilot workspace**
+- [x] **Step 4: Install the checkout and create a clean real Codex pilot workspace**
 
 Run:
 
@@ -1444,7 +1444,7 @@ git status --short
 
 Expected: installation succeeds and the Echelon repository is clean. In a temporary clean Git workspace configured with the normal Codex provider and Prosaic metadata, create an origin that accepts one domain and pauses before an independent sibling.
 
-- [ ] **Step 5: Execute and verify the real sibling-run pilot**
+- [x] **Step 5: Execute and verify the real sibling-run pilot**
 
 Run from the pilot workspace:
 
@@ -1455,7 +1455,7 @@ echelon re status --json
 
 Expected: the sibling schema-5 run automatically adopts the origin domain and exact dependency closure; status reports zero provider calls for adopted work and normal calls only for missing work. Then move the origin and `.echelon/re-v2/checkpoints/` aside, continue the child, repeat the exact terminal request, and verify no new events or provider invocations.
 
-- [ ] **Step 6: Record the exact pilot evidence and close EGR-166**
+- [x] **Step 6: Record the exact pilot evidence and close EGR-166**
 
 Update the design status to `Implemented`, add a `[Unreleased]` changelog entry naming EGR-166, and update the register row with exact source/test evidence and pilot run IDs. Use wording with this factual shape:
 
@@ -1465,7 +1465,7 @@ Update the design status to `Implemented`, add a `[Unreleased]` changelog entry 
 
 Copy the observed integer from `echelon re status --json` into the final register prose and include exact verification commands/results in the review note; do not estimate or invent telemetry.
 
-- [ ] **Step 7: Run the final documentation and focused gates**
+- [x] **Step 7: Run the final documentation and focused gates**
 
 Run:
 
@@ -1477,7 +1477,7 @@ git status --short
 
 Expected: all pass; diff check is clean; only the intended implementation/doc changes are present.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add CHANGELOG.md docs/findings/echelon-grounded-review-register.md \

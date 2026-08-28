@@ -1,7 +1,7 @@
 # RE v2 Adoptable Certified Checkpoints Design
 
 **Date:** 2026-08-28  
-**Status:** Approved design, pending implementation plan  
+**Status:** Implemented
 **Owner:** EGR-166  
 **Depends on:** EGR-164 and EGR-165  
 **Precedes:** EGR-168 workspace synthesis and EGR-169 L4 exhaustive depth
@@ -272,6 +272,14 @@ registers a deterministic rank extractor and rank-policy hash.
   certification exposes a comparable policy-defined vector.
 - Equal rank selects the lexicographically smallest artifact hash.
 
+Selection first applies those rules per exact artifact key. If independently
+ranked winners from different origins form a smaller closure than an
+authenticated origin-coherent alternative, the larger dependency-closed set
+wins. Equal-size closures retain the per-key ranked result. A lower-ranked
+dependency selected only to unlock the larger exact closure is reported as
+`checkpoint_dependency_closure`; this bounded fallback evaluates one candidate
+closure per origin and does not search arbitrary combinations.
+
 Timestamps, run IDs, directory order, and discovery order never affect the
 winner. All valid alternatives and the selection reason remain visible in
 status telemetry.
@@ -472,7 +480,33 @@ Use a clean Git workspace and the normal Codex provider through Prosaic:
 5. Route new opt-in v2 baseline and L2/L3 deepening runs to protocol 2.6.
 6. Run compatibility, fault-injection, and real Codex gates.
 7. Mark EGR-166 fixed only after the real sibling-run pilot demonstrates
-   automatic partial adoption and zero-call savings.
+   automatic adoption and zero-call savings.
+
+## Implementation evidence
+
+Protocol 2.6 is implemented for new L1, L2, and L3 runs. The final offline
+compatibility sweep passed 861 tests with 3 expected skips before the live
+pilot; the protocol-2.6 focused gate and final repository gate are recorded in
+the EGR register.
+
+The clean installed Codex pilot used source snapshot
+`sha256:7a4cd7a63f3fa58f3add53262ff84f99dc5035d8e6e33d12f8428815798c1cf1`.
+Origin runs `re-20260828-084826-825013` and
+`re-20260828-085101-370246` exposed a real selection defect: schema-5 origins
+were initially not reconstructable, and independent tie-breaking later mixed
+origins into an 11-of-14 closure. After correcting both boundaries, sibling
+`re-20260828-090755-380569` completed in 4.14 seconds with 14 adopted
+checkpoints, 0 generated artifacts, 0 charged tokens, and 0 charged active
+milliseconds. Its status reports 14 avoided dispatches and a conservative
+786,432-token avoided reservation.
+
+All prior origins and the disposable cache were then moved aside. Continuing
+the terminal child took 2.58 seconds and left the event-chain SHA-256 unchanged
+at `90173e69ebd3f9f19d813092a25c8a2e782f019a54de5562ab34517cd351764b`.
+With only that self-contained adopted child available, sibling
+`re-20260828-090831-459009` rebuilt the cache and again completed with 14
+adopted, 0 generated, and no provider charge in 4.16 seconds. The declared
+source Git repository remained clean throughout.
 
 Default-engine cutover remains outside this design.
 

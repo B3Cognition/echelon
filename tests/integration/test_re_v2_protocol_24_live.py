@@ -163,9 +163,9 @@ def test_installed_codex_completes_and_reuses_clean_l2_pilot(tmp_path: Path) -> 
     from harness.re_v2.canonical import content_digest
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
-    from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
-    from harness.re_v2.protocol_24.model import RunManifestV3
-    from harness.re_v2.protocol_24.status import protocol_24_status_document
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "live-codex")
@@ -225,19 +225,20 @@ def test_installed_codex_completes_and_reuses_clean_l2_pilot(tmp_path: Path) -> 
     child = next(
         path
         for path in fixture.run_directories()
-        if isinstance(load_run_manifest(path), RunManifestV3)
+        if isinstance(load_run_manifest(path), RunManifestV5)
+        and load_run_manifest(path).target_layer == "L2"
     )
     manifest = load_run_manifest(child)
     paths = ReV2Paths.for_run(child)
     objects = ObjectStore(paths.objects)
-    inputs = load_protocol_24_inputs(paths, manifest)
+    inputs = load_protocol_26_inputs(paths, manifest).layer_inputs
     renderer = inputs.executor_contract.entry_for(
         "compact-deepening"
     ).request_renderer
     assert renderer is not None
     assert renderer.agent_contract_hash == content_digest(deepener_bytes)
     assert objects.read_blob(renderer.agent_contract_hash) == deepener_bytes
-    status = protocol_24_status_document(child)
+    status = protocol_26_status_document(child)
     assert status["status"] == "complete"
     observations = status["telemetry"]["provider_observations"]
     assert len(observations) == 1
@@ -252,20 +253,21 @@ def test_installed_codex_completes_and_reuses_clean_l2_pilot(tmp_path: Path) -> 
 
 def _provider_dispatch_count(workspace: Path) -> int:
     from harness.re_v2.events import EventStore
-    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
-    from harness.re_v2.protocol_24.model import RunManifestV3
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     total = 0
     for run_dir in workspace.joinpath("runs").glob("re-*"):
-        if not isinstance(load_run_manifest(run_dir), RunManifestV3):
+        manifest = load_run_manifest(run_dir)
+        if not isinstance(manifest, RunManifestV5) or manifest.target_layer != "L2":
             continue
         total += sum(
             item.type == "dispatch_observed"
             and item.payload["raw_result_contract_status"] != "not_applicable"
             for item in EventStore(
                 ReV2Paths.for_run(run_dir),
-                protocol=PROTOCOL_24_EVENTS,
+                protocol=protocol_26_events_for("L2"),
             ).replay()
         )
     return total

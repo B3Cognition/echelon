@@ -162,14 +162,15 @@ def test_installed_codex_completes_clean_l0_l1_pilot(tmp_path: Path) -> None:
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
-    from harness.re_v2.protocol_22.events import PROTOCOL_22_EVENTS
     from harness.re_v2.protocol_22.execution import CandidateInventoryV1
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.model import PersistedCandidateV2
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.protocol_22.schema import load_canonical_object
-    from harness.re_v2.protocol_22.status import protocol_22_status_document
-    from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
     fixture = build_and_commit_fixture(tmp_path, "live-codex")
@@ -210,7 +211,8 @@ def test_installed_codex_completes_clean_l0_l1_pilot(tmp_path: Path) -> None:
     manifest = load_run_manifest(run_dir)
     paths = ReV2Paths.for_run(run_dir)
     objects = ObjectStore(paths.objects)
-    inputs = load_protocol_22_inputs(paths, manifest)
+    assert isinstance(manifest, RunManifestV5)
+    inputs = load_protocol_26_inputs(paths, manifest).layer_inputs
     renderer = inputs.executor_contract.entry_for(
         "compact-baseline"
     ).request_renderer
@@ -218,28 +220,31 @@ def test_installed_codex_completes_clean_l0_l1_pilot(tmp_path: Path) -> None:
     assert renderer.agent_contract_hash == content_digest(inspected_agent_bytes)
     assert objects.read_blob(renderer.agent_contract_hash) == inspected_agent_bytes
     ledger = Protocol22Ledger(paths, objects).replay()
-    status = protocol_22_status_document(run_dir)
-    assert manifest.engine_protocol_version == "2.3"
+    status = protocol_26_status_document(run_dir)
+    assert manifest.engine_protocol_version == "2.6"
+    assert manifest.target_layer == "L1"
     assert status["banner"] == "L1 COMPACT BASELINE COMPLETE"
     assert status["telemetry"]["provider_observations"] == [
         {
-            "dispatches": 2,
+            "dispatches": 3,
             "model": "gpt-5.6-sol",
             "provider": "codex",
         }
     ]
     provider_observations = [
         event
-        for event in EventStore(paths, protocol=PROTOCOL_22_EVENTS).replay()
+        for event in EventStore(
+            paths, protocol=protocol_26_events_for("L1")
+        ).replay()
         if event.type == "dispatch_observed"
         and event.payload["raw_result_contract_status"] != "not_applicable"
     ]
-    assert len(provider_observations) == 2
+    assert len(provider_observations) == 3
     assert all(
         event.payload["raw_result_contract_status"] == "valid"
         for event in provider_observations
     )
-    assert len(ledger.candidate_assessments) == 2
+    assert len(ledger.candidate_assessments) == 3
     for assessment in ledger.candidate_assessments.values():
         candidate = load_canonical_object(
             objects.read_blob(assessment.candidate_id),
