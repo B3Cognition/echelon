@@ -367,6 +367,7 @@ class AuthorizedEvidenceRangeV1:
     end_line: int
     source_blob_hash: str
     file_record: FileRecordV1
+    text_lf: str = ""
 
     def __post_init__(self) -> None:
         try:
@@ -403,6 +404,12 @@ class AuthorizedEvidenceRangeV1:
             raise Protocol25RuntimeError(
                 "authorized evidence file record does not bind the range"
             )
+        if not isinstance(self.text_lf, str) or "\x00" in self.text_lf:
+            raise Protocol25RuntimeError("authorized evidence text is invalid")
+        try:
+            self.text_lf.encode("utf-8", errors="strict")
+        except UnicodeEncodeError as exc:
+            raise Protocol25RuntimeError("authorized evidence text is invalid") from exc
         object.__setattr__(self, "aliases", aliases)
 
     @property
@@ -420,6 +427,7 @@ class AuthorizedEvidenceRangeV1:
             "end_line": self.end_line,
             "source_blob_hash": self.source_blob_hash,
             "file_record": self.file_record.to_json_dict(),
+            "text_lf": self.text_lf,
         }
 
     @classmethod
@@ -435,6 +443,7 @@ class AuthorizedEvidenceRangeV1:
                 "end_line",
                 "source_blob_hash",
                 "file_record",
+                "text_lf",
             }
         )
         try:
@@ -454,6 +463,7 @@ class AuthorizedEvidenceRangeV1:
                 end_line=raw["end_line"],
                 source_blob_hash=raw["source_blob_hash"],
                 file_record=FileRecordV1.from_json_dict(raw["file_record"]),
+                text_lf=raw["text_lf"],
             )
         except Protocol22SchemaError as exc:
             raise Protocol25RuntimeError(str(exc)) from exc
@@ -527,6 +537,8 @@ class SemanticContextV1:
     active_sibling_authority_hashes: tuple[str, ...]
     response_schema_hash: str
     max_canonical_json_bytes: int
+    audit_epoch_id: str | None = None
+    semantic_round: int | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or self.mode not in _MODES:
@@ -535,6 +547,26 @@ class SemanticContextV1:
             digest_value(self.response_schema_hash, "semantic context response schema")
         except Protocol22SchemaError as exc:
             raise Protocol25RuntimeError(str(exc)) from exc
+        if self.audit_epoch_id is not None:
+            try:
+                digest_value(self.audit_epoch_id, "semantic context audit epoch")
+            except Protocol22SchemaError as exc:
+                raise Protocol25RuntimeError(str(exc)) from exc
+        if self.semantic_round is not None and (
+            not isinstance(self.semantic_round, int)
+            or isinstance(self.semantic_round, bool)
+            or not 1 <= self.semantic_round <= 3
+        ):
+            raise Protocol25RuntimeError("semantic context round must be between 1 and 3")
+        if self.mode == "AUDIT_EPOCH_TARGET":
+            if self.audit_epoch_id is not None or self.semantic_round is not None:
+                raise Protocol25RuntimeError(
+                    "pre-freeze audit context cannot bind an epoch or round"
+                )
+        elif self.audit_epoch_id is None or self.semantic_round is None:
+            raise Protocol25RuntimeError(
+                "post-freeze semantic context requires an exact epoch and round"
+            )
         if not isinstance(self.audit_target, AuditTargetV1) or not isinstance(
             self.vocabulary, FindingAuthorityVocabularyV1
         ):
@@ -613,19 +645,23 @@ class SemanticContextV1:
             raise Protocol25RuntimeError(
                 "semantic context lower authority is not the exact audit-target closure"
             )
-        expected_object_hashes = tuple(
-            sorted(
-                {
-                    *self.lower_authority_hashes,
-                    *self.overlay_hashes,
-                    *self.target_assessment_hashes,
-                    *self.active_sibling_authority_hashes,
-                }
-            )
-        )
-        if object_hashes != expected_object_hashes:
+        supplemental_hashes = {
+            *self.overlay_hashes,
+            *self.target_assessment_hashes,
+            *self.active_sibling_authority_hashes,
+        }
+        provider_lower_hashes = set(object_hashes) - supplemental_hashes
+        audited_hashes = {
+            item.artifact_hash for item in self.audit_target.audited_artifacts
+        }
+        if (
+            not audited_hashes.issubset(provider_lower_hashes)
+            or not provider_lower_hashes.issubset(self.lower_authority_hashes)
+            or set(object_hashes) - set(self.lower_authority_hashes)
+            != supplemental_hashes
+        ):
             raise Protocol25RuntimeError(
-                "semantic context authority bytes do not equal declared authority"
+                "semantic context provider objects do not form a bounded authority projection"
             )
         if not isinstance(self.max_canonical_json_bytes, int) or self.max_canonical_json_bytes <= 0:
             raise Protocol25RuntimeError("semantic context byte ceiling is invalid")
@@ -653,7 +689,11 @@ class SemanticContextV1:
             ],
             "lower_authority_hashes": list(self.lower_authority_hashes),
             "unresolved_findings": [
-                item.to_json_dict() for item in self.unresolved_findings
+                {
+                    "finding_key_id": item.finding_key_id,
+                    "finding": item.to_json_dict(),
+                }
+                for item in self.unresolved_findings
             ],
             "overlay_hashes": list(self.overlay_hashes),
             "target_assessment_hashes": list(self.target_assessment_hashes),
@@ -662,6 +702,8 @@ class SemanticContextV1:
             ),
             "response_schema_hash": self.response_schema_hash,
             "max_canonical_json_bytes": self.max_canonical_json_bytes,
+            "audit_epoch_id": self.audit_epoch_id,
+            "semantic_round": self.semantic_round,
         }
 
     @classmethod
@@ -681,6 +723,8 @@ class SemanticContextV1:
                 "active_sibling_authority_hashes",
                 "response_schema_hash",
                 "max_canonical_json_bytes",
+                "audit_epoch_id",
+                "semantic_round",
             }
         )
         try:
@@ -698,6 +742,20 @@ class SemanticContextV1:
                 raise Protocol22SchemaError(
                     "SemanticContextV1 collection fields must be arrays"
                 )
+
+            def frozen_finding(value: object) -> SemanticFindingV1:
+                entry = exact_object(
+                    value,
+                    frozenset({"finding_key_id", "finding"}),
+                    "SemanticContextV1 unresolved finding",
+                )
+                finding = SemanticFindingV1.from_json_dict(entry["finding"])
+                if entry["finding_key_id"] != finding.finding_key_id:
+                    raise Protocol22SchemaError(
+                        "semantic context frozen finding ID is not exact"
+                    )
+                return finding
+
             return cls(
                 schema_version=raw["schema_version"],
                 mode=raw["mode"],
@@ -715,7 +773,7 @@ class SemanticContextV1:
                 ),
                 lower_authority_hashes=tuple(raw["lower_authority_hashes"]),
                 unresolved_findings=tuple(
-                    SemanticFindingV1.from_json_dict(item)
+                    frozen_finding(item)
                     for item in raw["unresolved_findings"]
                 ),
                 overlay_hashes=tuple(raw["overlay_hashes"]),
@@ -725,6 +783,8 @@ class SemanticContextV1:
                 ),
                 response_schema_hash=raw["response_schema_hash"],
                 max_canonical_json_bytes=raw["max_canonical_json_bytes"],
+                audit_epoch_id=raw["audit_epoch_id"],
+                semantic_round=raw["semantic_round"],
             )
         except Protocol22SchemaError as exc:
             raise Protocol25RuntimeError(str(exc)) from exc
@@ -1011,15 +1071,33 @@ class Protocol25DeterministicRuntime:
                     subject_refs.add(claim_id)
                     claim_anchor_ids.add(claim_id)
 
+        cited_evidence_ids = {
+            reference.evidence_authority_id
+            for _authority, artifact in audited
+            for surface in artifact.surfaces.values()
+            for claim in surface.items
+            for reference in claim.evidence
+        }
         excerpts = {}
         for context in contexts:
-            for excerpt in context.evidence:
+            context_excerpts = tuple(context.evidence) + tuple(
+                excerpt
+                for projection in context.domain_projections
+                for excerpt in projection.evidence
+            )
+            for excerpt in context_excerpts:
+                if excerpt.evidence_authority_id not in cited_evidence_ids:
+                    continue
                 existing = excerpts.get(excerpt.evidence_authority_id)
                 if existing is not None and existing != excerpt:
                     raise Protocol25RuntimeError(
                         "audit context evidence authority is ambiguous"
                     )
                 excerpts[excerpt.evidence_authority_id] = excerpt
+        if set(excerpts) != cited_evidence_ids:
+            raise Protocol25RuntimeError(
+                "audited L2 claims cite evidence outside their context authority"
+            )
 
         authorized_evidence = []
         evidence_anchors = []
@@ -1042,6 +1120,7 @@ class Protocol25DeterministicRuntime:
                     end_line=excerpt.end_line,
                     source_blob_hash=excerpt.source_blob_hash,
                     file_record=record,
+                    text_lf=excerpt.text_lf,
                 )
             )
             evidence_anchors.append(
@@ -1071,7 +1150,10 @@ class Protocol25DeterministicRuntime:
                     key=lambda item: item.canonical_anchor_id,
                 )
             ),
-            authority_payloads=authority_payloads,
+            authority_payloads={
+                authority.artifact_hash: authority_payloads[authority.artifact_hash]
+                for authority in audit_target.audited_artifacts
+            },
             lower_authority_hashes=expected_hashes,
             unresolved_findings=(),
             overlay_hashes=(),
@@ -1092,6 +1174,8 @@ class Protocol25DeterministicRuntime:
         overlay_hashes: tuple[str, ...],
         target_assessment_hashes: tuple[str, ...],
         active_sibling_authority_hashes: tuple[str, ...],
+        audit_epoch_id: str | None = None,
+        semantic_round: int | None = None,
         ) -> SemanticContextV1:
         if not isinstance(authority_payloads, Mapping):
             raise Protocol25RuntimeError("semantic context authority payloads are invalid")
@@ -1128,6 +1212,24 @@ class Protocol25DeterministicRuntime:
                 raise Protocol25RuntimeError(
                     "authorized evidence blob differs from pinned snapshot"
                 )
+            if item.text_lf:
+                try:
+                    normalized = payload.decode("utf-8", errors="strict").replace(
+                        "\r\n", "\n"
+                    )
+                except UnicodeDecodeError as exc:
+                    raise Protocol25RuntimeError(
+                        "authorized evidence is not strict UTF-8"
+                    ) from exc
+                selected = "".join(
+                    normalized.splitlines(keepends=True)[
+                        item.start_line - 1 : item.end_line
+                    ]
+                )
+                if selected != item.text_lf:
+                    raise Protocol25RuntimeError(
+                        "authorized evidence text differs from pinned snapshot"
+                    )
         kind_by_mode = {
             "AUDIT_EPOCH_TARGET": "semantic-audit-findings",
             "SEMANTIC_RESOLUTION": "semantic-resolution-overlay",
@@ -1170,6 +1272,8 @@ class Protocol25DeterministicRuntime:
             active_sibling_authority_hashes=active_sibling_authority_hashes,
             response_schema_hash=response_schema_hash,
             max_canonical_json_bytes=policy.max_context_bundle_bytes,
+            audit_epoch_id=audit_epoch_id,
+            semantic_round=semantic_round,
         )
 
     def certify_audit(
@@ -1223,6 +1327,13 @@ class Protocol25DeterministicRuntime:
         guidance_hash: str | None,
     ) -> SemanticCertificationResultV1:
         self._require_context(context, "SEMANTIC_RESOLUTION")
+        if (
+            context.audit_epoch_id != epoch.identity
+            or context.semantic_round != semantic_round
+        ):
+            raise Protocol25RuntimeError(
+                "resolution context does not bind the exact epoch and round"
+            )
         raw, normalized_payload = self._candidate_payload(
             candidate, "resolution.json", "semantic-resolution-overlay"
         )
@@ -1305,6 +1416,13 @@ class Protocol25DeterministicRuntime:
         overlay: SemanticResolutionOverlayV1,
     ) -> SemanticCertificationResultV1:
         self._require_context(context, "CLOSURE_RECHECK")
+        if (
+            context.audit_epoch_id != epoch.identity
+            or context.semantic_round != overlay.semantic_round
+        ):
+            raise Protocol25RuntimeError(
+                "closure context does not bind the exact epoch and round"
+            )
         raw, normalized_payload = self._candidate_payload(
             candidate, "closure.json", "semantic-closure-assessment"
         )
@@ -1632,13 +1750,17 @@ class Protocol25DeterministicRuntime:
         deferred_observations: tuple[DeferredObservationV1, ...],
     ) -> AuditClosureRootV1:
         receipts = tuple(sorted(latest_receipts, key=lambda item: item.finding_key_id))
+        receipts_by_finding = {item.finding_key_id: item for item in receipts}
         return AuditClosureRootV1(
             schema_version=1,
             audit_epoch_id=epoch.identity,
             frozen_finding_ids=epoch.finding_key_ids,
             latest_closure_receipts=receipts,
             unresolved_finding_ids=tuple(
-                item.finding_key_id for item in receipts if item.verdict == "open"
+                finding_id
+                for finding_id in epoch.finding_key_ids
+                if finding_id not in receipts_by_finding
+                or receipts_by_finding[finding_id].verdict == "open"
             ),
             target_rounds=target_rounds,
             plateau_counts=plateau_counts,

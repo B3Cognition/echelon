@@ -8,7 +8,7 @@ import time
 from typing import Callable
 
 from harness.echelon_result_schema import EchelonResultContract
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.squad_provider import SquadCliProvider
 
 from .artifacts import ContextBundleV1
@@ -18,7 +18,7 @@ from .executors import (
     SHARED_PROVIDER_USAGE_NORMALIZER_ID,
     ExecutorContractEntryV1,
 )
-from .model import ExecutionInputV1
+from .model import ExecutionInputV1, RetryDiagnosticsV1
 from .provider import (
     DispatchReservationV1,
     Protocol22ProviderError,
@@ -46,6 +46,7 @@ def calculate_shared_cli_dispatch_reservation(
     context_bytes: bytes,
     response_schema_bytes: bytes,
     executor: ExecutorContractEntryV1,
+    retry_diagnostics: tuple[str, ...] = (),
 ) -> DispatchReservationV1:
     """Reserve a byte-token upper bound for one shared-provider invocation."""
     _validate_cli_executor(executor)
@@ -58,7 +59,12 @@ def calculate_shared_cli_dispatch_reservation(
             "shared CLI prompt authority must be UTF-8 bytes"
         ) from exc
     initial = len(
-        _render_prompt(artifact.body, context, response_schema).encode("utf-8")
+        _render_prompt(
+            artifact.body,
+            context,
+            response_schema,
+            retry_diagnostics,
+        ).encode("utf-8")
     )
     billable = executor.limits.max_billable_tokens_per_dispatch
     if initial <= 0 or initial > billable:
@@ -100,6 +106,8 @@ class SquadCliBaselineExecutor:
         reservation: DispatchReservationV1,
         candidate_root: Path,
         deadline: float,
+        *,
+        retry_diagnostics: tuple[str, ...] = (),
     ) -> RawExecutionResultV1:
         artifact = _validate_dispatch_inputs(
             self.executor,
@@ -108,6 +116,7 @@ class SquadCliBaselineExecutor:
             context_bytes,
             response_schema_bytes,
             reservation,
+            retry_diagnostics,
         )
         root = _validate_empty_candidate_root(candidate_root)
         if (
@@ -138,6 +147,7 @@ class SquadCliBaselineExecutor:
             artifact.body,
             context_bytes.decode("utf-8"),
             response_schema_bytes.decode("utf-8"),
+            retry_diagnostics,
         )
         started_at = _utc_now()
         provider = self._provider
@@ -239,6 +249,7 @@ def _validate_dispatch_inputs(
     context_bytes: bytes,
     response_schema_bytes: bytes,
     reservation: DispatchReservationV1,
+    retry_diagnostics: tuple[str, ...],
 ):
     if not isinstance(execution_input, ExecutionInputV1):
         raise Protocol22ProviderError("shared CLI execution requires ExecutionInputV1")
@@ -248,6 +259,12 @@ def _validate_dispatch_inputs(
         raise Protocol22ProviderError("execution input agent contract mismatch")
     if execution_input.context_bundle_hash != content_digest(context_bytes):
         raise Protocol22ProviderError("execution input context bundle mismatch")
+    if (execution_input.attempt_kind == "initial_generation") != (
+        not retry_diagnostics
+    ):
+        raise Protocol22ProviderError(
+            "shared CLI retry diagnostics do not match the attempt kind"
+        )
     artifact = decode_prosaic_agent_bytes(agent_bytes)
     try:
         context = load_canonical_object(context_bytes, ContextBundleV1.from_json_dict)
@@ -271,13 +288,30 @@ def _validate_dispatch_inputs(
         context_bytes,
         response_schema_bytes,
         executor,
+        retry_diagnostics,
     )
     if reservation != expected_reservation:
         raise Protocol22ProviderError("shared CLI dispatch reservation mismatch")
     return artifact
 
 
-def _render_prompt(body: str, context: str, response_schema: str) -> str:
+def render_cli_retry_section(retry_diagnostics: tuple[str, ...]) -> str:
+    if not retry_diagnostics:
+        return ""
+    diagnostics = RetryDiagnosticsV1(1, retry_diagnostics)
+    return (
+        "\n## Retry diagnostics (canonical JSON)\n"
+        + canonical_json_bytes(diagnostics.to_json_dict()).decode("utf-8")
+        + "\n"
+    )
+
+
+def _render_prompt(
+    body: str,
+    context: str,
+    response_schema: str,
+    retry_diagnostics: tuple[str, ...] = (),
+) -> str:
     return (
         body
         + ("" if body.endswith("\n") else "\n")
@@ -291,10 +325,12 @@ def _render_prompt(body: str, context: str, response_schema: str) -> str:
         + "\n\n## Authorial response schema (canonical JSON)\n"
         + response_schema
         + "\n"
+        + render_cli_retry_section(retry_diagnostics)
     )
 
 
 __all__ = (
     "SquadCliBaselineExecutor",
     "calculate_shared_cli_dispatch_reservation",
+    "render_cli_retry_section",
 )

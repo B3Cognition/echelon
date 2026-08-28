@@ -130,8 +130,8 @@ def test_unavailable_and_untrusted_usage_never_charge_unknown_as_zero(
         1,
     )
     assert (suspect.charged_tokens, suspect.charged_active_ms) == (550, 2_500)
-    assert suspect.reservation_breaches == ("d2",)
-    assert suspect.allowed is False
+    assert suspect.reservation_breaches == ()
+    assert suspect.allowed is True
 
 
 @pytest.mark.unit

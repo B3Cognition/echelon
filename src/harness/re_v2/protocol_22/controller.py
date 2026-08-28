@@ -641,6 +641,7 @@ class Protocol22Controller:
                 prepared.reservation,
                 candidate_root,
                 deadline,
+                retry_diagnostics=dependencies.retry_diagnostics,
             )
         else:
             raise Protocol22ControllerError(
@@ -1553,8 +1554,14 @@ def _usage_exceeds_reservation(
     tokens = observation["reported_token_usage"]
     active = observation["observed_active_ms"]
     return (
-        isinstance(tokens, int) and tokens > prepared.reservation.billable_tokens
-    ) or (isinstance(active, int) and active > prepared.reservation.active_ms)
+        observation["token_usage_status"] == "trusted_exact"
+        and isinstance(tokens, int)
+        and tokens > prepared.reservation.billable_tokens
+    ) or (
+        observation["active_usage_status"] == "trusted_exact"
+        and isinstance(active, int)
+        and active > prepared.reservation.active_ms
+    )
 
 
 def _artifact_failure(

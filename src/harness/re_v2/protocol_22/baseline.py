@@ -27,6 +27,7 @@ from .policies import (
     SOURCE_OVERVIEW_SURFACES,
     ArtifactPolicyEntryV1,
     CompactBaselinePolicyParametersV1,
+    classify_domain_evidence_path,
     layer_policy_hash,
 )
 from .schema import (
@@ -59,6 +60,8 @@ _UNKNOWN_REASONS = frozenset(
 _UTILITY_DIAGNOSTICS = (
     "responsibilities_not_observed",
     "entry_or_behavior_not_observed",
+    "tests_not_observed",
+    "contract_or_operational_not_observed",
     "purpose_not_observed",
     "runtime_shape_not_observed",
     "boundary_or_relationship_not_observed",
@@ -728,6 +731,7 @@ class RequiredSurfaceRecordV1:
     minimum_utility_requirement: Literal[
         "required",
         "one_of_entry_or_behavior",
+        "one_of_contract_or_operational",
         "one_of_boundary_or_relationship",
         "none",
     ]
@@ -749,6 +753,7 @@ class RequiredSurfaceRecordV1:
                 {
                     "required",
                     "one_of_entry_or_behavior",
+                    "one_of_contract_or_operational",
                     "one_of_boundary_or_relationship",
                     "none",
                 }
@@ -771,7 +776,10 @@ class RequiredSurfaceRecordV1:
 
 @dataclass(frozen=True, slots=True)
 class MinimumUtilityAssessmentV1:
-    rule_id: Literal["compact-v1-minimum-utility-v1"]
+    rule_id: Literal[
+        "compact-v1-minimum-utility-v1",
+        "compact-v1-minimum-utility-v2",
+    ]
     passed: bool
     diagnostic_codes: tuple[str, ...]
 
@@ -782,7 +790,10 @@ class MinimumUtilityAssessmentV1:
     )
 
     def __post_init__(self) -> None:
-        if self.rule_id != "compact-v1-minimum-utility-v1":
+        if self.rule_id not in {
+            "compact-v1-minimum-utility-v1",
+            "compact-v1-minimum-utility-v2",
+        }:
             raise Protocol22CertificationError(
                 "MinimumUtilityAssessmentV1 rule_id is unsupported"
             )
@@ -1264,6 +1275,27 @@ class CandidateAssessmentReceiptV1(_IdentityValue):
         return cls(**{field: raw[field] for field in cls.FIELDS})
 
 
+def expanded_retry_diagnostics(
+    assessment: CandidateAssessmentReceiptV1,
+    certifications: Mapping[str, CertificationReceiptV2],
+) -> tuple[str, ...]:
+    """Expand coarse retry reasons with exact deterministic failed requirements."""
+    diagnostics = set(assessment.normalized_diagnostics)
+    if "minimum_utility_not_met" not in diagnostics:
+        return tuple(sorted(diagnostics))
+    receipt_id = assessment.certification_receipt_id
+    certification = None if receipt_id is None else certifications.get(receipt_id)
+    if certification is None or not isinstance(
+        certification.assessment,
+        CompactCertificationAssessmentV2,
+    ):
+        raise Protocol22CertificationError(
+            "minimum-utility retry has no compact certification authority"
+        )
+    diagnostics.update(certification.assessment.minimum_utility.diagnostic_codes)
+    return tuple(sorted(diagnostics))
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactAcceptanceReceiptV2(_IdentityValue):
     schema_version: int
@@ -1725,7 +1757,7 @@ def certify_compact_candidate(
     )
     artifact_bytes = canonical_json_bytes(artifact.to_json_dict())
 
-    authorities, invalid_evidence = _validate_context_and_references(
+    authorities, evidence_diagnostics = _validate_context_and_references(
         candidate.authorial_payload,
         context,
         snapshot,
@@ -1738,14 +1770,16 @@ def certify_compact_candidate(
     required_surfaces, minimum_utility = _minimum_utility(
         candidate.authorial_payload,
         context,
+        snapshot,
         bool(referenced_keys),
     )
 
     diagnostics: list[str] = []
     if len(artifact_bytes) > policy.max_canonical_json_bytes:
         diagnostics.append("artifact_bound_exceeded")
-    if invalid_evidence:
+    if evidence_diagnostics:
         diagnostics.append("evidence_contract_invalid")
+        diagnostics.extend(evidence_diagnostics)
     if not minimum_utility.passed:
         diagnostics.append("minimum_utility_not_met")
     normalized_diagnostics = tuple(sorted(diagnostics))
@@ -1920,9 +1954,10 @@ def _validate_context_and_references(
     payload: NormalizedAuthorialPayloadV1,
     context: ContextBundleV1,
     snapshot: object,
-) -> tuple[Mapping[str, _EvidenceAuthority], bool]:
+) -> tuple[Mapping[str, _EvidenceAuthority], tuple[str, ...]]:
     authorities: dict[str, _EvidenceAuthority] = {}
-    invalid = False
+    diagnostics: set[str] = set()
+    reference_details: set[str] = set()
     source = _source_descriptor(snapshot.partition, context.scope.source_id)
     located_excerpts = tuple(
         (excerpt, "direct") for excerpt in context.evidence
@@ -1949,22 +1984,41 @@ def _validate_context_and_references(
                 snapshot,
             )
         except Protocol22SchemaError:
-            invalid = True
+            diagnostics.add("evidence_context_invalid")
             continue
         previous = authorities.get(excerpt.evidence_authority_id)
         if previous is not None and previous.key != authority.key:
-            invalid = True
+            diagnostics.add("evidence_context_invalid")
             continue
         if previous is not None:
-            invalid = True
+            diagnostics.add("evidence_context_invalid")
             continue
         authorities[excerpt.evidence_authority_id] = authority
 
     for reference in _all_references(payload):
         authority = authorities.get(reference.evidence_authority_id)
-        if authority is None or not _reference_within(reference, authority.excerpt):
-            invalid = True
-    return MappingProxyType(authorities), invalid
+        if authority is None:
+            diagnostics.add("evidence_reference_unknown")
+            reference_details.add(
+                "evidence_reference_unknown:"
+                + reference.evidence_authority_id
+            )
+            continue
+        if reference.path != authority.excerpt.source_relative_path:
+            diagnostics.add("evidence_reference_path_mismatch")
+            reference_details.add(
+                "evidence_reference_path_mismatch:"
+                + reference.evidence_authority_id
+            )
+            continue
+        if not _reference_within(reference, authority.excerpt):
+            diagnostics.add("evidence_reference_range_outside_authority")
+            reference_details.add(
+                "evidence_reference_range_outside_authority:"
+                + reference.evidence_authority_id
+            )
+    diagnostics.update(sorted(reference_details)[:56])
+    return MappingProxyType(authorities), tuple(sorted(diagnostics))
 
 
 def _reconstruct_evidence_authority(
@@ -2265,6 +2319,7 @@ def _coverage_record(
 def _minimum_utility(
     payload: NormalizedAuthorialPayloadV1,
     context: ContextBundleV1,
+    snapshot: object,
     has_regular_file_citation: bool,
 ) -> tuple[tuple[RequiredSurfaceRecordV1, ...], MinimumUtilityAssessmentV1]:
     domain_count = (
@@ -2274,17 +2329,41 @@ def _minimum_utility(
     )
     requirements: dict[str, str] = {name: "none" for name in payload.surfaces}
     diagnostics: list[str] = []
+    rule_id = context.target_artifact_policy.minimum_utility_rule_id
+    if rule_id not in {
+        "compact-v1-minimum-utility-v1",
+        "compact-v1-minimum-utility-v2",
+    }:
+        raise Protocol22CertificationError("unsupported compact minimum-utility rule")
     if payload.artifact_kind == "domain-baseline":
         requirements["responsibilities"] = "required"
-        requirements["entry_points"] = "one_of_entry_or_behavior"
-        requirements["core_behavior"] = "one_of_entry_or_behavior"
         if payload.surfaces["responsibilities"].status != "observed":
             diagnostics.append("responsibilities_not_observed")
-        if not any(
-            payload.surfaces[name].status == "observed"
-            for name in ("entry_points", "core_behavior")
-        ):
-            diagnostics.append("entry_or_behavior_not_observed")
+        profile = (
+            "production"
+            if rule_id == "compact-v1-minimum-utility-v1"
+            else _domain_utility_profile(context, snapshot)
+        )
+        if profile == "production":
+            requirements["entry_points"] = "one_of_entry_or_behavior"
+            requirements["core_behavior"] = "one_of_entry_or_behavior"
+            if not any(
+                payload.surfaces[name].status == "observed"
+                for name in ("entry_points", "core_behavior")
+            ):
+                diagnostics.append("entry_or_behavior_not_observed")
+        elif profile == "test":
+            requirements["tests"] = "required"
+            if payload.surfaces["tests"].status != "observed":
+                diagnostics.append("tests_not_observed")
+        else:
+            requirements["external_contracts"] = "one_of_contract_or_operational"
+            requirements["operational_constraints"] = "one_of_contract_or_operational"
+            if not any(
+                payload.surfaces[name].status == "observed"
+                for name in ("external_contracts", "operational_constraints")
+            ):
+                diagnostics.append("contract_or_operational_not_observed")
     else:
         requirements["purpose"] = "required"
         requirements["runtime_shape"] = "required"
@@ -2316,11 +2395,28 @@ def _minimum_utility(
         for name in _surface_names(payload.artifact_kind)
     )
     utility = MinimumUtilityAssessmentV1(
-        rule_id="compact-v1-minimum-utility-v1",
+        rule_id=rule_id,
         passed=not diagnostics,
         diagnostic_codes=tuple(diagnostics),
     )
     return records, utility
+
+
+def _domain_utility_profile(
+    context: ContextBundleV1,
+    snapshot: object,
+) -> Literal["production", "test", "supporting"]:
+    source = _source_descriptor(snapshot.partition, context.scope.source_id)
+    domain = _domain_descriptor(source, context.scope.domain_key)
+    roles = {
+        classify_domain_evidence_path(path)
+        for path in _owned_source_paths(domain)
+    }
+    if roles.intersection({"entry_point", "production"}):
+        return "production"
+    if "test" in roles:
+        return "test"
+    return "supporting"
 
 
 def _certification_key(

@@ -457,7 +457,12 @@ class _ScriptedProvider:
     calls_by_kind: dict[str, int] = field(default_factory=dict)
     envelopes: list[object] = field(default_factory=list)
 
-    def execute(self, _execution_input: object, *args: object) -> RawExecutionResultV1:
+    def execute(
+        self,
+        _execution_input: object,
+        *args: object,
+        **_kwargs: object,
+    ) -> RawExecutionResultV1:
         self.calls += 1
         if len(args) == 4:
             envelope, reservation, candidate_root, _deadline = args
@@ -918,6 +923,30 @@ def test_provider_uses_only_the_classified_shared_retry_and_preserves_context(
 
 
 @pytest.mark.unit
+def test_minimum_utility_retry_exposes_exact_failed_requirements(
+    tmp_path: Path,
+) -> None:
+    context, provider = _baseline_context(
+        tmp_path,
+        scripts={"domain-baseline": ["minimum_utility", "valid"]},
+    )
+
+    result = Protocol22Controller(context).run_until_stopped()
+
+    assert result.status == "completed"
+    retry_diagnostics = json.loads(provider.envelopes[1].messages[2].content_utf8)
+    assert retry_diagnostics == {
+        "diagnostics": [
+            "entry_or_behavior_not_observed",
+            "minimum_utility_not_met",
+            "no_regular_file_cited",
+            "responsibilities_not_observed",
+        ],
+        "schema_version": 1,
+    }
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("mode", "failure_class", "reason_code"),
     (
@@ -991,6 +1020,26 @@ def test_usage_overflow_fails_only_the_exact_executor_contract(
         for receipt in result.ledger.accepted_artifacts.values()
     )
     assert result.ledger.accepted_artifacts
+
+
+@pytest.mark.unit
+def test_untrusted_cli_usage_overflow_is_charged_without_executor_failure(
+    tmp_path: Path,
+) -> None:
+    context, provider = _baseline_context(
+        tmp_path,
+        scripts={"domain-baseline": ["usage_overflow"]},
+        provider_mode="cli",
+    )
+
+    result = Protocol22Controller(context).run_until_stopped()
+
+    assert result.status == "completed"
+    assert provider.calls_by_kind["domain-baseline"] == 1
+    assert provider.calls == 2
+    assert result.ledger is not None
+    assert result.ledger.executor_failures == {}
+    assert result.events[-1].type == "run_completed"
 
 
 @pytest.mark.unit

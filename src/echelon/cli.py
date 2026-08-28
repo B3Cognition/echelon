@@ -11156,7 +11156,9 @@ def _load_prosaic_command(
 
 
 def _load_cli_config(project_dir: Path):
-    return load_config(project_dir, squad_only=True)
+    from harness.config import effective_llm_config
+
+    return effective_llm_config(load_config(project_dir, squad_only=True))
 
 
 def _capability_label(capability: ProviderCapability) -> str:
@@ -12244,7 +12246,6 @@ def _prepare_re_v22_creation(
     time_limit_minutes: int | None,
     engine_protocol_version: str | None = None,
 ) -> _Protocol22Creation:
-    from harness.config import load_config
     from harness.re_v2 import RE_V2_PROTOCOL
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.model import RE_V2_SCHEMA_2_PROTOCOLS
@@ -12316,7 +12317,7 @@ def _prepare_re_v22_creation(
     ):
         raise ValueError("protocol-2.2 partition authority changed during preflight")
     try:
-        config = load_config(workspace_root, squad_only=True)
+        config = _load_cli_config(workspace_root)
     except Exception as exc:
         if exc.__class__.__module__ != "harness.config":
             raise
@@ -14041,7 +14042,7 @@ def _run_re_v25_continue(
 
     recovered = recover_protocol_25_run(context)
     changes = validate(recovered)
-    if recovered.controller_state.terminal_state is not None or not changes:
+    if recovered.controller_state.terminal_state is not None:
         from harness.re_v2.protocol_25.status import render_protocol_25_status
 
         print(
@@ -14051,6 +14052,9 @@ def _run_re_v25_continue(
             ),
             end="",
         )
+        return
+    if not changes:
+        _run_re_v2_live(context)
         return
     with protocol_22_run_lock(context.paths):
         recovered = recover_protocol_25_run(context)

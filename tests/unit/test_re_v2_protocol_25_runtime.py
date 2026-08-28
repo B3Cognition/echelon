@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 
 from jsonschema import Draft202012Validator, ValidationError
@@ -112,6 +113,8 @@ def _context(
     overlays=(),  # type: ignore[no-untyped-def]
     assessments=(),  # type: ignore[no-untyped-def]
     extra_authority=None,  # type: ignore[no-untyped-def]
+    audit_epoch_id=None,  # type: ignore[no-untyped-def]
+    semantic_round=None,  # type: ignore[no-untyped-def]
 ):
     authority_payloads = _base_authority_payloads()
     authority_payloads.update(extra_authority or {})
@@ -126,7 +129,48 @@ def _context(
         overlay_hashes=tuple(overlays),
         target_assessment_hashes=tuple(assessments),
         active_sibling_authority_hashes=tuple(active_siblings),
+        audit_epoch_id=audit_epoch_id,
+        semantic_round=semantic_round,
     )
+
+
+@pytest.mark.unit
+def test_post_freeze_context_exposes_exact_output_binding() -> None:
+    epoch_id = digest("semantic-epoch")
+    context = _context(
+        unresolved=(_certified_audit().normalized_findings[0],),
+        audit_epoch_id=epoch_id,
+        semantic_round=2,
+    )
+
+    assert context.audit_epoch_id == epoch_id
+    assert context.semantic_round == 2
+    assert context.to_json_dict()["audit_epoch_id"] == epoch_id
+    assert context.to_json_dict()["semantic_round"] == 2
+
+
+@pytest.mark.unit
+def test_post_freeze_context_pairs_each_finding_with_its_frozen_id() -> None:
+    finding = _certified_audit().normalized_findings[0]
+    context = _context(
+        unresolved=(finding,),
+        audit_epoch_id=digest("semantic-epoch"),
+        semantic_round=1,
+    )
+
+    serialized = context.to_json_dict()
+    assert serialized["unresolved_findings"] == [
+        {
+            "finding_key_id": finding.finding_key_id,
+            "finding": finding.to_json_dict(),
+        }
+    ]
+    assert SemanticContextV1.from_json_dict(serialized) == context
+
+    tampered = copy.deepcopy(serialized)
+    tampered["unresolved_findings"][0]["finding_key_id"] = digest("wrong finding")
+    with pytest.raises(Protocol25RuntimeError, match="frozen finding ID"):
+        SemanticContextV1.from_json_dict(tampered)
 
 
 def _candidate(filename: str, payload: dict[str, object]) -> SemanticCandidateInputV1:
@@ -270,6 +314,10 @@ def test_audit_context_derives_closed_authority_from_accepted_l2_objects() -> No
     assert context.vocabulary.rule_ids == runtime.artifact_policy.audit_taxonomy.rule_ids
     assert any(item.startswith("surface:") for item in context.vocabulary.subject_refs)
     assert context.vocabulary.claim_anchor_ids
+    assert tuple(item.object_hash for item in context.authority_objects) == tuple(
+        item.artifact_hash for item in target.audited_artifacts
+    )
+    assert all(item.text_lf for item in context.authorized_evidence)
     assert tuple(
         item.aliases[0] for item in context.vocabulary.evidence_anchors
     ) == tuple(item.aliases[0] for item in context.authorized_evidence)
@@ -482,8 +530,8 @@ def test_context_reads_authorized_evidence_through_shared_snapshot_seam() -> Non
 @pytest.mark.unit
 def test_context_requires_exact_authority_bytes_and_runtime_schema() -> None:
     incomplete = _base_authority_payloads()
-    del incomplete[digest("evidence-pack")]
-    with pytest.raises(Protocol25RuntimeError, match="authority bytes"):
+    del incomplete[digest("baseline")]
+    with pytest.raises(Protocol25RuntimeError, match="bounded authority projection"):
         _runtime().build_context(
             mode="AUDIT_EPOCH_TARGET",
             audit_target=TARGET,
@@ -653,7 +701,11 @@ def _certified_resolution():  # type: ignore[no-untyped-def]
         verifier_authority_hash=VERIFIER_AUTHORITY,
         audited_l2_root_hashes=(digest("l2-root"),),
     )
-    context = _context(unresolved=audit.normalized_findings)
+    context = _context(
+        unresolved=audit.normalized_findings,
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
+    )
     result = _runtime().certify_resolution(
         _candidate("resolution.json", _resolution_payload(epoch)),
         artifact_key=l3_artifact_key_v2(
@@ -694,6 +746,8 @@ def _certified_closure():  # type: ignore[no-untyped-def]
     closure_context = _context(
         unresolved=audit.normalized_findings,
         mode="CLOSURE_RECHECK",
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
         overlays=(resolution.artifact.identity,),
         extra_authority={
             resolution.artifact.identity: resolution.artifact_bytes
@@ -795,6 +849,8 @@ def test_target_closure_requires_every_input_id_and_exact_overlay_hash() -> None
         context=_context(
             unresolved=audit.normalized_findings,
             mode="CLOSURE_RECHECK",
+            audit_epoch_id=epoch.identity,
+            semantic_round=1,
             overlays=(resolution.artifact.identity,),
             extra_authority={
                 resolution.artifact.identity: resolution.artifact_bytes
@@ -816,6 +872,8 @@ def test_target_closure_requires_every_input_id_and_exact_overlay_hash() -> None
             context=_context(
                 unresolved=audit.normalized_findings,
                 mode="CLOSURE_RECHECK",
+                audit_epoch_id=epoch.identity,
+                semantic_round=1,
                 overlays=(resolution.artifact.identity,),
                 extra_authority={
                     resolution.artifact.identity: resolution.artifact_bytes
@@ -848,6 +906,8 @@ def test_deferred_observations_are_normalized_without_joining_frozen_findings() 
     closure_context = _context(
         unresolved=audit.normalized_findings,
         mode="CLOSURE_RECHECK",
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
         overlays=(resolution.artifact.identity,),
         extra_authority={
             resolution.artifact.identity: resolution.artifact_bytes
@@ -889,6 +949,8 @@ def test_failed_source_guard_binds_composed_view_and_retains_authorizing_id() ->
         target=source_target,
         vocabulary=source_vocabulary,
         unresolved=audit.normalized_findings,
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
         active_siblings=(sibling,),
         overlays=(resolution.artifact.identity,),
         assessments=(closure.artifact.identity,),
@@ -1005,3 +1067,29 @@ def test_zero_finding_audits_freeze_and_close_without_model_work() -> None:
 
     assert epoch.finding_key_ids == ()
     assert closure.state == "closed"
+
+
+@pytest.mark.unit
+def test_closure_root_keeps_unreceipted_failed_guard_findings_open() -> None:
+    audit = _certified_audit()
+    epoch = _runtime().freeze_epoch(
+        (audit,),
+        selection_id=digest("selection"),
+        audit_policy_hash=digest("audit-policy"),
+        auditor_authority_hash=TARGET.auditor_authority_hash,
+        executor_authority_hash=digest("executor"),
+        verifier_authority_hash=VERIFIER_AUTHORITY,
+        audited_l2_root_hashes=(digest("l2-root"),),
+    )
+
+    closure = _runtime().build_closure_root(
+        epoch,
+        latest_receipts=(),
+        target_rounds=((audit.artifact.audit_target_id, 2),),
+        plateau_counts=((audit.artifact.audit_target_id, 2),),
+        deferred_observations=(),
+    )
+
+    assert closure.latest_closure_receipts == ()
+    assert closure.unresolved_finding_ids == epoch.finding_key_ids
+    assert closure.state == "open"

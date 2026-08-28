@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
@@ -63,13 +63,11 @@ class CodexCliBackend:
             or isolated_workspace
         )
         raw_prompt_metadata = request.metadata.get("prompt_metadata")
-        isolated_workspace_error = _isolated_workspace_error(
-            request,
-            raw_prompt_metadata,
-            allow_unsafe_host_execution=(
-                self._config.llm.tool_policy.allow_unsafe_host_execution
-            ),
-        ) if isolated_workspace else None
+        isolated_workspace_error = (
+            _isolated_workspace_error(request, raw_prompt_metadata)
+            if isolated_workspace
+            else None
+        )
         if isolated_workspace_error is not None:
             _unlink_if_present(final_path)
             return CliRunResult(
@@ -120,7 +118,14 @@ class CodexCliBackend:
                 metadata={"workspace_synthesis_boundary": "unavailable"},
             )
 
-        unsafe = self._config.llm.tool_policy.allow_unsafe_host_execution
+        tool_policy = self._config.llm.tool_policy
+        if isolated_workspace and tool_policy.allow_unsafe_host_execution:
+            tool_policy = replace(
+                tool_policy,
+                allow_unsafe_host_execution=False,
+                approval_reason=None,
+            )
+        unsafe = tool_policy.allow_unsafe_host_execution
         permission_profile = None
         if forbidden_roots and not unsafe and not isolated_workspace:
             permission_profile = (
@@ -139,7 +144,7 @@ class CodexCliBackend:
             "codex",
             self._bin,
             request.prompt,
-            self._config.llm.tool_policy,
+            tool_policy,
             codex_json=True,
             codex_model=model,
             codex_skip_git_repo_check=allow_non_git_cwd,
@@ -358,12 +363,8 @@ _ISOLATED_WORKSPACE_SCOPE_KEYS = (
 def _isolated_workspace_error(
     request: CliRunRequest,
     prompt_metadata: object,
-    *,
-    allow_unsafe_host_execution: bool,
 ) -> str | None:
     """Validate the narrow profile that delegates containment to Codex itself."""
-    if allow_unsafe_host_execution:
-        return "isolated workspace rejects unsafe host execution policy"
     if not _is_empty_isolated_directory(request.cwd):
         return "isolated workspace requires an empty isolated working directory"
     if not isinstance(prompt_metadata, Mapping):

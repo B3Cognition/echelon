@@ -18,13 +18,56 @@ from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_25.cli_provider import (
     Protocol25ExecutionStore,
     SquadCliSemanticRenderer,
+    _has_exact_semantic_candidate,
+    _render_semantic_prompt,
+    validate_semantic_provider_content_authority,
 )
 from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import audit_target_v1, l3_artifact_key_v2
 from tests.unit.test_re_v2_protocol_22_cli_provider import _ProviderSpy, _result
 from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
-from tests.unit.test_re_v2_protocol_25_runtime import _context
+from tests.unit.test_re_v2_protocol_25_runtime import _certified_audit, _context
+
+
+@pytest.mark.unit
+def test_semantic_prompt_promotes_exact_post_freeze_binding() -> None:
+    catalog, objects = _executor_fixture()
+    executor = catalog.entry_for("semantic-resolution")
+    renderer = executor.request_renderer
+    assert renderer is not None
+    schema_bytes = objects[renderer.response_schemas[0].schema_hash]
+    body = "Resolve the finding.\n"
+    agent_bytes = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            body=body,
+            frontmatter={"name": "echelon.re-resolver"},
+        )
+    )
+    epoch_id = digest("prompt epoch")
+    context = _context(
+        unresolved=(_context().unresolved_findings),
+        mode="SEMANTIC_RESOLUTION",
+        audit_epoch_id=epoch_id,
+        semantic_round=2,
+    )
+    context_bytes = canonical_json_bytes(context.to_json_dict())
+    prompt = _render_semantic_prompt(
+        body,
+        context_bytes.decode("utf-8"),
+        schema_bytes.decode("utf-8"),
+    )
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        executor,
+    )
+
+    assert "Exact output binding:" in prompt
+    assert f'"audit_epoch_id":"{epoch_id}"' in prompt
+    assert '"semantic_round":2' in prompt
+    assert len(prompt.encode("utf-8")) <= reservation.initial_input_tokens
 
 
 @pytest.mark.unit
@@ -95,7 +138,7 @@ def test_semantic_renderer_reuses_shared_provider_without_baseline_filename(
     assert result.outcome == "candidate_ready"
     assert len(provider.calls) == 1
     prompt = str(provider.calls[0]["prompt"])
-    assert "candidate file required by the role contract" in prompt
+    assert "role-required candidate JSON" in prompt
     assert "baseline.json" not in prompt
     assert provider.calls[0]["prompt_metadata"] == frontmatter
     assert provider.calls[0]["isolated_workspace"] is True
@@ -205,7 +248,105 @@ def test_semantic_execution_store_prepares_and_revalidates_l3_cli_authority(
 
     assert prepared.provider_envelope is None
     assert prepared.execution_input.context_bundle_hash == content_digest(context_bytes)
+    prompt = _render_semantic_prompt(
+        "Write exactly `audit.json` for the supplied target.\n",
+        context_bytes.decode("utf-8"),
+        schema_bytes.decode("utf-8"),
+    )
+    assert prepared.reservation.initial_input_tokens >= len(prompt.encode("utf-8"))
     assert store.validate_prepared_execution(prepared, item, dependencies) == prepared
+
+
+@pytest.mark.unit
+def test_closure_content_authority_uses_shared_closure_schema_hash() -> None:
+    catalog, objects = _executor_fixture()
+    executor = catalog.entry_for("closure-recheck")
+    renderer = executor.request_renderer
+    assert renderer is not None
+    agent_bytes = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            body="Write exactly `closure.json`.\n",
+            frontmatter={"name": "echelon.re-validator"},
+        )
+    )
+    executor = replace(
+        executor,
+        request_renderer=replace(
+            renderer,
+            agent_contract_hash=content_digest(agent_bytes),
+        ),
+    )
+    renderer = executor.request_renderer
+    assert renderer is not None
+    schema = renderer.response_schemas[0]
+    context = replace(
+        _context(
+            unresolved=_certified_audit().normalized_findings,
+            mode="CLOSURE_RECHECK",
+            audit_epoch_id=digest("closure epoch"),
+            semantic_round=1,
+        ),
+        response_schema_hash=schema.schema_hash,
+    )
+    key = l3_artifact_key_v2(
+        "target-closure-assessment",
+        dependency_hashes=(digest("closure epoch"), digest("resolution")),
+    )
+    item = WorkItemV2(
+        identity_schema_version=2,
+        template_id=digest("closure template"),
+        goal_id="semantic-audit-closure",
+        output_key=key,
+        required_artifact_hashes=key.dependency_hashes,
+        producer_id="echelon.re-validator",
+        producer_family=executor.producer_family,
+        producer_protocol_version=executor.producer_protocol_version,
+        executor_contract_hash=executor.executor_contract_hash,
+        verifier_id=executor.verifier.verifier_id,
+        verifier_version=executor.verifier.verifier_version,
+        verifier_implementation_digest=executor.verifier.implementation_digest,
+        result_contract_id=executor.result_contract_id,
+        max_provider_attempts=2,
+        max_generation_attempts=2,
+        max_semantic_rounds=0,
+        max_result_contract_retries=1,
+        max_shared_retries=1,
+        max_artifact_contract_retries=1,
+    )
+
+    validated = validate_semantic_provider_content_authority(
+        item,
+        agent_bytes,
+        canonical_json_bytes(context.to_json_dict()),
+        executor,
+        schema.schema_hash,
+    )
+
+    assert validated == context
+
+
+@pytest.mark.unit
+def test_closure_candidate_recovers_when_only_result_contract_is_missing(
+    tmp_path: Path,
+) -> None:
+    catalog, _objects = _executor_fixture()
+    executor = catalog.entry_for("closure-recheck")
+    root = tmp_path / "candidate"
+    root.mkdir()
+    root.joinpath("closure.json").write_text("{}\n", encoding="utf-8")
+    execution_input = ExecutionInputV1(
+        schema_version=1,
+        dispatch_id="closure-dispatch",
+        work_item_id=digest("closure work"),
+        attempt_kind="initial_generation",
+        executor_contract_hash=executor.executor_contract_hash,
+        agent_contract_hash=digest("closure agent"),
+        context_bundle_hash=digest("closure context"),
+        provider_request_envelope_hash=None,
+        deterministic_invocation=None,
+    )
+
+    assert _has_exact_semantic_candidate(root, execution_input, executor)
 
 
 @pytest.mark.unit

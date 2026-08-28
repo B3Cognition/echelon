@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -433,6 +433,15 @@ def _validate_llm_cli(cli: str) -> str:
             field_path="llm.cli",
         )
     return cli
+
+
+def effective_llm_config(config: HarnessConfig) -> HarnessConfig:
+    """Apply the process-local provider selector to a loaded harness config."""
+    selected = os.environ.get("ECHELON_LLM", "").strip()
+    if not selected or selected == config.llm.cli:
+        return config
+    cli = _validate_llm_cli(selected)
+    return replace(config, llm=replace(config.llm, cli=cli))
 
 
 def _validate_semver_range(version_range: str) -> str:

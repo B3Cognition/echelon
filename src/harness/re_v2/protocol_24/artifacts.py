@@ -43,7 +43,6 @@ from harness.re_v2.protocol_22.executors import (
 )
 from harness.re_v2.protocol_22.evidence import (
     EvidenceAuthorityDescriptorV1,
-    _classify_path,
     _verify_payload,
     evidence_authority_id,
 )
@@ -59,6 +58,7 @@ from harness.re_v2.protocol_22.policies import (
     ContextBundlePolicyParametersV1,
     DomainEvidencePackPolicyParametersV1,
     ProjectionPolicyV1,
+    classify_path_role,
     layer_policy_hash,
     policy_for,
 )
@@ -491,7 +491,7 @@ def build_l2_domain_evidence_pack(
         if (
             row.object_kind != "regular"
             or row.text_status != "eligible_utf8"
-            or _classify_path(row.source_relative_path, parameters.path_classifiers)
+            or classify_path_role(row.source_relative_path, parameters.path_classifiers)
             is None
         ):
             ineligible.append(_l2_file_omission(row, work_item, "policy_ineligible"))
@@ -1103,7 +1103,7 @@ def certify_l2_compact_candidate(
         depth_debt=context.depth_debt,
     )
     artifact_bytes = canonical_json_bytes(artifact.to_json_dict())
-    authorities, invalid_evidence = _validate_context_and_references(
+    authorities, evidence_diagnostics = _validate_context_and_references(
         candidate.authorial_payload,
         context,
         snapshot,
@@ -1116,13 +1116,15 @@ def certify_l2_compact_candidate(
     required_surfaces, minimum_utility = _minimum_utility(
         candidate.authorial_payload,
         context,
+        snapshot,
         bool(referenced_keys),
     )
     diagnostics: list[str] = []
     if len(artifact_bytes) > policy.max_canonical_json_bytes:
         diagnostics.append("artifact_bound_exceeded")
-    if invalid_evidence:
+    if evidence_diagnostics:
         diagnostics.append("evidence_contract_invalid")
+        diagnostics.extend(evidence_diagnostics)
     if not minimum_utility.passed:
         diagnostics.append("minimum_utility_not_met")
     if _duplicates_lower_layer_claim(candidate.authorial_payload, adopted_l1_artifacts):

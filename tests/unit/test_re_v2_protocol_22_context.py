@@ -178,7 +178,19 @@ def _domain_fixture(
     depth_debt: DepthDebtV1 | None = None,
 ) -> _DomainFixture:
     if manifest_inputs is None:
-        manifest, inputs = _fixture({"api": (root,)})
+        relative_path = None
+        if path is not None:
+            prefix = root + "/"
+            assert path.startswith(prefix)
+            relative_path = path[len(prefix) :]
+        manifest, inputs = _fixture(
+            {"api": (root,)},
+            domain_file_names=(
+                None
+                if relative_path is None
+                else {("api", root): relative_path}
+            ),
+        )
     else:
         manifest, inputs = manifest_inputs
     graph = build_protocol_22_graph(manifest, inputs)

@@ -308,11 +308,13 @@ def evaluate_budget_v22(
                     "unknown active dispatches",
                 )
             if (
-                token_value is not None
+                token_status == "trusted_exact"
+                and token_value is not None
                 and _accounting(token_value, "reported token usage")
                 > dispatch.token_reservation
             ) or (
-                active_value is not None
+                active_status == "trusted_exact"
+                and active_value is not None
                 and _accounting(active_value, "observed active_ms")
                 > dispatch.active_reservation
             ):

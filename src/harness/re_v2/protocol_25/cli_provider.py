@@ -13,6 +13,7 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.cli_provider import (
     SquadCliBaselineExecutor,
     calculate_shared_cli_dispatch_reservation,
+    render_cli_retry_section,
 )
 from harness.re_v2.protocol_22.executors import (
     SHARED_AI_CLI_ADAPTER_ID,
@@ -63,6 +64,7 @@ _SEMANTIC_MODE_BY_ARTIFACT = {
 _CANDIDATE_FILE_BY_ARTIFACT = {
     "semantic-audit-findings": "audit.json",
     "semantic-resolution-overlay": "resolution.json",
+    "semantic-closure-assessment": "closure.json",
     "target-closure-assessment": "closure.json",
     "source-composition-assessment": "closure.json",
 }
@@ -113,6 +115,7 @@ class Protocol25ExecutionStore(Protocol22ExecutionStore):
             dependencies.context_bytes,
             dependencies.response_schema_bytes,
             executor,
+            dependencies.retry_diagnostics,
         )
         execution_input = ExecutionInputV1(
             schema_version=1,
@@ -175,6 +178,7 @@ class Protocol25ExecutionStore(Protocol22ExecutionStore):
             ),
             dependencies.response_schema_bytes,
             dependencies.executor,
+            dependencies.retry_diagnostics,
         )
         if expected != prepared.reservation:
             raise Protocol22ExecutionError(
@@ -196,15 +200,8 @@ def validate_semantic_provider_content_authority(
     expected_mode = _SEMANTIC_MODE_BY_ARTIFACT.get(kind)
     schema = (
         None
-        if renderer is None
-        else next(
-            (
-                item
-                for item in renderer.response_schemas
-                if item.artifact_kind == kind
-            ),
-            None,
-        )
+        if renderer is None or len(renderer.response_schemas) != 1
+        else renderer.response_schemas[0]
     )
     if (
         work_item.output_key.layer != "L3"
@@ -280,6 +277,8 @@ class SquadCliSemanticRenderer:
         reservation: DispatchReservationV1,
         candidate_root: Path,
         deadline: float,
+        *,
+        retry_diagnostics: tuple[str, ...] = (),
     ) -> RawExecutionResultV1:
         executor = self._executors.get(execution_input.executor_contract_hash)
         if executor is None:
@@ -294,6 +293,7 @@ class SquadCliSemanticRenderer:
                 reservation,
                 candidate_root,
                 deadline,
+                retry_diagnostics=retry_diagnostics,
             )
         artifact = _validate_semantic_inputs(
             executor,
@@ -302,6 +302,7 @@ class SquadCliSemanticRenderer:
             context_bytes,
             response_schema_bytes,
             reservation,
+            retry_diagnostics,
         )
         root = _validate_empty_candidate_root(candidate_root)
         if (
@@ -329,6 +330,7 @@ class SquadCliSemanticRenderer:
             artifact.body,
             context_bytes.decode("utf-8"),
             response_schema_bytes.decode("utf-8"),
+            retry_diagnostics,
         )
         if len(prompt.encode("utf-8")) > reservation.initial_input_tokens:
             raise Protocol22ProviderError(
@@ -432,6 +434,7 @@ def _validate_semantic_inputs(
     context_bytes: bytes,
     response_schema_bytes: bytes,
     reservation: DispatchReservationV1,
+    retry_diagnostics: tuple[str, ...],
 ):  # type: ignore[no-untyped-def]
     renderer = executor.request_renderer
     if (
@@ -451,6 +454,12 @@ def _validate_semantic_inputs(
         raise Protocol22ProviderError("execution input agent contract mismatch")
     if execution_input.context_bundle_hash != content_digest(context_bytes):
         raise Protocol22ProviderError("execution input context bundle mismatch")
+    if (execution_input.attempt_kind == "initial_generation") != (
+        not retry_diagnostics
+    ):
+        raise Protocol22ProviderError(
+            "semantic CLI retry diagnostics do not match the attempt kind"
+        )
     artifact = decode_prosaic_agent_bytes(agent_bytes)
     try:
         load_canonical_object(context_bytes, lambda value: value)
@@ -466,28 +475,53 @@ def _validate_semantic_inputs(
         context_bytes,
         response_schema_bytes,
         executor,
+        retry_diagnostics,
     )
     if reservation != expected:
         raise Protocol22ProviderError("shared CLI dispatch reservation mismatch")
     return artifact
 
 
-def _render_semantic_prompt(body: str, context: str, response_schema: str) -> str:
+def _render_semantic_prompt(
+    body: str,
+    context: str,
+    response_schema: str,
+    retry_diagnostics: tuple[str, ...] = (),
+) -> str:
+    binding = ""
+    try:
+        raw_context = load_canonical_object(
+            context.encode("utf-8"),
+            lambda value: value,
+        )
+    except Protocol22SchemaError as exc:
+        raise Protocol22ProviderError("semantic prompt context is invalid") from exc
+    if isinstance(raw_context, dict):
+        epoch_id = raw_context.get("audit_epoch_id")
+        semantic_round = raw_context.get("semantic_round")
+        if isinstance(epoch_id, str) and isinstance(semantic_round, int):
+            binding = (
+                "Exact output binding: "
+                + canonical_json_bytes(
+                    {
+                        "audit_epoch_id": epoch_id,
+                        "semantic_round": semantic_round,
+                    }
+                ).decode("utf-8")
+                + "\n"
+            )
     return (
         body
         + ("" if body.endswith("\n") else "\n")
-        + "\n## Dispatch contract\n"
-        + "Write exactly the candidate file required by the role contract. The file "
-        + "must contain only the authorial JSON payload matching the supplied schema. "
-        + "Finish with exactly the required `echelon_result` block.\n\n"
+        + "\nWrite the role-required candidate JSON and required `echelon_result`.\n"
+        + binding
         + "## Bounded context (canonical JSON)\n"
         + context
         + "\n\n## Authorial response schema (canonical JSON)\n"
         + response_schema
         + "\n"
+        + render_cli_retry_section(retry_diagnostics)
     )
-
-
 def _has_exact_semantic_candidate(
     root: Path,
     execution_input: ExecutionInputV1,

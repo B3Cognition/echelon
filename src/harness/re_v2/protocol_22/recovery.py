@@ -38,6 +38,7 @@ from .baseline import (
     CompactCandidateError,
     CompactCertificationAssessmentV2,
     DeterministicCertificationAssessmentV2,
+    expanded_retry_diagnostics,
     parse_authorial_candidate,
 )
 from .budget import BudgetDecisionV2, ReV2BudgetV22Error, evaluate_budget_v22
@@ -1746,10 +1747,11 @@ def _retry_diagnostics(
             "artifact retry has no preceding candidate rejection"
         )
     assessment_id = str(rejected.payload["candidate_assessment_id"])
+    ledger = context.ledger.replay()
     assessment = next(
         (
             value
-            for value in context.ledger.replay().candidate_assessments.values()
+            for value in ledger.candidate_assessments.values()
             if value.identity == assessment_id
         ),
         None,
@@ -1758,7 +1760,7 @@ def _retry_diagnostics(
         raise Protocol22RecoveryError(
             "artifact retry has no exact normalized diagnostics"
         )
-    return tuple(assessment.normalized_diagnostics)
+    return expanded_retry_diagnostics(assessment, ledger.certifications)
 
 
 def _is_pristine_preparation_state(

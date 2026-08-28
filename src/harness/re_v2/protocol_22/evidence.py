@@ -33,6 +33,7 @@ from .policies import (
     EvidencePackPolicyParametersV1,
     PathClassifierV1,
     Protocol22PolicyError,
+    classify_path_role,
     SourceEvidencePackPolicyParametersV1,
     layer_policy_hash,
 )
@@ -420,7 +421,7 @@ def _selection_context(
         if row.object_kind != "regular" or row.text_status != "eligible_utf8":
             ineligible.append(_file_omission(row, origin, "non_text"))
             continue
-        role = _classify_path(row.source_relative_path, parameters.path_classifiers)
+        role = classify_path_role(row.source_relative_path, parameters.path_classifiers)
         if role is None:
             ineligible.append(_file_omission(row, origin, "policy_ineligible"))
             continue
@@ -576,20 +577,6 @@ def _inventory_record(row: InventoryFileV1) -> FileRecordV1:
     return FileRecordV1(
         **{field: getattr(row, field) for field in FileRecordV1.FIELDS}
     )
-
-
-def _classify_path(
-    path: str,
-    classifiers: tuple[PathClassifierV1, ...],
-) -> str | None:
-    candidate = PurePosixPath(path)
-    for classifier in classifiers:
-        for pattern in classifier.patterns:
-            if candidate.match(pattern) or (
-                pattern.startswith("**/") and candidate.match(pattern[3:])
-            ):
-                return classifier.role
-    return None
 
 
 def _raw_lines(payload: bytes) -> tuple[bytes, ...]:

@@ -606,6 +606,7 @@ def preview_dispatch_reservation(
                     dependencies.context_bytes,
                     dependencies.response_schema_bytes,
                     executor,
+                    dependencies.retry_diagnostics,
                 ),
             )
         if executor.execution_mode != "api":
@@ -802,6 +803,7 @@ class Protocol22ExecutionStore:
                 dependencies.context_bytes,
                 dependencies.response_schema_bytes,
                 executor,
+                dependencies.retry_diagnostics,
             )
         execution_input = ExecutionInputV1(
             schema_version=1,
@@ -976,6 +978,7 @@ class Protocol22ExecutionStore:
                 ),
                 dependencies.response_schema_bytes,
                 dependencies.executor,
+                dependencies.retry_diagnostics,
             )
             if expected != prepared.reservation:
                 raise Protocol22ExecutionError(

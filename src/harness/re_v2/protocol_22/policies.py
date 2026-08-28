@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 import re
 from typing import ClassVar, Literal
 
@@ -197,8 +198,9 @@ def _validate_evidence_parameters(
         _policy_error(f"{label}.path_classifiers must contain closed classifiers")
     classifiers = tuple(classifiers)
     object.__setattr__(value, "path_classifiers", classifiers)
-    if tuple(item.role for item in classifiers) != roles:
-        _policy_error(f"{label}.path_classifiers must occur once in role_priority order")
+    classifier_roles = tuple(item.role for item in classifiers)
+    if len(classifier_roles) != len(set(classifier_roles)) or set(classifier_roles) != set(roles):
+        _policy_error(f"{label}.path_classifiers must contain each role exactly once")
     reasons = _ordered_unique_ids(
         getattr(value, "omission_reason_codes"),
         f"{label}.omission_reason_codes",
@@ -488,9 +490,14 @@ class CompactBaselinePolicyParametersV1:
             _policy_error("question byte limits are reversed")
         if self.min_conflicting_evidence_refs > self.max_inspected_refs_per_unknown:
             _policy_error("conflicting-evidence minimum exceeds inspected-reference maximum")
-        literal(
+        one_of(
             self.minimum_utility_rule_id,
-            "compact-v1-minimum-utility-v1",
+            frozenset(
+                {
+                    "compact-v1-minimum-utility-v1",
+                    "compact-v1-minimum-utility-v2",
+                }
+            ),
             "CompactBaselinePolicyParametersV1.minimum_utility_rule_id",
         )
 
@@ -788,6 +795,29 @@ def _classifier(role: str, *patterns: str) -> PathClassifierV1:
     return PathClassifierV1(role=role, patterns=tuple(sorted(patterns)))
 
 
+def classify_path_role(
+    path: str,
+    classifiers: tuple[PathClassifierV1, ...],
+) -> str | None:
+    """Return the first matching semantic role from a closed classifier set."""
+    candidate = PurePosixPath(path)
+    for classifier in classifiers:
+        for pattern in classifier.patterns:
+            if candidate.match(pattern) or (
+                pattern.startswith("**/") and candidate.match(pattern[3:])
+            ):
+                return classifier.role
+    return None
+
+
+def classify_domain_evidence_path(path: str) -> str:
+    """Classify a source-relative domain path with canonical semantic precedence."""
+    role = classify_path_role(path, _domain_evidence_parameters().path_classifiers)
+    if role is None:  # The canonical domain classifier ends with the closed catch-all.
+        _policy_error("canonical domain classifier did not match a path")
+    return role
+
+
 def _source_evidence_parameters() -> SourceEvidencePackPolicyParametersV1:
     return SourceEvidencePackPolicyParametersV1(
         parameter_schema="evidence-pack-policy-parameters-v1",
@@ -851,6 +881,15 @@ def _domain_evidence_parameters() -> DomainEvidencePackPolicyParametersV1:
                 "**/routes.*",
             ),
             _classifier(
+                "test",
+                "**/*_test.*",
+                "**/*.spec.*",
+                "**/*.test.*",
+                "**/test/**",
+                "**/tests/**",
+                "**/vitest/**",
+            ),
+            _classifier(
                 "production",
                 "**/*.c",
                 "**/*.cpp",
@@ -865,14 +904,6 @@ def _domain_evidence_parameters() -> DomainEvidencePackPolicyParametersV1:
                 "**/*.rb",
                 "**/*.rs",
                 "**/*.ts",
-            ),
-            _classifier(
-                "test",
-                "**/*_test.*",
-                "**/*.spec.*",
-                "**/*.test.*",
-                "**/test/**",
-                "**/tests/**",
             ),
             _classifier("documentation", "**/*.md", "**/*.rst", "**/docs/**"),
             _classifier("other", "**"),
@@ -900,7 +931,7 @@ def _compact_parameters(artifact_kind: str) -> CompactBaselinePolicyParametersV1
         min_question_utf8_bytes=1,
         max_question_utf8_bytes=512,
         raw_candidate_size_multiplier=2,
-        minimum_utility_rule_id="compact-v1-minimum-utility-v1",
+        minimum_utility_rule_id="compact-v1-minimum-utility-v2",
     )
 
 
@@ -963,7 +994,7 @@ def build_compact_v1_policy_catalog() -> ArtifactPolicyCatalogV1:
         required_surfaces=DOMAIN_SURFACES,
         evidence_rule_id="bounded-context-citations-v1",
         ownership_rule_id="explicit-read-set-v1",
-        minimum_utility_rule_id="compact-v1-minimum-utility-v1",
+        minimum_utility_rule_id="compact-v1-minimum-utility-v2",
         parameters=_compact_parameters("domain-baseline"),
     )
     source_compact = _entry(
@@ -977,7 +1008,7 @@ def build_compact_v1_policy_catalog() -> ArtifactPolicyCatalogV1:
         required_surfaces=SOURCE_OVERVIEW_SURFACES,
         evidence_rule_id="bounded-context-citations-v1",
         ownership_rule_id="explicit-read-set-v1",
-        minimum_utility_rule_id="compact-v1-minimum-utility-v1",
+        minimum_utility_rule_id="compact-v1-minimum-utility-v2",
         parameters=_compact_parameters("source-overview"),
     )
     entries = (

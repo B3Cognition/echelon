@@ -490,6 +490,10 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
             item.failure_class == "execution_indeterminate"
             for item in ledger.work_item_failures.values()
         ),
+        work_item_failed=bool(
+            replay.shared.shared.failed_work_items
+            or replay.shared.shared.failed_executors
+        ),
     )
     return Protocol25RecoveryResult(state, events, ledger)
 
@@ -674,6 +678,8 @@ def build_resolution_dispatch_authority(
         overlay_hashes=prior_hashes,
         target_assessment_hashes=(),
         active_sibling_authority_hashes=(),
+        audit_epoch_id=epoch.identity,
+        semantic_round=action.semantic_round,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
 
@@ -787,6 +793,8 @@ def build_recheck_dispatch_authority(
         overlay_hashes=(overlay.identity,),
         target_assessment_hashes=(),
         active_sibling_authority_hashes=(),
+        audit_epoch_id=epoch.identity,
+        semantic_round=action.semantic_round,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
     item = _semantic_operation_item(
@@ -939,9 +947,13 @@ def build_source_guard_dispatch_authority(
         authority_payloads=authority_payloads,
         lower_authority_hashes=base_context.lower_authority_hashes,
         unresolved_findings=unresolved,
-        overlay_hashes=tuple(item.identity for item in overlays),
-        target_assessment_hashes=tuple(item.identity for item in assessments),
+        overlay_hashes=tuple(sorted(item.identity for item in overlays)),
+        target_assessment_hashes=tuple(
+            sorted(item.identity for item in assessments)
+        ),
         active_sibling_authority_hashes=active_siblings,
+        audit_epoch_id=epoch.identity,
+        semantic_round=action.semantic_round,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
     composed = context.semantic_runtime.build_composed_view(
@@ -998,6 +1010,7 @@ def _semantic_operation_item(
     }.get(artifact_kind)
     if family is None:
         raise Protocol25RecoveryError("semantic operation artifact kind is unsupported")
+    dependencies = tuple(sorted(dependencies))
     policy = context.semantic_inputs.artifact_policy.entry_for("L3", artifact_kind)
     executor = context.semantic_inputs.executor_contract.entry_for(family)
     manifest = context.semantic_graph.manifest
@@ -1103,8 +1116,8 @@ def build_semantic_provider_dependencies(
         executor.execution_mode != "cli"
         or renderer is None
         or len(renderer.response_schemas) != 1
-        or renderer.response_schemas[0].artifact_kind
-        != item.output_key.artifact_kind
+        or renderer.response_schemas[0].schema_hash
+        != semantic_context.response_schema_hash
     ):
         raise Protocol25RecoveryError(
             "semantic executor does not expose the shared Prosaic CLI contract"
@@ -1215,18 +1228,12 @@ def _target_states(
                     "frozen target differs from accepted audit authority"
                 )
             frozen = epoch_authority.finding_key_ids
-        unresolved = tuple(
-            finding_id
-            for finding_id in frozen
-            if finding_id not in ledger.latest_finding_closures
-            or ledger.latest_finding_closures[finding_id].verdict != "closed"
+        unresolved = _replayed_unresolved_finding_ids(
+            replay,
+            target.audit_target_id,
+            frozen,
         )
-        stage = "idle"
-        for cycle in replay.source_cycles.values():
-            if target.audit_target_id in cycle.target_assessments:
-                stage = "assessment_accepted"
-            elif target.audit_target_id in cycle.accepted_resolution_targets:
-                stage = "resolution_accepted"
+        stage = _active_target_stage(replay, target.audit_target_id)
         if target.audit_target_id in replay.plateau_targets:
             stage = "plateau_recorded"
         states.append(
@@ -1244,6 +1251,34 @@ def _target_states(
             )
         )
     return tuple(sorted(states, key=lambda item: item.audit_target_id))
+
+
+def _replayed_unresolved_finding_ids(
+    replay: Protocol25ReplayState,
+    audit_target_id: str,
+    frozen_finding_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Project closure only at the protocol's semantic-progress boundary."""
+    unresolved = replay.unresolved_by_target.get(audit_target_id)
+    if unresolved is None:
+        return frozen_finding_ids
+    return tuple(sorted(unresolved))
+
+
+def _active_target_stage(
+    replay: Protocol25ReplayState,
+    audit_target_id: str,
+) -> str:
+    """Project target progress from the active cycle, never historical cycles."""
+    stage = "idle"
+    for cycle in replay.source_cycles.values():
+        if cycle.complete:
+            continue
+        if audit_target_id in cycle.target_assessments:
+            stage = "assessment_accepted"
+        elif audit_target_id in cycle.accepted_resolution_targets:
+            stage = "resolution_accepted"
+    return stage
 
 
 def _source_cycle_states(

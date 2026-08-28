@@ -10,6 +10,7 @@ from harness.prompt_markdown import read_prompt_markdown
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINER = ROOT / "prosaic" / "subagents" / "echelon.re-baseliner.md"
+DEEPENER = ROOT / "prosaic" / "subagents" / "echelon.re-deepener.md"
 
 
 def _rule_sections(body: str) -> list[str]:
@@ -92,6 +93,14 @@ def test_baseliner_limits_write_authority_to_the_candidate_payload() -> None:
         "ALWAYS use write authority only to write exactly `baseline.json` in the "
         "supplied candidate root."
     ) in body
+
+
+def test_re_authoring_agents_name_the_only_citable_evidence_identifier() -> None:
+    for path in (BASELINER, DEEPENER):
+        body = read_prompt_markdown(path).body
+
+        assert "copy the `evidence_authority_id` value verbatim" in body
+        assert "NEVER substitute `source_blob_hash` or `raw_excerpt_hash`" in body
     assert (
         "NEVER perform filesystem discovery, read the live source workspace, or "
         "write any other path."

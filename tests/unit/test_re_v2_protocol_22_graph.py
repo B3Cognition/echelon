@@ -108,6 +108,7 @@ def _partition(
     source_domains: Mapping[str, tuple[str, ...]],
     *,
     presentation_ids: Mapping[tuple[str, str], str] | None = None,
+    domain_file_names: Mapping[tuple[str, str], str] | None = None,
 ) -> WorkspacePartitionCatalogV1:
     partitioner = ImplementationAuthorityV1(
         id="existing-domain-partitioner",
@@ -126,8 +127,11 @@ def _partition(
         domains: list[DomainDescriptorV1] = []
         for index, root in enumerate(sorted(roots), start=1):
             payload = f"{source_id}:{root}\n".encode()
+            file_name = (domain_file_names or {}).get(
+                (source_id, root), "main.py"
+            )
             record = FileRecordV1(
-                source_relative_path=f"{root}/main.py",
+                source_relative_path=f"{root}/{file_name}",
                 mode="100644",
                 object_kind="regular",
                 content_hash=content_digest(payload),
@@ -142,7 +146,7 @@ def _partition(
                 ownership,
                 stable_key,
                 root,
-                ("main.py",),
+                (file_name,),
                 (),
             )
             domains.append(
@@ -163,7 +167,7 @@ def _partition(
                         (),
                     ),
                     domain_partition_id=partition_id,
-                    owned_domain_relative_paths=("main.py",),
+                    owned_domain_relative_paths=(file_name,),
                     supporting_source_relative_paths=(),
                 )
             )
@@ -236,8 +240,13 @@ def _fixture(
     policy: ArtifactPolicyCatalogV1 | None = None,
     registry: InstalledAuthorityRegistry | None = None,
     presentation_ids: Mapping[tuple[str, str], str] | None = None,
+    domain_file_names: Mapping[tuple[str, str], str] | None = None,
 ) -> tuple[RunManifestV2, ValidatedProtocol22Inputs]:
-    workspace = _partition(source_domains, presentation_ids=presentation_ids)
+    workspace = _partition(
+        source_domains,
+        presentation_ids=presentation_ids,
+        domain_file_names=domain_file_names,
+    )
     artifact_policy = policy or build_compact_v1_policy_catalog()
     executor = resolve_executor_catalog(_config(), goal, registry or _registry())
     inputs = ValidatedProtocol22Inputs(

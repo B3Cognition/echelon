@@ -285,6 +285,29 @@ def test_protocol_23_baseline_preparation_pins_inspected_agent(
 
 
 @pytest.mark.unit
+def test_protocol_23_baseline_freezes_environment_selected_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    probe = create_cli_workspace(tmp_path, llm_cli="claude")
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "echelon-home"))
+    monkeypatch.setenv("ECHELON_LLM", "codex")
+
+    prepared = legacy_cli._prepare_re_v22_creation(
+        probe.root,
+        goal="baseline",
+        token_limit=None,
+        time_limit_minutes=None,
+        engine_protocol_version="2.3",
+    )
+
+    executor = prepared.inputs.executor_contract.entry_for("compact-baseline")
+    assert executor.provider_id == "codex"
+
+
+@pytest.mark.unit
 def test_protocol_23_missing_inspected_agent_fails_before_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

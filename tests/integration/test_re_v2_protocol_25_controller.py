@@ -69,6 +69,7 @@ def _state(
     deferred: tuple[str, ...] = (),
     terminal: str | None = None,
     indeterminate: bool = False,
+    work_failed: bool = False,
 ) -> Protocol25ControllerStateV1:
     return Protocol25ControllerStateV1(
         prerequisites_complete=prerequisites_complete,
@@ -81,6 +82,7 @@ def _state(
         deferred_observation_ids=deferred,
         terminal_state=terminal,  # type: ignore[arg-type]
         indeterminate_execution=indeterminate,
+        work_item_failed=work_failed,
     )
 
 
@@ -483,6 +485,30 @@ def test_indeterminate_execution_is_not_redispatched() -> None:
     terminal = replace(
         state,
         indeterminate_execution=False,
+        terminal_state="blocked_incomplete",
+    )
+    backend = _ScriptedBackend(
+        (state, terminal),
+        (Protocol25ControllerActionV1(kind="terminal_blocked_incomplete"),),
+    )
+
+    result = Protocol25Controller(backend).run_until_stopped()
+
+    assert result.status == "failed"
+    assert backend.provider_actions == []
+
+
+@pytest.mark.integration
+def test_exhausted_semantic_work_failure_is_not_redispatched() -> None:
+    """Catch an exhausted L3 contract retry being planned as fresh work."""
+    cycle = _cycle(DOMAIN_TARGET)
+    state = _state(
+        _target(DOMAIN_TARGET, findings=(DOMAIN_FINDING,)),
+        cycles=(cycle,),
+        work_failed=True,
+    )
+    terminal = replace(
+        state,
         terminal_state="blocked_incomplete",
     )
     backend = _ScriptedBackend(

@@ -102,7 +102,7 @@ def _domain_certification_fixture(
     domain = source.domains[0]
     reader = _SnapshotReader(
         fixture.inputs.workspace_partition,
-        {f"{domain.source_relative_root}/main.py": b"api:orders\n"},
+        {context.evidence[0].source_relative_path: b"api:orders\n"},
     )
     verifier = fixture.inputs.executor_contract.entry_for(
         "compact-baseline"
@@ -195,6 +195,96 @@ def test_valid_domain_candidate_has_exact_direct_and_combined_coverage() -> None
 
 
 @pytest.mark.unit
+def test_test_only_domain_accepts_responsibilities_and_tests() -> None:
+    fixture = _domain_fixture(path="orders/unit.test.py")
+    item, _unused = _domain_baseline_bytes(fixture, {})
+    context = load_canonical_object(
+        fixture.context_bytes,
+        ContextBundleV1.from_json_dict,
+    )
+    excerpt = context.evidence[0]
+    reference = {
+        "evidence_authority_id": excerpt.evidence_authority_id,
+        "path": excerpt.source_relative_path,
+        "start_line": excerpt.start_line,
+        "end_line": excerpt.end_line,
+    }
+    raw = _candidate()
+    raw["surfaces"]["responsibilities"] = _surface(
+        "Owns order verification", evidence=[reference]
+    )
+    raw["surfaces"]["tests"] = _surface(
+        "Verifies order behavior", evidence=[reference]
+    )
+    reader = _SnapshotReader(
+        fixture.inputs.workspace_partition,
+        {excerpt.source_relative_path: b"api:orders\n"},
+    )
+
+    result = certify_compact_candidate(
+        _candidate_input(raw, "domain-baseline", context),
+        item,
+        context,
+        reader,
+        fixture.inputs.executor_contract.entry_for("compact-baseline").verifier,
+    )
+
+    assert result.certification.verdict == "accepted"
+    requirements = {
+        record.surface: record.minimum_utility_requirement
+        for record in result.certification.assessment.required_surfaces
+    }
+    assert requirements["tests"] == "required"
+    assert requirements["entry_points"] == "none"
+
+
+@pytest.mark.unit
+def test_supporting_only_domain_accepts_contract_or_operational_surface() -> None:
+    fixture = _domain_fixture(path="orders/README.md")
+    item, _unused = _domain_baseline_bytes(fixture, {})
+    context = load_canonical_object(
+        fixture.context_bytes,
+        ContextBundleV1.from_json_dict,
+    )
+    excerpt = context.evidence[0]
+    reference = {
+        "evidence_authority_id": excerpt.evidence_authority_id,
+        "path": excerpt.source_relative_path,
+        "start_line": excerpt.start_line,
+        "end_line": excerpt.end_line,
+    }
+    raw = _candidate()
+    raw["surfaces"]["responsibilities"] = _surface(
+        "Documents order operations", evidence=[reference]
+    )
+    raw["surfaces"]["operational_constraints"] = _surface(
+        "Documents an operational constraint", evidence=[reference]
+    )
+    reader = _SnapshotReader(
+        fixture.inputs.workspace_partition,
+        {excerpt.source_relative_path: b"api:orders\n"},
+    )
+
+    result = certify_compact_candidate(
+        _candidate_input(raw, "domain-baseline", context),
+        item,
+        context,
+        reader,
+        fixture.inputs.executor_contract.entry_for("compact-baseline").verifier,
+    )
+
+    assert result.certification.verdict == "accepted"
+    requirements = {
+        record.surface: record.minimum_utility_requirement
+        for record in result.certification.assessment.required_surfaces
+    }
+    assert requirements["operational_constraints"] == (
+        "one_of_contract_or_operational"
+    )
+    assert requirements["core_behavior"] == "none"
+
+
+@pytest.mark.unit
 def test_two_candidates_share_artifact_certification_but_keep_provenance() -> None:
     fixture = _domain_fixture()
     context = load_canonical_object(
@@ -243,6 +333,16 @@ def test_evidence_mismatch_rejects_after_artifact(violation: str) -> None:
     assert result.certification.verdict == "rejected"
     assert "evidence_contract_invalid" in (
         result.certification.assessment.normalized_diagnostics
+    )
+    expected_detail = {
+        "path": "evidence_reference_path_mismatch",
+        "range": "evidence_reference_range_outside_authority",
+        "authority": "evidence_reference_unknown",
+    }[violation]
+    assert expected_detail in result.certification.assessment.normalized_diagnostics
+    assert (
+        f"{expected_detail}:{reference['evidence_authority_id']}"
+        in result.certification.assessment.normalized_diagnostics
     )
     assert result.candidate_assessment.outcome == "rejected_after_artifact"
 

@@ -98,6 +98,8 @@ def test_resolver_writes_only_resolution_candidate_from_frozen_authority() -> No
     assert "unresolved frozen finding" in lowered
     assert "never discover or read the live source workspace" in lowered
     assert "never edit or replace an l0, l1, or l2 artifact" in lowered
+    assert "copy each supplied `finding_key_id` verbatim" in lowered
+    assert "never recompute, hash, transform, or substitute a finding identifier" in lowered
     assert "never write receipts, routing, counters" in lowered
 
 

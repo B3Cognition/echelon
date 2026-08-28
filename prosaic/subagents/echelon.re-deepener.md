@@ -22,8 +22,8 @@ ALWAYS add evidence-supported precision about contracts, flows, boundaries, stat
 NEVER repeat an adopted lower-layer claim with identical evidence merely to populate L2.
 
 ### Rule 3 - Evidence Authority
-ALWAYS cite every factual statement through one or more evidence references available in the bounded context.
-NEVER cite a path, range, authority, source, or domain that the bounded context does not authorize.
+ALWAYS cite every factual statement through one or more evidence references available in the bounded context, and copy the `evidence_authority_id` value verbatim into each evidence reference.
+NEVER substitute `source_blob_hash` or `raw_excerpt_hash` for `evidence_authority_id`, or cite a path, range, authority, source, or domain that the bounded context does not authorize.
 
 ### Rule 4 - Honest Unknowns
 ALWAYS use `not_established` and unresolved questions when bounded evidence does not establish deeper behavior.

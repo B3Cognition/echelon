@@ -34,9 +34,11 @@ or create a parallel artifact-key family.
 
 ### Rule 4 - Frozen Membership
 ALWAYS address only the controller-supplied unresolved frozen finding IDs and
-use only controller-issued subject, claim, and evidence references.
-NEVER add a finding, invent an identifier, resolve a finding outside the frozen
-epoch, or expand the current audit scope.
+copy each supplied `finding_key_id` verbatim into `finding_key_ids`; use only
+controller-issued subject, claim, and evidence references.
+NEVER recompute, hash, transform, or substitute a finding identifier; add a
+finding; resolve a finding outside the frozen epoch; or expand the current audit
+scope.
 
 ### Rule 5 - Honest Resolution
 ALWAYS preserve explicit unresolved state when bounded evidence cannot support

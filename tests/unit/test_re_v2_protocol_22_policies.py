@@ -17,6 +17,7 @@ from harness.re_v2.protocol_22.policies import (
     layer_policy_hash,
     policy_for,
 )
+from harness.re_v2.protocol_22 import policies as policy_module
 from harness.re_v2.protocol_22.schema import load_canonical_object
 from tests.re_v2_protocol_22_fixtures import digest
 
@@ -84,6 +85,17 @@ def test_builtin_catalog_pins_literal_compact_bounds_and_surfaces() -> None:
     ) == (131_072, 98_304)
     assert domain.max_rendered_markdown_bytes == 96 * 1024
     assert source.max_rendered_markdown_bytes == 96 * 1024
+    assert domain.minimum_utility_rule_id == "compact-v1-minimum-utility-v2"
+    assert source.minimum_utility_rule_id == "compact-v1-minimum-utility-v2"
+
+
+def test_domain_role_classification_prefers_test_shapes_over_extensions() -> None:
+    classify = policy_module.classify_domain_evidence_path
+
+    assert classify("vitest/setup.ts") == "test"
+    assert classify("src/orders/service.test.ts") == "test"
+    assert classify("src/orders/main.ts") == "entry_point"
+    assert classify("src/orders/service.ts") == "production"
 
 
 def test_policy_parameter_branches_match_only_their_artifact_kinds() -> None:
@@ -133,7 +145,14 @@ def test_evidence_roles_and_omission_codes_are_literal_and_ordered() -> None:
         "other",
     )
     assert tuple(classifier.role for classifier in source.path_classifiers) == source.role_priority
-    assert tuple(classifier.role for classifier in domain.path_classifiers) == domain.role_priority
+    assert tuple(classifier.role for classifier in domain.path_classifiers) == (
+        "explicit_supporting",
+        "entry_point",
+        "test",
+        "production",
+        "documentation",
+        "other",
+    )
     assert source.omission_reason_codes == (
         "policy_ineligible",
         "non_text",

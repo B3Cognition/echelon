@@ -332,6 +332,17 @@ produces the same epoch object across crash recovery or an audit successor.
 Audit candidate certification happens before the epoch exists. Resolution,
 closure, and L3-root authorities bind the final audit-epoch ID.
 
+Every post-freeze provider context carries the exact controller-issued
+`audit_epoch_id` and `semantic_round`. The shared CLI renderer promotes this
+small binding ahead of the larger bounded context, and candidates must copy
+same-named values exactly. A response schema that merely permits an arbitrary
+digest or round is not sufficient authority for provider output.
+
+Each serialized unresolved finding is also a closed pair of its exact
+controller-issued `finding_key_id` and its authorial `finding` payload. The
+resolver copies that ID verbatim; it never recomputes an identifier by hashing
+the nested finding key or any other payload.
+
 ### SemanticResolutionOverlayV1
 
 Resolution never edits L2. For one audit target and semantic round, the resolver
@@ -418,11 +429,13 @@ depend on the preceding receipt and overlay, preserving the full chain.
 
 ### AuditClosureRootV1 and L3SourceRootV1
 
-`AuditClosureRootV1` deterministically aggregates every frozen finding and its
-latest closure receipt, unresolved set, semantic-round state, plateau state,
-and any deferred observations. It distinguishes a closed epoch from a complete
-L3 layer claim: deferred observations close neither the current finding set nor
-the selected L3 scope.
+`AuditClosureRootV1` deterministically aggregates every frozen finding, each
+available latest closure receipt, the exact unresolved set, semantic-round
+state, plateau state, and any deferred observations. A frozen finding without a
+receipt remains unresolved; this is required when a failed source guard emits
+no closure receipts before a plateau. It distinguishes a closed epoch from a
+complete L3 layer claim: deferred observations close neither the current
+finding set nor the selected L3 scope.
 
 `L3SourceRootV1` binds a selected source's domain and source-level audit targets,
 their closure roots, selected-domain coverage, adopted closure authority, and
@@ -452,6 +465,16 @@ The auditor receives only controller-supplied immutable context. It cannot
 discover the live source workspace, sibling outputs, mutable status, or prior
 aggregate findings.
 
+The controller keeps the complete accepted L2 dependency closure as hashed
+audit-target authority, but does not duplicate every transitive object into the
+provider prompt. The bounded provider projection contains the exact audited L2
+artifact bytes and only the immutable evidence excerpts actually cited by
+those artifacts, including their text, path, line range, source-blob hash, and
+file record. Inventories, evidence packs, lower context bundles, and other
+transitive objects remain controller-verifiable authority by hash. They are not
+re-embedded as duplicate prompt payloads. The projection must fit the semantic
+context ceiling; exceeding it fails before provider dispatch.
+
 Each audit operation permits:
 
 - one initial dispatch;
@@ -461,6 +484,11 @@ Each audit operation permits:
 - zero semantic-resolution rounds.
 
 Malformed output cannot combine retry categories into a third audit dispatch.
+When the bounded retry is exhausted, shared `work_item_failed` or
+`executor_failed` authority is projected into protocol 2.5 controller state
+and terminalizes the child as `blocked_incomplete`; it is never replanned as
+fresh semantic work. The incomplete source cycle remains visible as forensic
+terminal state.
 
 ### Phase 3: epoch freeze
 

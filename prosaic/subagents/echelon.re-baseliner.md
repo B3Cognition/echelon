@@ -22,8 +22,8 @@ ALWAYS preserve semantic claim order by placing the most material supported clai
 NEVER reorder claims lexically or add a claim merely to populate a surface.
 
 ### Rule 3 - Evidence Authority
-ALWAYS cite every factual statement through one or more evidence references available in the bounded context.
-NEVER cite a path, range, authority, sibling source, or sibling domain that the bounded context does not authorize.
+ALWAYS cite every factual statement through one or more evidence references available in the bounded context, and copy the `evidence_authority_id` value verbatim into each evidence reference.
+NEVER substitute `source_blob_hash` or `raw_excerpt_hash` for `evidence_authority_id`, or cite a path, range, authority, sibling source, or sibling domain that the bounded context does not authorize.
 
 ### Rule 4 - Honest Unknowns
 ALWAYS use `not_established` and unresolved questions honestly when the bounded context does not establish a surface or answer.

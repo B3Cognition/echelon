@@ -16,7 +16,7 @@ from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
 from .artifacts import ContextBundleV1
-from .baseline import CompactCertificationAssessmentV2
+from .baseline import CompactCertificationAssessmentV2, expanded_retry_diagnostics
 from .budget import BudgetDecisionV2, evaluate_budget_v22
 from .cli_provider import calculate_shared_cli_dispatch_reservation
 from .events import PROTOCOL_22_EVENTS
@@ -774,6 +774,7 @@ def _preview_from_pinned_run(
             context_bytes,
             schema_bytes,
             executor,
+            diagnostics,
         )
         return dispatch_id, reservation
     envelope = render_provider_request_envelope(
@@ -833,7 +834,7 @@ def _pinned_retry_diagnostics(
         raise Protocol22StatusError(
             "artifact retry has no exact normalized diagnostics"
         )
-    return tuple(assessment.normalized_diagnostics)
+    return expanded_retry_diagnostics(assessment, ledger.certifications)
 
 
 def _attempt_kind(item: WorkItemV2, budget: BudgetDecisionV2) -> str:

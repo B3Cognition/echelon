@@ -4476,7 +4476,7 @@ def test_codex_backend_rejects_isolated_workspace_with_external_scope(
     popen.assert_not_called()
 
 
-def test_codex_backend_rejects_isolated_workspace_with_unsafe_policy(
+def test_codex_backend_downgrades_unsafe_policy_for_isolated_workspace(
     tmp_path,
 ) -> None:
     config = _config("codex")
@@ -4485,6 +4485,23 @@ def test_codex_backend_rejects_isolated_workspace_with_unsafe_policy(
         approval_reason="test approval",
     )
     backend = CodexCliBackend(config)
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
     request = CliRunRequest(
         cwd=str(tmp_path),
         prompt="Write one isolated candidate.",
@@ -4493,13 +4510,19 @@ def test_codex_backend_rejects_isolated_workspace_with_unsafe_policy(
         metadata={"isolated_workspace": True},
     )
 
-    with patch("harness.ai_cli_backends.codex.subprocess.Popen") as popen:
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
         result = backend.run_prompt(request)
 
-    assert result.exit_code == 125
-    assert result.metadata == {"isolated_workspace": "invalid"}
-    assert "unsafe host execution" in result.stderr
-    popen.assert_not_called()
+    command = captured["command"]
+    assert result.exit_code == 0
+    assert command[1:5] == [
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+    ]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--skip-git-repo-check" in command
 
 
 def test_codex_backend_fails_closed_without_workspace_boundary(tmp_path) -> None:

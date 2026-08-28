@@ -809,7 +809,7 @@ CompactBaselinePolicyParametersV1 = {
   min_question_utf8_bytes: 1,
   max_question_utf8_bytes: 512,
   raw_candidate_size_multiplier: 2,
-  minimum_utility_rule_id: "compact-v1-minimum-utility-v1"
+  minimum_utility_rule_id: "compact-v1-minimum-utility-v2"
 }
 
 EmptyPolicyParametersV1 = {}
@@ -819,8 +819,9 @@ EmptyPolicyParametersV1 = {}
 policy version select exactly one branch above. A source evidence-pack entry
 requires the source branch and a domain evidence-pack entry the domain branch,
 so an unrelated classifier change cannot re-key the other scope. Evidence
-classifiers contain each literal role exactly once in `role_priority` order;
-their normalized glob patterns are sorted and unique. A domain
+classifiers contain each literal role exactly once; their order is semantic-
+match precedence and may differ from the independent allocation
+`role_priority`. Their normalized glob patterns are sorted and unique. A domain
 context requires null `projection`; a source-overview context requires the
 literal projection object. A compact domain entry requires the literal domain
 surface order defined below; a compact source entry requires the literal source
@@ -1660,15 +1661,27 @@ identity, counts, and descriptor hashes require no provider citation; every
 provider-authored factual statement appears only inside `Claim` and therefore
 always carries evidence.
 
-`compact-v1-minimum-utility-v1` is a deterministic acceptance gate in addition
-to schema presence. A domain baseline must have an observed `responsibilities`
-surface, at least one observed `entry_points` or `core_behavior` surface, and at
-least one distinct cited regular snapshot file. A source overview must have
-observed `purpose` and `runtime_shape` surfaces and at least one distinct cited
-regular snapshot file. When its partition contains more than one domain, it
-must additionally have at least one observed claim in
-`intra_source_boundaries` or `domain_relationships`. An honest all-
-`not_established` payload therefore cannot be labeled complete.
+`compact-v1-minimum-utility-v2` is a deterministic acceptance gate in addition
+to schema presence. It replaces the production-only domain assumption in the
+legacy `compact-v1-minimum-utility-v1` rule. The controller classifies the full
+authenticated owned-path set from the immutable domain partition, not the
+bounded excerpt selection. Test-specific patterns take precedence over generic
+language-extension patterns. A domain is then assigned exactly one profile:
+
+- a production or mixed domain, when any owned path is an entry point or
+  production file, requires observed `responsibilities` plus at least one
+  observed `entry_points` or `core_behavior` surface;
+- a test-only domain requires observed `responsibilities` and `tests`; and
+- a supporting, documentation, or configuration-only domain requires observed
+  `responsibilities` plus at least one observed `external_contracts` or
+  `operational_constraints` surface.
+
+Every profile also requires at least one distinct cited regular snapshot file.
+A source overview retains the v1 requirements: observed `purpose` and
+`runtime_shape`, plus at least one distinct cited regular snapshot file. When
+its partition contains more than one domain, it must additionally have at least
+one observed claim in `intra_source_boundaries` or `domain_relationships`. An
+honest all-`not_established` payload therefore cannot be labeled complete.
 
 Failure of this gate is the artifact-contract diagnostic
 `minimum_utility_not_met`. It may consume the one shared retry, but a second
@@ -1833,6 +1846,15 @@ scope, or minimum utility consumes `artifact_contract_retry` and receives only
 normalized deterministic diagnostics plus the identical context bundle. The two
 retry kinds can never both occur for one work item. Reconstruction consumes no
 retry. Neither retry performs atomic or semantic repair.
+
+Retry diagnostics are immutable request authority on every provider path. The
+bounded API envelope and the shared Prosaic CLI prompt carry the same canonical
+`RetryDiagnosticsV1` object, and CLI reservation calculation includes its exact
+rendered bytes. A minimum-utility retry includes both
+`minimum_utility_not_met` and the exact failed requirement diagnostics from the
+controller-owned certification receipt, such as
+`responsibilities_not_observed` or `tests_not_observed`; a coarse failure code
+alone is insufficient repair guidance.
 
 Run-manifest schema 2 `BudgetPolicy` adds `shared_retry_limit` and
 `artifact_contract_retry_limit`. Protocol-2.2 `WorkTemplate` and `WorkItem`
@@ -2072,7 +2094,7 @@ The L1 certifier is deterministic and controller-owned. It validates:
   constructs and canonicalizes the complete controller-owned envelope with the
   existing v2 serializer;
 - required compact-baseline sections and maximum output size;
-- `compact-v1-minimum-utility-v1`;
+- `compact-v1-minimum-utility-v2`;
 - canonical, in-bounds evidence references;
 - membership of every complete cited line range in the exact context bundle;
 - matching excerpt and source-blob hashes in the immutable snapshot;
@@ -2118,14 +2140,17 @@ RequiredSurfaceRecord = {
   status: "observed" | "not_established",
   claim_count: nonnegative integer,
   minimum_utility_requirement: "required" | "one_of_entry_or_behavior" |
+                               "one_of_contract_or_operational" |
                                "one_of_boundary_or_relationship" | "none"
 }
 
 MinimumUtilityAssessment = {
-  rule_id: "compact-v1-minimum-utility-v1",
+  rule_id: "compact-v1-minimum-utility-v1" |
+           "compact-v1-minimum-utility-v2",
   passed: boolean,
   diagnostic_codes: [
     "responsibilities_not_observed" | "entry_or_behavior_not_observed" |
+    "tests_not_observed" | "contract_or_operational_not_observed" |
     "purpose_not_observed" | "runtime_shape_not_observed" |
     "boundary_or_relationship_not_observed" | "no_regular_file_cited",
     ...

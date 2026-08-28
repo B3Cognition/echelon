@@ -185,6 +185,7 @@ class Protocol25ControllerStateV1:
     deferred_observation_ids: tuple[str, ...] = ()
     terminal_state: TerminalStateV1 | None = None
     indeterminate_execution: bool = False
+    work_item_failed: bool = False
 
     def __post_init__(self) -> None:
         for field in (
@@ -192,6 +193,7 @@ class Protocol25ControllerStateV1:
             "prerequisites_failed",
             "paused_resource",
             "indeterminate_execution",
+            "work_item_failed",
         ):
             if not isinstance(getattr(self, field), bool):
                 raise Protocol25ControllerError(f"{field} must be boolean")
@@ -250,8 +252,10 @@ class Protocol25ControllerStateV1:
             raise Protocol25ControllerError(
                 "semantic cycles and roots require a frozen audit epoch"
             )
-        if self.terminal_state is not None and self.source_cycles:
-            raise Protocol25ControllerError("terminal state cannot retain active cycles")
+        if self.terminal_state in {"complete", "next_epoch_required"} and self.source_cycles:
+            raise Protocol25ControllerError(
+                "completed terminal state cannot retain active cycles"
+            )
         object.__setattr__(self, "rooted_source_ids", rooted)
         object.__setattr__(self, "deferred_observation_ids", deferred)
 
@@ -386,6 +390,8 @@ def plan_next_protocol_25(
     if state.terminal_state is not None or state.paused_resource:
         return None
     if state.indeterminate_execution:
+        return Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
+    if state.work_item_failed:
         return Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
     if state.prerequisites_failed:
         return Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")

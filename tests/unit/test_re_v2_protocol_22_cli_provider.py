@@ -155,6 +155,59 @@ def test_cli_reservation_is_the_exact_rendered_prompt_byte_upper_bound() -> None
     assert reservation.billable_tokens == executor.limits.max_billable_tokens_per_dispatch
 
 
+def test_cli_retry_diagnostics_are_in_the_exact_reserved_prompt(
+    tmp_path: Path,
+) -> None:
+    (
+        executor,
+        execution_input,
+        agent_bytes,
+        _frontmatter,
+        context_bytes,
+        schema_bytes,
+        initial_reservation,
+    ) = _inputs()
+    diagnostics = (
+        "minimum_utility_not_met",
+        "responsibilities_not_observed",
+    )
+    execution_input = replace(
+        execution_input,
+        attempt_kind="artifact_contract_retry",
+    )
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        executor,
+        diagnostics,
+    )
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    provider = _ProviderSpy(_result())
+
+    SquadCliBaselineExecutor(executor, provider=provider).execute(
+        execution_input,
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        reservation,
+        candidate_root,
+        10**12,
+        retry_diagnostics=diagnostics,
+    )
+
+    prompt = provider.calls[0]["prompt"]
+    assert isinstance(prompt, str)
+    assert reservation.initial_input_tokens > initial_reservation.initial_input_tokens
+    assert "## Retry diagnostics (canonical JSON)" in prompt
+    assert (
+        '{"diagnostics":["minimum_utility_not_met",'
+        '"responsibilities_not_observed"],"schema_version":1}'
+        in prompt
+    )
+
+
 def _result(**overrides: object) -> SquadAgentResult:
     values: dict[str, object] = {
         "exit_code": 0,

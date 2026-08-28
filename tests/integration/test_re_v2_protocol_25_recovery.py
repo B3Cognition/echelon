@@ -37,6 +37,7 @@ from harness.re_v2.protocol_25.artifacts import (
     SemanticResolutionOverlayV1,
 )
 from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
+from harness.re_v2.protocol_25.events import Protocol25ReplayState, _SourceCycle
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 from harness.re_v2.protocol_25.recovery import (
@@ -75,6 +76,63 @@ from tests.unit.test_re_v2_protocol_22_ledger import _provider_authority, _verif
 class _SnapshotReader:
     def read_file(self, *_args: object) -> bytes:
         raise AssertionError("context-construction test must not read the snapshot")
+
+
+@pytest.mark.integration
+def test_active_target_stage_ignores_completed_cycle_assessment() -> None:
+    target_id = digest("historically-assessed-target")
+    sibling_id = digest("current-cycle-sibling")
+    completed = _SourceCycle(
+        source_cycle_id="completed-cycle",
+        source_id="api",
+        semantic_round=1,
+        target_assessments={target_id: digest("old-assessment")},
+        participating_targets=(target_id,),
+        progress_targets={target_id},
+    )
+    active = _SourceCycle(
+        source_cycle_id="active-cycle",
+        source_id="api",
+        semantic_round=2,
+        resolution_targets={sibling_id},
+        accepted_resolution_targets={sibling_id},
+        target_assessments={sibling_id: digest("current-assessment")},
+    )
+    replay = Protocol25ReplayState(
+        source_cycles={
+            completed.source_cycle_id: completed,
+            active.source_cycle_id: active,
+        }
+    )
+
+    assert recovery_module._active_target_stage(replay, target_id) == "idle"
+    assert (
+        recovery_module._active_target_stage(replay, sibling_id)
+        == "assessment_accepted"
+    )
+
+
+@pytest.mark.integration
+def test_unresolved_projection_waits_for_semantic_progress_event() -> None:
+    target_id = digest("target-awaiting-progress")
+    frozen = tuple(sorted((digest("finding-a"), digest("finding-b"))))
+    replay = Protocol25ReplayState()
+
+    assert (
+        recovery_module._replayed_unresolved_finding_ids(
+            replay,
+            target_id,
+            frozen,
+        )
+        == frozen
+    )
+
+    replay.unresolved_by_target[target_id] = frozenset((frozen[1],))
+    assert recovery_module._replayed_unresolved_finding_ids(
+        replay,
+        target_id,
+        frozen,
+    ) == (frozen[1],)
 
 
 def _context(tmp_path):  # type: ignore[no-untyped-def]
@@ -184,6 +242,11 @@ def test_terminal_reconciliation_is_idempotent(tmp_path) -> None:
             "trigger_work_item_id": digest("failed-audit-work"),
         },
         occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    recovered = recover_protocol_25_run(context)
+    assert recovered.controller_state.work_item_failed is True
+    assert plan_next_protocol_25(recovered.controller_state) == (
+        Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
     )
     action = Protocol25ControllerActionV1(kind="terminal_blocked_incomplete")
 
@@ -835,6 +898,14 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
     result = _certified_audit(verdict="PASS")
     item = _semantic_audit_work_item(context, result)
     semantic_context = _semantic_context()
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    assert executor.request_renderer is not None
+    semantic_context = replace(
+        semantic_context,
+        response_schema_hash=executor.request_renderer.response_schemas[0].schema_hash,
+    )
     target_id = digest("ready-audit-target")
     state = Protocol25ControllerStateV1(
         prerequisites_complete=True,
@@ -1030,10 +1101,20 @@ def test_recheck_action_enters_inherited_single_dispatch_kernel(
     semantic_context = _semantic_context(
         unresolved=audit.normalized_findings,
         mode="CLOSURE_RECHECK",
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
         overlays=(result.artifact.resolution_overlay_hash,),
         extra_authority={
             result.artifact.resolution_overlay_hash: _resolution.artifact_bytes,
         },
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    assert executor.request_renderer is not None
+    semantic_context = replace(
+        semantic_context,
+        response_schema_hash=executor.request_renderer.response_schemas[0].schema_hash,
     )
     dependencies = ProviderExecutionDependenciesV1(
         executor=executor,
@@ -1213,6 +1294,14 @@ def test_semantic_dependencies_fail_closed_when_pinned_prosaic_bytes_are_absent(
     result = _certified_audit(verdict="PASS")
     item = _semantic_audit_work_item(context, result)
     semantic_context = _semantic_context()
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    assert executor.request_renderer is not None
+    semantic_context = replace(
+        semantic_context,
+        response_schema_hash=executor.request_renderer.response_schemas[0].schema_hash,
+    )
 
     with pytest.raises(
         recovery_module.Protocol25RecoveryError,
@@ -1223,6 +1312,63 @@ def test_semantic_dependencies_fail_closed_when_pinned_prosaic_bytes_are_absent(
             item,
             semantic_context,
         )
+
+
+@pytest.mark.integration
+def test_closure_dependencies_accept_the_shared_closure_response_schema_kind(
+    tmp_path,
+) -> None:
+    context = _context(tmp_path)
+    audit, epoch, _base_context, resolution, result = _certified_closure()
+    item = _semantic_result_work_item(context, result)
+    semantic_context = _semantic_context(
+        unresolved=audit.normalized_findings,
+        mode="CLOSURE_RECHECK",
+        audit_epoch_id=epoch.identity,
+        semantic_round=1,
+        overlays=(resolution.artifact.identity,),
+        extra_authority={
+            resolution.artifact.identity: resolution.artifact_bytes,
+        },
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        item.producer_family
+    )
+    assert executor.request_renderer is not None
+    semantic_context = replace(
+        semantic_context,
+        response_schema_hash=executor.request_renderer.response_schemas[0].schema_hash,
+    )
+
+    with pytest.raises(
+        recovery_module.Protocol25RecoveryError,
+        match="semantic Prosaic agent or response schema is unavailable",
+    ):
+        recovery_module.build_semantic_provider_dependencies(
+            context,
+            item,
+            semantic_context,
+        )
+
+
+@pytest.mark.integration
+def test_semantic_operation_item_canonicalizes_dependency_order(tmp_path) -> None:
+    context = _context(tmp_path)
+    audit = _certified_audit(verdict="REPAIR")
+    audit_item = _semantic_audit_work_item(context, audit)
+    dependencies = tuple(
+        sorted((digest("epoch"), digest("overlay")), reverse=True)
+    )
+
+    item = recovery_module._semantic_operation_item(
+        context,
+        audit_item,
+        audit.artifact.audit_target,
+        "target-closure-assessment",
+        dependencies,
+    )
+
+    assert item.output_key.dependency_hashes == tuple(sorted(dependencies))
 
 
 @pytest.mark.integration

@@ -1080,14 +1080,21 @@ class AuditClosureRootV1(_Authority):
             raise Protocol25SchemaError("audit closure receipts are invalid")
         receipts = tuple(self.latest_closure_receipts)
         receipt_ids = tuple(item.finding_key_id for item in receipts)
-        if receipt_ids != frozen:
+        if (
+            receipt_ids != tuple(sorted(set(receipt_ids)))
+            or not set(receipt_ids).issubset(frozen)
+        ):
             raise Protocol25SchemaError(
-                "audit closure must contain one latest receipt for every frozen finding"
+                "audit closure receipts must be sorted, unique frozen findings"
             )
         if any(item.audit_epoch_id != self.audit_epoch_id for item in receipts):
             raise Protocol25SchemaError("audit closure receipt is outside its epoch")
+        receipts_by_finding = {item.finding_key_id: item for item in receipts}
         expected_unresolved = tuple(
-            item.finding_key_id for item in receipts if item.verdict == "open"
+            finding_id
+            for finding_id in frozen
+            if finding_id not in receipts_by_finding
+            or receipts_by_finding[finding_id].verdict == "open"
         )
         unresolved = _digests(
             self.unresolved_finding_ids,

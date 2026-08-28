@@ -377,6 +377,16 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema4_child(
     ]
     assert continued == [rebuilt]
 
+    continued.clear()
+    legacy_cli._run_re_v25_continue(
+        rebuilt,
+        token_limit=None,
+        time_limit_minutes=None,
+        semantic_token_limit=None,
+        semantic_time_limit_minutes=None,
+    )
+    assert continued == [rebuilt]
+
     from harness.re_v2.status import render_v2_status
 
     routed = json.loads(render_v2_status(first, as_json=True))
