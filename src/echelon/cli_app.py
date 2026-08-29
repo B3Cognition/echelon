@@ -1373,22 +1373,6 @@ def root_land(
     )
 
 
-def root_continue(
-    ctx: typer.Context,
-    mode: Optional[str] = typer.Option(
-        None,
-        "--mode",
-        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
-    ),
-) -> None:
-    """Compatibility alias for spec continue."""
-    legacy_cli = _legacy_cli()
-
-    args = _ctx_args(ctx)
-    _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
-
-
 def root_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
@@ -1413,23 +1397,6 @@ def root_rewind(
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
-
-
-def root_resume(
-    ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(
-        None,
-        help="Answer for an awaiting-human Phase A decision.",
-    ),
-) -> None:
-    """Compatibility alias for spec resume."""
-    legacy_cli = _legacy_cli()
-
-    args: list[str] = []
-    if answer is not None:
-        args.append(answer)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_spec_resume(args)
 
 
 def root_run(
