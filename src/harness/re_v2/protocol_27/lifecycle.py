@@ -330,7 +330,8 @@ def _protocol_27_input_set(
 
         resolved = resolve_run_authority(parent._context)  # type: ignore[arg-type]
         topology = build_workspace_synthesis_topology(
-            resolved.shared_inputs.workspace_partition
+            resolved.shared_inputs.workspace_partition,
+            partition_manifest_id=parent.partition_manifest_id,
         )
         try:
             artifact = ProsaicPromptLoader(workspace_root).load_subagent(

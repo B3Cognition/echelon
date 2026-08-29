@@ -238,3 +238,48 @@ def test_targeted_l2_parent_selects_highest_accepted_layer_per_source(
         "api": "L2",
         "web": "L1",
     }
+
+
+@pytest.mark.unit
+def test_blocked_l3_parent_is_rejected_through_recovery_controller_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.re_v2.protocol_25.recovery import recover_protocol_25_run
+    from harness.re_v2.protocol_27 import authority as authority_module
+    from harness.re_v2.protocol_27.authority import (
+        Protocol27AuthorityError,
+        resolve_synthesis_parent,
+    )
+    from tests.integration.test_re_v2_protocol_25_recovery import _context
+
+    context = _context(tmp_path / "runs")
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    recovered = recover_protocol_25_run(context)
+    blocked = replace(
+        recovered,
+        controller_state=replace(
+            recovered.controller_state,
+            terminal_state="blocked_plateau",
+        ),
+    )
+    monkeypatch.setattr(
+        authority_module,
+        "recover_protocol_25_run",
+        lambda _context: blocked,
+    )
+
+    with pytest.raises(
+        Protocol27AuthorityError,
+        match="L3 parent is running, blocked, or incomplete",
+    ):
+        resolve_synthesis_parent(
+            tmp_path,
+            context.paths.root.parent.name,
+            (),
+            context_loader=lambda _root, _run_dir: context,
+        )

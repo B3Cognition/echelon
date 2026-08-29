@@ -306,7 +306,10 @@ def _resolve_layer_parent(
     overview_authorities: dict[str, tuple[str, str]] = {}
     if target_layer == "L3":
         recovered = recover_protocol_25_run(context)  # type: ignore[arg-type]
-        if recovered.state.terminal_state not in {"complete", "next_epoch_required"}:
+        if recovered.controller_state.terminal_state not in {
+            "complete",
+            "next_epoch_required",
+        }:
             raise Protocol27AuthorityError("L3 parent is running, blocked, or incomplete")
         target_ids = tuple(authority.semantic_graph.selected_source_ids)
         l3_roots = recovered.ledger.l3_source_roots

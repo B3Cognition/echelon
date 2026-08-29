@@ -318,6 +318,8 @@ class WorkspaceSynthesisTopologyV1:
 
 def build_workspace_synthesis_topology(
     partition: WorkspacePartitionCatalogV1,
+    *,
+    partition_manifest_id: str,
 ) -> WorkspaceSynthesisTopologyV1:
     if not isinstance(partition, WorkspacePartitionCatalogV1):
         raise Protocol27GraphError("workspace topology requires partition authority")
@@ -356,7 +358,7 @@ def build_workspace_synthesis_topology(
     )
     return WorkspaceSynthesisTopologyV1(
         1,
-        partition.identity,
+        partition_manifest_id,
         sources,
         tuple(sorted(domains, key=lambda item: item.workspace_domain_id)),
     )

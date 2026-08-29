@@ -78,11 +78,30 @@ def _inputs(
     return SynthesisGraphInputsV1(
         accepted_sources=tuple(sources),
         source_overviews=AcceptedSourceOverviewCatalogV1(1, tuple(projections)),
-        topology=build_workspace_synthesis_topology(partition),
+        topology=build_workspace_synthesis_topology(
+            partition,
+            partition_manifest_id=partition.identity,
+        ),
         policy_catalog=policy,
         response_schema_hashes=response_hashes,
         context_policy_hash=digest("context-policy"),
     )
+
+
+@pytest.mark.unit
+def test_topology_preserves_explicit_run_partition_authority() -> None:
+    from harness.re_v2.protocol_27.graph import build_workspace_synthesis_topology
+
+    partition = _partition({"api": ("api-core",)})
+    run_partition_manifest_id = digest("run-partition-manifest")
+
+    topology = build_workspace_synthesis_topology(
+        partition,
+        partition_manifest_id=run_partition_manifest_id,
+    )
+
+    assert run_partition_manifest_id != partition.identity
+    assert topology.partition_manifest_id == run_partition_manifest_id
 
 
 def _node(graph, kind: str, *, source: str | None = None, domain: str | None = None):
@@ -284,7 +303,10 @@ def test_one_source_without_domains_has_closed_workspace_graph() -> None:
         SynthesisGraphInputsV1(
             accepted_sources=(source,),
             source_overviews=AcceptedSourceOverviewCatalogV1(1, (projection,)),
-            topology=build_workspace_synthesis_topology(partition),
+            topology=build_workspace_synthesis_topology(
+                partition,
+                partition_manifest_id=partition.identity,
+            ),
             policy_catalog=inputs.policy_catalog,
             response_schema_hashes=inputs.response_schema_hashes,
             context_policy_hash=inputs.context_policy_hash,
