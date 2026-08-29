@@ -1445,18 +1445,6 @@ def _dispatch_skill(command: str, args: list[str]) -> None:
     legacy_cli._dispatch_skill_command(command, args)
 
 
-def root_codegen(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to build with SOAR codegen."),
-) -> None:
-    """Compatibility alias for the codegen skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("codegen", args)
-
-
 def root_verify_spec(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to audit."),
@@ -1484,24 +1472,6 @@ def root_reopen(
         args.append(report)
     args.extend(_ctx_args(ctx))
     _dispatch_skill("reopen", args)
-
-
-def root_bugfix(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Bug description."),
-) -> None:
-    """Compatibility alias for spec bugfix."""
-    _dispatch_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
-
-
-def root_change(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Change description."),
-) -> None:
-    """Compatibility alias for spec change."""
-    _dispatch_skill("change", [spec_id, description, *_ctx_args(ctx)])
 
 
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
