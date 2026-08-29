@@ -1096,62 +1096,6 @@ def _dispatch_land_to_spec_targets(
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
 
-def _removed_cmd_delivery(args: list[str]) -> None:
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: echelon delivery <subcommand> [args...]\n\n"
-            "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
-            "Subcommands:\n"
-            "  init                              Initialize delivery environment — sandbox, mirror, verify\n"
-            "  target <spec_id>                  Prepare target-scoped delivery metadata\n"
-            "  status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state\n"
-            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
-            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
-            "                                     Run build→verify→PR loop\n"
-            "                                     mode: semi (default) | banzai | guided\n"
-            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked delivery run with a human answer\n"
-            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Continue a blocked/checkpointed delivery run without a new answer\n"
-            "  checkpoint list <spec_id> [strategy=<s>]\n"
-            "                                     List delivery checkpoint/recovery commits\n"
-            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
-            "Examples:\n"
-            "  echelon delivery init\n"
-            "  echelon delivery target 001\n"
-            "  echelon delivery status 001\n"
-            "  echelon delivery run 001\n"
-            "  echelon delivery run 001 strategy=codegen\n"
-            "  echelon delivery run 001 mode=banzai max_outer=3\n"
-            "  echelon delivery continue 001\n"
-            "  echelon delivery resume 001 \"Use the simpler option\"\n"
-            "  echelon delivery land 001\n"
-        )
-        return
-
-    subcmd = args[0]
-    if subcmd == "init":
-        _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
-    elif subcmd == "target":
-        _cmd_delivery_target(args[1:])
-    elif subcmd == "status":
-        _cmd_delivery_status(args[1:])
-    elif subcmd == "run":
-        _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
-    elif subcmd == "resume":
-        _cmd_harness_resume(args[1:])
-    elif subcmd == "continue":
-        _cmd_harness_continue(args[1:])
-    elif subcmd == "checkpoint":
-        _cmd_delivery_checkpoint(args[1:])
-    elif subcmd == "land":
-        _cmd_land(args[1:])
-    else:
-        print(f"echelon delivery: unknown subcommand '{subcmd}'\n", file=sys.stderr)
-        sys.exit(1)
-
-
 def _print_harness_config_error(error: Exception) -> None:
     field_path = getattr(error, "field_path", None)
     if field_path == "target_repo":
