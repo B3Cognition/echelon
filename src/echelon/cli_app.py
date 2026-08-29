@@ -61,9 +61,6 @@ delivery_app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
 )
-# Kept temporarily so the unregistered compatibility wrappers below remain
-# importable while their execution handlers are migrated out of cli.py.
-harness_app = typer.Typer(add_completion=False, no_args_is_help=True)
 delivery_checkpoint_app = typer.Typer(
     add_completion=False,
     help="Delivery checkpoint discovery commands.",
@@ -1326,51 +1323,6 @@ def re_check_domain(
 ) -> None:
     """Check one staged source-domain spec before the agent returns DONE."""
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
-
-
-def root_land(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to land."),
-    continue_: bool = typer.Option(
-        False,
-        "--continue",
-        help="Resume an interrupted land operation.",
-    ),
-    prepare_only: bool = typer.Option(
-        False,
-        "--prepare-only",
-        help="Prepare landing artifacts without merging.",
-    ),
-    no_autoresolve: bool = typer.Option(
-        False,
-        "--no-autoresolve",
-        help="Disable automatic local conflict resolution.",
-    ),
-    allow_fulfillment_gaps: bool = typer.Option(
-        False,
-        "--allow-fulfillment-gaps",
-        help="Allow landing with open fulfillment gaps.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Landing strategy, usually merge or rebase.",
-    ),
-) -> None:
-    """Compatibility alias for delivery land."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_land(
-        _merge_land_args(
-            spec_id,
-            list(ctx.args),
-            continue_=continue_,
-            prepare_only=prepare_only,
-            no_autoresolve=no_autoresolve,
-            allow_fulfillment_gaps=allow_fulfillment_gaps,
-            strategy=strategy,
-        )
-    )
 
 
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -3435,20 +3387,6 @@ def delivery_status(
     command(args)
 
 
-@harness_app.command(
-    "init",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_init(ctx: typer.Context) -> None:
-    """Compatibility alias for delivery init."""
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_harness_init(
-        list(ctx.args),
-        command_prefix="echelon delivery init",
-    )
-
-
 @delivery_app.command(
     "run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -3529,54 +3467,6 @@ def delivery_run(
     )
 
 
-@harness_app.command(
-    "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_run(
-    ctx: typer.Context,
-    spec_id: str,
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-    max_outer: Optional[int] = typer.Option(None, "--max-outer"),
-    max_inner: Optional[int] = typer.Option(None, "--max-inner"),
-    token_budget: Optional[int] = typer.Option(None, "--token-budget"),
-    auto_merge: Optional[bool] = typer.Option(None, "--auto-merge/--no-auto-merge"),
-    kill_losers: bool = typer.Option(False, "--kill-losers"),
-    reset: bool = typer.Option(False, "--reset"),
-) -> None:
-    """Compatibility alias for delivery run."""
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_harness_run(
-        _merge_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-        command_prefix="echelon delivery run",
-        display_args=_display_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-    )
-
-
 @delivery_app.command(
     "resume",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -3625,80 +3515,6 @@ def delivery_continue(
             mode=mode,
             strategy=strategy,
         )
-    )
-
-
-@harness_app.command(
-    "resume",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_resume(
-    ctx: typer.Context,
-    spec_id: str,
-    answer: Optional[str] = typer.Argument(None, help="Answer for blocker escalation."),
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-) -> None:
-    """Compatibility alias for delivery resume."""
-    delivery_resume(ctx, spec_id, answer=answer, mode=mode, strategy=strategy)
-
-
-@harness_app.command(
-    "continue",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_continue(
-    ctx: typer.Context,
-    spec_id: str,
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-) -> None:
-    """Compatibility alias for delivery continue."""
-    delivery_continue(ctx, spec_id, mode=mode, strategy=strategy)
-
-
-@harness_app.command(
-    "land",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_land(
-    ctx: typer.Context,
-    spec_id: str,
-    continue_: bool = typer.Option(
-        False,
-        "--continue",
-        help="Continue an interrupted land operation.",
-    ),
-    prepare_only: bool = typer.Option(
-        False,
-        "--prepare-only",
-        help="Prepare the feature branch but do not merge it.",
-    ),
-    no_autoresolve: bool = typer.Option(
-        False,
-        "--no-autoresolve",
-        help="Disable deterministic conflict autoresolution.",
-    ),
-    allow_fulfillment_gaps: bool = typer.Option(
-        False,
-        "--allow-fulfillment-gaps",
-        help="Allow landing despite unresolved fulfillment gaps.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Landing strategy: merge or rebase.",
-    ),
-) -> None:
-    """Compatibility alias for delivery land."""
-    delivery_land(
-        ctx,
-        spec_id,
-        continue_=continue_,
-        prepare_only=prepare_only,
-        no_autoresolve=no_autoresolve,
-        allow_fulfillment_gaps=allow_fulfillment_gaps,
-        strategy=strategy,
     )
 
 
