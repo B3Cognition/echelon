@@ -1445,35 +1445,6 @@ def _dispatch_skill(command: str, args: list[str]) -> None:
     legacy_cli._dispatch_skill_command(command, args)
 
 
-def root_verify_spec(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to audit."),
-    reconcile: bool = typer.Option(False, "--reconcile", help="Apply deterministic reconciliation fixes."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
-) -> None:
-    """Compatibility alias for spec verify."""
-    _reject_spec_verify_extra_args(ctx)
-    _run_spec_verify(
-        Path.cwd(),
-        spec_id,
-        reconcile=reconcile,
-        dry_run=dry_run,
-    )
-
-
-def root_reopen(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to reopen."),
-    report: Optional[str] = typer.Argument(None, help="Optional from=<report> fulfillment report selector."),
-) -> None:
-    """Compatibility alias for spec reopen."""
-    args = [spec_id]
-    if report is not None:
-        args.append(report)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("reopen", args)
-
-
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def workspace_init(
     ctx: typer.Context,
