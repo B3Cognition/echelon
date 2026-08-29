@@ -1328,30 +1328,6 @@ def re_check_domain(
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
 
 
-def root_init() -> None:
-    """Initialize the current workspace."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_init(Path.cwd())
-
-
-def root_cicd(ctx: typer.Context) -> None:
-    """Retired CI/CD compatibility command."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_cicd(_ctx_args(ctx))
-
-
-def root_artifacts(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to index."),
-) -> None:
-    """Generate a spec artifact index."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_artifacts([spec_id, *_ctx_args(ctx)])
-
-
 def root_land(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to land."),
@@ -1395,13 +1371,6 @@ def root_land(
             strategy=strategy,
         )
     )
-
-
-def root_status() -> None:
-    """Compatibility alias for spec status."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_status(Path.cwd())
 
 
 def root_continue(
