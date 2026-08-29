@@ -1445,39 +1445,6 @@ def _dispatch_skill(command: str, args: list[str]) -> None:
     legacy_cli._dispatch_skill_command(command, args)
 
 
-def root_build(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to build."),
-    fix: bool = typer.Option(False, "--fix", help="Run build as a targeted fix pass."),
-    failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
-    context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
-) -> None:
-    """Compatibility alias for the build skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    if fix:
-        args.append("--fix")
-    _extend_option(args, "--failures", failures)
-    _extend_option(args, "--context", context)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("build", args)
-
-
-def root_review(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to review."),
-    pr_url: Optional[str] = typer.Option(None, "--pr-url", help="Pull request URL to review."),
-) -> None:
-    """Compatibility alias for the review skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    _extend_option(args, "--pr-url", pr_url)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("review", args)
-
-
 def root_codegen(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to build with SOAR codegen."),
