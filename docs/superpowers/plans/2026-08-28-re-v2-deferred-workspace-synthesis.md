@@ -1299,7 +1299,7 @@ git commit -m "feat(re-v2): publish synthesis generations atomically"
 - `echelon re synthesize --from-run <parent-run-id>`, `echelon re continue [run-id]`, and `echelon re status [run-id] [--json]` route schema 6 to protocol 2.7.
 - Existing registry/spec/delivery/MemPalace readers consume the same physical paths and explicit complete/partial metadata without special provider behavior.
 
-- [ ] **Step 1: Write failing status and CLI lifecycle tests**
+- [x] **Step 1: Write failing status and CLI lifecycle tests**
 
 ```python
 def test_partial_input_complete_synthesis_is_not_blocked(tmp_path: Path) -> None:
@@ -1325,17 +1325,17 @@ def test_cli_prints_source_specific_partial_command_on_conflict(tmp_path: Path) 
     assert "--accept-partial api" in result.stdout
 ```
 
-- [ ] **Step 2: Run lifecycle/status tests and confirm RED**
+- [x] **Step 2: Run lifecycle/status tests and confirm RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_27_status.py tests/unit/test_cli_re_v2_protocol_27.py tests/integration/test_re_v2_protocol_27_cli.py`
 
 Expected: failures because schema-6 status and lifecycle routing do not exist.
 
-- [ ] **Step 3: Implement status from authenticated replay only**
+- [x] **Step 3: Implement status from authenticated replay only**
 
 Report parent/protocol/schema, accepted complete/partial sources, debt/receipt IDs, required/generated/adopted/failed/unresolved artifacts by scope, origins/dispositions, attempts/retries, known/unknown usage, reservations, active time, avoided calls/reservations, synthesis root, materialization, both publication indexes, and full-quality availability. Derive no count from mutable projections.
 
-- [ ] **Step 4: Implement prominent terminal banners and exact actions**
+- [x] **Step 4: Implement prominent terminal banners and exact actions**
 
 Render exact titles:
 
@@ -1348,11 +1348,11 @@ RE WORKSPACE SYNTHESIS — COMPLETE, PUBLICATION CONFLICT
 
 Incomplete names exact unresolved artifacts and `echelon re continue <run-id>`. Conflict names the current run and prints a complete successor `echelon re synthesize --from-run <current-run>` command with every required `--accept-partial` flag. Terminal complete continuation says no action is required.
 
-- [ ] **Step 5: Wire CLI creation, exact reuse, continuation, and status**
+- [x] **Step 5: Wire CLI creation, exact reuse, continuation, and status**
 
 Keep the v1 `_cmd_re_synthesize` body byte-for-byte where feasible; branch before it only when `--from-run` is present. Load installed Prosaic/runtime through `_installed_re_runtime_or_exit`, instantiate `SquadCliProvider` through the existing config path, and pass a factory into protocol 2.7. Route manifest schema 6 in continue/status without changing old schema routes.
 
-- [ ] **Step 6: Prove downstream compatibility**
+- [x] **Step 6: Prove downstream compatibility**
 
 Publish complete and partial protocol-2.7 generations, then load them through `load_published_index`, published RE context, spec graph, Phase A readiness, delivery context, and MemPalace RE indexing tests. Assert existing paths resolve and explicit partial quality/debt remains visible; no consumer treats partial synthesis as full quality.
 
@@ -1360,7 +1360,7 @@ Run: `pytest -q tests/unit/test_re_v2_protocol_27_status.py tests/unit/test_cli_
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit lifecycle and downstream integration**
+- [x] **Step 7: Commit lifecycle and downstream integration**
 
 ```bash
 git add src/harness/re_v2/protocol_27/status.py src/harness/re_v2/protocol_27/lifecycle.py src/harness/re_v2/status.py src/echelon/cli.py tests/unit/test_re_v2_protocol_27_status.py tests/unit/test_cli_re_v2_protocol_27.py tests/integration/test_re_v2_protocol_27_cli.py tests/integration/test_re_v2_protocol_27_downstream.py tests/unit/test_published_re_context.py tests/unit/test_spec_graph.py tests/unit/test_phase_a_readiness.py tests/unit/test_mempalace_re.py

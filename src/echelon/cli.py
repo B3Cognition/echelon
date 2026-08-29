@@ -11470,16 +11470,54 @@ def _detect_re_engine_for_cli(run_dir: Path) -> str:
         raise ValueError(str(exc)) from exc
 
 
+def _resolve_named_re_run(project_root: Path, run_id: str) -> Path:
+    """Resolve one direct child of runs without accepting path syntax."""
+    if (
+        not run_id
+        or run_id in {".", ".."}
+        or any(
+            character
+            not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+            for character in run_id
+        )
+    ):
+        raise ValueError(f"unsafe RE run ID: {run_id!r}")
+    runs = project_root.resolve() / "runs"
+    run_dir = runs / run_id
+    if run_dir.resolve().parent != runs.resolve():
+        raise ValueError("RE run escaped the workspace run root")
+    if run_dir.is_symlink() or not run_dir.is_dir():
+        raise ValueError(f"RE run does not exist: {run_id}")
+    return run_dir
+
+
 def _cmd_re_status(args: list[str]) -> None:
     """Show the active RE controller state and every source's quality outcome."""
     from harness.re_lifecycle import resolve_current_re_run
     from harness.re_v2.status import ReV2StatusError, render_v2_status
 
-    as_json = args == ["--json"]
-    if args and not as_json:
-        print("Usage: echelon re status [--json]", file=sys.stderr)
+    as_json = False
+    positional: list[str] = []
+    for arg in args:
+        if arg == "--json" and not as_json:
+            as_json = True
+        elif arg.startswith("-"):
+            print(f"echelon re status: unknown argument {arg!r}", file=sys.stderr)
+            raise SystemExit(2)
+        else:
+            positional.append(arg)
+    if len(positional) > 1:
+        print("Usage: echelon re status [<run-id>] [--json]", file=sys.stderr)
         raise SystemExit(2)
-    run_dir = resolve_current_re_run(Path.cwd())
+    try:
+        run_dir = (
+            _resolve_named_re_run(Path.cwd(), positional[0])
+            if positional
+            else resolve_current_re_run(Path.cwd())
+        )
+    except ValueError as exc:
+        print(f"echelon re status: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
     if run_dir is None:
         print("echelon re status: no active RE run", file=sys.stderr)
         raise SystemExit(2)
@@ -13563,6 +13601,7 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.protocol_24.model import RunManifestV3
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_27.model import RunManifestV6
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
@@ -13578,6 +13617,10 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
         if manifest.target_layer == "L3":
             return _re_v25_context(project_root, run_dir, manifest)
         raise ValueError("unsupported protocol-2.6 target layer")
+    if isinstance(manifest, RunManifestV6):
+        from harness.re_v2.protocol_27.recovery import load_protocol_27_run_context
+
+        return load_protocol_27_run_context(run_dir)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -14078,9 +14121,36 @@ def _run_re_v2_continue(
 ) -> None:
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
     from harness.re_v2.protocol_25.recovery import Protocol25RunContext
+    from harness.re_v2.protocol_27.recovery import Protocol27RunContext
 
     project_root = run_dir.resolve().parent.parent
     context = _re_v2_context(project_root, run_dir)
+    if isinstance(context, Protocol27RunContext):
+        if any(
+            value is not None
+            for value in (
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
+        ):
+            raise ValueError(
+                "protocol-2.7 continuation uses its immutable synthesis budget"
+            )
+        from harness.config import load_config
+        from harness.re_v2.protocol_27.lifecycle import run_protocol_27_synthesis
+        from harness.re_v2.protocol_27.status import render_protocol_27_status
+        from harness.squad_provider import SquadCliProvider
+
+        _installed_re_runtime_or_exit(project_root)
+        config = load_config(project_root, squad_only=True)
+        run_protocol_27_synthesis(
+            run_dir,
+            lambda: SquadCliProvider(config),
+        )
+        print(render_protocol_27_status(run_dir), end="")
+        return
     if isinstance(context, Protocol25RunContext):
         _run_re_v25_continue(
             context,
@@ -15857,11 +15927,23 @@ def _cmd_re_continue(args: list[str]) -> None:
             allow_reset=False,
             allow_budget_overrides=True,
         )
-        if positional:
-            raise ValueError("echelon re continue does not accept positional arguments")
         project_root = Path.cwd()
-        run_dir = resolve_current_re_run(project_root)
+        if len(positional) > 1:
+            raise ValueError("usage: echelon re continue [<run-id>]")
+        run_dir = (
+            _resolve_named_re_run(project_root, positional[0])
+            if positional
+            else resolve_current_re_run(project_root)
+        )
         if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
+            if positional:
+                from harness.re_v2.protocol_27.model import RunManifestV6
+                from harness.re_v2.run_store import load_run_manifest
+
+                if not isinstance(load_run_manifest(run_dir), RunManifestV6):
+                    raise ValueError(
+                        "an explicit RE run ID is supported only for protocol 2.7"
+                    )
             if re_max_inner is not None:
                 raise ValueError(
                     "v2 has independent attempt budgets; this option is valid only for v1"
@@ -15881,6 +15963,10 @@ def _cmd_re_continue(args: list[str]) -> None:
             except RuntimeError as exc:
                 raise ValueError(str(exc)) from exc
             return
+        if positional:
+            raise ValueError(
+                "an explicit RE run ID is supported only for protocol 2.7"
+            )
         if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
             raise ValueError(
                 "semantic resource authorization is valid only for protocol 2.5"
@@ -16085,15 +16171,32 @@ def _parse_re_synthesize_v2_options(args: list[str]) -> _ReSynthesizeV2Options:
 
 
 def _cmd_re_synthesize_v2(args: list[str]) -> None:
+    from harness.config import load_config
     from harness.re_v2.protocol_27.authority import Protocol27AuthorityError
     from harness.re_v2.protocol_27.lifecycle import (
         Protocol27LifecycleError,
         run_synthesis_child,
     )
+    from harness.re_v2.protocol_27.status import render_protocol_27_status
+    from harness.re_lifecycle import resolve_current_re_run
+    from harness.squad_provider import SquadCliProvider
 
     try:
+        project_root = Path.cwd()
         options = _parse_re_synthesize_v2_options(args)
-        run_synthesis_child(Path.cwd(), options)
+        _installed_re_runtime_or_exit(project_root)
+        config = load_config(project_root, squad_only=True)
+        run_synthesis_child(
+            project_root,
+            options,
+            lambda: SquadCliProvider(config),
+        )
+        run_dir = resolve_current_re_run(project_root)
+        if run_dir is None:
+            raise Protocol27LifecycleError(
+                "protocol-2.7 synthesis did not activate its child"
+            )
+        print(render_protocol_27_status(run_dir), end="")
     except (OSError, Protocol27AuthorityError, Protocol27LifecycleError, ValueError) as exc:
         print(f"echelon re synthesize: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

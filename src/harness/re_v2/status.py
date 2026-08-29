@@ -63,6 +63,10 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
         if detect_re_engine(run_path) != "v2":
             raise ReV2StatusError(f"RE run is not pinned to v2: {run_path.name}")
         manifest = load_run_manifest(run_path)
+        if getattr(manifest, "engine_protocol_version", None) == "2.7":
+            from .protocol_27.status import render_protocol_27_status
+
+            return render_protocol_27_status(run_path, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) == "2.6":
             from .protocol_26.status import render_protocol_26_status
 

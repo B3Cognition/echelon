@@ -1004,6 +1004,20 @@ def _render_published_re_context(state: dict) -> str:
     snapshot_root = str(context.get("snapshot_root") or "").strip()
     if snapshot_root:
         lines.append(f"PUBLISHED_RE_SNAPSHOT_ROOT={snapshot_root}")
+    quality = context.get("synthesis_quality")
+    if isinstance(quality, dict):
+        lines.extend(
+            [
+                f"PUBLISHED_RE_INPUT_QUALITY={quality.get('input_quality', 'unknown')}",
+                f"PUBLISHED_RE_FULL_QUALITY_CLAIM={quality.get('full_quality_claim', 'unavailable')}",
+                "PUBLISHED_RE_DEBT_MANIFEST_HASHES="
+                + ",".join(
+                    str(item)
+                    for item in quality.get("debt_manifest_hashes", [])
+                    if isinstance(item, str)
+                ),
+            ]
+        )
     artifacts = context.get("artifacts")
     if status == "attached" and isinstance(artifacts, dict):
         lines.extend(_render_published_re_briefings(context))

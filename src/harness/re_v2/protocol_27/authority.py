@@ -23,6 +23,7 @@ from harness.re_v2.protocol_24.artifacts import L2SourceBaselineRootV1
 from harness.re_v2.protocol_26.authority import resolve_run_authority
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
+from .events import PROTOCOL_27_EVENTS
 from .model import (
     AcceptedSourceOutcomeV1,
     AcceptedSourceOverviewCatalogV1,
@@ -243,7 +244,7 @@ def _resolve_embedded_protocol_27(
     manifest: RunManifestV6,
 ) -> ResolvedSynthesisParentV1:
     paths = ReV2Paths.for_run(run_dir)
-    events = EventStore(paths).replay()
+    events = EventStore(paths, protocol=PROTOCOL_27_EVENTS).replay()
     if not events or events[-1].type != "run_completed":
         raise Protocol27AuthorityError(
             "protocol-2.7 synthesis parent is not terminal complete"

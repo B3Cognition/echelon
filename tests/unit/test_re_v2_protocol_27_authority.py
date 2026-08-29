@@ -8,7 +8,6 @@ import pytest
 from typer.testing import CliRunner
 
 from harness.re_v2.canonical import canonical_json_bytes
-from harness.re_v2.events import EventStore
 from harness.re_v2.protocol_27.model import (
     PartialSourceAcceptanceV1,
     RunManifestV6,
@@ -21,24 +20,17 @@ from tests.re_v2_protocol_27_fixtures import (
 
 
 def _completed_protocol_27_parent(tmp_path: Path) -> tuple[Path, RunManifestV6]:
-    from harness.re_v2.protocol_27.inputs import create_protocol_27_run_store
-    from tests.unit.test_re_v2_protocol_27_inputs import _input_set
+    from harness.re_v2.protocol_27.lifecycle import run_protocol_27_synthesis
+    from tests.unit.test_re_v2_protocol_27_controller import _ScriptedProvider
+    from tests.unit.test_re_v2_protocol_27_publication import _completed_context
 
-    run_dir = tmp_path / "runs" / "re-parent"
-    paths = ReV2Paths.for_run(run_dir)
-    manifest = create_protocol_27_run_store(run_dir, _input_set(run_dir.name))
-    events = EventStore(paths)
-    events.append(
-        "run_created",
-        {"run_manifest_id": manifest.run_manifest_id},
-        occurred_at=manifest.created_at,
+    context = _completed_context(tmp_path, run_id="re-parent")
+    run_dir = context.paths.root.parent
+    run_protocol_27_synthesis(
+        run_dir,
+        lambda: _ScriptedProvider(),  # type: ignore[arg-type]
     )
-    events.append(
-        "run_completed",
-        {"reason": "synthesis fixture complete"},
-        occurred_at="2026-08-28T12:01:00Z",
-    )
-    return run_dir, manifest
+    return run_dir, context.inputs.manifest
 
 
 @pytest.mark.unit

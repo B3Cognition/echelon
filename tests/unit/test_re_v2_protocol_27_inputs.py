@@ -21,7 +21,11 @@ from tests.re_v2_protocol_27_fixtures import (
 from tests.unit.test_re_v2_protocol_27_graph import _inputs as graph_inputs
 
 
-def _input_set(run_id: str = "re-synthesis-child"):
+def _input_set(
+    run_id: str = "re-synthesis-child",
+    *,
+    partial_sources: frozenset[str] = frozenset({"web"}),
+):
     from harness.prosaic_prompt_loader import ProsaicCommandArtifact
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.protocol_27.context import default_synthesis_context_policy
@@ -31,7 +35,7 @@ def _input_set(run_id: str = "re-synthesis-child"):
         canonical_synthesis_response_schema_bytes,
     )
 
-    graph_input = graph_inputs(partial_sources=frozenset({"web"}))
+    graph_input = graph_inputs(partial_sources=partial_sources)
     response_schema_bytes = {
         kind: canonical_synthesis_response_schema_bytes(kind)
         for kind in graph_input.response_schema_hashes
@@ -105,7 +109,10 @@ def _input_set(run_id: str = "re-synthesis-child"):
         selected_layers={"api": "L3", "web": "L3"},
         accepted_sources=graph_input.accepted_sources,
         authority_objects=authority_objects,
-        debt_summary_hashes={"web": digest("web:debt-summary")},
+        debt_summary_hashes={
+            source_id: digest(f"{source_id}:debt-summary")
+            for source_id in sorted(partial_sources)
+        },
         _overview_catalog=graph_input.source_overviews,
         _overview_payloads=dict(overview_payloads),
         _overview_authorities={

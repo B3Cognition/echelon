@@ -1013,6 +1013,10 @@ def re_deepen(
 
 @re_app.command("status")
 def re_status(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="RE run id below runs/; defaults to the active RE run.",
+    ),
     as_json: bool = typer.Option(
         False,
         "--json",
@@ -1020,11 +1024,18 @@ def re_status(
     ),
 ) -> None:
     """Show live RE state, source quality, debt, and the next safe action."""
-    _legacy_cli()._cmd_re_status(["--json"] if as_json else [])
+    args: list[str] = [run_id] if run_id else []
+    if as_json:
+        args.append("--json")
+    _legacy_cli()._cmd_re_status(args)
 
 
 @re_app.command("continue")
 def re_continue(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Protocol-2.7 run id below runs/; defaults to the active RE run.",
+    ),
     re_max_inner: Optional[int] = typer.Option(
         None,
         "--re-max-inner",
@@ -1058,6 +1069,8 @@ def re_continue(
 ) -> None:
     """Continue the active RE run without a human answer."""
     args: list[str] = []
+    if run_id:
+        args.append(run_id)
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
@@ -1167,9 +1180,49 @@ def re_synthesize(
         min=1,
         help="Raise the run active-time ceiling for the synthesis dispatch.",
     ),
+    from_run: Optional[str] = typer.Option(
+        None,
+        "--from-run",
+        help="Create or reuse an exact protocol-2.7 synthesis child.",
+    ),
+    accept_partial: Optional[list[str]] = typer.Option(
+        None,
+        "--accept-partial",
+        help="Accept one authenticated partial source; repeat per source.",
+    ),
+    token_limit: Optional[int] = typer.Option(
+        None,
+        "--token-limit",
+        min=1,
+        help="Set the immutable protocol-2.7 synthesis token ceiling.",
+    ),
+    active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--active-ms-limit",
+        min=1,
+        help="Set the immutable protocol-2.7 synthesis active-time ceiling.",
+    ),
 ) -> None:
     """Regenerate workspace synthesis from finalized partial source results."""
     args: list[str] = []
+    if from_run is not None:
+        if run_id is not None or allow_partial or re_token_limit is not None or re_time_limit_minutes is not None:
+            raise typer.BadParameter(
+                "--from-run cannot be combined with legacy run-id/--allow-partial/--re-* options",
+                param_hint="--from-run",
+            )
+        args.extend(["--from-run", from_run])
+        for source_id in accept_partial or []:
+            args.extend(["--accept-partial", source_id])
+        _extend_option(args, "--token-limit", token_limit)
+        _extend_option(args, "--active-ms-limit", active_ms_limit)
+        _legacy_cli()._cmd_re_synthesize(args)
+        return
+    if accept_partial or token_limit is not None or active_ms_limit is not None:
+        raise typer.BadParameter(
+            "--accept-partial, --token-limit, and --active-ms-limit require --from-run",
+            param_hint="--from-run",
+        )
     if run_id:
         args.append(run_id)
     if allow_partial:
