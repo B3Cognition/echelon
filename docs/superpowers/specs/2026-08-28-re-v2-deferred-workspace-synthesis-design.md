@@ -1,7 +1,7 @@
 # RE v2 Deferred Workspace Synthesis Design
 
 **Date:** 2026-08-28
-**Status:** Approved design
+**Status:** Implemented
 **Owner:** EGR-168
 **Depends on:** EGR-164 through EGR-167 and protocol 2.6 checkpoint adoption
 **Precedes:** EGR-169 L4 exhaustive depth and EGR-170 atomic repair
@@ -726,6 +726,72 @@ EGR-168 is complete when:
 14. focused, compatibility, full-suite, and real Codex pilot gates pass; and
 15. L4, lower-layer atomic repair, provider-specific execution, and default
     cutover remain outside the implementation.
+
+## Implementation evidence (2026-08-29)
+
+Protocol 2.7 is implemented as the opt-in schema-6 synthesis child. Its
+canonical manifest and request fixture identities are respectively
+`sha256:b515fa0347d3320554aca5288e3b7498633135012c1edc85ff67f51fbd99d47d`
+and
+`sha256:c5e10cd86cb16201db934833155963e5a30e90b96dd4098ffa794a03d508b233`.
+Schema-5 fixture digests and the protocol-2.2-through-2.6 implementation
+directories remain frozen against `main`.
+
+The installed Echelon `4.0.12` pilot used disposable workspace
+`/tmp/echelon-re27-pilot.NSpP2p`, parent
+`re-protocol-27-pilot-parent`, and two clean Git sources. The parent froze one
+complete source and one source-specific explicitly accepted partial source.
+The installed `echelon.re-synthesizer` Prosaic role resolved `model_tier:
+strong` and `effort: high` through the normal Codex provider path to
+`gpt-5.6-sol`; no protocol-specific provider adapter was added.
+
+The 2,000,000-token child `re-20260829-005158-345760` stopped truthfully after
+seven generated artifacts and seven calls, with six artifacts unresolved:
+1,835,008 conservative tokens were charged, 233,014 active milliseconds were
+charged, and the remaining 164,992 tokens could not admit the next 262,144
+token reservation. Sibling `re-20260829-005810-112309` then completed the same
+partial-input synthesis with six generated and seven adopted artifacts, six
+provider attempts, no retries, 1,572,864 conservative charged tokens, and
+276,938 active milliseconds. Codex reported 359,788 billable tokens, but the
+provider marked every token observation untrusted, so the controller retained
+the conservative charge. It published partial compatibility generation 2 with
+synthesis root
+`sha256:4afd2d551bc9a41df7820d87c248715780d6d1b502b77d3aa3ab9bb1d49a9ecb`
+and never claimed full workspace quality.
+
+Terminal continuation of the generated child issued no provider call and left
+event hash
+`14850a23279e8fdf63d4b7049426ad2ab49e23f8bace761e1873883532d63650`
+and ledger hash
+`e380d77662f2ee871b31f63cf8131fc766db80f7cb57c1b5358dc36b92a947b5`
+unchanged. Sibling `re-20260829-010612-399597` adopted all 13 artifacts with
+zero calls and zero charge. After the incomplete origin and disposable cache
+were hidden, its continuation remained byte-identical, with event hash
+`6bb9d2ba143ecda0898aa0116ded90488d54133462318d0b69ddb97e2845fb80`
+and ledger hash
+`aee84e1f76cd51b1586c0c521058b22ed9f637bef8ae6401dbed052db00b594b`.
+After the generating origin was also hidden, sibling
+`re-20260829-010630-083098` reconstructed and re-exported all 13 artifacts with
+zero calls.
+
+Incremental parent `re-protocol-27-incremental-parent` changed only source-a
+authority. Child `re-20260829-010724-474057` regenerated eight artifacts and
+adopted five: all three source-b local artifacts and both source-b-only domain
+artifacts were retained, while source-a local artifacts, participating domains,
+and the three workspace-wide artifacts regenerated. One malformed artifact
+used the single bounded artifact-contract repair, for nine attempts,
+2,359,296 conservative charged tokens, and 394,907 active milliseconds. The
+successful repair reports zero failed terminal artifacts and one historical
+failed attempt. It published partial compatibility generation 6. Both source
+repositories remained clean through every run.
+
+The final focused protocol-2.7 gate passed 202 tests. The frozen-protocol and
+v1 compatibility matrix passed 978 tests with four expected skips, and a direct
+diff confirmed that protocol-2.2-through-2.6 implementation directories remain
+unchanged from `main`. The complete locked repository gate passed 10,988 tests
+with 14 expected skips and one intentional deselection. The opt-in live test
+encodes the installed Codex sequence above for repeatable credentialed
+verification without making live credentials part of the default test gate.
 
 ## Follow-on order
 

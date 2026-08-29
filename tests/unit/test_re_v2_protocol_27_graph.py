@@ -22,6 +22,7 @@ def _inputs(
     source_hashes: Mapping[str, str] | None = None,
     partial_sources: frozenset[str] = frozenset(),
     policy_seed: str = "policy",
+    source_ids: tuple[str, ...] = ("api", "web"),
 ):
     from harness.re_v2.protocol_27.graph import (
         SynthesisGraphInputsV1,
@@ -32,19 +33,22 @@ def _inputs(
         build_synthesis_policy_catalog,
     )
 
+    domain_paths = {
+        source_id: (f"src/{source_id}-core", f"src/{source_id}-edge")
+        for source_id in source_ids
+    }
     partition = _partition(
-        {"api": ("src/orders", "src/users"), "web": ("src/search", "src/ui")},
+        domain_paths,
         presentation_ids={
-            ("api", "src/orders"): "001-re-orders",
-            ("api", "src/users"): "002-re-users",
-            ("web", "src/search"): "001-re-search",
-            ("web", "src/ui"): "002-re-ui",
+            (source_id, path): f"{index:03d}-re-{path.rsplit('/', 1)[-1]}"
+            for source_id, paths in domain_paths.items()
+            for index, path in enumerate(paths, start=1)
         },
     )
     hashes = dict(source_hashes or {})
     sources: list[AcceptedSourceOutcomeV1] = []
     projections = []
-    for source_id in ("api", "web"):
+    for source_id in source_ids:
         base = accepted_source_outcome_v1(
             source_id,
             outcome="partial" if source_id in partial_sources else "complete",

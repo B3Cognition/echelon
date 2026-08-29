@@ -1387,7 +1387,7 @@ git commit -m "feat(re-v2): expose deferred synthesis lifecycle"
 - Adds an opt-in installed Codex live pilot with recorded run IDs, provider/model/effort observations, generated/adopted counts, trusted/reserved usage, timing, clean-Git evidence, zero-call replay, origin/cache removal, sibling re-export, and one-source incremental recomposition.
 - Marks EGR-168 fixed only after every completion criterion has concrete evidence.
 
-- [ ] **Step 1: Run the complete focused protocol-2.7 matrix**
+- [x] **Step 1: Run the complete focused protocol-2.7 matrix**
 
 Run:
 
@@ -1402,7 +1402,7 @@ pytest -q \
 
 Expected: all focused tests pass with the live test excluded by its opt-in condition.
 
-- [ ] **Step 2: Run frozen-protocol and v1 compatibility gates**
+- [x] **Step 2: Run frozen-protocol and v1 compatibility gates**
 
 Run:
 
@@ -1424,7 +1424,7 @@ git diff --exit-code $(git merge-base HEAD main) -- src/harness/re_v2/protocol_2
 
 Expected: all tests pass and frozen protocol directories have no diff.
 
-- [ ] **Step 3: Install Echelon and prepare a disposable clean multi-source workspace**
+- [x] **Step 3: Install Echelon and prepare a disposable clean multi-source workspace**
 
 Run:
 
@@ -1438,7 +1438,7 @@ git -C "$pilot_root/source-b" status --short
 
 Expected: the installed version equals the version in `pyproject.toml`; both source status outputs are empty; the fixture records one complete and one explicitly partial accepted parent source and writes its run ID to `$pilot_root/parent-run-id`.
 
-- [ ] **Step 4: Run the real Codex synthesis and capture evidence**
+- [x] **Step 4: Run the real Codex synthesis and capture evidence**
 
 Run from the disposable workspace using its configured Codex provider:
 
@@ -1454,25 +1454,32 @@ echelon re status --json > /tmp/re27-first-status.json
 
 Expected: synthesis completes, publication is partial, source-a is complete, source-b is explicitly partial, every required artifact is accepted, provider/model/effort observations resolve through Prosaic, and both source repositories remain clean.
 
-- [ ] **Step 5: Prove zero-call continuation, sibling adoption, and origin/cache removal**
+Observed: the 2,000,000-token child stopped before the next conservative
+reservation with seven accepted artifacts retained and six unresolved. A
+5,000,000-token sibling adopted those seven artifacts, generated only the six
+missing artifacts, completed, and published the truthful partial result. This
+is stronger bounded-exhaustion and sibling-reuse evidence than an unbroken
+first-child completion.
+
+- [x] **Step 5: Prove zero-call continuation, sibling adoption, and origin/cache removal**
 
 Record provider dispatch count and event/ledger hashes. Continue the terminal child and assert all remain unchanged. Create an artifact-compatible successor synthesis request against the now-current publication bases and assert every synthesis artifact is adopted with zero charge. Hide the generating origin and `.echelon/re-v2/checkpoints`, continue the adopted child, create another artifact-compatible successor, and assert it reconstructs/re-exports the complete closure with zero calls.
 
-- [ ] **Step 6: Prove one-source incremental recomposition**
+- [x] **Step 6: Prove one-source incremental recomposition**
 
 Create a successor accepted parent in the fixture where only source-a authority changes. Run synthesis again, then compare artifact keys/status: source-b local artifacts and source-b-only workspace-domain summaries are adopted; source-a local artifacts, participating domains, and all workspace-wide artifacts regenerate. Source repositories remain clean.
 
-- [ ] **Step 7: Run the full locked-environment suite**
+- [x] **Step 7: Run the full locked-environment suite**
 
 Run: `uv run --extra dev pytest -q`
 
 Expected: all tests pass; only documented opt-in/environment skips and existing warnings remain.
 
-- [ ] **Step 8: Record exact evidence and close EGR-168**
+- [x] **Step 8: Record exact evidence and close EGR-168**
 
 Update the design to `Status: Implemented`, add exact focused/compatibility/full test counts, pilot workspace/run IDs, provider/model/effort, generated/adopted/avoided dispatch counts, charged/reserved tokens and active time, replay hashes, publication generations, origin/cache removal result, incremental reuse result, and clean-Git proof. Update `CHANGELOG.md` and mark EGR-168 fixed while leaving EGR-169 L4, EGR-170 atomic repair, and default cutover open.
 
-- [ ] **Step 9: Commit final evidence**
+- [x] **Step 9: Commit final evidence**
 
 ```bash
 git add tests/fixtures/create_re_v2_protocol_27_pilot.py tests/integration/test_re_v2_protocol_27_live.py tests/unit/test_re_v2_protocol_compatibility.py tests/unit/test_re_v2_protocol_26_model.py tests/unit/test_re_v2_protocol_26_status.py CHANGELOG.md docs/findings/echelon-grounded-review-register.md docs/superpowers/specs/2026-08-28-re-v2-deferred-workspace-synthesis-design.md

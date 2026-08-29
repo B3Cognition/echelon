@@ -88,3 +88,68 @@ def test_incomplete_banner_names_exact_unresolved_artifacts(tmp_path: Path) -> N
     assert "RE WORKSPACE SYNTHESIS — INCOMPLETE" in rendered
     assert "unresolved:" in rendered
     assert "echelon re continue re-incomplete" in rendered
+
+
+@pytest.mark.unit
+def test_status_explains_insufficient_next_reservation(tmp_path: Path) -> None:
+    from harness.re_v2.protocol_27.controller import Protocol27Controller
+    from harness.re_v2.protocol_27.inputs import (
+        create_protocol_27_run_store,
+        load_protocol_27_inputs,
+    )
+    from harness.re_v2.protocol_27.status import protocol_27_status_document
+    from tests.unit.test_re_v2_protocol_27_controller import _ScriptedProvider
+    from tests.unit.test_re_v2_protocol_27_inputs import _input_set
+
+    run_dir = tmp_path / "runs/re-small-budget"
+    create_protocol_27_run_store(run_dir, _input_set(run_dir.name))
+    result = Protocol27Controller(
+        load_protocol_27_inputs(run_dir),
+        provider_factory=lambda: _ScriptedProvider(),  # type: ignore[arg-type]
+    ).run_to_closure()
+
+    document = protocol_27_status_document(run_dir)
+    assert not result.synthesis_closure_complete
+    assert document["stop_reason"] == "synthesis-reservation-exceeds-remaining-budget"
+    resources = document["resources"]
+    assert isinstance(resources, dict)
+    assert resources["insufficient_remaining_dimensions"] == ["tokens"]
+    assert resources["next_reservation"]["fits"] is False
+
+
+@pytest.mark.unit
+def test_repaired_attempt_does_not_report_a_failed_terminal_artifact(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_27.controller import Protocol27Controller
+    from harness.re_v2.protocol_27.inputs import (
+        create_protocol_27_run_store,
+        load_protocol_27_inputs,
+    )
+    from harness.re_v2.protocol_27.status import protocol_27_status_document
+    from tests.unit.test_re_v2_protocol_27_controller import _ScriptedProvider
+    from tests.unit.test_re_v2_protocol_27_inputs import _input_set
+
+    run_dir = tmp_path / "runs/re-repaired"
+    create_protocol_27_run_store(
+        run_dir,
+        _input_set(
+            run_dir.name,
+            expected_v2_index_hash=(
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ),
+            expected_compatibility_generation=0,
+            token_limit=10_000_000,
+            active_ms_limit=10_000_000,
+        ),
+    )
+    result = Protocol27Controller(
+        load_protocol_27_inputs(run_dir),
+        provider_factory=lambda: _ScriptedProvider(malformed_first=True),  # type: ignore[arg-type]
+    ).run_to_closure()
+
+    document = protocol_27_status_document(run_dir)
+    assert result.synthesis_closure_complete
+    assert document["artifact_counts"]["failed"] == 0
+    assert document["artifact_counts"]["failed_attempts"] == 1
+    assert document["failures"][0]["resolved"] is True

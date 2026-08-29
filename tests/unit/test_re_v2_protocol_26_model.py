@@ -149,3 +149,13 @@ def test_manifest_v5_rejects_unknown_field() -> None:
 
     with pytest.raises(Protocol26SchemaError, match="unknown fields"):
         RunManifestV5.from_json_dict(raw)
+
+
+@pytest.mark.unit
+def test_manifest_v5_has_no_deferred_synthesis_authority() -> None:
+    fields = set(manifest_v5("L3").to_json_dict())
+
+    assert "synthesis_request_id" not in fields
+    assert "accepted_sources" not in fields
+    assert "partial_acceptances" not in fields
+    assert "expected_compatibility_generation" not in fields

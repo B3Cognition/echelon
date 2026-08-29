@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 
@@ -25,6 +26,13 @@ def _input_set(
     run_id: str = "re-synthesis-child",
     *,
     partial_sources: frozenset[str] = frozenset({"web"}),
+    source_ids: tuple[str, ...] = ("api", "web"),
+    prosaic_artifact: object | None = None,
+    expected_v2_index_hash: str | None = None,
+    expected_compatibility_generation: int = 4,
+    token_limit: int | None = 400_000,
+    active_ms_limit: int | None = 600_000,
+    source_root_suffixes: Mapping[str, str] | None = None,
 ):
     from harness.prosaic_prompt_loader import ProsaicCommandArtifact
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
@@ -35,14 +43,32 @@ def _input_set(
         canonical_synthesis_response_schema_bytes,
     )
 
-    graph_input = graph_inputs(partial_sources=partial_sources)
+    suffixes = dict(source_root_suffixes or {})
+    root_payloads = {
+        source_id: (
+            f"{source_id}:root"
+            if not suffixes.get(source_id)
+            else f"{source_id}:root:{suffixes[source_id]}"
+        ).encode()
+        for source_id in source_ids
+    }
+    graph_input = graph_inputs(
+        partial_sources=partial_sources,
+        source_ids=source_ids,
+        source_hashes={
+            source_id: content_digest(payload)
+            for source_id, payload in root_payloads.items()
+        },
+    )
     response_schema_bytes = {
         kind: canonical_synthesis_response_schema_bytes(kind)
         for kind in graph_input.response_schema_hashes
     }
     context_policy = default_synthesis_context_policy()
-    prosaic = canonical_prosaic_agent_bytes(
-        ProsaicCommandArtifact(
+    artifact = (
+        prosaic_artifact
+        if prosaic_artifact is not None
+        else ProsaicCommandArtifact(
             frontmatter={
                 "description": "Bounded RE workspace synthesis",
                 "effort": "high",
@@ -53,6 +79,8 @@ def _input_set(
             body="Generate exactly the authorized synthesis.json artifact.\n",
         )
     )
+    assert isinstance(artifact, ProsaicCommandArtifact)
+    prosaic = canonical_prosaic_agent_bytes(artifact)
     from tests.unit.test_re_v2_protocol_22_cli_provider import _cli_executor
 
     executor = compose_synthesis_executor(
@@ -87,7 +115,7 @@ def _input_set(
     graph = build_synthesis_graph(graph_input)
     authority_objects: dict[str, bytes] = {}
     for source in graph_input.accepted_sources:
-        root_payload = f"{source.source_id}:root".encode()
+        root_payload = root_payloads[source.source_id]
         lower_payload = f"{source.source_id}:lower".encode()
         assert content_digest(root_payload) == source.source_root_hash
         assert content_digest(lower_payload) in source.lower_authority_ids
@@ -106,7 +134,7 @@ def _input_set(
         parent_manifest_hash=digest("parent-manifest"),
         source_snapshot_id=digest("workspace-snapshot"),
         partition_manifest_id=graph_input.topology.partition_manifest_id,
-        selected_layers={"api": "L3", "web": "L3"},
+        selected_layers={source_id: "L3" for source_id in source_ids},
         accepted_sources=graph_input.accepted_sources,
         authority_objects=authority_objects,
         debt_summary_hashes={
@@ -120,12 +148,19 @@ def _input_set(
             for item in graph_input.source_overviews.projections
         },
     )
-    budget = synthesis_budget_policy_v1()
+    budget = synthesis_budget_policy_v1(
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+    )
     request = synthesis_request(
         parent,
         budget,
-        expected_v2_index_hash=digest("v2-index"),
-        expected_compatibility_generation=4,
+        expected_v2_index_hash=(
+            digest("v2-index")
+            if expected_v2_index_hash is None
+            else expected_v2_index_hash
+        ),
+        expected_compatibility_generation=expected_compatibility_generation,
     )
     partials = partial_acceptances_for(parent, request)
     from harness.re_v2.protocol_27.model import SynthesisCheckpointSelectionV1

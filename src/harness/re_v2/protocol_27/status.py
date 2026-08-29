@@ -6,10 +6,14 @@ import json
 from pathlib import Path
 
 from harness.re_registry import load_published_index
+from harness.re_v2.protocol_22.cli_provider import (
+    calculate_shared_cli_dispatch_reservation,
+)
 from harness.re_v2.publication import current_index_hash, load_published_v2_index
 
 from .budget import evaluate_synthesis_budget
 from .controller import plan_next_synthesis, reconstruct_synthesis_controller_state
+from .execution import build_synthesis_provider_dependencies
 from .recovery import load_protocol_27_run_context
 
 
@@ -28,6 +32,44 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             context.inputs, ledger, events, budget
         )
         action = plan_next_synthesis(state)
+        next_reservation: dict[str, object] | None = None
+        insufficient_dimensions: list[str] = []
+        if action.kind == "dispatch" and action.work_item is not None:
+            dependencies = build_synthesis_provider_dependencies(
+                context.inputs,
+                action.work_item,
+                action.retry_diagnostics,
+            )
+            reservation = calculate_shared_cli_dispatch_reservation(
+                dependencies.agent_bytes,
+                dependencies.context_bytes,
+                dependencies.response_schema_bytes,
+                dependencies.executor,
+                dependencies.retry_diagnostics,
+            )
+            token_remaining = (
+                None
+                if budget.token_limit is None
+                else max(0, budget.token_limit - budget.charged_tokens)
+            )
+            active_remaining = (
+                None
+                if budget.active_ms_limit is None
+                else max(0, budget.active_ms_limit - budget.charged_active_ms)
+            )
+            if token_remaining is not None and reservation.billable_tokens > token_remaining:
+                insufficient_dimensions.append("tokens")
+            if active_remaining is not None and reservation.active_ms > active_remaining:
+                insufficient_dimensions.append("active_ms")
+            next_reservation = {
+                "work_item_id": action.work_item.work_item_id,
+                "artifact_kind": action.work_item.output_key.artifact_kind,
+                "billable_tokens": reservation.billable_tokens,
+                "active_ms": reservation.active_ms,
+                "remaining_tokens": token_remaining,
+                "remaining_active_ms": active_remaining,
+                "fits": not insufficient_dimensions,
+            }
         workspace = context.paths.root.parent.parent.parent
         current_compatibility = load_published_index(workspace)
         current_v2 = load_published_v2_index(workspace)
@@ -114,15 +156,25 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             publication_status = "conflict"
         else:
             publication_status = "not_attempted"
+        accepted_work_item_ids = {
+            item.work_item_id for item in ledger.accepted_work_items.values()
+        }
         failures = [
             {
                 "failure_class": str(event.payload["failure_class"]),
                 "reason_code": str(event.payload["reason_code"]),
                 "work_item_id": str(event.payload["work_item_id"]),
+                "resolved": str(event.payload["work_item_id"])
+                in accepted_work_item_ids,
             }
             for event in events
             if event.type == "work_item_failed"
         ]
+        unresolved_failed_work_items = {
+            str(item["work_item_id"])
+            for item in failures
+            if item["resolved"] is False
+        }
         next_action = _next_action(
             manifest.run_id,
             partial_sources,
@@ -162,7 +214,8 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
                 "required": len(context.inputs.graph.required_nodes),
                 "generated": sum(row["status"] == "generated" for row in artifact_rows),
                 "adopted": sum(row["status"] == "adopted" for row in artifact_rows),
-                "failed": len(failures),
+                "failed": len(unresolved_failed_work_items),
+                "failed_attempts": len(failures),
                 "unresolved": sum(row["status"] == "unresolved" for row in artifact_rows),
             },
             "failures": failures,
@@ -185,6 +238,8 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
                 "token_limit": budget.token_limit,
                 "active_ms_limit": budget.active_ms_limit,
                 "exhausted_dimensions": list(budget.exhausted_dimensions),
+                "insufficient_remaining_dimensions": insufficient_dimensions,
+                "next_reservation": next_reservation,
             },
             "avoided_provider_calls": len(ledger.checkpoint_adoptions),
             "avoided_reservations": len(ledger.checkpoint_adoptions),
@@ -214,6 +269,11 @@ def protocol_27_status_document(run_dir: Path) -> dict[str, object]:
             ),
             "v2_generation_id": None if current_v2 is None else current_v2.generation_id,
             "next_action": next_action,
+            "stop_reason": (
+                "synthesis-reservation-exceeds-remaining-budget"
+                if insufficient_dimensions
+                else action.reason
+            ),
         }
     except Protocol27StatusError:
         raise
@@ -262,6 +322,8 @@ def render_protocol_27_status(run_dir: Path, *, as_json: bool = False) -> str:
         lines.append("retained source debt: " + ", ".join(sources["partial"]))
     if unresolved:
         lines.append("unresolved: " + ", ".join(unresolved))
+    if document["stop_reason"] is not None:
+        lines.append(f"stopped because: {document['stop_reason']}")
     lines.append(f"next action: {document['next_action']}")
     return "\n".join(lines) + "\n"
 
