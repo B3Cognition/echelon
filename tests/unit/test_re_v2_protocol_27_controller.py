@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.re_v2.canonical import canonical_json_bytes
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.squad_provider import SquadAgentResult
 from tests.re_v2_protocol_27_fixtures import synthesis_budget_policy_v1
 from tests.unit.test_re_v2_protocol_27_inputs import _input_set
@@ -31,10 +31,8 @@ def _validated_controller_inputs(tmp_path: Path):
     request = synthesis_request(
         base.parent,
         budget,
-        expected_v2_index_hash=base.request.expected_v2_index_hash,
-        expected_compatibility_generation=(
-            base.request.expected_compatibility_generation
-        ),
+        expected_v2_index_hash=content_digest(b""),
+        expected_compatibility_generation=0,
     )
     inputs = replace(
         base,
@@ -212,9 +210,9 @@ def test_planner_materializes_only_after_root_closure(tmp_path: Path) -> None:
     )
 
     assert plan_next_synthesis(state).kind == "materialize"
-    assert plan_next_synthesis(replace(state, materialization_complete=True)).kind == (
-        "materialization_complete"
-    )
+    materialized = replace(state, materialization_complete=True)
+    assert plan_next_synthesis(materialized).kind == "publish"
+    assert plan_next_synthesis(replace(materialized, publication_complete=True)).kind == "complete"
 
 
 @pytest.mark.unit
@@ -235,7 +233,7 @@ def test_controller_closes_graph_with_one_shared_provider_instance(
     result = Protocol27Controller(inputs, provider_factory=factory).run_to_closure()  # type: ignore[arg-type]
 
     assert result.synthesis_closure_complete
-    assert result.terminal_kind == "materialization_complete"
+    assert result.terminal_kind == "complete"
     assert result.accepted_artifact_count == result.required_artifact_count == 13
     assert result.provider_attempts == 13
     assert result.contract_retries == 0

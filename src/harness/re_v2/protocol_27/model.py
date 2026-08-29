@@ -1134,6 +1134,17 @@ class PublicationDescriptorV1:
                 _schema(sorted_unique_digests, getattr(self, field), f"{label}.{field}"),
             )
         _schema(nonnegative_int, self.compatibility_generation, f"{label}.compatibility_generation")
+        if self.compatibility_generation < 1:
+            raise Protocol27SchemaError(
+                "PublicationDescriptorV1 compatibility_generation must be positive"
+            )
+        partial = bool(
+            self.debt_manifest_hashes or self.partial_acceptance_receipt_ids
+        )
+        if (self.input_quality == "partial") != partial:
+            raise Protocol27SchemaError(
+                "PublicationDescriptorV1 input_quality disagrees with debt authority"
+            )
 
     @property
     def descriptor_id(self) -> str:

@@ -295,5 +295,5 @@ def test_recovery_repairs_interrupted_materialization_without_provider(
     )
 
     assert result.synthesis_closure_complete
-    assert result.terminal_kind == "materialization_complete"
+    assert result.terminal_kind == "complete"
     assert len(provider.calls) == calls

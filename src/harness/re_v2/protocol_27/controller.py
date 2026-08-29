@@ -53,6 +53,8 @@ ActionKind = Literal[
     "closure_complete",
     "materialize",
     "materialization_complete",
+    "publish",
+    "complete",
     "incomplete",
 ]
 
@@ -75,6 +77,7 @@ class SynthesisControllerStateV1:
     root_accepted: bool
     budget_allowed: bool
     materialization_complete: bool = False
+    publication_complete: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -159,6 +162,7 @@ def reconstruct_synthesis_controller_state(
         root_accepted=ledger.synthesis_root is not None,
         budget_allowed=budget.allowed,
         materialization_complete=ledger.materialization is not None,
+        publication_complete=ledger.publication is not None,
     )
 
 
@@ -174,10 +178,10 @@ def plan_next_synthesis(
     if len(state.accepted_node_hashes) == len(state.graph.required_nodes):
         if not state.root_accepted:
             return SynthesisControllerActionV1("create_root")
+        if not state.materialization_complete:
+            return SynthesisControllerActionV1("materialize")
         return SynthesisControllerActionV1(
-            "materialization_complete"
-            if state.materialization_complete
-            else "materialize"
+            "complete" if state.publication_complete else "publish"
         )
     if not state.budget_allowed:
         return SynthesisControllerActionV1(
@@ -271,9 +275,28 @@ class Protocol27Controller:
                     self.fault_hook,
                 )
                 continue
+            if action.kind == "publish":
+                from .publication import publish_protocol_27_generation
+                from .recovery import load_protocol_27_run_context
+
+                result = publish_protocol_27_generation(
+                    load_protocol_27_run_context(self.inputs.paths.root.parent),
+                    self.fault_hook,
+                )
+                if result.status == "conflict":
+                    return self._result("incomplete", "publication-conflict")
+                continue
             if action.kind in {"recover_capture", "accept_candidate"}:
                 raise Protocol27ControllerError(
                     "durable boundary recovery is delegated to protocol-2.7 recovery"
+                )
+            if action.kind == "complete" and not any(
+                event.type == "run_completed" for event in self.events.replay()
+            ):
+                self.events.append(
+                    "run_completed",
+                    {"reason": "synthesis-published"},
+                    occurred_at=self.clock(),
                 )
             return self._result(action.kind, action.reason)
 
@@ -284,7 +307,7 @@ class Protocol27Controller:
         )
         return Protocol27ControllerResult(
             synthesis_closure_complete=terminal_kind
-            in {"closure_complete", "materialization_complete"},
+            in {"closure_complete", "materialization_complete", "complete"},
             terminal_kind=reason or terminal_kind,
             accepted_artifact_count=len(final.accepted_artifacts),
             required_artifact_count=len(self.inputs.graph.required_nodes),

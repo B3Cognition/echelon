@@ -284,7 +284,15 @@ def recover_stale_publish_lock(
 
 
 def _owner_has_pending_journal(workspace_root: Path, owner_run_id: str) -> bool:
-    journal = ensure_re_layout(workspace_root).staging / owner_run_id / "rollback-journal.json"
+    # This check runs while publication may have moved the registry's source or
+    # workspace directories into rollback storage. It must be observational:
+    # recreating layout directories here would manufacture unrelated finals and
+    # make digest-protected rollback correctly fail closed.
+    journal = (
+        ReRegistryPaths.for_workspace(workspace_root).staging
+        / owner_run_id
+        / "rollback-journal.json"
+    )
     if not journal.is_file():
         return False
     return _read_json(journal).get("status") in {"replacing", "rolling_back"}
@@ -478,7 +486,10 @@ def _publish_lock_owner_hint(lock_path: Path, paths: ReRegistryPaths) -> str:
 def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
     """Atomically claim exactly one safe orphan journal for recovery."""
     root = workspace_root.resolve()
-    paths = ensure_re_layout(root)
+    paths = ReRegistryPaths.for_workspace(root)
+    if not paths.staging.is_dir():
+        return None
+    paths.locks.mkdir(parents=True, exist_ok=True)
     initial_pending = _pending_publication_journals(paths.staging)
     if not initial_pending:
         return None
@@ -542,7 +553,9 @@ def claim_stale_publish_recovery(
 ) -> RePublishLock | None:
     """Claim a stale owner lock before inspecting or recovering its journal."""
     root = workspace_root.resolve()
-    paths = ensure_re_layout(root)
+    paths = ReRegistryPaths.for_workspace(root)
+    if not paths.staging.is_dir() or not paths.locks.is_dir():
+        return None
     owner = recoverable_publish_lock_owner(
         root,
         stale_after_seconds=stale_after_seconds,
@@ -591,7 +604,9 @@ def recoverable_publish_lock_owner(
 ) -> dict[str, Any] | None:
     """Return inactive stale owner metadata without modifying the lock."""
     root = workspace_root.resolve()
-    paths = ensure_re_layout(root)
+    paths = ReRegistryPaths.for_workspace(root)
+    if not paths.locks.is_dir():
+        return None
     lock_path = paths.locks / "publish.lock"
     if not lock_path.exists():
         return None

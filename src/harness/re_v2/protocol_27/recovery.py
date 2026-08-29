@@ -202,6 +202,21 @@ def recover_protocol_27_run(
                 repaired.append("synthesis-materialization")
             events = context.events.replay()
             ledger = context.ledger.replay()
+            publication_stage = (
+                context.paths.root.parent.parent.parent
+                / "re/.staging"
+                / context.inputs.manifest.run_id
+                / "protocol-27-publication.json"
+            )
+            if publication_stage.is_file() or ledger.publication is not None:
+                from .publication import recover_protocol_27_publication
+
+                before_publication = ledger.publication
+                recover_protocol_27_publication(context, fault_hook)
+                if before_publication is None:
+                    repaired.append("synthesis-publication")
+                events = context.events.replay()
+                ledger = context.ledger.replay()
     budget = evaluate_synthesis_budget(context.inputs.manifest, events, ledger)
     state = reconstruct_synthesis_controller_state(
         context.inputs,

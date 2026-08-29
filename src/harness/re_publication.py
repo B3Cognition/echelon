@@ -514,12 +514,54 @@ def recover_interrupted_publication(
         if recovery_lock is None:
             return False
         run_id = recovery_lock.owner_run_id
-    paths = ensure_re_layout(root)
+    # Recovery must not recreate source/workspace directories that an active
+    # rollback journal has intentionally moved aside.
+    paths = ReRegistryPaths.for_workspace(root)
+    if not paths.root.is_dir() or not paths.staging.is_dir():
+        recovery_lock.release()
+        return False
     stage_root = paths.staging / run_id
     journal = stage_root / "rollback-journal.json"
     if not journal.is_file():
         recovery_lock.release()
         return False
+    protocol_27_marker = stage_root / "protocol-27-publication.json"
+    if protocol_27_marker.is_file():
+        try:
+            marker = _read_json(protocol_27_marker)
+            run_dir_value = marker.get("run_dir")
+            if not isinstance(run_dir_value, str):
+                raise RePublishRecoveryRequired(
+                    "protocol-2.7 publication marker has no run directory"
+                )
+            run_dir = Path(run_dir_value).resolve()
+            expected_runs = root / "runs"
+            if (
+                not run_dir.is_relative_to(expected_runs)
+                or run_dir.name != run_id
+            ):
+                raise RePublishRecoveryRequired(
+                    "protocol-2.7 publication marker escapes its owner run"
+                )
+            from harness.re_v2.protocol_27.publication import (
+                recover_protocol_27_publication,
+            )
+            from harness.re_v2.protocol_27.recovery import (
+                load_protocol_27_run_context,
+            )
+
+            recover_protocol_27_publication(
+                load_protocol_27_run_context(run_dir),
+                _release_lock=False,
+            )
+            recovery_lock.release()
+            return True
+        except RePublishRecoveryRequired:
+            raise
+        except Exception as exc:
+            raise RePublishRecoveryRequired(
+                f"protocol-2.7 publication recovery failed: {exc}"
+            ) from exc
     data = _read_json(journal)
     if data.get("status") not in {"replacing", "rolling_back"}:
         recovery_lock.release()

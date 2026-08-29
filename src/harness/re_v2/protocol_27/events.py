@@ -285,8 +285,8 @@ class Protocol27ReplayState(EventReplayState):
                 raise ReV2EventError("publication authority does not match materialization")
             self.publication_descriptor_id = str(payload["publication_descriptor_id"])
         elif event_type == "run_completed":
-            if self.synthesis_root_id is None or self.has_active_dispatch:
-                raise ReV2EventError("run completion requires a closed synthesis root")
+            if self.publication_descriptor_id is None or self.has_active_dispatch:
+                raise ReV2EventError("run completion requires durable synthesis publication")
             self.terminal = True
         elif event_type == "run_failed":
             if self.has_active_dispatch:

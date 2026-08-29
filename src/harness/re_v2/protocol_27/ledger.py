@@ -301,6 +301,15 @@ class _Protocol27LedgerState:
                 != self.materialization.materialization_manifest_id
                 or descriptor.synthesis_policy_hash
                 != self.inputs.manifest.synthesis_policy_hash
+                or descriptor.input_quality != self.synthesis_root.input_quality
+                or descriptor.accepted_source_outcome_ids
+                != self.synthesis_root.accepted_source_outcome_ids
+                or descriptor.debt_manifest_hashes
+                != self.synthesis_root.debt_manifest_hashes
+                or descriptor.partial_acceptance_receipt_ids
+                != self.synthesis_root.partial_acceptance_receipt_ids
+                or descriptor.compatibility_generation
+                != self.inputs.manifest.expected_compatibility_generation + 1
             ):
                 raise ReV2LedgerError("publication descriptor authority mismatch")
             object_store.verify(descriptor.identity)

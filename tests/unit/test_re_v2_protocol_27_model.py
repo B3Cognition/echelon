@@ -132,3 +132,12 @@ def test_synthesis_root_quality_must_match_debt() -> None:
 
     with pytest.raises(Protocol27SchemaError, match="input_quality"):
         replace(root, input_quality="complete")
+
+
+def test_publication_descriptor_quality_and_generation_are_exact() -> None:
+    descriptor = publication_descriptor_v1()
+
+    with pytest.raises(Protocol27SchemaError, match="input_quality"):
+        replace(descriptor, input_quality="complete")
+    with pytest.raises(Protocol27SchemaError, match="generation"):
+        replace(descriptor, compatibility_generation=0)

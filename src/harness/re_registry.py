@@ -22,6 +22,7 @@ _INDEX_STATUSES = frozenset({"complete", "partial"})
 _SOURCE_STATUSES = frozenset({"complete", "partial", "empty"})
 _WORKSPACE_FIELDS = ("manifest", "overview", "relationships", "contracts")
 _RUNTIME_PARTS = frozenset({".cache", ".staging", ".locks"})
+_SYNTHESIS_QUALITIES = frozenset({"complete", "partial"})
 
 
 class ReRegistryError(RuntimeError):
@@ -77,6 +78,19 @@ class PublishedWorkspace:
 
 
 @dataclass(frozen=True)
+class PublishedReSynthesisQualityV1:
+    """Closed protocol-2.7 quality authority embedded in a schema-1 index."""
+
+    schema_version: int
+    input_quality: str
+    synthesis_root_id: str
+    materialization_manifest_id: str
+    accepted_source_outcome_ids: tuple[str, ...]
+    debt_manifest_hashes: tuple[str, ...]
+    partial_acceptance_receipt_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PublishedReIndex:
     schema_version: int
     generation: int
@@ -86,6 +100,7 @@ class PublishedReIndex:
     sources: dict[str, PublishedSource]
     workspace: PublishedWorkspace
     warnings: tuple[str, ...]
+    synthesis_quality: PublishedReSynthesisQualityV1 | None = None
 
     @classmethod
     def from_path(cls, path: Path) -> "PublishedReIndex":
@@ -785,6 +800,7 @@ def _parse_index(raw: Any, *, workspace_root: Path) -> PublishedReIndex:
     if not isinstance(raw_warnings, list) or any(not isinstance(item, str) for item in raw_warnings):
         raise ReRegistryError("RE index warnings must be a list of strings")
 
+    quality = _parse_synthesis_quality(raw.get("quality"))
     return PublishedReIndex(
         schema_version=schema_version,
         generation=generation,
@@ -794,6 +810,63 @@ def _parse_index(raw: Any, *, workspace_root: Path) -> PublishedReIndex:
         sources=sources,
         workspace=PublishedWorkspace(**workspace_values),
         warnings=tuple(raw_warnings),
+        synthesis_quality=quality,
+    )
+
+
+def _parse_synthesis_quality(raw_quality: object) -> PublishedReSynthesisQualityV1 | None:
+    if not isinstance(raw_quality, dict) or "workspace_synthesis" not in raw_quality:
+        return None
+    raw = raw_quality["workspace_synthesis"]
+    fields = frozenset(
+        {
+            "schema_version",
+            "input_quality",
+            "synthesis_root_id",
+            "materialization_manifest_id",
+            "accepted_source_outcome_ids",
+            "debt_manifest_hashes",
+            "partial_acceptance_receipt_ids",
+        }
+    )
+    if not isinstance(raw, dict) or frozenset(raw) != fields:
+        raise ReRegistryError("quality.workspace_synthesis must be a closed schema-v1 object")
+    if raw.get("schema_version") != 1:
+        raise ReRegistryError("unsupported quality.workspace_synthesis schema_version")
+    input_quality = raw.get("input_quality")
+    if input_quality not in _SYNTHESIS_QUALITIES:
+        raise ReRegistryError("invalid quality.workspace_synthesis input_quality")
+
+    def digests(field: str) -> tuple[str, ...]:
+        value = raw.get(field)
+        if (
+            not isinstance(value, list)
+            or any(not isinstance(item, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", item) for item in value)
+            or value != sorted(set(value))
+        ):
+            raise ReRegistryError(
+                f"quality.workspace_synthesis.{field} must be sorted unique digests"
+            )
+        return tuple(value)
+
+    synthesis_root_id = _required_string(raw, "synthesis_root_id", "quality.workspace_synthesis")
+    materialization_manifest_id = _required_string(
+        raw, "materialization_manifest_id", "quality.workspace_synthesis"
+    )
+    for field, value in (
+        ("synthesis_root_id", synthesis_root_id),
+        ("materialization_manifest_id", materialization_manifest_id),
+    ):
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+            raise ReRegistryError(f"quality.workspace_synthesis.{field} must be a digest")
+    return PublishedReSynthesisQualityV1(
+        schema_version=1,
+        input_quality=input_quality,
+        synthesis_root_id=synthesis_root_id,
+        materialization_manifest_id=materialization_manifest_id,
+        accepted_source_outcome_ids=digests("accepted_source_outcome_ids"),
+        debt_manifest_hashes=digests("debt_manifest_hashes"),
+        partial_acceptance_receipt_ids=digests("partial_acceptance_receipt_ids"),
     )
 
 
