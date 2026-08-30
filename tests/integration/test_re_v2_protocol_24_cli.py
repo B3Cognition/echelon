@@ -46,6 +46,10 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
     workspace = tmp_path / "workspace"
     (workspace / "runs").mkdir(parents=True)
+    shutil.copytree(
+        parent.run_dir,
+        workspace / "runs" / parent.manifest.run_id,
+    )
     monkeypatch.setattr(
         "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
         lambda _run, _workspace: parent,
@@ -74,19 +78,36 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
         lambda context: contexts.append(context.run_dir),
     )
     options = legacy_cli._parse_re_deepen_options(
-        ["--to", "L2", "--source", "api", "--from-run", "re-parent"]
+        [
+            "--to",
+            "L2",
+            "--source",
+            "api",
+            "--from-run",
+            parent.manifest.run_id,
+        ]
     )
 
     first = legacy_cli._run_re_v24_deepen(workspace, options)
     second = legacy_cli._run_re_v24_deepen(workspace, options)
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v22_implementation_digest",
+        lambda *_modules: digest("upgraded-protocol-2.4-runtime"),
+    )
+    upgraded = legacy_cli._run_re_v24_deepen(workspace, options)
 
     children = tuple(
         path
         for path in (workspace / "runs").iterdir()
-        if path.is_dir() and (path / "v2" / "run.json").is_file()
+        if path.name != parent.manifest.run_id
+        and path.is_dir()
+        and (path / "v2" / "run.json").is_file()
     )
     assert first == second
-    assert children == (first,)
+    assert upgraded != first
+    assert len(children) == 2
+    assert set(children) == {first, upgraded}
     manifest = load_run_manifest(first)
     assert isinstance(manifest, RunManifestV5)
     outer_inputs = load_protocol_26_inputs(ReV2Paths.for_run(first), manifest)
@@ -94,7 +115,7 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     assert isinstance(layer_manifest, RunManifestV3)
     assert layer_manifest.parent_run_id == parent.manifest.run_id
     assert layer_manifest.selection.source_ids == ("api",)
-    assert (workspace / "runs" / ".current-re").read_text() == first.name + "\n"
+    assert (workspace / "runs" / ".current-re").read_text() == upgraded.name + "\n"
     paths = ReV2Paths.for_run(first)
     events = EventStore(paths, protocol=protocol_26_events_for("L2")).replay()
     ledger = Protocol22Ledger(paths, ObjectStore(paths.objects)).replay()
@@ -105,7 +126,7 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
         else parent.ledger.accepted_artifacts
     )
     assert ledger.accepted_artifacts == parent.ledger.accepted_artifacts
-    assert contexts == [first, first]
+    assert contexts == [first, first, upgraded]
 
 
 @pytest.mark.integration

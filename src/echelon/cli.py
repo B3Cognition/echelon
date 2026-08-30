@@ -15181,6 +15181,7 @@ def _re_v24_creation_lock(workspace_root: Path):
 def _find_re_v24_semantic_child(
     workspace_root: Path,
     semantic_request_id: str,
+    executor_contract_catalog_id: str,
 ) -> Path | None:
     from harness.re_v2.events import EventStore
     from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
@@ -15211,6 +15212,8 @@ def _find_re_v24_semantic_child(
         if (
             isinstance(candidate_manifest, RunManifestV3)
             and candidate_manifest.semantic_request_id == semantic_request_id
+            and candidate_manifest.executor_contract_catalog.identity
+            == executor_contract_catalog_id
         ):
             event_protocol = (
                 protocol_26_events_for("L2")
@@ -15266,6 +15269,7 @@ def _run_re_v24_deepen(
         existing = _find_re_v24_semantic_child(
             workspace,
             request.manifest.semantic_request_id,
+            request.manifest.executor_contract_catalog.identity,
         )
         if existing is None:
             prepared = _prepare_re_v26_creation(
