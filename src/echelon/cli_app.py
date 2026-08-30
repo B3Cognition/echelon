@@ -128,11 +128,6 @@ spec_evidence_memory_app = typer.Typer(
     help="Mine spec verification evidence in MemPalace.",
     no_args_is_help=True,
 )
-harness_app = typer.Typer(
-    add_completion=False,
-    help="Compatibility alias for delivery init/run/resume.",
-    no_args_is_help=True,
-)
 llm_app = typer.Typer(
     add_completion=False,
     help="LLM provider diagnostics.",
@@ -148,6 +143,16 @@ re_app = typer.Typer(
 class ReEngine(str, Enum):
     V1 = "v1"
     V2 = "v2"
+
+
+class ReGoal(str, Enum):
+    BASELINE = "baseline"
+    INVENTORY = "inventory"
+
+
+class ReDeepeningLayer(str, Enum):
+    L2 = "L2"
+    L3 = "L3"
 
 
 re_memory_app = typer.Typer(
@@ -177,7 +182,6 @@ app.add_typer(phase_app, name="phase")
 app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
-app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
 app.add_typer(graph_app, name="graph")
 app.add_typer(topology_app, name="topology")
@@ -859,8 +863,18 @@ def re_run(
         "--shadow",
         help="For v2 only, explain the authoritative plan without dispatching work.",
     ),
+    goal: list[ReGoal] = typer.Option(
+        [],
+        "--goal",
+        case_sensitive=True,
+        help="For v2 only: baseline (default) or inventory.",
+    ),
 ) -> None:
     """Run or resume workspace reverse engineering; publish explicitly afterward."""
+    if len(goal) > 1:
+        raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
+    if goal and engine is not ReEngine.V2:
+        raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
     args = ["--re-policy", re_policy]
     _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
@@ -872,6 +886,8 @@ def re_run(
         args.append("--no-reuse")
     if engine is ReEngine.V2:
         args.extend(["--engine", engine.value])
+    if goal:
+        args.extend(["--goal", goal[0].value])
     if shadow:
         args.append("--shadow")
     _legacy_cli()._cmd_re_run(args)
@@ -887,6 +903,106 @@ def re_refresh(
 ) -> None:
     """Refresh and publish semantic RE and topology for one source."""
     _legacy_cli()._cmd_re_refresh(["--source", source])
+
+
+@re_app.command("deepen")
+def re_deepen(
+    target_layer: ReDeepeningLayer = typer.Option(
+        ...,
+        "--to",
+        case_sensitive=True,
+        help="Registered deeper layer to generate: L2 or L3.",
+    ),
+    all_sources: bool = typer.Option(
+        False,
+        "--all",
+        help="Deepen every source and domain from the completed parent.",
+    ),
+    source: list[str] = typer.Option(
+        [],
+        "--source",
+        help="Repeat for each source ID to deepen.",
+    ),
+    domain: list[str] = typer.Option(
+        [],
+        "--domain",
+        help="Repeat for a domain ID within exactly one selected source.",
+    ),
+    from_run: Optional[str] = typer.Option(
+        None,
+        "--from-run",
+        help="Completed RE v2 parent run; defaults to the active RE run.",
+    ),
+    token_limit: Optional[int] = typer.Option(
+        None,
+        "--token-limit",
+        min=1,
+        help="Authorize the child run's token ceiling.",
+    ),
+    active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--active-ms-limit",
+        min=1,
+        help="Authorize the child run's active-time ceiling in milliseconds.",
+    ),
+    semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-token-limit",
+        min=1,
+        help="For L3, authorize the independent semantic token ceiling.",
+    ),
+    semantic_active_ms_limit: Optional[int] = typer.Option(
+        None,
+        "--semantic-active-ms-limit",
+        min=1,
+        help="For L3, authorize the independent semantic active-time ceiling.",
+    ),
+    new_audit_epoch: bool = typer.Option(
+        False,
+        "--new-audit-epoch",
+        help="For L3, explicitly create the next audit epoch from an eligible parent.",
+    ),
+) -> None:
+    """Create or reuse a self-contained selected-scope RE v2 child run."""
+    if all_sources and (source or domain):
+        raise typer.BadParameter(
+            "--all cannot be combined with --source or --domain",
+            param_hint="--all",
+        )
+    if not all_sources and not source:
+        raise typer.BadParameter(
+            "exactly one selector form is required: --all or --source",
+            param_hint="--source",
+        )
+    if domain and len(source) != 1:
+        raise typer.BadParameter(
+            "--domain requires exactly one --source",
+            param_hint="--domain",
+        )
+    if target_layer is not ReDeepeningLayer.L3 and (
+        semantic_token_limit is not None
+        or semantic_active_ms_limit is not None
+        or new_audit_epoch
+    ):
+        raise typer.BadParameter(
+            "semantic limits and --new-audit-epoch are valid only for L3",
+            param_hint="--to",
+        )
+    args = ["--to", target_layer.value]
+    if all_sources:
+        args.append("--all")
+    for source_id in source:
+        args.extend(["--source", source_id])
+    for domain_id in domain:
+        args.extend(["--domain", domain_id])
+    _extend_option(args, "--from-run", from_run)
+    _extend_option(args, "--token-limit", token_limit)
+    _extend_option(args, "--active-ms-limit", active_ms_limit)
+    _extend_option(args, "--semantic-token-limit", semantic_token_limit)
+    _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
+    if new_audit_epoch:
+        args.append("--new-audit-epoch")
+    _legacy_cli()._cmd_re_deepen(args)
 
 
 @re_app.command("status")
@@ -921,12 +1037,30 @@ def re_continue(
         min=1,
         help="Raise the active run's active-time ceiling without resetting it.",
     ),
+    re_semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-token-limit",
+        min=1,
+        help="Raise the active L3 run's independent semantic token ceiling.",
+    ),
+    re_semantic_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-time-limit-minutes",
+        min=1,
+        help="Raise the active L3 run's independent semantic time ceiling.",
+    ),
 ) -> None:
     """Continue the active RE run without a human answer."""
     args: list[str] = []
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
+    _extend_option(
+        args,
+        "--re-semantic-time-limit-minutes",
+        re_semantic_time_limit_minutes,
+    )
     _legacy_cli()._cmd_re_continue(args)
 
 
@@ -1189,349 +1323,6 @@ def re_check_domain(
 ) -> None:
     """Check one staged source-domain spec before the agent returns DONE."""
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
-
-
-@app.command(
-    "init",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_init() -> None:
-    """Initialize the current workspace."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_init(Path.cwd())
-
-
-@app.command(
-    "cicd",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_cicd(ctx: typer.Context) -> None:
-    """Retired CI/CD compatibility command."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_cicd(_ctx_args(ctx))
-
-
-@app.command(
-    "artifacts",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_artifacts(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to index."),
-) -> None:
-    """Generate a spec artifact index."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_artifacts([spec_id, *_ctx_args(ctx)])
-
-
-@app.command(
-    "land",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_land(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to land."),
-    continue_: bool = typer.Option(
-        False,
-        "--continue",
-        help="Resume an interrupted land operation.",
-    ),
-    prepare_only: bool = typer.Option(
-        False,
-        "--prepare-only",
-        help="Prepare landing artifacts without merging.",
-    ),
-    no_autoresolve: bool = typer.Option(
-        False,
-        "--no-autoresolve",
-        help="Disable automatic local conflict resolution.",
-    ),
-    allow_fulfillment_gaps: bool = typer.Option(
-        False,
-        "--allow-fulfillment-gaps",
-        help="Allow landing with open fulfillment gaps.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Landing strategy, usually merge or rebase.",
-    ),
-) -> None:
-    """Compatibility alias for delivery land."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_land(
-        _merge_land_args(
-            spec_id,
-            list(ctx.args),
-            continue_=continue_,
-            prepare_only=prepare_only,
-            no_autoresolve=no_autoresolve,
-            allow_fulfillment_gaps=allow_fulfillment_gaps,
-            strategy=strategy,
-        )
-    )
-
-
-@app.command("status", hidden=True)
-def root_status() -> None:
-    """Compatibility alias for spec status."""
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._cmd_status(Path.cwd())
-
-
-@app.command(
-    "continue",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_continue(
-    ctx: typer.Context,
-    mode: Optional[str] = typer.Option(
-        None,
-        "--mode",
-        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
-    ),
-) -> None:
-    """Compatibility alias for spec continue."""
-    legacy_cli = _legacy_cli()
-
-    args = _ctx_args(ctx)
-    _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
-
-
-@app.command(
-    "rewind",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_rewind(
-    ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
-    checkpoint_commit: Optional[str] = typer.Option(
-        None,
-        "--commit",
-        help="Full checkpoint commit or unique abbreviated prefix.",
-    ),
-    confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
-) -> None:
-    """Compatibility alias for spec rewind."""
-    legacy_cli = _legacy_cli()
-
-    args = [phase_id, *_ctx_args(ctx)]
-    _extend_option(args, "--commit", checkpoint_commit)
-    if confirm:
-        args.append("--confirm")
-    legacy_cli._cmd_rewind(args, project_root=Path.cwd())
-
-
-@app.command(
-    "resume",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_resume(
-    ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(
-        None,
-        help="Answer for an awaiting-human Phase A decision.",
-    ),
-) -> None:
-    """Compatibility alias for spec resume."""
-    legacy_cli = _legacy_cli()
-
-    args: list[str] = []
-    if answer is not None:
-        args.append(answer)
-    args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_spec_resume(args)
-
-
-@app.command(
-    "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_run(
-    ctx: typer.Context,
-    description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
-    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
-    reset: bool = typer.Option(False, "--reset", help="Discard blocked state and start fresh."),
-    init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
-    message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
-    next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
-    target: Optional[list[str]] = typer.Option(
-        None,
-        "--target",
-        help="Implementation source id or path; repeat for multi-repo delivery.",
-    ),
-    ignore_re: bool = typer.Option(
-        False,
-        "--ignore-re",
-        help="Do not attach the latest published RE context.",
-    ),
-    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
-    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
-    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
-) -> None:
-    """Compatibility alias for spec run."""
-    spec_run(
-        ctx,
-        description=description,
-        mode=mode,
-        reset=reset,
-        init=init,
-        message=message,
-        next_phase=next_phase,
-        target=target,
-        input_values=None,
-        ignore_re=ignore_re,
-        stash=stash,
-        discard=discard,
-        confirm=confirm,
-    )
-
-
-def _dispatch_skill(command: str, args: list[str]) -> None:
-    legacy_cli = _legacy_cli()
-
-    legacy_cli._dispatch_skill_command(command, args)
-
-
-@app.command(
-    "build",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_build(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to build."),
-    fix: bool = typer.Option(False, "--fix", help="Run build as a targeted fix pass."),
-    failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
-    context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
-) -> None:
-    """Compatibility alias for the build skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    if fix:
-        args.append("--fix")
-    _extend_option(args, "--failures", failures)
-    _extend_option(args, "--context", context)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("build", args)
-
-
-@app.command(
-    "review",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_review(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to review."),
-    pr_url: Optional[str] = typer.Option(None, "--pr-url", help="Pull request URL to review."),
-) -> None:
-    """Compatibility alias for the review skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    _extend_option(args, "--pr-url", pr_url)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("review", args)
-
-
-@app.command(
-    "codegen",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_codegen(
-    ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to build with SOAR codegen."),
-) -> None:
-    """Compatibility alias for the codegen skill command."""
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("codegen", args)
-
-
-@app.command(
-    "verify-spec",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_verify_spec(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to audit."),
-    reconcile: bool = typer.Option(False, "--reconcile", help="Apply deterministic reconciliation fixes."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
-) -> None:
-    """Compatibility alias for spec verify."""
-    _reject_spec_verify_extra_args(ctx)
-    _run_spec_verify(
-        Path.cwd(),
-        spec_id,
-        reconcile=reconcile,
-        dry_run=dry_run,
-    )
-
-
-@app.command(
-    "reopen",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_reopen(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to reopen."),
-    report: Optional[str] = typer.Argument(None, help="Optional from=<report> fulfillment report selector."),
-) -> None:
-    """Compatibility alias for spec reopen."""
-    args = [spec_id]
-    if report is not None:
-        args.append(report)
-    args.extend(_ctx_args(ctx))
-    _dispatch_skill("reopen", args)
-
-
-@app.command(
-    "bugfix",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_bugfix(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Bug description."),
-) -> None:
-    """Compatibility alias for spec bugfix."""
-    _dispatch_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
-
-
-@app.command(
-    "change",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-    hidden=True,
-)
-def root_change(
-    ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Change description."),
-) -> None:
-    """Compatibility alias for spec change."""
-    _dispatch_skill("change", [spec_id, description, *_ctx_args(ctx)])
 
 
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -1806,6 +1597,60 @@ def stack_preflight(
     if json_output:
         args.append("--json")
     args.extend(_ctx_args(ctx))
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("enable")
+def stack_enable(
+    stack_ids: list[str] = typer.Argument(..., help="Stack IDs to add to the project selection."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Add stacks to the committed project selection."""
+    legacy_cli = _legacy_cli()
+    args = ["enable", *stack_ids]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("disable")
+def stack_disable(
+    stack_ids: list[str] = typer.Argument(..., help="Explicit stack IDs to remove."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Remove explicitly selected stacks from the committed project config."""
+    legacy_cli = _legacy_cli()
+    args = ["disable", *stack_ids]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("select")
+def stack_select(
+    stack_ids: Optional[list[str]] = typer.Argument(
+        None,
+        help="Complete explicit selection; omit all IDs to clear it.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
+) -> None:
+    """Replace the committed project stack selection."""
+    legacy_cli = _legacy_cli()
+    args = ["select", *(stack_ids or [])]
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("selected")
+def stack_selected(
+    json_output: bool = typer.Option(False, "--json", help="Print selection as JSON."),
+) -> None:
+    """Show explicit, effective, and implied project stack selection."""
+    legacy_cli = _legacy_cli()
+    args = ["selected"]
+    if json_output:
+        args.append("--json")
     legacy_cli._cmd_stack(args, project_root=Path.cwd())
 
 
@@ -2120,6 +1965,11 @@ def spec_rewind(
         "--commit",
         help="Full checkpoint commit or unique abbreviated prefix.",
     ),
+    checkpoint_next_phase: Optional[str] = typer.Option(
+        None,
+        "--next-phase",
+        help="Exact next phase recorded by the selected checkpoint row.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -2129,6 +1979,7 @@ def spec_rewind(
 
     args = [phase_id, *list(ctx.args)]
     _extend_option(args, "--commit", checkpoint_commit)
+    _extend_option(args, "--next-phase", checkpoint_next_phase)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -3524,7 +3375,7 @@ def delivery_status(
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show current Phase B delivery/Ralph state."""
-    from echelon import cli as legacy_cli
+    from echelon.delivery_status import command
 
     args: list[str] = []
     if spec_id is not None:
@@ -3533,21 +3384,7 @@ def delivery_status(
         args.extend(["--strategy", strategy])
     if json_output:
         args.append("--json")
-    legacy_cli._cmd_delivery_status(args)
-
-
-@harness_app.command(
-    "init",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_init(ctx: typer.Context) -> None:
-    """Compatibility alias for delivery init."""
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_harness_init(
-        list(ctx.args),
-        command_prefix="echelon delivery init",
-    )
+    command(args)
 
 
 @delivery_app.command(
@@ -3630,54 +3467,6 @@ def delivery_run(
     )
 
 
-@harness_app.command(
-    "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_run(
-    ctx: typer.Context,
-    spec_id: str,
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-    max_outer: Optional[int] = typer.Option(None, "--max-outer"),
-    max_inner: Optional[int] = typer.Option(None, "--max-inner"),
-    token_budget: Optional[int] = typer.Option(None, "--token-budget"),
-    auto_merge: Optional[bool] = typer.Option(None, "--auto-merge/--no-auto-merge"),
-    kill_losers: bool = typer.Option(False, "--kill-losers"),
-    reset: bool = typer.Option(False, "--reset"),
-) -> None:
-    """Compatibility alias for delivery run."""
-    from echelon import cli as legacy_cli
-
-    legacy_cli._cmd_harness_run(
-        _merge_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-        command_prefix="echelon delivery run",
-        display_args=_display_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-    )
-
-
 @delivery_app.command(
     "resume",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -3726,80 +3515,6 @@ def delivery_continue(
             mode=mode,
             strategy=strategy,
         )
-    )
-
-
-@harness_app.command(
-    "resume",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_resume(
-    ctx: typer.Context,
-    spec_id: str,
-    answer: Optional[str] = typer.Argument(None, help="Answer for blocker escalation."),
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-) -> None:
-    """Compatibility alias for delivery resume."""
-    delivery_resume(ctx, spec_id, answer=answer, mode=mode, strategy=strategy)
-
-
-@harness_app.command(
-    "continue",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_continue(
-    ctx: typer.Context,
-    spec_id: str,
-    mode: Optional[str] = typer.Option(None, "--mode"),
-    strategy: Optional[str] = typer.Option(None, "--strategy"),
-) -> None:
-    """Compatibility alias for delivery continue."""
-    delivery_continue(ctx, spec_id, mode=mode, strategy=strategy)
-
-
-@harness_app.command(
-    "land",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def harness_land(
-    ctx: typer.Context,
-    spec_id: str,
-    continue_: bool = typer.Option(
-        False,
-        "--continue",
-        help="Continue an interrupted land operation.",
-    ),
-    prepare_only: bool = typer.Option(
-        False,
-        "--prepare-only",
-        help="Prepare the feature branch but do not merge it.",
-    ),
-    no_autoresolve: bool = typer.Option(
-        False,
-        "--no-autoresolve",
-        help="Disable deterministic conflict autoresolution.",
-    ),
-    allow_fulfillment_gaps: bool = typer.Option(
-        False,
-        "--allow-fulfillment-gaps",
-        help="Allow landing despite unresolved fulfillment gaps.",
-    ),
-    strategy: Optional[str] = typer.Option(
-        None,
-        "--strategy",
-        help="Landing strategy: merge or rebase.",
-    ),
-) -> None:
-    """Compatibility alias for delivery land."""
-    delivery_land(
-        ctx,
-        spec_id,
-        continue_=continue_,
-        prepare_only=prepare_only,
-        no_autoresolve=no_autoresolve,
-        allow_fulfillment_gaps=allow_fulfillment_gaps,
-        strategy=strategy,
     )
 
 

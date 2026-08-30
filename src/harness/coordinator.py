@@ -45,14 +45,7 @@ from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
-from harness.stacks import (
-    load_stack_definitions,
-    render_preflight_markdown,
-    render_resolved_markdown,
-    resolve_stacks,
-    run_stack_preflight,
-)
-from harness.stacks.paths import find_stack_extension_root
+from harness.stacks.context import build_stack_context
 from harness.visual_ralph import VisualRalphController
 from harness.state import (
     DELIVERY_STATE_VERSION,
@@ -1658,45 +1651,12 @@ class StrategyCoordinator:
 
     def _build_stack_context(self, spec_dir: Path | None = None) -> str:
         """Render resolved Echelon stack context for selected project stacks."""
-        selected_stacks = self._config.stacks.selected
-        if not selected_stacks:
-            return ""
-
-        base_dir = Path(self._base_dir)
-        definitions = load_stack_definitions(
-            extension_root=self._stack_extension_root(base_dir),
-            project_root=base_dir,
+        return build_stack_context(
+            Path(self._base_dir),
+            selected_stacks=self._config.stacks.selected,
+            target_archetypes=self._config.stacks.target_archetypes,
+            spec_dir=spec_dir,
         )
-        resolved = resolve_stacks(
-            selected_stacks,
-            definitions,
-            target_archetypes=self._stack_target_archetypes(spec_dir),
-        )
-        stack_context = render_resolved_markdown(resolved)
-        preflight = run_stack_preflight(resolved)
-        return f"{stack_context.rstrip()}\n\n{render_preflight_markdown(preflight)}"
-
-    @staticmethod
-    def _stack_extension_root(base_dir: Path) -> Path:
-        """Return the extension root that owns bundled stack definitions."""
-        return find_stack_extension_root(base_dir)
-
-    def _stack_target_archetypes(self, spec_dir: Path | None) -> set[str] | None:
-        """Read optional target archetypes from config and spec frontmatter."""
-        archetypes = set(self._config.stacks.target_archetypes)
-        if spec_dir is not None:
-            frontmatter = read_frontmatter(spec_dir)
-            for key in ("target_archetypes", "stack_archetypes", "archetypes"):
-                raw = frontmatter.get(key)
-                if isinstance(raw, list):
-                    archetypes.update(
-                        str(item).strip()
-                        for item in raw
-                        if str(item).strip()
-                    )
-                elif isinstance(raw, str) and raw.strip():
-                    archetypes.add(raw.strip())
-        return archetypes or None
 
     @staticmethod
     def _combine_strategy_context(

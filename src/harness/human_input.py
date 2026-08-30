@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
+import hashlib
 import json
 import math
+import re
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
@@ -32,6 +34,11 @@ HumanInputClassification = Literal[
 ]
 HumanInputRisk = Literal["low", "medium", "high", "critical"]
 SemiPolicy = Literal["require_human", "auto_if_recommended_low_risk"]
+RecommendationAuthority = Literal[
+    "workflow_policy", "controller_evidence", "provider_evidence",
+]
+RecommendationConfidence = Literal["high", "medium", "low"]
+RecommendationMode = Literal["static", "controller"]
 
 
 def gate_outcome_route_error(outcome: str, route: str) -> str | None:
@@ -53,7 +60,13 @@ _SOURCE_KINDS = frozenset({
 _CLASSIFICATIONS = frozenset({"operational", "material", "external_prerequisite"})
 _RISKS = frozenset({"low", "medium", "high", "critical"})
 _SEMI_POLICIES = frozenset({"require_human", "auto_if_recommended_low_risk"})
+_RECOMMENDATION_AUTHORITIES = frozenset({
+    "workflow_policy", "controller_evidence", "provider_evidence",
+})
+_RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
+_RECOMMENDATION_MODES = frozenset({"static", "controller"})
 _RESOLUTION_HANDLERS = frozenset({
+    "banzai_issue_resolution",
     "clarification_resume",
     "gate_outcome",
     "phase_dispatch_limit",
@@ -87,12 +100,14 @@ _POLICY_FIELDS = frozenset({
     "context_state_keys",
     "context_paths",
     "options",
+    "recommendation_mode",
 })
 _REQUIRED_POLICY_FIELDS = _POLICY_FIELDS - {"options"}
 _OPTION_FIELDS = frozenset({
     "id", "label", "description", "recommended", "risk_level", "next_phase", "outcome",
 })
 _PROVIDER_OPTION_FIELDS = _OPTION_FIELDS - {"outcome"}
+_SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _clean_string(value: object, field: str) -> str:
@@ -211,6 +226,64 @@ class HumanInputOption:
         )
 
 
+@dataclass(frozen=True)
+class RecommendationEvidence:
+    """An immutable reference supporting one prepared recommendation."""
+
+    id: str
+    kind: str
+    reference: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "id",
+            _clean_bounded_string(
+                self.id,
+                "recommendation_evidence.id",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        for field in ("kind", "reference"):
+            object.__setattr__(
+                self,
+                field,
+                _clean_bounded_string(
+                    getattr(self, field),
+                    f"recommendation_evidence.{field}",
+                    max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+                ),
+            )
+        if not isinstance(self.digest, str) or _SHA256_DIGEST.fullmatch(self.digest) is None:
+            raise HumanInputPolicyError(
+                "recommendation_evidence.digest must be a lowercase SHA-256"
+            )
+
+
+def _canonical_sha256(payload: Mapping[str, object]) -> str:
+    """Return the stable SHA-256 for recommendation evidence content."""
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _recommendation_option_payload(option: HumanInputOption) -> dict[str, object]:
+    return {
+        "id": option.id,
+        "label": option.label,
+        "description": option.description,
+        "risk_level": option.risk_level,
+        "next_phase": option.next_phase,
+        "outcome": option.outcome,
+    }
+
+
 def _validate_options(
     options: tuple[HumanInputOption, ...],
     *,
@@ -302,6 +375,7 @@ class HumanInputPolicy:
     context_state_keys: tuple[str, ...]
     context_paths: tuple[str, ...]
     options: tuple[HumanInputOption, ...]
+    recommendation_mode: RecommendationMode = "controller"
 
     def __post_init__(self) -> None:
         if self.source_kind not in _SOURCE_KINDS:
@@ -328,6 +402,8 @@ class HumanInputPolicy:
             raise HumanInputPolicyError("classification is not supported")
         if self.semi_policy not in _SEMI_POLICIES:
             raise HumanInputPolicyError("semi_policy is not supported")
+        if self.recommendation_mode not in _RECOMMENDATION_MODES:
+            raise HumanInputPolicyError("recommendation_mode must be static or controller")
         if self.resolution_handler not in _RESOLUTION_HANDLERS:
             raise HumanInputPolicyError("resolution_handler is not supported")
         if type(self.allow_free_text) is not bool:
@@ -348,6 +424,25 @@ class HumanInputPolicy:
         if not isinstance(self.options, tuple) or not all(isinstance(item, HumanInputOption) for item in self.options):
             raise HumanInputPolicyError("options must be a tuple of HumanInputOption values")
         _validate_options(self.options, allowed_target_phases=targets)
+        if self.recommendation_mode == "static" and (
+            sum(option.recommended for option in self.options) != 1
+        ):
+            raise HumanInputPolicyError(
+                "static policies require exactly one recommended option"
+            )
+        if (
+            self.recommendation_mode == "controller"
+            and self.options
+            and not any(option.recommended for option in self.options)
+            and (
+                self.source_kind,
+                self.producer_id,
+                self.reason_code,
+            ) not in _CONTROLLER_RECOMMENDATION_PREPARERS
+        ):
+            raise HumanInputPolicyError(
+                "controller recommendation mode requires a registered preparer"
+            )
         if self.source_kind == "human_gate":
             if self.allow_free_text:
                 raise HumanInputPolicyError("human_gate policies cannot allow free text")
@@ -368,7 +463,7 @@ class HumanInputPolicy:
 
 @dataclass(frozen=True)
 class PreparedHumanInput:
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     source_kind: HumanInputSourceKind
     producer_id: str
     phase_id: str
@@ -377,13 +472,20 @@ class PreparedHumanInput:
     question: str
     options: tuple[HumanInputOption, ...]
     recommended_answer: str | None
+    recommended_option_id: str | None
+    recommended_action: str | None
+    automatic_eligible: bool
+    recommendation_rationale: str
+    recommendation_confidence: RecommendationConfidence
+    recommendation_authority: RecommendationAuthority
+    recommendation_evidence: tuple[RecommendationEvidence, ...]
     risk_level: HumanInputRisk | None
     resolution_handler: str
     source_state_revision: int
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 1:
-            raise HumanInputPolicyError("prepared human input schema_version must be 1")
+        if type(self.schema_version) is not int or self.schema_version != 2:
+            raise HumanInputPolicyError("prepared human input schema_version must be 2")
         if self.source_kind not in _SOURCE_KINDS:
             raise HumanInputPolicyError("source_kind is not supported")
         object.__setattr__(
@@ -438,10 +540,75 @@ class PreparedHumanInput:
             max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
         )
         object.__setattr__(self, "recommended_answer", recommendation)
-        validate_human_input_answer_shape(
-            options=self.options,
-            recommended_answer=recommendation,
+        recommended_option_id = _clean_optional_bounded_string(
+            self.recommended_option_id,
+            "recommended_option_id",
+            max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
         )
+        recommended_action = _clean_optional_bounded_string(
+            self.recommended_action,
+            "recommended_action",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
+        if type(self.automatic_eligible) is not bool:
+            raise HumanInputPolicyError("automatic_eligible must be a boolean")
+        object.__setattr__(self, "recommended_option_id", recommended_option_id)
+        object.__setattr__(self, "recommended_action", recommended_action)
+        rationale = _clean_bounded_string(
+            self.recommendation_rationale,
+            "recommendation_rationale",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
+        object.__setattr__(self, "recommendation_rationale", rationale)
+        if self.recommendation_confidence not in _RECOMMENDATION_CONFIDENCES:
+            raise HumanInputPolicyError(
+                "recommendation_confidence must be high, medium, or low"
+            )
+        if self.recommendation_authority not in _RECOMMENDATION_AUTHORITIES:
+            raise HumanInputPolicyError("recommendation_authority is not supported")
+        if not isinstance(self.recommendation_evidence, tuple) or not all(
+            isinstance(item, RecommendationEvidence)
+            for item in self.recommendation_evidence
+        ):
+            raise HumanInputPolicyError(
+                "recommendation_evidence must be a tuple of RecommendationEvidence values"
+            )
+        recommendation_ids = [option.id for option in self.options if option.recommended]
+        if self.options:
+            if len(recommendation_ids) != 1:
+                raise HumanInputPolicyError(
+                    "choices require exactly one option recommendation"
+                )
+            if recommended_option_id != recommendation_ids[0]:
+                raise HumanInputPolicyError(
+                    "recommended_option_id must identify the recommended option"
+                )
+            if recommendation is not None or recommended_action is not None:
+                raise HumanInputPolicyError(
+                    "choice recommendations cannot include free-text metadata"
+                )
+        elif recommendation is not None:
+            if recommended_option_id is not None or recommended_action is not None:
+                raise HumanInputPolicyError(
+                    "automatic free text cannot include a choice target or action"
+                )
+        else:
+            if (
+                recommended_option_id is not None
+                or recommended_action is None
+                or self.automatic_eligible
+            ):
+                raise HumanInputPolicyError(
+                    "human-only free text requires a recommended action"
+                )
+            if self.recommendation_evidence:
+                raise HumanInputPolicyError(
+                    "human-only free text cannot retain recommendation evidence"
+                )
+        if (self.options or recommendation is not None) and not self.recommendation_evidence:
+            raise HumanInputPolicyError(
+                "prepared recommendations require recommendation evidence"
+            )
         if self.risk_level is not None and self.risk_level not in _RISKS:
             raise HumanInputPolicyError(
                 "risk_level must be low, medium, high, or critical"
@@ -483,6 +650,21 @@ class PreparedHumanInput:
                     for option in self.options
                 ],
                 "recommended_answer": self.recommended_answer,
+                "recommended_option_id": self.recommended_option_id,
+                "recommended_action": self.recommended_action,
+                "automatic_eligible": self.automatic_eligible,
+                "recommendation_rationale": self.recommendation_rationale,
+                "recommendation_confidence": self.recommendation_confidence,
+                "recommendation_authority": self.recommendation_authority,
+                "recommendation_evidence": [
+                    {
+                        "id": evidence.id,
+                        "kind": evidence.kind,
+                        "reference": evidence.reference,
+                        "digest": evidence.digest,
+                    }
+                    for evidence in self.recommendation_evidence
+                ],
                 "risk_level": self.risk_level,
             }
         )
@@ -528,10 +710,18 @@ class DecisionResolution:
 
 
 @dataclass(frozen=True)
-class HumanInputResolution:
+class AppliedHumanInputResolution:
     selected_option_id: str | None
     answer_text: str | None
-    resolved_by: Literal["user", "semi", "COMMANDER"]
+    resolved_by: Literal["user", "semi", "COMMANDER", "controller"]
+    rationale: str | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
+
+
+# Historical callers construct this internal value directly.  Keep the old
+# import name as an alias while making the complete applied result the one
+# concrete runtime type accepted by handlers and state transactions.
+HumanInputResolution = AppliedHumanInputResolution
 
 
 @dataclass(frozen=True)
@@ -544,6 +734,7 @@ class ProportionalQualityRecommendationEvidence:
     previous_formal_statement_count: int
     formal_statement_count: int
     qualitative_failure_count: int = 0
+    qualitative_hard_blocker_count: int = 0
 
     def __post_init__(self) -> None:
         margin = self.borderline_margin
@@ -560,12 +751,17 @@ class ProportionalQualityRecommendationEvidence:
             "previous_formal_statement_count",
             "formal_statement_count",
             "qualitative_failure_count",
+            "qualitative_hard_blocker_count",
         ):
             count = getattr(self, field)
             if type(count) is not int or count < 0:
                 raise HumanInputPolicyError(
                     f"{field} must be a non-negative integer"
                 )
+        if self.qualitative_hard_blocker_count > self.qualitative_failure_count:
+            raise HumanInputPolicyError(
+                "qualitative hard blockers cannot exceed qualitative failures"
+            )
         previous = self._validate_gates(self.previous_gates, "previous_gates")
         current = self._validate_gates(self.current_gates, "current_gates")
         if {row[0] for row in previous} != {row[0] for row in current}:
@@ -674,7 +870,11 @@ class HumanInputPolicyRegistry:
         normalized_question = _clean_string(question, "question")
         if len(normalized_question) > 4_000:
             raise HumanInputPolicyError("question must not exceed 4,000 characters")
-        normalized_recommendation = _clean_optional_string(recommended_answer, "recommended_answer")
+        normalized_recommendation = _clean_optional_bounded_string(
+            recommended_answer,
+            "recommended_answer",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
         if risk_level is not None and risk_level not in _RISKS:
             raise HumanInputPolicyError("risk_level must be low, medium, high, or critical")
         normalized_options = (
@@ -685,6 +885,10 @@ class HumanInputPolicyRegistry:
             if options is not None
             else policy.options
         )
+        validate_human_input_answer_shape(
+            options=normalized_options,
+            recommended_answer=normalized_recommendation,
+        )
         if (
             normalized_recommendation is None
             and risk_level is not None
@@ -693,8 +897,55 @@ class HumanInputPolicyRegistry:
             raise HumanInputPolicyError("risk_level requires a recommendation")
         if type(source_state_revision) is not int or source_state_revision < 0:
             raise HumanInputPolicyError("source_state_revision must be a non-negative integer")
+        recommended_options = [
+            option for option in normalized_options if option.recommended
+        ]
+        if normalized_options and len(recommended_options) != 1:
+            raise HumanInputPolicyError("choices require exactly one option recommendation")
+        has_recommendation = bool(recommended_options) or normalized_recommendation is not None
+        recommended_option_id = (
+            recommended_options[0].id if recommended_options else None
+        )
+        automatic_eligible = _derive_automatic_eligibility(
+            policy=policy,
+            options=normalized_options,
+            recommended_answer=normalized_recommendation,
+            risk_level=risk_level,
+        )
+        if policy.recommendation_mode == "static":
+            authority: RecommendationAuthority = "workflow_policy"
+        elif has_recommendation:
+            authority = "provider_evidence"
+        else:
+            authority = "workflow_policy"
+        evidence = (
+            (
+                RecommendationEvidence(
+                    id=f"{policy.producer_id}:{policy.reason_code}",
+                    kind=authority,
+                    reference=f"{policy.producer_id}:{policy.reason_code}",
+                    digest=_canonical_sha256({
+                        "authority": authority,
+                        "source_kind": policy.source_kind,
+                        "producer_id": policy.producer_id,
+                        "phase_id": normalized_phase,
+                        "reason_code": policy.reason_code,
+                        "question": normalized_question,
+                        "recommended_answer": normalized_recommendation,
+                        "recommended_option": (
+                            _recommendation_option_payload(recommended_options[0])
+                            if recommended_options
+                            else None
+                        ),
+                        "risk_level": risk_level,
+                    }),
+                ),
+            )
+            if has_recommendation
+            else ()
+        )
         return PreparedHumanInput(
-            schema_version=1,
+            schema_version=2,
             source_kind=policy.source_kind,
             producer_id=policy.producer_id,
             phase_id=normalized_phase,
@@ -703,10 +954,166 @@ class HumanInputPolicyRegistry:
             question=normalized_question,
             options=normalized_options,
             recommended_answer=normalized_recommendation,
+            recommended_option_id=recommended_option_id,
+            recommended_action=(
+                None
+                if has_recommendation
+                else 'Run echelon spec resume "<answer>" with the requested value.'
+            ),
+            automatic_eligible=automatic_eligible,
+            recommendation_rationale=(
+                "A controller-prepared recommendation is available."
+                if has_recommendation
+                else "Human input is required because no automatic recommendation is available."
+            ),
+            recommendation_confidence="medium" if has_recommendation else "low",
+            recommendation_authority=authority,
+            recommendation_evidence=evidence,
             risk_level=risk_level,
             resolution_handler=policy.resolution_handler,
             source_state_revision=source_state_revision,
         )
+
+    def prepare_controller(
+        self,
+        *,
+        source_kind: HumanInputSourceKind,
+        producer_id: str,
+        reason_code: str,
+        phase_id: str,
+        question: str,
+        source_state_revision: int,
+        **controller_evidence: object,
+    ) -> PreparedHumanInput:
+        """Invoke only the preparer registered for one exact policy triple."""
+        policy = self.lookup(source_kind, producer_id, reason_code)
+        key = (policy.source_kind, policy.producer_id, policy.reason_code)
+        preparer = _CONTROLLER_RECOMMENDATION_PREPARERS.get(key)
+        if preparer is None or policy.recommendation_mode != "controller":
+            raise HumanInputPolicyError(
+                "policy has no registered controller recommendation preparer"
+            )
+        return preparer(
+            self,
+            reason_code=policy.reason_code,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+            **controller_evidence,
+        )
+
+    def has_controller_preparer(
+        self,
+        source_kind: HumanInputSourceKind,
+        producer_id: str,
+        reason_code: str,
+    ) -> bool:
+        """Return whether one exact registered policy has a controller preparer."""
+        policy = self.lookup(source_kind, producer_id, reason_code)
+        key = (policy.source_kind, policy.producer_id, policy.reason_code)
+        return (
+            policy.recommendation_mode == "controller"
+            and key in _CONTROLLER_RECOMMENDATION_PREPARERS
+        )
+
+
+def _derive_automatic_eligibility(
+    *,
+    policy: HumanInputPolicy,
+    options: tuple[HumanInputOption, ...],
+    recommended_answer: str | None,
+    risk_level: HumanInputRisk | None,
+) -> bool:
+    """Derive intrinsic automatic eligibility from recommendation and risk."""
+    if policy.classification == "external_prerequisite":
+        return False
+    recommended_options = [option for option in options if option.recommended]
+    if len(recommended_options) == 1:
+        return (recommended_options[0].risk_level or risk_level) == "low"
+    return not options and recommended_answer is not None and risk_level == "low"
+
+
+def v2_automatic_decision_is_registered(
+    decision: Mapping[str, object],
+    policy: HumanInputPolicy,
+) -> bool:
+    """Reconstruct intrinsic v2 eligibility without requiring v3 preparation."""
+    if decision.get("schema_version") != 2:
+        return False
+    if (
+        decision.get("source_kind") != policy.source_kind
+        or decision.get("producer_id") != policy.producer_id
+        or decision.get("reason_code") != policy.reason_code
+        or decision.get("classification") != policy.classification
+        or decision.get("resolution_handler") != policy.resolution_handler
+        or decision.get("source_phase") not in policy.allowed_phase_ids
+    ):
+        return False
+    raw_options = decision.get("options")
+    if not isinstance(raw_options, list):
+        return False
+    try:
+        options = tuple(
+            HumanInputOption(
+                id=raw_option.get("id"),
+                label=raw_option.get("label"),
+                description=raw_option.get("description"),
+                recommended=raw_option.get("recommended"),
+                risk_level=raw_option.get("risk_level"),
+                next_phase=raw_option.get("next_phase"),
+                outcome=raw_option.get("outcome"),
+            )
+            for raw_option in raw_options
+            if isinstance(raw_option, Mapping)
+        )
+    except HumanInputPolicyError:
+        return False
+    if len(options) != len(raw_options):
+        return False
+
+    dynamic_dispatch_cap = (
+        policy.source_kind == "controller_safeguard"
+        and policy.producer_id
+        in {"phase_dispatch_limit", "banzai_issue_resolution"}
+        and policy.reason_code == policy.producer_id
+        and policy.resolution_handler == policy.producer_id
+    )
+    if dynamic_dispatch_cap:
+        if not options:
+            return False
+    elif policy.source_kind != "provider_escalation":
+        if tuple(
+            replace(option, recommended=False) for option in options
+        ) != tuple(
+            replace(option, recommended=False) for option in policy.options
+        ):
+            return False
+    if any(
+        option.next_phase is not None
+        and option.next_phase not in policy.allowed_target_phases
+        for option in options
+    ):
+        return False
+    if policy.source_kind != "human_gate" and any(
+        option.outcome is not None for option in options
+    ):
+        return False
+    if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
+        return False
+    if policy.classification == "external_prerequisite":
+        return False
+    recommended_options = [option for option in options if option.recommended]
+    if len(recommended_options) == 1:
+        return (
+            recommended_options[0].risk_level
+            or decision.get("risk_level")
+        ) == "low"
+    return (
+        not options
+        and isinstance(decision.get("recommended_answer"), str)
+        and bool(str(decision["recommended_answer"]).strip())
+        and decision.get("risk_level") == "low"
+    )
 
 
 def _within_inclusive_decimal_margin(
@@ -716,6 +1123,249 @@ def _within_inclusive_decimal_margin(
 ) -> bool:
     """Compare decimal-domain quality inputs without binary subtraction drift."""
     return Decimal(str(threshold)) - Decimal(str(score)) <= Decimal(str(margin))
+
+
+def _controller_preparation_identity(
+    policy: HumanInputPolicy,
+    *,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+) -> tuple[str, str, int]:
+    normalized_phase = _clean_string(phase_id, "phase_id")
+    if normalized_phase not in policy.allowed_phase_ids:
+        raise HumanInputPolicyError("phase_id is not allowed by the selected policy")
+    normalized_question = _clean_bounded_string(
+        question,
+        "question",
+        max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+        max_characters=4_000,
+    )
+    if type(source_state_revision) is not int or source_state_revision < 0:
+        raise HumanInputPolicyError(
+            "source_state_revision must be a non-negative integer"
+        )
+    return normalized_phase, normalized_question, source_state_revision
+
+
+def prepare_controller_checkpoint_assessment_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    authority_kind: object,
+    authority_evidence: object,
+    accepted_debt_resolver: object = None,
+    authorization_digest: object = None,
+) -> PreparedHumanInput:
+    """Select checkpoint approval from current controller-certified authority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "checkpoint assessment preparation requires a policy registry"
+        )
+    if reason_code != "checkpoint_assess_decision_required":
+        raise HumanInputPolicyError(
+            "reason_code is not the checkpoint assessment decision"
+        )
+    policy = registry.lookup(
+        "human_gate",
+        "checkpoint-assess",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if authority_kind not in {"ordinary_pass", "accepted_with_debt"}:
+        raise HumanInputPolicyError(
+            "checkpoint assessment authority is unavailable"
+        )
+    if (
+        type(authority_evidence) is not tuple
+        or not authority_evidence
+        or not all(
+            isinstance(item, RecommendationEvidence)
+            for item in authority_evidence
+        )
+        or len({item.id for item in authority_evidence})
+        != len(authority_evidence)
+    ):
+        raise HumanInputPolicyError(
+            "checkpoint assessment evidence is invalid"
+        )
+    evidence_kinds = {item.kind for item in authority_evidence}
+    if authority_kind == "ordinary_pass":
+        if (
+            "phase1_quality_certificate" not in evidence_kinds
+            or not evidence_kinds
+            <= {"phase1_quality_certificate", "spec_lexicon_pass"}
+            or accepted_debt_resolver is not None
+            or authorization_digest is not None
+        ):
+            raise HumanInputPolicyError(
+                "ordinary checkpoint authority evidence is invalid"
+            )
+        rationale = (
+            "Current ordinary Phase 1 PASS authority"
+            + (
+                " and current Spec Lexicon pass authority"
+                if "spec_lexicon_pass" in evidence_kinds
+                else ""
+            )
+            + " authorize the existing approve option."
+        )
+    else:
+        resolver = _clean_bounded_string(
+            accepted_debt_resolver,
+            "accepted_debt_resolver",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        )
+        if (
+            not isinstance(authorization_digest, str)
+            or _SHA256_DIGEST.fullmatch(authorization_digest) is None
+            or evidence_kinds
+            != {"accepted_with_debt", "quality_gate_failure"}
+            or not any(
+                item.kind == "accepted_with_debt"
+                and item.digest == authorization_digest
+                for item in authority_evidence
+            )
+        ):
+            raise HumanInputPolicyError(
+                "accepted-debt checkpoint authority evidence is invalid"
+            )
+        rationale = (
+            "Current accepted_with_debt authority resolved by "
+            f"{resolver} authorizes the existing approve option under "
+            f"authorization digest {authorization_digest}; the retained "
+            "quality-gate FAIL is authorized debt, not an ordinary PASS."
+        )
+
+    if {option.id for option in policy.options} != {"approve", "reject"}:
+        raise HumanInputPolicyError(
+            "checkpoint assessment option contract is invalid"
+        )
+    prepared_options = tuple(
+        replace(option, recommended=option.id == "approve")
+        for option in policy.options
+    )
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id="approve",
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=rationale,
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=authority_evidence,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
+def prepare_controller_phase_dispatch_limit_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    option_contract: object,
+) -> PreparedHumanInput:
+    """Recommend the first eligible issues.md option without inventing priority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "phase dispatch preparation requires a policy registry"
+        )
+    if reason_code != "phase_dispatch_limit":
+        raise HumanInputPolicyError("reason_code is not a phase dispatch limit")
+    policy = registry.lookup(
+        "controller_safeguard",
+        "phase_dispatch_limit",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if (
+        type(option_contract) is not tuple
+        or not option_contract
+        or not all(isinstance(option, HumanInputOption) for option in option_contract)
+        or any(option.recommended for option in option_contract)
+        or any(option.outcome is not None for option in option_contract)
+    ):
+        raise HumanInputPolicyError(
+            "phase dispatch option contract is invalid"
+        )
+    _validate_options(
+        option_contract,
+        allowed_target_phases=policy.allowed_target_phases,
+    )
+    selected = option_contract[0]
+    prepared_options = tuple(
+        replace(option, recommended=index == 0)
+        for index, option in enumerate(option_contract)
+    )
+    evidence_payload = {
+        "kind": "phase_dispatch_issue",
+        "phase_id": normalized_phase,
+        "document_order": [option.id for option in option_contract],
+        "recommended_option": _recommendation_option_payload(
+            prepared_options[0]
+        ),
+    }
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=selected.id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "The selected issue is the first eligible entry in authoritative "
+            "issues.md document order. This is a deterministic processing "
+            "choice, not a product or quality priority claim."
+        ),
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"phase-dispatch-limit:{selected.id}",
+                kind="phase_dispatch_issue",
+                reference=f"issues.md#{selected.id}",
+                digest=_canonical_sha256(evidence_payload),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
 
 
 def prepare_controller_proportional_quality_decision(
@@ -814,8 +1464,15 @@ def prepare_controller_proportional_quality_decision(
         for name, score, _threshold, _passed
         in recommendation_evidence.previous_gates
     }
+    has_hard_blocker = (
+        recommendation_evidence.qualitative_hard_blocker_count > 0
+    )
     should_extend = (
-        reason_code == "proportional_quality_budget_exhausted"
+        has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
+    ) or (
+        not has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
         and not no_artifact_progress
         and bool(current_failures)
         and all(
@@ -833,25 +1490,248 @@ def prepare_controller_proportional_quality_decision(
         and recommendation_evidence.formal_statement_count
         <= recommendation_evidence.previous_formal_statement_count
     )
-    recommended_id = "extend_once" if should_extend else "continue_with_debt"
+    recommended_id = (
+        "extend_once"
+        if should_extend
+        else "stop"
+        if has_hard_blocker
+        else "continue_with_debt"
+    )
     if recommended_id not in {option.id for option in policy.options}:
         raise HumanInputPolicyError(
             "registered policy does not contain the controller recommendation"
         )
 
-    request = registry.prepare(
-        source_kind="controller_safeguard",
-        producer_id=reason_code,
-        phase_id=phase_id,
-        reason_code=reason_code,
-        question=question,
-        source_state_revision=source_state_revision,
-    )
     prepared_options = tuple(
         replace(option, recommended=option.id == recommended_id)
         for option in option_contract
     )
-    return replace(request, options=prepared_options)
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if has_hard_blocker and should_extend:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, so the single available extension is required."
+        )
+    elif has_hard_blocker:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, and the bounded extension is exhausted."
+        )
+    elif should_extend:
+        rationale = (
+            "Residual gates improved within the configured borderline margin "
+            "without formal-statement growth, so one final repair is favored."
+        )
+    elif reason_code == "proportional_quality_extension_exhausted":
+        rationale = (
+            "The single authorized extension is consumed and quality still "
+            "fails, so the remaining non-stop choice is explicit debt acceptance."
+        )
+    elif no_artifact_progress:
+        rationale = (
+            "The repair produced no artifact progress, so another automatic "
+            "attempt is not favored over explicit debt acceptance."
+        )
+    elif not current_failures:
+        rationale = (
+            "Numeric gates pass, but authoritative qualitative failures remain; "
+            "extension is not inferred from an empty numeric comparison, so "
+            "explicit debt acceptance is favored."
+        )
+    else:
+        rationale = (
+            "At least one residual gate is outside the improving borderline "
+            "case or formal statements grew, so explicit debt acceptance is favored."
+        )
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=recommended_id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=rationale,
+        recommendation_confidence="medium",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"{reason_code}:{recommended_id}",
+                kind="proportional_quality",
+                reference=reason_code,
+                digest=_canonical_sha256({
+                    "kind": "proportional_quality",
+                    "reason_code": reason_code,
+                    "phase_id": normalized_phase,
+                    "question": normalized_question,
+                    "recommended_option": _recommendation_option_payload(
+                        next(
+                            option
+                            for option in prepared_options
+                            if option.id == recommended_id
+                        )
+                    ),
+                    "repair_state": dict(validated_repair),
+                    "evidence": {
+                        "borderline_margin": recommendation_evidence.borderline_margin,
+                        "previous_gates": recommendation_evidence.previous_gates,
+                        "current_gates": recommendation_evidence.current_gates,
+                        "previous_formal_statement_count": (
+                            recommendation_evidence.previous_formal_statement_count
+                        ),
+                        "formal_statement_count": (
+                            recommendation_evidence.formal_statement_count
+                        ),
+                        "qualitative_failure_count": (
+                            recommendation_evidence.qualitative_failure_count
+                        ),
+                        "qualitative_hard_blocker_count": (
+                            recommendation_evidence.qualitative_hard_blocker_count
+                        ),
+                    },
+                }),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
+def prepare_controller_banzai_issue_resolution_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    option_contract: object,
+) -> PreparedHumanInput:
+    """Seal the first explicit Banzai-eligible issue as controller authority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "Banzai issue preparation requires a policy registry"
+        )
+    if reason_code != "banzai_issue_resolution":
+        raise HumanInputPolicyError(
+            "reason_code is not a Banzai issue resolution"
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if (
+        type(option_contract) is not tuple
+        or not option_contract
+        or not all(
+            isinstance(option, HumanInputOption)
+            for option in option_contract
+        )
+        or any(option.recommended for option in option_contract)
+        or any(option.outcome is not None for option in option_contract)
+    ):
+        raise HumanInputPolicyError(
+            "Banzai issue option contract is invalid"
+        )
+    _validate_options(
+        option_contract,
+        allowed_target_phases=policy.allowed_target_phases,
+    )
+    selected = option_contract[0]
+    prepared_options = tuple(
+        replace(option, recommended=index == 0)
+        for index, option in enumerate(option_contract)
+    )
+    evidence_payload = {
+        "kind": "banzai_issue_resolution",
+        "phase_id": normalized_phase,
+        "document_order": [option.id for option in option_contract],
+        "recommended_option": _recommendation_option_payload(
+            prepared_options[0]
+        ),
+    }
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=selected.id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "The selected issue is the first unresolved Banzai-eligible entry "
+            "in authoritative issues.md document order. Its sealed suggested "
+            "option and evidence provide deterministic repair authority."
+        ),
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"banzai-issue-resolution:{selected.id}",
+                kind="banzai_issue_resolution",
+                reference=f"issues.md#{selected.id}",
+                digest=_canonical_sha256(evidence_payload),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
+_CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
+    (
+        "human_gate",
+        "checkpoint-assess",
+        "checkpoint_assess_decision_required",
+    ): prepare_controller_checkpoint_assessment_decision,
+    (
+        "controller_safeguard",
+        "phase_dispatch_limit",
+        "phase_dispatch_limit",
+    ): prepare_controller_phase_dispatch_limit_decision,
+    (
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        "banzai_issue_resolution",
+    ): prepare_controller_banzai_issue_resolution_decision,
+    (
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    ): prepare_controller_proportional_quality_decision,
+    (
+        "controller_safeguard",
+        "proportional_quality_extension_exhausted",
+        "proportional_quality_extension_exhausted",
+    ): prepare_controller_proportional_quality_decision,
+})
 
 
 def legacy_recovery_policy_alias(
@@ -885,23 +1765,14 @@ def select_initial_decision_status(
     if mode == "guided":
         return "awaiting_human"
     if mode == "banzai":
-        return (
-            "awaiting_human"
-            if policy.classification == "external_prerequisite"
-            else "pending"
-        )
-    if policy.classification != "operational":
+        return "pending" if request.automatic_eligible else "awaiting_human"
+    if (
+        policy.classification != "operational"
+        or policy.semi_policy != "auto_if_recommended_low_risk"
+    ):
         return "awaiting_human"
     if mode == "semi":
-        if policy.semi_policy != "auto_if_recommended_low_risk":
-            return "awaiting_human"
-        recommended_options = [option for option in request.options if option.recommended]
-        if len(recommended_options) == 1:
-            effective_risk = recommended_options[0].risk_level or request.risk_level
-            return "pending" if effective_risk == "low" else "awaiting_human"
-        if not request.options and request.recommended_answer and request.risk_level == "low":
-            return "pending"
-        return "awaiting_human"
+        return "pending" if request.automatic_eligible else "awaiting_human"
     return "pending"
 
 
@@ -968,6 +1839,7 @@ def compile_workflow_human_input_policies(
             context_state_keys=tuple(raw_policy["context_state_keys"]),
             context_paths=tuple(raw_policy["context_paths"]),
             options=tuple(options),
+            recommendation_mode=raw_policy["recommendation_mode"],
         ))
     return tuple(compiled)
 
@@ -988,11 +1860,35 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
     })
     return (
         HumanInputPolicy(
+            source_kind="controller_safeguard",
+            producer_id="banzai_issue_resolution",
+            reason_code="banzai_issue_resolution",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="banzai_issue_resolution",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-why2"}),
+            allowed_target_phases=frozenset({"phase1-what"}),
+            context_state_keys=(
+                "phase",
+                "issue_resolution_ledger",
+                "phase1_quality_repair",
+                "understanding_evidence",
+            ),
+            context_paths=(),
+            options=(),
+        ),
+        HumanInputPolicy(
             source_kind="controller_safeguard", producer_id="phase_dispatch_limit",
             reason_code="phase_dispatch_limit", classification="material",
             semi_policy="require_human", resolution_handler="phase_dispatch_limit",
             allow_free_text=False, allowed_phase_ids=phase_a_sources,
-            allowed_target_phases=frozenset({"phase1-what"}),
+            allowed_target_phases=frozenset({
+                "phase1-what",
+                "phase3-how",
+                "phase3-sentinel",
+                "phase3-plan",
+            }),
             context_state_keys=("phase", "phase_dispatch_limit_phase", "phase_dispatch_limit", "issue_resolution_ledger"),
             context_paths=(), options=(),
         ),

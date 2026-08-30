@@ -30,6 +30,7 @@ import yaml
 from harness.config import (
     DEFAULT_NETWORK_ALLOWLIST,
     HarnessConfig,
+    ReV2BaselineConfig,
     StacksConfig,
     ValidationError,
     _parse_config,
@@ -504,6 +505,50 @@ def test_llm_defaults():
     assert config.llm.timeout_ms == 43_200_000
     assert config.llm.config_dir is None
     assert config.llm.codex_inherit_user_config is False
+    assert isinstance(config.llm.re_v2_baseline, ReV2BaselineConfig)
+    assert config.llm.re_v2_baseline.model_revision is None
+
+
+def test_llm_re_v2_baseline_capability_config_is_typed() -> None:
+    config = _parse_config({
+        "provider": "docker",
+        "llm": {
+            "cli": "openai-compatible",
+            "base_url": "https://api.example.test/v1",
+            "model": "gpt-example",
+            "re_v2_baseline": {
+                "model_revision": "gpt-example-2026-08-01",
+                "revision_authority": "provider_resolved_revision",
+                "provider_context_tokens": 200000,
+                "reasoning_effort": "high",
+                "top_p": "1.0",
+                "seed": 42,
+                "request_path": "/chat/completions",
+                "api_protocol_version": "1",
+                "non_secret_headers": [
+                    {"name": "openai-organization", "value": "org-example"},
+                ],
+                "fixed_framing_byte_upper_bound": 4096,
+            },
+        },
+    })
+
+    capability = config.llm.re_v2_baseline
+    assert capability.model_revision == "gpt-example-2026-08-01"
+    assert capability.provider_context_tokens == 200000
+    assert capability.top_p == "1.0"
+    assert capability.seed == 42
+    assert [(header.name, header.value) for header in capability.non_secret_headers] == [
+        ("openai-organization", "org-example"),
+    ]
+
+
+def test_llm_re_v2_baseline_rejects_non_mapping_headers() -> None:
+    with pytest.raises(ValidationError, match="non_secret_headers"):
+        _parse_config({
+            "provider": "docker",
+            "llm": {"re_v2_baseline": {"non_secret_headers": ["x-route: one"]}},
+        })
 
 
 def test_llm_config_dir_set():

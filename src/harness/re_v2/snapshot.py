@@ -1473,7 +1473,7 @@ def _inventory(root: Path, exclusions: tuple[str, ...], *, allow_worktree_git: b
             else:
                 raise ReV2SnapshotError(f"source snapshot rejects special file: {relative}")
     visit(root)
-    return tuple(entries)
+    return tuple(sorted(entries, key=lambda entry: entry.path))
 
 
 def _copy_regular_files(source: Path, target: Path, entries: tuple[SnapshotEntry, ...]) -> None:

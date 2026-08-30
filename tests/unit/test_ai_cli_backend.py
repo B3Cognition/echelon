@@ -4229,6 +4229,156 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
     assert "codex" in command[3]
 
 
+def test_codex_backend_uses_native_sandbox_for_isolated_non_git_root(
+    tmp_path,
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Write one isolated candidate.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "isolated_workspace": True,
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(tmp_path / ".echelon")],
+            },
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert Path(command[0]).name == "codex"
+    assert command[:2] != ["/usr/bin/sandbox-exec", "-p"]
+    assert command[1:5] == [
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+    ]
+    assert "--skip-git-repo-check" in command
+
+
+def test_codex_backend_rejects_isolated_workspace_for_nonempty_root(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    (tmp_path / "existing.txt").write_text("not isolated\n", encoding="utf-8")
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Write one isolated candidate.",
+        env={},
+        timeout_s=10,
+        metadata={"isolated_workspace": True},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen") as popen:
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 125
+    assert result.metadata == {"isolated_workspace": "invalid"}
+    assert "empty isolated working directory" in result.stderr
+    popen.assert_not_called()
+
+
+def test_codex_backend_rejects_isolated_workspace_with_external_scope(
+    tmp_path,
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Write one isolated candidate.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "isolated_workspace": True,
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(tmp_path.parent / "sources")],
+            },
+        },
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen") as popen:
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 125
+    assert result.metadata == {"isolated_workspace": "invalid"}
+    assert "scopes inside that directory" in result.stderr
+    popen.assert_not_called()
+
+
+def test_codex_backend_downgrades_unsafe_policy_for_isolated_workspace(
+    tmp_path,
+) -> None:
+    config = _config("codex")
+    config.llm.tool_policy = LlmToolPolicy(
+        allow_unsafe_host_execution=True,
+        approval_reason="test approval",
+    )
+    backend = CodexCliBackend(config)
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Write one isolated candidate.",
+        env={},
+        timeout_s=10,
+        metadata={"isolated_workspace": True},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    command = captured["command"]
+    assert result.exit_code == 0
+    assert command[1:5] == [
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+    ]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--skip-git-repo-check" in command
+
+
 def test_codex_backend_fails_closed_without_workspace_boundary(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
     request = CliRunRequest(

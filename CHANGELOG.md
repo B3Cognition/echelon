@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-167 / EGR-169 layered L3 semantic closure** — Opt-in RE v2
+  protocol `2.5`/schema `4` now audits selected L2 authority in one immutable
+  epoch, resolves only its frozen findings through L3 overlays, rechecks
+  closure under an independent semantic budget, and stops at fixed retry,
+  round, and plateau limits. `echelon re deepen --to L3` composes the existing
+  L0→L1→L2 layers and shared Prosaic/provider machinery; exact requests and
+  identical guidance reuse immutable children without provider calls. Status,
+  telemetry, and run-local `re/l3/` materialization make selected-scope
+  completion explicit while leaving workspace synthesis, exhaustive L4,
+  default-engine cutover, and atomic lower-artifact repair out of scope.
+
 - **Explicit governance structural nodes** — Feasibility and intent-alignment
   certification now run in visible provider-free
   `phase2-feasibility-structural` and
@@ -33,6 +44,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   concrete architecture.
 
 ### Fixed
+
+- **EGR-166 adoptable RE checkpoints** — New opt-in RE v2 L1/L2/L3 runs use
+  protocol `2.6` to reconstruct exact controller-certified artifacts from
+  workspace sibling runs, select a deterministic dependency-closed set, copy
+  its complete authority into the staged child, and record adoption before any
+  dispatch. The disposable cache can be rebuilt from schema-2-through-schema-5
+  origins; self-contained adopted children remain reusable after their origin
+  and cache disappear. Status reports adopted/generated counts, origins,
+  rejections, and avoided reservations. A clean installed Codex pilot adopted
+  14/14 artifacts with zero provider calls and zero charged tokens while all
+  provider execution remained on the existing Prosaic/shared-provider path.
 
 - **RE v2 declared-source snapshots** — New opt-in v2 runs use protocol `2.1`
   and atomically snapshot only declared, clean Git source roots at pinned
@@ -161,6 +183,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   minor version.
 
 ### Added
+
+- **Selective layered RE v2 deepening** — Protocol `2.4` adds opt-in
+  `echelon re deepen --to L2` child runs over completed L0/L1 baselines. The
+  controller adopts the authenticated parent receipt/object closure, schedules
+  only explicitly selected missing source/domain work, uses the normal neutral
+  `echelon.re-deepener` Prosaic role and shared provider path, and reuses an
+  existing semantic child with zero provider calls. Schema-3 children remain
+  self-contained across further deepening, preserve the original lineage root,
+  materialize only generated L2 projections, and report selected-scope coverage,
+  adopted/generated counts, budgets, telemetry, and exact terminal state.
+  Manifest-to-adoption initialization is idempotent across child creation,
+  receipt import, adoption events, and active-pointer publication.
+  Completion means only that the selected unaudited L2 scope is complete; it
+  does not claim semantic audit, workspace synthesis, exhaustive depth, or full
+  RE quality. Existing protocols and the default v1 engine remain unchanged.
+
+- **Prosaic shared-provider RE v2 baselines** — New opt-in v2 runs use protocol
+  `2.3` and execute L1 compact baselines through the same Prosaic frontmatter
+  and shared AI coding-provider path as specification and delivery workflows.
+  Provider-neutral fixtures cover result contracts, usage breaches, bounded
+  large sources, and restart stability. Isolated non-Git candidate roots now
+  request the provider's native workspace sandbox when an outer macOS sandbox
+  would prevent Codex from writing the single authorized `baseline.json`;
+  legacy protocol `2.2` runs remain readable and recoverable without new
+  provider-specific RE authority.
+
+- **EGR-165 layered compact RE baseline** — Opt-in RE v2 protocol `2.2`
+  now makes the bounded L0 inventory and L1 compact baseline an explicit
+  dependency graph with source-, content-, partition-, domain-, layer-,
+  policy-, producer-, and verifier-scoped artifact identity. `echelon re run
+  --engine v2` defaults to the compact baseline goal, while `--goal inventory`
+  remains a deterministic L0-only option. The baseline uses one pinned,
+  tool-free bounded API call per domain or source overview, exact conservative
+  reservations when provider usage is unavailable, one shared retry at most,
+  controller certification, immutable run-local JSON/Markdown projections,
+  explicit debt and rational coverage, terminal banners, and crash recovery
+  from committed captures without paid redispatch. RE v1 remains the default
+  engine; checkpoint adoption, semantic audit epochs, workspace synthesis,
+  selective L2-L4 deepening, and atomic repair remain EGR-166 through EGR-170.
 
 - **EGR-164 opt-in pinned RE v2 kernel** — `echelon re run --engine v2`
   now freezes the source, pins engine/protocol, partition, goals,

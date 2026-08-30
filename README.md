@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.7** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.14** — 60 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 22 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -155,6 +155,24 @@ latest published generation under `re/`; active RE work is isolated under
 `runs/re-*/re/` and selected by `runs/.current-re`. Spec runs never execute or
 freshness-check RE. By default they take one immutable run-local snapshot of the
 latest publication; use `echelon spec run ... --ignore-re` to omit it.
+
+The default RE engine remains v1. Opt-in RE v2 first produces a reusable L0/L1
+baseline, then protocol 2.4 can deepen only selected clean source repositories
+or domains to L2. A deepening run is a self-contained child: it adopts the
+authenticated lower-layer authority and generates only its selected missing L2
+work through the same neutral Prosaic/shared-provider path used elsewhere.
+Repeating the same semantic request reuses its existing child with zero provider
+calls. `L2 SELECTED SCOPE COMPLETE` means the requested unaudited L2 outputs are
+complete; it is not a claim of semantic audit, workspace synthesis, exhaustive
+depth, publication, or full RE quality.
+
+```bash
+echelon re run --engine v2
+echelon re deepen --to L2 --all
+echelon re deepen --to L2 --source api --domain 001-api
+echelon re status
+echelon re status --json
+```
 
 New RE runs use the bounded `balanced` execution goal by default. It targets
 completion within 60 active minutes and has hard ceilings of 180 active minutes
@@ -664,8 +682,9 @@ For command-backed operations, Echelon:
 4. Lets the configured concrete provider invoke Claude, Codex, Copilot, Opencode, or an OpenAI-compatible endpoint.
 
 The selected AI CLI must be on `PATH`; OpenAI-compatible providers use the
-configured HTTP endpoint. `ECHELON_LLM` or `harness.llm.cli` in
-`.echelon/config.yml` selects the provider. Old provider-native skill files are
+configured HTTP endpoint. `ECHELON_LLM` or developer-local `harness.llm.cli` in
+`.echelon/local.yml` selects the provider. `echelon workspace init --llm <provider>`
+writes this local setting and keeps it out of shared project policy. Old provider-native skill files are
 recognized only as migration compatibility; initialize or migrate the workspace
 so normal execution uses the Prosaic bundle.
 
@@ -692,7 +711,7 @@ configure `harness.llm.cli` to select the concrete adapter:
 Echelon starts Codex with user configuration ignored by default. Authentication
 and Codex sessions still work, but personal plugins and skills do not leak into
 Echelon agents. To deliberately restore the normal personal Codex environment,
-set `harness.llm.codex_inherit_user_config: true` in `.echelon/config.yml`.
+set `harness.llm.codex_inherit_user_config: true` in `.echelon/local.yml`.
 
 ```bash
 # Use Copilot for all echelon commands
@@ -1111,6 +1130,9 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon workspace init [--allow-unsafe-host-execution]` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
 | `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--perfectionist] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
 | `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
+| `echelon re run --engine v2 [--goal <baseline\|inventory>]` | Create or reuse an opt-in reusable L0/L1 RE v2 baseline |
+| `echelon re deepen --to L2 (--all \| --source <id>...) [--domain <id>...] [--from-run <id>] [--token-limit <n>] [--active-ms-limit <n>]` | Create or reuse a self-contained protocol-2.4 child that generates only selected missing L2 work |
+| `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
 | `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
 | `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
 | `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
@@ -1222,6 +1244,16 @@ independently rather than allowing either one to hide the other.
 
 Legacy aliases may still exist for older scripts, but current docs and operator
 guidance use the `spec` and `delivery` namespaces.
+
+### Stack selection
+
+List bundled profiles with `echelon stack list`. Persist a project selection in
+`.echelon/config.yml` with `echelon stack enable <id>`, remove explicitly
+selected IDs with `echelon stack disable <id>`, or replace the full selection
+with `echelon stack select <id>...` (omit IDs to clear it). Use
+`echelon stack selected` to show the explicit project setting, the effective
+setting after local overrides, and implied stacks. Each mutation accepts
+`--dry-run` to validate the proposed selection without writing config.
 
 ## Codegen Pipeline
 

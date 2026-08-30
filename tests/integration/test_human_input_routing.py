@@ -668,6 +668,59 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     provider.exec_agent.assert_not_called()
 
 
+def test_clarification_discards_stale_proportional_quality_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A material clarification cannot reuse quality evidence for old requirements."""
+    from echelon.cli import _cmd_resume
+
+    _controller_instance, store, provider, _decision_id = (
+        _cli_awaiting_human_controller(tmp_path)
+    )
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda _config: provider,
+    )
+    state = store.load()
+    state.update(
+        {
+            "spec_authoring_mode": "proportional",
+            "phase1_quality_repair": {
+                "schema_version": 1,
+                "authoring_mode": "proportional",
+                "automatic_limit": 3,
+                "automatic_consumed": 1,
+                "extension_limit": 1,
+                "extension_authorized": 0,
+                "extension_consumed": 0,
+                "migration_basis": "fresh",
+                "baseline_candidate_id": "quality-candidate-0",
+                "candidate_ids": ["quality-candidate-0"],
+            },
+            "quality_gate_remediation": {"kind": "proportional_quality"},
+            "proportional_quality_candidate_evidence": {
+                "current_candidate_id": "quality-candidate-0"
+            },
+        }
+    )
+    store.save(state)
+
+    _cmd_resume(
+        ["Use only the latest checkpoint."],
+        project_root=tmp_path,
+        ext_dir=ROOT / "runtime",
+    )
+
+    resumed = store.load()
+    assert resumed["phase1_quality_repair"]["candidate_ids"] == []
+    assert resumed["phase1_quality_repair"]["automatic_consumed"] == 0
+    assert "quality_gate_remediation" not in resumed
+    assert "proportional_quality_candidate_evidence" not in resumed
+    capsys.readouterr()
+
+
 @contextmanager
 def _external_resume_lease(lock_type, lock_root: Path):
     acquired = Event()
@@ -4307,6 +4360,61 @@ def test_qualitative_only_failure_never_vacuously_recommends_extension() -> None
     assert next(
         option for option in request.options if option.id == "continue_with_debt"
     ).risk_level == "high"
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "extension_authorized", "extension_consumed", "expected"),
+    (
+        ("proportional_quality_budget_exhausted", 0, 0, "extend_once"),
+        ("proportional_quality_extension_exhausted", 1, 1, "stop"),
+    ),
+)
+def test_qualitative_hard_blocker_never_recommends_impossible_debt(
+    reason_code: str,
+    extension_authorized: int,
+    extension_consumed: int,
+    expected: str,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        reason_code,
+        reason_code,
+    )
+    passing = (
+        ("overall", 0.90, 0.80, True),
+        ("structure", 0.85, 0.80, True),
+    )
+    evidence = ProportionalQualityRecommendationEvidence(
+        borderline_margin=0.05,
+        previous_gates=passing,
+        current_gates=passing,
+        previous_formal_statement_count=8,
+        formal_statement_count=8,
+        qualitative_failure_count=1,
+        qualitative_hard_blocker_count=1,
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code=reason_code,
+        phase_id="phase1-why2",
+        question="Resolve the residual SAGE contradiction.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(
+            extension_authorized=extension_authorized,
+            extension_consumed=extension_consumed,
+        ),
+        recommendation_evidence=evidence,
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        expected
+    ]
+    assert not next(
+        option for option in request.options if option.id == "continue_with_debt"
+    ).recommended
 
 
 def test_proportional_budget_policy_cannot_be_prepared_after_extension_authorization(

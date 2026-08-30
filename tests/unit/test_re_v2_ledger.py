@@ -192,6 +192,30 @@ def test_blob_is_published_at_its_content_address_and_existing_bytes_are_verifie
     assert object_path(objects, object_hash).read_bytes() == b"corrupt"
 
 
+def test_read_blob_reopens_and_reverifies_immutable_bytes(tmp_path: Path) -> None:
+    objects = ObjectStore(tmp_path / "objects")
+    payload = b"canonical deterministic artifact\n"
+    object_hash = objects.put_blob(payload)
+
+    assert objects.read_blob(object_hash) == payload
+
+    object_path(objects, object_hash).chmod(0o600)
+    object_path(objects, object_hash).write_bytes(b"corrupt")
+    with pytest.raises(ReV2LedgerError, match="hash mismatch"):
+        objects.read_blob(object_hash)
+
+
+def test_read_blob_rejects_tree_objects(tmp_path: Path) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "artifact.txt").write_bytes(b"artifact")
+    objects = ObjectStore(tmp_path / "objects")
+    tree_hash = objects.put_tree(tree)
+
+    with pytest.raises(ReV2LedgerError, match="tree.*not a blob"):
+        objects.read_blob(tree_hash)
+
+
 def test_concurrent_identical_blob_writers_never_clobber_the_object(
     tmp_path: Path,
 ) -> None:
@@ -402,8 +426,17 @@ def test_ledger_writes_canonical_hash_chained_records(tmp_path: Path) -> None:
 
     assert (first.seq, first.previous_record_hash) == (1, None)
     assert (second.seq, second.previous_record_hash) == (2, first.record_hash)
+    assert first.record_hash == (
+        "sha256:d86954da4a43b995d40aef519ff988a9f5a4e7745918c73bea372dc4dcb3c471"
+    )
+    assert second.record_hash == (
+        "sha256:8602a4d48b19bc8cafdf769a0a74f803fd99926a5a0cc603a24d64789d180a2c"
+    )
     assert records == [first.to_json_dict(), second.to_json_dict()]
     assert all(record["schema_version"] == LEDGER_SCHEMA_VERSION for record in records)
+    assert content_digest(ledger.path.read_bytes()) == (
+        "sha256:9fa329fa18f07b1ab640e9c70fdd14fd719f15fd9dec2ebee953cf30d0d83aa5"
+    )
 
 
 @pytest.mark.parametrize(

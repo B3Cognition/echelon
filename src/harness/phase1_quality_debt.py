@@ -294,6 +294,8 @@ def _validate_debt_decision(
         and decision["status"] != "awaiting_human"
         or resolved_by == "COMMANDER"
         and decision["status"] != "resolving"
+        or resolved_by == "controller"
+        and decision["status"] != "pending"
     ):
         raise QualityCandidateIntegrityError(
             "quality-debt decision is not sealed for resolution"
@@ -913,7 +915,7 @@ def build_quality_debt_authorization(
         )
     if not is_valid_decision_id(decision_id):
         raise QualityCandidateIntegrityError("quality-debt decision ID is invalid")
-    if resolved_by not in {"user", "COMMANDER"}:
+    if resolved_by not in {"user", "COMMANDER", "controller"}:
         raise QualityCandidateIntegrityError("quality-debt resolver is invalid")
     resolved_decision = _resolved_debt_decision(
         decision,
@@ -1184,7 +1186,7 @@ def _current_quality_debt_authorization(
     if (
         authorization.get("schema_version") != SCHEMA_VERSION
         or authorization.get("status") != "accepted_with_debt"
-        or authorization.get("resolved_by") not in {"user", "COMMANDER"}
+        or authorization.get("resolved_by") not in {"user", "COMMANDER", "controller"}
         or not is_valid_decision_id(authorization.get("decision_id"))
         or type(authorization.get("selected_candidate_id")) is not str
         or not authorization["selected_candidate_id"]

@@ -17,14 +17,66 @@ def _definitions():
 
 
 @pytest.mark.unit
-def test_loads_bundled_statsperform_stacks() -> None:
+def test_loads_bundled_stack_catalog() -> None:
     definitions = _definitions()
 
     assert sorted(definitions) == [
+        "browser-3d-game",
+        "browser-wasm-game",
+        "game-persistence-postgres",
+        "ios-ar-game",
         "statsperform-msa-service",
         "statsperform-playbook",
         "statsperform-stark-webapp",
     ]
+
+
+@pytest.mark.unit
+def test_resolves_browser_3d_game_with_shared_persistence() -> None:
+    resolved = resolve_stacks(
+        ["game-persistence-postgres", "browser-3d-game"],
+        _definitions(),
+        target_archetypes={"browser_3d_game"},
+    )
+
+    assert resolved.resolved_ids == [
+        "game-persistence-postgres",
+        "browser-3d-game",
+    ]
+    assert resolved.capabilities["data.database"].value == "postgres"
+    assert resolved.capabilities["web_app.rendering"].value == "react-three-fiber"
+    assert resolved.capabilities["x.game.client_runtime"].value == "browser-3d"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("stack_id", "archetype", "runtime"),
+    [
+        ("ios-ar-game", "ios_ar_game", "ios-ar"),
+        ("browser-wasm-game", "browser_wasm_game", "browser-wasm"),
+    ],
+)
+def test_resolves_game_client_with_shared_persistence(
+    stack_id: str, archetype: str, runtime: str
+) -> None:
+    resolved = resolve_stacks(
+        ["game-persistence-postgres", stack_id],
+        _definitions(),
+        target_archetypes={archetype},
+    )
+
+    assert resolved.capabilities["data.database"].value == "postgres"
+    assert resolved.capabilities["x.game.client_runtime"].value == runtime
+
+
+@pytest.mark.unit
+def test_rejects_two_game_client_archetypes() -> None:
+    with pytest.raises(StackResolutionError, match="x.game.client_runtime"):
+        resolve_stacks(
+            ["browser-3d-game", "browser-wasm-game"],
+            _definitions(),
+            target_archetypes={"browser_3d_game", "browser_wasm_game"},
+        )
 
 
 @pytest.mark.unit
