@@ -362,6 +362,215 @@ def test_checkpoint_list_explains_ledger_order_and_marks_latest_phase_occurrence
     assert " yes " in last_what
 
 
+def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
+    tmp_path: Path,
+) -> None:
+    run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-1")
+    (tmp_path / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    for index, commit in enumerate(("1" * 40, "2" * 40), start=1):
+        record_checkpoint_metadata(
+            spec_dir,
+            PhaseCheckpoint(
+                id="phase1-lexicon",
+                spec_id="001-demo",
+                phase="phase1-lexicon",
+                next_phase="checkpoint-assess",
+                commit=commit,
+                metadata_commit="",
+                source="auto",
+                run_id=run_dir.name,
+                created_at=f"2026-08-23T12:0{index}:00+00:00",
+                completion_id=str(index) * 32,
+            ),
+        )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-terminal-gate",
+        status="resolved",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue to feasibility assessment.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for specification revision.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=3,
+        selected_option_id="reject",
+        resolved_by="user",
+        now="2026-08-23T12:00:00+00:00",
+        resolved_at="2026-08-23T12:05:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "gate_rejected",
+            "blocked_decision": decision,
+            "escalation_question": decision["question"],
+            "escalation_options": decision["options"],
+            "escalation_resolved": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "safe_rewind"
+    assert action.phase == "phase1-lexicon"
+    assert action.command == (
+        "echelon spec rewind phase1-lexicon --commit "
+        + "2" * 40
+        + " --next-phase checkpoint-assess"
+        + " --confirm"
+    )
+
+
+def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir, spec_dir = _write_switchable_run(tmp_path, "spec-run-collision")
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (spec_dir / "spec.md").write_text("# Intended checkpoint\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(
+        "/.echelon/\n"
+        "/runs/.current\n"
+        "/runs/*/state.json*\n"
+        "/runs/*/state.lock\n"
+        "/runs/*/.echelon/\n"
+        "/runs/*/specs/*/.echelon/\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "init", "-b", spec_dir.name)
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "add", ".gitignore", spec_dir.relative_to(tmp_path).as_posix())
+    _git(tmp_path, "commit", "-m", "intended checkpoint")
+    shared_commit = _git(tmp_path, "rev-parse", "HEAD")
+    intended = PhaseCheckpoint(
+        id="phase1-lexicon",
+        spec_id=spec_dir.name,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-assess",
+        commit=shared_commit,
+        metadata_commit="",
+        source="auto",
+        run_id=run_dir.name,
+        created_at="2026-08-23T12:00:00+00:00",
+        completion_id="1" * 32,
+    )
+    collision = PhaseCheckpoint(
+        id="phase1-lexicon",
+        spec_id=spec_dir.name,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-plan",
+        commit=shared_commit,
+        metadata_commit="",
+        source="legacy-migration",
+        run_id=run_dir.name,
+        created_at="2026-08-23T12:01:00+00:00",
+        completion_id="2" * 32,
+        rewind="none",
+        rewind_reason="legacy-migration-boundary",
+    )
+    for checkpoint in (intended, collision):
+        record_checkpoint_metadata(spec_dir, checkpoint)
+    (spec_dir / "spec.md").write_text("# Later work\n", encoding="utf-8")
+    _git(tmp_path, "add", spec_dir.relative_to(tmp_path).as_posix())
+    _git(tmp_path, "commit", "-m", "later work")
+    later_commit = _git(tmp_path, "rev-parse", "HEAD")
+    decision = build_blocked_decision_v2(
+        decision_id="dec-colliding-gate",
+        status="resolved",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="Approve the reviewed Phase 1 boundary?",
+        options=[
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Return to specification authoring.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        selected_option_id="reject",
+        resolved_by="user",
+        now="2026-08-23T12:00:00+00:00",
+        resolved_at="2026-08-23T12:00:01+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "state_revision": 2,
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "gate_rejected",
+            "autonomy_mode": "banzai",
+            "blocked_decision": decision,
+            "escalation_question": decision["question"],
+            "escalation_options": decision["options"],
+            "escalation_resolved": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.command == (
+        f"echelon spec rewind phase1-lexicon --commit {shared_commit} "
+        "--next-phase checkpoint-assess --confirm"
+    )
+    command_args = shlex.split(action.command)[1:]
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, command_args)
+
+    assert result.exit_code == 0, result.output
+    assert later_commit != shared_commit
+    assert _git(tmp_path, "rev-parse", "HEAD") == shared_commit
+    assert (spec_dir / "spec.md").read_text(encoding="utf-8") == "# Intended checkpoint\n"
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [intended]
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],
