@@ -200,7 +200,6 @@ golddigger:
 scoring:
   confidence_min: 0.0
   confidence_max: 1.0
-  confidence_threshold: 0.7
   evidence_grades: [A, B, C, D, E]
 
 # =============================================================================

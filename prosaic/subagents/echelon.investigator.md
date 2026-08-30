@@ -202,7 +202,7 @@ echelon_result:
     status: blocked
     blocked_reason: "<investigation_access_required | human_clarification_required>"
     escalation_question: "<one concrete access request or project decision>"
-    escalation_recommended_answer: "<exact answer value>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
     escalation_risk_level: "<low | medium | high | critical>"
   journal_entries: []
 ```
@@ -211,12 +211,6 @@ Include `escalation_recommended_answer` and `escalation_risk_level` together
 only when evidence supports a recommendation; otherwise omit both. Do not use
 the access reason for a source reachable under current authority. The
 controller owns clarification writes and state cleanup.
-`escalation_recommended_answer` must contain the exact answer value that can be
-copied verbatim into `answer_text`; do not write an instruction, rationale, or
-recommendation preamble in that field.
-In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
-that explicit input, the selected stack, reachable evidence, or a conventional
-default can resolve; record the assumption and continue.
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
 

@@ -61,9 +61,6 @@ delivery_app = typer.Typer(
     rich_markup_mode=None,
     no_args_is_help=True,
 )
-# Kept temporarily so the unregistered compatibility wrappers below remain
-# importable while their execution handlers are migrated out of cli.py.
-harness_app = typer.Typer(add_completion=False, no_args_is_help=True)
 delivery_checkpoint_app = typer.Typer(
     add_completion=False,
     help="Delivery checkpoint discovery commands.",
@@ -131,6 +128,11 @@ spec_evidence_memory_app = typer.Typer(
     help="Mine spec verification evidence in MemPalace.",
     no_args_is_help=True,
 )
+harness_app = typer.Typer(
+    add_completion=False,
+    help="Compatibility alias for delivery init/run/resume.",
+    no_args_is_help=True,
+)
 llm_app = typer.Typer(
     add_completion=False,
     help="LLM provider diagnostics.",
@@ -175,6 +177,7 @@ app.add_typer(phase_app, name="phase")
 app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
+app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
 app.add_typer(graph_app, name="graph")
 app.add_typer(topology_app, name="topology")
@@ -1188,6 +1191,11 @@ def re_check_domain(
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
 
 
+@app.command(
+    "init",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_init() -> None:
     """Initialize the current workspace."""
     legacy_cli = _legacy_cli()
@@ -1195,6 +1203,11 @@ def root_init() -> None:
     legacy_cli._cmd_init(Path.cwd())
 
 
+@app.command(
+    "cicd",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_cicd(ctx: typer.Context) -> None:
     """Retired CI/CD compatibility command."""
     legacy_cli = _legacy_cli()
@@ -1202,6 +1215,11 @@ def root_cicd(ctx: typer.Context) -> None:
     legacy_cli._cmd_cicd(_ctx_args(ctx))
 
 
+@app.command(
+    "artifacts",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_artifacts(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to index."),
@@ -1212,6 +1230,11 @@ def root_artifacts(
     legacy_cli._cmd_artifacts([spec_id, *_ctx_args(ctx)])
 
 
+@app.command(
+    "land",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_land(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to land."),
@@ -1257,6 +1280,7 @@ def root_land(
     )
 
 
+@app.command("status", hidden=True)
 def root_status() -> None:
     """Compatibility alias for spec status."""
     legacy_cli = _legacy_cli()
@@ -1264,6 +1288,11 @@ def root_status() -> None:
     legacy_cli._cmd_status(Path.cwd())
 
 
+@app.command(
+    "continue",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_continue(
     ctx: typer.Context,
     mode: Optional[str] = typer.Option(
@@ -1280,6 +1309,11 @@ def root_continue(
     legacy_cli._cmd_spec_continue(args)
 
 
+@app.command(
+    "rewind",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
@@ -1288,11 +1322,6 @@ def root_rewind(
         "--commit",
         help="Full checkpoint commit or unique abbreviated prefix.",
     ),
-    checkpoint_next_phase: Optional[str] = typer.Option(
-        None,
-        "--next-phase",
-        help="Exact next phase recorded by the selected checkpoint row.",
-    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
@@ -1300,12 +1329,16 @@ def root_rewind(
 
     args = [phase_id, *_ctx_args(ctx)]
     _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
 
 
+@app.command(
+    "resume",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_resume(
     ctx: typer.Context,
     answer: Optional[str] = typer.Argument(
@@ -1323,6 +1356,11 @@ def root_resume(
     legacy_cli._cmd_spec_resume(args)
 
 
+@app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_run(
     ctx: typer.Context,
     description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
@@ -1369,6 +1407,11 @@ def _dispatch_skill(command: str, args: list[str]) -> None:
     legacy_cli._dispatch_skill_command(command, args)
 
 
+@app.command(
+    "build",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_build(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to build."),
@@ -1388,6 +1431,11 @@ def root_build(
     _dispatch_skill("build", args)
 
 
+@app.command(
+    "review",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_review(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to review."),
@@ -1402,6 +1450,11 @@ def root_review(
     _dispatch_skill("review", args)
 
 
+@app.command(
+    "codegen",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_codegen(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to build with SOAR codegen."),
@@ -1414,6 +1467,11 @@ def root_codegen(
     _dispatch_skill("codegen", args)
 
 
+@app.command(
+    "verify-spec",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_verify_spec(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to audit."),
@@ -1430,6 +1488,11 @@ def root_verify_spec(
     )
 
 
+@app.command(
+    "reopen",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_reopen(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to reopen."),
@@ -1443,6 +1506,11 @@ def root_reopen(
     _dispatch_skill("reopen", args)
 
 
+@app.command(
+    "bugfix",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_bugfix(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to update."),
@@ -1452,6 +1520,11 @@ def root_bugfix(
     _dispatch_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
 
 
+@app.command(
+    "change",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_change(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to update."),
@@ -1733,60 +1806,6 @@ def stack_preflight(
     if json_output:
         args.append("--json")
     args.extend(_ctx_args(ctx))
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
-
-
-@stack_app.command("enable")
-def stack_enable(
-    stack_ids: list[str] = typer.Argument(..., help="Stack IDs to add to the project selection."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
-) -> None:
-    """Add stacks to the committed project selection."""
-    legacy_cli = _legacy_cli()
-    args = ["enable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
-
-
-@stack_app.command("disable")
-def stack_disable(
-    stack_ids: list[str] = typer.Argument(..., help="Explicit stack IDs to remove."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
-) -> None:
-    """Remove explicitly selected stacks from the committed project config."""
-    legacy_cli = _legacy_cli()
-    args = ["disable", *stack_ids]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
-
-
-@stack_app.command("select")
-def stack_select(
-    stack_ids: Optional[list[str]] = typer.Argument(
-        None,
-        help="Complete explicit selection; omit all IDs to clear it.",
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate without writing config."),
-) -> None:
-    """Replace the committed project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["select", *(stack_ids or [])]
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._cmd_stack(args, project_root=Path.cwd())
-
-
-@stack_app.command("selected")
-def stack_selected(
-    json_output: bool = typer.Option(False, "--json", help="Print selection as JSON."),
-) -> None:
-    """Show explicit, effective, and implied project stack selection."""
-    legacy_cli = _legacy_cli()
-    args = ["selected"]
-    if json_output:
-        args.append("--json")
     legacy_cli._cmd_stack(args, project_root=Path.cwd())
 
 
@@ -2101,11 +2120,6 @@ def spec_rewind(
         "--commit",
         help="Full checkpoint commit or unique abbreviated prefix.",
     ),
-    checkpoint_next_phase: Optional[str] = typer.Option(
-        None,
-        "--next-phase",
-        help="Exact next phase recorded by the selected checkpoint row.",
-    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -2115,7 +2129,6 @@ def spec_rewind(
 
     args = [phase_id, *list(ctx.args)]
     _extend_option(args, "--commit", checkpoint_commit)
-    _extend_option(args, "--next-phase", checkpoint_next_phase)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -3511,7 +3524,7 @@ def delivery_status(
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show current Phase B delivery/Ralph state."""
-    from echelon.delivery_status import command
+    from echelon import cli as legacy_cli
 
     args: list[str] = []
     if spec_id is not None:
@@ -3520,7 +3533,7 @@ def delivery_status(
         args.extend(["--strategy", strategy])
     if json_output:
         args.append("--json")
-    command(args)
+    legacy_cli._cmd_delivery_status(args)
 
 
 @harness_app.command(

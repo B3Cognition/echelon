@@ -334,12 +334,6 @@ phases:
                     (run_local_spec_dir / name).write_text(
                         content, encoding="utf-8"
                     )
-            # The controller now promotes CHIEF's protected-root artifact
-            # from this run-local draft before phase1-constitution can finish.
-            (squad_dir / "constitution.draft.md").write_text(
-                "# Project Constitution\n\n## Core Principles\n\nReal rules.\n",
-                encoding="utf-8",
-            )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={

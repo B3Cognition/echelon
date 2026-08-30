@@ -92,7 +92,6 @@ class TestSageTemplates:
         text = AGENT.read_text(encoding="utf-8")
 
         assert "report PASS but flag the borderline metrics" not in text
-        assert "If you find only MEDIUM/LOW issues:** Report PASS" not in text
         assert "PASS means no required amendments remain" in text
         assert "NEVER return `verdict: PASS`" in text
         assert "mandatory amendments" in text
@@ -172,26 +171,6 @@ class TestSageTemplates:
         assert "using the provided templates" in text
         assert "architecture_requirement_drift" in text
         assert "validated `spec.md`" in text
-
-    def test_owned_deferred_automation_is_not_a_phase_a_blocker(self) -> None:
-        text = AGENT.read_text(encoding="utf-8")
-
-        assert "owned `deferred-automation`" in text
-        assert "does not require a Phase A amendment" in text
-
-    def test_why3_issue_ownership_names_each_repair_plane(self) -> None:
-        agent = AGENT.read_text(encoding="utf-8")
-        template = (TEMPLATE_DIR / "sage-issues-template.md").read_text(
-            encoding="utf-8"
-        )
-        phase = WHY3_PHASE.read_text(encoding="utf-8")
-
-        for owner in ("WHAT", "HOW", "SENTINEL", "ORCHESTRATOR"):
-            assert owner in agent
-            assert owner in template
-            assert owner in phase
-        assert "earliest agent that can edit" in agent
-        assert "controller routes the next pass from that field" in phase
 
     def test_sage_contradiction_reference_includes_architecture_drift(self) -> None:
         text = CONTRADICTION_REFERENCE.read_text(encoding="utf-8")

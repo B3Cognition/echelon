@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 
 
@@ -76,7 +74,6 @@ def build_llm_cli_command(
     codex_model: str | None = None,
     codex_skip_git_repo_check: bool = False,
     codex_ignore_user_config: bool = False,
-    codex_permission_profile: tuple[str, str] | None = None,
     output_last_message: str | None = None,
     opencode_json: bool = False,
     copilot_json: bool = False,
@@ -98,25 +95,7 @@ def build_llm_cli_command(
     if cli == "codex":
         cmd = [bin_]
         if unsafe:
-            if codex_permission_profile is not None:
-                raise ToolPolicyViolation(
-                    "codex native permission profiles cannot be combined with "
-                    "unsafe host execution"
-                )
             cmd += ["exec", "--dangerously-bypass-approvals-and-sandbox"]
-        elif codex_permission_profile is not None:
-            profile_name, profile_definition = codex_permission_profile
-            if not re.fullmatch(r"[a-z][a-z0-9_]*", profile_name):
-                raise ToolPolicyViolation("invalid Codex permission profile name")
-            if not profile_definition.strip():
-                raise ToolPolicyViolation("empty Codex permission profile definition")
-            cmd += ["--ask-for-approval", "never", "exec", "--strict-config"]
-            cmd += [
-                "-c",
-                f"default_permissions={json.dumps(profile_name)}",
-                "-c",
-                f"permissions.{profile_name}={profile_definition}",
-            ]
         else:
             cmd += [
                 "--sandbox",

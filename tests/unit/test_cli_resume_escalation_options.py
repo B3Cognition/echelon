@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 import sys
 import types
 from pathlib import Path
@@ -12,10 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from harness.blocked_decision import (
-    build_blocked_decision_v2,
-    validate_blocked_decision_v3,
-)
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 
 
@@ -109,75 +105,6 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "harness.squad", squad_mod)
 
 
-def _v3_human_resume_decision(*, answer_type: str) -> dict[str, object]:
-    options = (
-        [
-            {
-                "id": "approve",
-                "label": "Approve the reviewed boundary",
-                "description": "Accept the reviewed scope.",
-                "recommended": True,
-                "risk_level": "low",
-                "next_phase": "phase2-decide",
-                "outcome": "approved",
-            }
-        ]
-        if answer_type == "choice"
-        else []
-    )
-    legacy = build_blocked_decision_v2(
-        decision_id=f"dec-cli-v3-{answer_type}",
-        status="awaiting_human",
-        source_kind="human_gate" if options else "provider_escalation",
-        producer_id="checkpoint-assess" if options else "phase1-investigate",
-        source_phase="checkpoint-assess" if options else "phase1-investigate",
-        reason_code=(
-            "checkpoint_assessment" if options else "human_clarification_required"
-        ),
-        classification="material",
-        question="Which reviewed boundary should be retained?",
-        options=options,
-        recommended_answer=None,
-        risk_level="low" if options else None,
-        resolution_handler="gate_outcome" if options else "clarification_resume",
-        autonomy_mode="guided",
-        source_state_revision=0,
-        now="2026-08-23T10:00:00+00:00",
-    )
-    return validate_blocked_decision_v3(
-        {
-            **legacy,
-            "schema_version": 3,
-            "recommended_option_id": "approve" if options else None,
-            "recommended_action": (
-                None if options else "Supply the missing product boundary."
-            ),
-            "automatic_eligible": False,
-            "recommendation_rationale": (
-                "Human confirmation is required for this material boundary."
-            ),
-            "recommendation_confidence": "medium",
-            "recommendation_authority": "controller_evidence",
-            "recommendation_evidence": (
-                [
-                    {
-                        "id": "checkpoint-assess:boundary",
-                        "kind": "checkpoint_evidence",
-                        "reference": "state:completed_phases",
-                        "digest": "b" * 64,
-                    }
-                ]
-                if options
-                else []
-            ),
-            "resolution_rationale": None,
-            "resolution_confidence": None,
-            "recommendation_followed": None,
-            "override_reason": None,
-        }
-    )
-
-
 def test_resume_submits_a_valid_v2_answer_only_through_controller(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,187 +190,6 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     assert output.count("worked on") == 1
     assert "Recorded the schema-v2 decision handoff." in output
     assert output.count("echelon spec continue") == 1
-
-
-@pytest.mark.parametrize(
-    ("answer_type", "answer"),
-    [
-        ("choice", "approve"),
-        ("free_text", "Use the retained public boundary."),
-    ],
-)
-def test_displayed_resume_routes_v3_human_input_through_controller_only(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    answer_type: str,
-    answer: str,
-) -> None:
-    from echelon.cli import _classify_run_recovery, _cmd_resume
-
-    run_dir = _write_blocked_run(tmp_path, [])
-    state_path = run_dir / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    decision = _v3_human_resume_decision(answer_type=answer_type)
-    state.update(
-        {
-            "blocked_reason": decision["reason_code"],
-            "escalation_question": decision["question"],
-            "escalation_options": decision["options"],
-            "blocked_decision": decision,
-            "recovery_instruction": RecoveryInstruction(
-                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
-                reason_code=str(decision["reason_code"]),
-                phase=str(decision["source_phase"]),
-                requires_human_input=True,
-                schema_version=2,
-                decision_id=str(decision["id"]),
-            ).to_dict(),
-        }
-    )
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    _patch_resume_dependencies(monkeypatch)
-    controller = sys.modules["harness.squad"].SquadController
-
-    def resolve(self, submitted: str) -> bool:
-        current = self._state_store.load()
-        current_decision = dict(current["blocked_decision"])
-        current_decision.update(
-            {
-                "status": "resolved",
-                "selected_option_id": "approve" if answer_type == "choice" else None,
-                "answer_text": submitted if answer_type == "free_text" else None,
-                "resolved_by": "user",
-                "resolved_at": "2026-08-23T10:05:00+00:00",
-                "recommendation_followed": True if answer_type == "choice" else None,
-            }
-        )
-        current["blocked_decision"] = validate_blocked_decision_v3(
-            current_decision
-        )
-        self._state_store._path.write_text(json.dumps(current), encoding="utf-8")
-        return True
-
-    controller.resume_with_human_input = resolve
-    action = _classify_run_recovery(state, project_root=tmp_path)
-    displayed_argv = shlex.split(action.command)
-    assert displayed_argv[:3] == ["echelon", "spec", "resume"]
-    displayed_argv[-1] = answer
-
-    _cmd_resume(
-        displayed_argv[3:],
-        project_root=tmp_path,
-        ext_dir=tmp_path / ".echelon/runtime",
-    )
-
-    persisted = json.loads(state_path.read_text(encoding="utf-8"))
-    resolved = persisted["blocked_decision"]
-    assert persisted["run_id"] == run_dir.name
-    assert resolved["id"] == decision["id"]
-    assert resolved["status"] == "resolved"
-    assert resolved["resolved_by"] == "user"
-    assert resolved["recommendation_followed"] == (
-        True if answer_type == "choice" else None
-    )
-    assert not (run_dir / "staging" / "user-clarifications.md").exists()
-    assert not (run_dir / "staging" / "feature-policy.json").exists()
-    assert not (run_dir / "context" / "current-feature-context.md").exists()
-
-
-def test_rejected_v3_resume_writes_no_legacy_or_partial_artifacts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from echelon.cli import _cmd_resume
-    from harness.human_input import HumanInputPolicyError
-
-    run_dir = _write_blocked_run(tmp_path, [])
-    state_path = run_dir / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    decision = _v3_human_resume_decision(answer_type="choice")
-    state.update(
-        {
-            "blocked_reason": decision["reason_code"],
-            "escalation_question": decision["question"],
-            "escalation_options": decision["options"],
-            "blocked_decision": decision,
-            "recovery_instruction": RecoveryInstruction(
-                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
-                reason_code=str(decision["reason_code"]),
-                phase=str(decision["source_phase"]),
-                requires_human_input=True,
-                schema_version=2,
-                decision_id=str(decision["id"]),
-            ).to_dict(),
-        }
-    )
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    before = state_path.read_bytes()
-    _patch_resume_dependencies(monkeypatch)
-    controller = sys.modules["harness.squad"].SquadController
-    controller.resume_with_human_input = lambda *_args: (_ for _ in ()).throw(
-        HumanInputPolicyError("answer shape is invalid")
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        _cmd_resume(
-            ["not-an-offered-choice"],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
-        )
-
-    assert exc.value.code == 1
-    assert state_path.read_bytes() == before
-    assert not (run_dir / "staging" / "user-clarifications.md").exists()
-    assert not (run_dir / "staging" / "feature-policy.json").exists()
-    assert not (run_dir / "context" / "current-feature-context.md").exists()
-
-
-def test_v3_resume_rejects_stale_recovery_before_controller_or_legacy_writes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from echelon.cli import _cmd_resume
-
-    run_dir = _write_blocked_run(tmp_path, [])
-    state_path = run_dir / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    decision = _v3_human_resume_decision(answer_type="free_text")
-    state.update(
-        {
-            "blocked_reason": decision["reason_code"],
-            "escalation_question": decision["question"],
-            "escalation_options": decision["options"],
-            "blocked_decision": decision,
-            "recovery_instruction": RecoveryInstruction(
-                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
-                reason_code="stale_unrelated_reason",
-                phase=str(decision["source_phase"]),
-                requires_human_input=True,
-                schema_version=2,
-                decision_id=str(decision["id"]),
-            ).to_dict(),
-        }
-    )
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    before = state_path.read_bytes()
-    _patch_resume_dependencies(monkeypatch)
-    controller = sys.modules["harness.squad"].SquadController
-    controller.resume_with_human_input = lambda *_args: (_ for _ in ()).throw(
-        AssertionError("invalid authority must fail before controller resolution")
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        _cmd_resume(
-            ["Use the retained public boundary."],
-            project_root=tmp_path,
-            ext_dir=tmp_path / ".echelon/runtime",
-        )
-
-    assert exc.value.code == 1
-    assert state_path.read_bytes() == before
-    assert not (run_dir / "staging" / "user-clarifications.md").exists()
-    assert not (run_dir / "staging" / "feature-policy.json").exists()
-    assert not (run_dir / "context" / "current-feature-context.md").exists()
 
 
 def test_resume_rejects_stale_v2_reason_before_controller_construction(

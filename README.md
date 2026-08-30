@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.11** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.7** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -664,9 +664,8 @@ For command-backed operations, Echelon:
 4. Lets the configured concrete provider invoke Claude, Codex, Copilot, Opencode, or an OpenAI-compatible endpoint.
 
 The selected AI CLI must be on `PATH`; OpenAI-compatible providers use the
-configured HTTP endpoint. `ECHELON_LLM` or developer-local `harness.llm.cli` in
-`.echelon/local.yml` selects the provider. `echelon workspace init --llm <provider>`
-writes this local setting and keeps it out of shared project policy. Old provider-native skill files are
+configured HTTP endpoint. `ECHELON_LLM` or `harness.llm.cli` in
+`.echelon/config.yml` selects the provider. Old provider-native skill files are
 recognized only as migration compatibility; initialize or migrate the workspace
 so normal execution uses the Prosaic bundle.
 
@@ -693,7 +692,7 @@ configure `harness.llm.cli` to select the concrete adapter:
 Echelon starts Codex with user configuration ignored by default. Authentication
 and Codex sessions still work, but personal plugins and skills do not leak into
 Echelon agents. To deliberately restore the normal personal Codex environment,
-set `harness.llm.codex_inherit_user_config: true` in `.echelon/local.yml`.
+set `harness.llm.codex_inherit_user_config: true` in `.echelon/config.yml`.
 
 ```bash
 # Use Copilot for all echelon commands
@@ -1223,16 +1222,6 @@ independently rather than allowing either one to hide the other.
 
 Legacy aliases may still exist for older scripts, but current docs and operator
 guidance use the `spec` and `delivery` namespaces.
-
-### Stack selection
-
-List bundled profiles with `echelon stack list`. Persist a project selection in
-`.echelon/config.yml` with `echelon stack enable <id>`, remove explicitly
-selected IDs with `echelon stack disable <id>`, or replace the full selection
-with `echelon stack select <id>...` (omit IDs to clear it). Use
-`echelon stack selected` to show the explicit project setting, the effective
-setting after local overrides, and implied stacks. Each mutation accepts
-`--dry-run` to validate the proposed selection without writing config.
 
 ## Codegen Pipeline
 

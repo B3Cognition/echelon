@@ -309,13 +309,6 @@ ASSESS2 can flag issues but has restricted blocking power:
 - **Can flag but NOT kill:** Most issues are sent as feedback for PLAN2 to incorporate.
 - **Can block only for CRITICAL feasibility issues:** If the architecture fundamentally cannot support the requirements (discovered now that concrete details exist), route back to HOW. This should be rare.
 
-A completed negative assessment returns `REJECTED`, with
-`gate_decision: REJECTED` and `phase_recommendation: phase3-how`, even when
-individual tasks are classified BLOCKED or the feasibility issue is critical.
-`BLOCKED` is reserved for an assessment that could not complete because its
-required inputs were missing, unreadable, or could not be evaluated. Never use
-top-level `BLOCKED` as a synonym for a completed negative gate decision.
-
 ### Outputs (Consensus)
 
 - `implementability-report.md` — use `.echelon/runtime/templates/implementability-report-template.md`.

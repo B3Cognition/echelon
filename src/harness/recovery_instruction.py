@@ -7,11 +7,8 @@ from enum import Enum
 from typing import Mapping
 
 from harness.blocked_decision import (
-    BlockedDecisionError,
-    SCHEMA_V2,
-    SCHEMA_V3,
     is_valid_decision_id,
-    validate_blocked_decision,
+    validate_blocked_decision_v2,
 )
 
 
@@ -224,12 +221,8 @@ def validate_decision_recovery_pair(
     decision: object,
     instruction: object | None,
 ) -> RecoveryInstruction | None:
-    """Validate recovery paired with a versioned human-input decision."""
-    validated_decision = validate_blocked_decision(decision)
-    if validated_decision.get("schema_version") not in {SCHEMA_V2, SCHEMA_V3}:
-        raise BlockedDecisionError(
-            "decision recovery requires blocked-decision schema 2 or 3"
-        )
+    """Validate the only recovery instruction shape allowed for a v2 decision."""
+    validated_decision = validate_blocked_decision_v2(decision)
     status = validated_decision["status"]
     if status == "resolved":
         if instruction is not None:

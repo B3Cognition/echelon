@@ -45,7 +45,6 @@ tools:
     command: npx
     args:
       - "-y"
-      - "--registry=https://nexus.statsperform.tools/repository/public-npm/"
       - "@statsperform/playbook-cli"
     phase_scope:
       - spec

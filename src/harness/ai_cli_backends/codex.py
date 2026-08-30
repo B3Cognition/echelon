@@ -25,8 +25,6 @@ _MODEL_TIER_TO_CODEX_MODEL = {
     "strong": "gpt-5.6-sol",
 }
 
-_PRODUCT_PLANE_PERMISSION_PROFILE = "echelon_product_plane"
-
 
 class CodexCliBackend:
     name = "codex"
@@ -59,58 +57,6 @@ class CodexCliBackend:
         model = _codex_model_for_request(request)
         allow_non_git_cwd = request.metadata.get("allow_non_git_cwd") is True
         isolated_user_config = not self._config.llm.codex_inherit_user_config
-        raw_prompt_metadata = request.metadata.get("prompt_metadata")
-        read_roots: tuple[str, ...] = ()
-        write_paths: tuple[str, ...] = ()
-        forbidden_roots: tuple[str, ...] = ()
-        operational_roots: tuple[str, ...] = ()
-        operational_read_paths: tuple[str, ...] = ()
-        operational_metadata_paths: tuple[str, ...] = ()
-        if isinstance(raw_prompt_metadata, Mapping):
-            read_roots = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_read_roots"
-            )
-            write_paths = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_write_paths"
-            )
-            forbidden_roots = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_forbidden_roots"
-            )
-            operational_roots = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_operational_roots"
-            )
-            operational_read_paths = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_operational_read_paths"
-            )
-            operational_metadata_paths = _prompt_scope_paths(
-                request, raw_prompt_metadata, "tool_operational_metadata_paths"
-            )
-
-        sandbox_exec = _sandbox_exec_path() if forbidden_roots else None
-        if forbidden_roots and sandbox_exec is None:
-            _unlink_if_present(final_path)
-            return CliRunResult(
-                exit_code=125,
-                stdout="",
-                stderr="workspace synthesis host boundary is unavailable",
-                metadata={"workspace_synthesis_boundary": "unavailable"},
-            )
-
-        unsafe = self._config.llm.tool_policy.allow_unsafe_host_execution
-        permission_profile = None
-        if forbidden_roots and not unsafe:
-            permission_profile = (
-                _PRODUCT_PLANE_PERMISSION_PROFILE,
-                _codex_product_plane_permission_profile(
-                    read_roots=read_roots,
-                    write_paths=write_paths,
-                    forbidden_roots=forbidden_roots,
-                    operational_roots=operational_roots,
-                    operational_read_paths=operational_read_paths,
-                    operational_metadata_paths=operational_metadata_paths,
-                ),
-            )
-
         cmd = build_llm_cli_command(
             "codex",
             self._bin,
@@ -120,21 +66,39 @@ class CodexCliBackend:
             codex_model=model,
             codex_skip_git_repo_check=allow_non_git_cwd,
             codex_ignore_user_config=isolated_user_config,
-            codex_permission_profile=permission_profile,
             output_last_message=final_path or None,
         )
-        if forbidden_roots and unsafe:
-            assert sandbox_exec is not None
-            cmd = [
-                sandbox_exec,
-                "-p",
-                _workspace_sandbox_profile(
-                    forbidden_roots,
-                    read_roots=read_roots,
-                    write_paths=write_paths,
-                ),
-                *cmd,
-            ]
+        raw_prompt_metadata = request.metadata.get("prompt_metadata")
+        if isinstance(raw_prompt_metadata, Mapping):
+            forbidden_roots = _prompt_scope_paths(
+                request, raw_prompt_metadata, "tool_forbidden_roots"
+            )
+            if forbidden_roots:
+                sandbox_exec = _sandbox_exec_path()
+                if sandbox_exec is None:
+                    _unlink_if_present(final_path)
+                    return CliRunResult(
+                        exit_code=125,
+                        stdout="",
+                        stderr="workspace synthesis host boundary is unavailable",
+                        metadata={"workspace_synthesis_boundary": "unavailable"},
+                    )
+                read_roots = _prompt_scope_paths(
+                    request, raw_prompt_metadata, "tool_read_roots"
+                )
+                write_paths = _prompt_scope_paths(
+                    request, raw_prompt_metadata, "tool_write_paths"
+                )
+                cmd = [
+                    sandbox_exec,
+                    "-p",
+                    _workspace_sandbox_profile(
+                        forbidden_roots,
+                        read_roots=read_roots,
+                        write_paths=write_paths,
+                    ),
+                    *cmd,
+                ]
         proc = subprocess.Popen(
             cmd,
             cwd=request.cwd,
@@ -174,8 +138,6 @@ class CodexCliBackend:
                 if event.token_usage is not None:
                     token_usage = event.token_usage
                     token_usage_details = dict(event.token_usage_details)
-                if event.diagnostic:
-                    print(event.diagnostic, flush=True)
                 if event.text:
                     stdout_chunks.append(event.text)
                     print(event.text, flush=True)
@@ -248,58 +210,6 @@ def _prompt_scope_paths(
     return tuple(sorted(paths))
 
 
-def _codex_product_plane_permission_profile(
-    *,
-    read_roots: tuple[str, ...],
-    write_paths: tuple[str, ...],
-    forbidden_roots: tuple[str, ...],
-    operational_roots: tuple[str, ...],
-    operational_read_paths: tuple[str, ...],
-    operational_metadata_paths: tuple[str, ...],
-) -> str:
-    """Build one native Codex profile for workspace and product-plane scope."""
-    access: dict[str, str] = {}
-
-    for path in (*read_roots, *operational_roots, *operational_read_paths):
-        access[path] = "read"
-    for path in write_paths:
-        access[path] = "write"
-    metadata_visible = set(operational_metadata_paths)
-    explicitly_authorized = {
-        *read_roots,
-        *write_paths,
-        *operational_roots,
-        *operational_read_paths,
-    }
-    for path in forbidden_roots:
-        if path not in metadata_visible:
-            access[path] = "deny"
-            continue
-
-        # Named runtime helpers use ordinary file metadata checks before opening
-        # an authenticated config path. A read-only root exposes that metadata
-        # and prevents new children; every existing unauthenticated child is
-        # snapshotted as denied. More-specific authenticated paths remain usable.
-        try:
-            children = tuple(Path(path).iterdir())
-        except OSError:
-            access[path] = "deny"
-            continue
-        access[path] = "read"
-        for child in children:
-            child_path = str(child)
-            if child_path not in explicitly_authorized:
-                access[child_path] = "deny"
-
-    filesystem = ",".join(
-        f"{json.dumps(path)}={json.dumps(access[path])}" for path in sorted(access)
-    )
-    return (
-        f'{{extends=":workspace",filesystem={{{filesystem}}},'
-        "network={enabled=true}}"
-    )
-
-
 def _unlink_if_present(path: str) -> None:
     if not path:
         return
@@ -315,7 +225,6 @@ class _CodexEvent:
     task_complete: bool = False
     token_usage: int | None = None
     token_usage_details: dict[str, int] = field(default_factory=dict)
-    diagnostic: str = ""
 
 
 def _codex_event(line: str) -> _CodexEvent:
@@ -326,7 +235,7 @@ def _codex_event(line: str) -> _CodexEvent:
 
     item = event.get("item")
     if isinstance(item, dict) and item.get("type") == "command_execution":
-        return _CodexEvent("", diagnostic=_codex_command_event_text(event, item))
+        return _CodexEvent(_codex_command_event_text(event, item))
 
     payload = event.get("payload")
     if isinstance(payload, dict):
@@ -438,8 +347,6 @@ def _codex_command_event_text(event: dict, item: dict) -> str:
         header = f"[codex] command completed"
     if exit_code is not None:
         header += f" (exit {exit_code})"
-    if failed and not debug:
-        return header
     header += f": {command}"
 
     if output and (failed or debug):

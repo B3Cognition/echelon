@@ -107,16 +107,6 @@ QUESTION_FIELDS = {
     "escalation_recommended_answer",
     "escalation_risk_level",
 }
-EXACT_RECOMMENDED_ANSWER_CONTRACT = (
-    "`escalation_recommended_answer` must contain the exact answer value that "
-    "can be copied verbatim into `answer_text`; do not write an instruction, "
-    "rationale, or recommendation preamble in that field."
-)
-BANZAI_REVERSIBLE_DEFAULT_CONTRACT = (
-    "In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible "
-    "detail that explicit input, the selected stack, reachable evidence, or a "
-    "conventional default can resolve; record the assumption and continue."
-)
 _DIRECT_WRITE_VERBS = (
     r"writ(?:e|es|ing|ten)|append(?:s|ed|ing)?|edit(?:s|ed|ing)?|"
     r"mutat(?:e|es|ed|ing)|clear(?:s|ed|ing)?|delet(?:e|es|ed|ing)|"
@@ -218,34 +208,6 @@ def test_workflow_gates_have_only_compiled_outcome_policy() -> None:
         } == {"approved", "rejected"}
 
 
-def test_every_static_choice_policy_has_one_recommended_option() -> None:
-    static_policy_producers: set[str] = set()
-    for phase in _workflow_phases().values():
-        for policy in phase.get("human_input", []):
-            if policy.get("recommendation_mode") != "static":
-                continue
-            static_policy_producers.add(phase["id"])
-            assert sum(option["recommended"] for option in policy["options"]) == 1
-    assert static_policy_producers == {"checkpoint-plan"}
-
-
-def test_checkpoint_assess_uses_registered_controller_preparation() -> None:
-    phases = _workflow_phases()
-    policy = phases["checkpoint-assess"]["human_input"][0]
-
-    assert policy["recommendation_mode"] == "controller"
-    assert not any(option["recommended"] for option in policy["options"])
-    registry = PhaseGraph(
-        DEFINITION,
-        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
-    ).human_input_policy_registry()
-    assert registry.lookup(
-        "human_gate",
-        "checkpoint-assess",
-        "checkpoint_assess_decision_required",
-    ).recommendation_mode == "controller"
-
-
 def test_question_capable_provider_edges_do_not_accept_escalate() -> None:
     phases = _workflow_phases()
 
@@ -294,32 +256,6 @@ def test_provider_prompts_declare_exact_controller_question_shape() -> None:
             assert clause in text
         for clause in SHARED_FORBIDDEN_CLAUSES[prompt_name]:
             assert clause not in text
-
-
-def test_free_text_producers_seal_literal_recommended_answer_values() -> None:
-    for path in (*PROVIDER_PROMPTS.values(), *SHARED_PROMPTS.values()):
-        text = _normalized_prompt(path)
-
-        assert EXACT_RECOMMENDED_ANSWER_CONTRACT in text
-
-    for path in PROVIDER_PROMPTS.values():
-        text = _normalized_prompt(path)
-        assert (
-            'escalation_recommended_answer: "<exact answer value>"'
-            in text
-        )
-
-
-def test_question_capable_producers_apply_reversible_banzai_defaults() -> None:
-    for path in (*PROVIDER_PROMPTS.values(), *SHARED_PROMPTS.values()):
-        assert BANZAI_REVERSIBLE_DEFAULT_CONTRACT in _normalized_prompt(path)
-
-
-def test_product_authoring_phases_receive_the_immutable_user_request() -> None:
-    phases = _workflow_phases()
-
-    for phase_id in ("phase1-discover", "phase1-tracker", "phase1-what"):
-        assert "user_request" in phases[phase_id]["context_pack"]
 
 
 def test_stop_and_ask_producers_allow_the_complete_question_shape() -> None:

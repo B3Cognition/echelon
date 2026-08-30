@@ -364,8 +364,6 @@ scoring:
   # @belief(claim: "0.0–1.0 normalized range enables consistent cross-agent score comparison and aggregation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: low)
   confidence_min: 0.0
   confidence_max: 1.0
-  # Minimum normalized confidence required for phase-agent findings.
-  confidence_threshold: 0.7
 
   # Evidence grades (from most to least reliable)
   evidence_grades:
@@ -1200,8 +1198,6 @@ deploy:
 #
 # Infrastructure capabilities such as Postgres, Kafka, and Flink should be
 # selected through their own stacks when those stacks exist.
-# Manage the committed selection with `echelon stack enable <id>`,
-# `echelon stack disable <id>`, or `echelon stack select <id>...`.
 stacks:
   selected: []
   # Optional guard. When set, selected stacks must apply to at least one listed
@@ -1242,9 +1238,8 @@ harness:
 
   # --- LLM Provider ---
 
-  # LLM provider settings are developer-local. Configure them with
-  # `echelon workspace init --llm <provider>`, which writes .echelon/local.yml.
-  # ECHELON_LLM overrides the local setting for the current process.
+  # LLM provider used by Echelon commands.
+  # Overrides ECHELON_LLM env var when set.
   # Build-capable CLIs: claude (default) | copilot | opencode | codex
   # Artifact-only API provider: openai-compatible
   # llm:

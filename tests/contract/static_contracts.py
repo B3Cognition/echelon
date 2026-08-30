@@ -908,15 +908,9 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
 
     checks = [
         PatternCheck(
-            "CHIEF authors the controller-published constitution draft",
+            "CHIEF owns the canonical constitution",
             chief,
-            r"sole author of the project constitution.*author only the\s+run-local `\$\{SQUAD_DIR\}/constitution\.draft\.md`",
-            flags,
-        ),
-        PatternCheck(
-            "CHIEF never writes the protected canonical constitution path",
-            chief,
-            r"NEVER.*write to `\.echelon/constitution\.md`",
+            r"sole author of the project constitution.*create and amend `\.echelon/constitution\.md`",
             flags,
         ),
         PatternCheck(
@@ -980,12 +974,12 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
         PatternCheck(
             "phase3 how treats constitution as read-only",
             phase3_how,
-            r"\.echelon/constitution\.md.*read-only Phase A governance",
+            r"constitution\.md.*read-only published Phase A snapshot",
         ),
         PatternCheck(
             "phase3 how forbids constitution output",
             phase3_how,
-            r"do not edit, rewrite, append to, or output the canonical constitution",
+            r"do not edit, rewrite, append to, or output `constitution\.md`",
         ),
         PatternCheck(
             "phase3 how uses amendment candidates",
@@ -1047,9 +1041,9 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
             r"id:\s+phase1-what[\s\S]*?context_pack:[\s\S]*?\.echelon/constitution\.md",
         ),
         PatternCheck(
-            "workflow phase3-plan includes canonical Echelon constitution",
+            "workflow phase3-plan includes constitution snapshot",
             workflow,
-            r"id:\s+phase3-plan[\s\S]*?context_pack:[\s\S]*?- \.echelon/constitution\.md",
+            r"id:\s+phase3-plan[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
         ),
         PatternCheck(
             "workflow WHY3 includes canonical Echelon constitution",
@@ -1075,12 +1069,12 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
         PatternCheck(
             "phase3 plan prompt includes read-only constitution",
             phase3_plan,
-            r"\.echelon/constitution\.md.*read-only Phase A governance",
+            r"read-only constitution\.md",
         ),
         PatternCheck(
             "phase3 plan forbids ORCHESTRATOR constitution output",
             phase3_plan,
-            r"do not edit, rewrite, append to, or output the canonical constitution",
+            r"Do not edit, rewrite, append to, or output `constitution\.md`",
         ),
         PatternCheck(
             "phase3 consensus WHY3 includes constitution",
@@ -1099,14 +1093,14 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
             r"Treat `\.echelon/constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output it\.",
         ),
         PatternCheck(
-            "ARCHITECT consumes canonical constitution context",
+            "ARCHITECT consumes published constitution snapshot",
             architect,
-            r"canonical `\.echelon/constitution\.md` content.*read-only governance context",
+            r"read-only `constitution\.md` snapshot",
         ),
         PatternCheck(
             "ARCHITECT forbids canonical constitution mutation",
             architect,
-            r"NEVER create a constitution, edit or append to `\.echelon/constitution\.md`, or require a spec-local `constitution\.md` copy",
+            r"NEVER create a constitution, edit `\.echelon/constitution\.md`, or append directly to `constitution\.md`",
         ),
         PatternCheck(
             "ARCHITECT stale fallback removed",

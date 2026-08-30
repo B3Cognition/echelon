@@ -645,36 +645,6 @@ def resolve_checkpoint(
     return commit_matches[-1]
 
 
-def resolve_rewind_checkpoint(
-    ledger: CheckpointLedger,
-    target: str,
-    *,
-    commit: str = "",
-    next_phase: str = "",
-) -> PhaseCheckpoint:
-    """Resolve one supported rewind row, including its rendered discriminator."""
-
-    selected_ledger = ledger
-    normalized_next_phase = next_phase.strip()
-    if normalized_next_phase:
-        candidates = [
-            checkpoint
-            for checkpoint in ledger.checkpoints
-            if checkpoint.next_phase == normalized_next_phase
-            and checkpoint.rewind == "supported"
-        ]
-        if not candidates:
-            raise KeyError(
-                "no supported checkpoint precedes requested phase "
-                f"{normalized_next_phase}"
-            )
-        selected_ledger = CheckpointLedger(
-            spec_id=ledger.spec_id,
-            checkpoints=candidates,
-        )
-    return resolve_checkpoint(selected_ledger, target, commit=commit)
-
-
 def checkpoint_targets(ledger: CheckpointLedger) -> list[str]:
     """Return the distinct phase/id selectors accepted by one checkpoint ledger."""
 

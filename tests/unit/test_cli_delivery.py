@@ -498,6 +498,34 @@ def test_delivery_land_routes_to_land(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.unit
+def test_harness_land_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "harness", "land", "001", "--continue"])
+
+    with patch("echelon.cli._cmd_land") as mock_land:
+        main()
+
+    mock_land.assert_called_once_with(["001", "--continue"])
+
+
+@pytest.mark.unit
+def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "harness", "run", "001"])
+
+    with patch("echelon.cli._cmd_harness_run") as mock_run:
+        main()
+
+    mock_run.assert_called_once_with(
+        ["001"],
+        command_prefix="echelon delivery run",
+        display_args=["001"],
+    )
+
+
+@pytest.mark.unit
 def test_delivery_unknown_subcommand_exits_without_traceback(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,

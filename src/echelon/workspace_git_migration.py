@@ -263,33 +263,6 @@ def _tracked_paths(root: Path, pathspec: str) -> tuple[str, ...]:
     return tuple(line for line in result.stdout.splitlines() if line)
 
 
-def _is_run_local_checkpoint_artifact(path: str) -> bool:
-    """Return whether a tracked runs/ path is an intentional Phase A artifact.
-
-    Phase A checkpoints force-add only their active spec tree through the broad
-    ``/runs/`` ignore. Controller state, locks, telemetry, ledgers, and other
-    run runtime remain forbidden from the Git index.
-    """
-    parts = tuple(part for part in path.strip("/").split("/") if part)
-    if len(parts) < 4 or parts[0] != "runs" or ".echelon" in parts[3:]:
-        return False
-    if parts[2] == "staging":
-        return len(parts) >= 4
-    return parts[2] == "specs" and len(parts) >= 5
-
-
-def _unexpected_tracked_runtime_paths(
-    root: Path,
-    pathspec: str,
-) -> tuple[str, ...]:
-    tracked = _tracked_paths(root, pathspec)
-    if pathspec != "runs":
-        return tracked
-    return tuple(
-        path for path in tracked if not _is_run_local_checkpoint_artifact(path)
-    )
-
-
 def _is_tracked(root: Path, pathspec: str) -> bool:
     return bool(_tracked_paths(root, pathspec))
 
@@ -376,12 +349,7 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
     )
     for runtime_path, message in runtime_paths:
         path_obj = root / runtime_path
-        ignore_probe = (
-            f"{runtime_path.rstrip('/')}/.echelon-doctor-ignore-probe"
-            if path_obj.is_dir()
-            else runtime_path
-        )
-        if path_obj.exists() and not _git_ignored(root, ignore_probe):
+        if path_obj.exists() and not _git_ignored(root, runtime_path):
             findings.append(
                 WorkspaceDoctorFinding(
                     "error",
@@ -390,11 +358,7 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
                     runtime_path,
                 )
             )
-        tracked_runtime = (
-            _unexpected_tracked_runtime_paths(root, runtime_path)
-            if _has_git_marker(root)
-            else ()
-        )
+        tracked_runtime = _tracked_paths(root, runtime_path) if _has_git_marker(root) else ()
         if tracked_runtime:
             findings.append(
                 WorkspaceDoctorFinding(
@@ -522,18 +486,10 @@ def _untrack_runtime_paths(root: Path) -> tuple[str, ...]:
         ".echelon/cache",
         ".echelon/recovery-backups",
     ):
-        tracked = _unexpected_tracked_runtime_paths(root, pathspec)
+        tracked = _tracked_paths(root, pathspec)
         if not tracked:
             continue
-        _run_git(
-            root,
-            "rm",
-            "-r",
-            "--cached",
-            "--ignore-unmatch",
-            "--",
-            *tracked,
-        )
+        _run_git(root, "rm", "-r", "--cached", "--ignore-unmatch", "--", pathspec)
         untracked.extend(tracked)
     return tuple(untracked)
 

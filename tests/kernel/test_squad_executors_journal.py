@@ -1342,62 +1342,6 @@ def test_assemble_prompt_bounded_state_omits_large_raw_ledger(tmp_path):
     assert "X" * 1000 not in prompt
 
 
-def test_assemble_prompt_renders_symbolic_user_request_context(tmp_path):
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ex = _executor(tmp_path, squad_dir=squad_dir)
-    request = "Do a hello world app with selected stack"
-
-    prompt = ex._assemble_prompt(
-        PhaseNode(
-            id="phase1-tracker",
-            type="agent",
-            context_pack=["user_request"],
-        ),
-        {
-            "squad_dir": str(squad_dir),
-            "staging_dir": str(squad_dir / "staging"),
-            "phase": "phase1-tracker",
-            "user_message": request,
-        },
-    )
-
-    assert "# Original user request (immutable)" in prompt
-    assert json.dumps(request, ensure_ascii=False) in prompt
-
-
-def test_phase3_sentinel_repair_prompt_includes_live_why3_plan_evidence(tmp_path):
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    spec_dir = squad_dir / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    artifacts = {
-        "issues.md": "WHY3_SENTINEL_REPAIR_MARKER",
-        "tasks.md": "CURRENT_TASK_IDS_MARKER",
-        "dependencies.md": "CURRENT_DEPENDENCIES_MARKER",
-    }
-    for filename, marker in artifacts.items():
-        (spec_dir / filename).write_text(marker, encoding="utf-8")
-    ex = _executor(tmp_path, squad_dir=squad_dir)
-
-    prompt = ex._assemble_prompt(
-        PhaseNode(
-            id="phase3-sentinel",
-            type="agent",
-            agent="echelon.sentinel",
-            context_pack=list(artifacts),
-        ),
-        {
-            "squad_dir": str(squad_dir),
-            "staging_dir": str(squad_dir / "staging"),
-            "spec_dir": str(spec_dir.relative_to(tmp_path)),
-            "phase": "phase3-sentinel",
-        },
-    )
-
-    assert all(marker in prompt for marker in artifacts.values())
-
-
 def test_assemble_prompt_legacy_mode_preserves_raw_state_json(tmp_path, monkeypatch):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
@@ -2790,65 +2734,6 @@ def test_quarantined_state_updates_are_recorded_as_controller_journal_warning(tm
     assert entries[0]["type"] == "state_contract_warning"
     assert entries[0]["data"]["dropped_keys"] == ["high_risk_tasks", "total_tasks"]
     assert entries[0]["data"]["action"] == "quarantined"
-
-
-def test_staged_parallel_persists_why3_issue_owned_repair_phase(tmp_path):
-    squad_dir = tmp_path / "squad" / "run-test"
-    spec_dir = tmp_path / "specs" / "001-demo"
-    spec_dir.mkdir(parents=True)
-    (spec_dir / "issues.md").write_text(
-        "### ISS-001: Test strategy conflict\n"
-        "- **Responsible agent:** HOW\n"
-        "- **Action Required:** SENTINEL must repair test-strategy.md.\n",
-        encoding="utf-8",
-    )
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
-    state = state_store.load()
-    state["spec_dir"] = str(spec_dir)
-    state_store.save(state)
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "FAIL",
-            "state_updates": {},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = None
-    graph.all_phase_ids.return_value = []
-    executor = StagedParallelExecutor(
-        provider,
-        graph,
-        tmp_path / "ext",
-        tmp_path,
-        squad_dir,
-    )
-    node = SimpleNamespace(
-        id="phase3-consensus",
-        agents=[
-            {
-                "id": "echelon-sage",
-                "mode": "WHY3",
-                "stage": 1,
-                "context_pack": [],
-                "allowed_verdicts": ["PASS", "FAIL", "BLOCKED"],
-            }
-        ],
-        allowed_state_updates=[],
-    )
-
-    result = executor.execute(node, state_store)
-
-    assert result.verdict == "FAIL"
-    persisted = state_store.load()
-    assert persisted["why3_verdict"] == "FAIL"
-    assert persisted["why3_repair_phase"] == "phase3-how"
 
 
 def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):

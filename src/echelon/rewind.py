@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
-import shlex
 import stat
 
 from echelon.git_helpers import (
@@ -22,7 +21,7 @@ from harness.phase_checkpoints import (
     CHECKPOINT_LEDGER_REL,
     CHECKPOINT_LOCK_REL,
     load_checkpoint_ledger,
-    resolve_rewind_checkpoint,
+    resolve_checkpoint,
     rewindable_checkpoint_targets,
 )
 
@@ -142,17 +141,15 @@ def prepare_rewind(
     confirm: bool,
     spec_dir: Path | None = None,
     checkpoint_commit: str = "",
-    checkpoint_next_phase: str = "",
     discard_active_spec_dirty_paths: frozenset[str] = frozenset(),
 ) -> RewindResult:
     resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
     ledger = load_checkpoint_ledger(resolved_spec_dir)
     try:
-        checkpoint = resolve_rewind_checkpoint(
+        checkpoint = resolve_checkpoint(
             ledger,
             target,
             commit=checkpoint_commit,
-            next_phase=checkpoint_next_phase,
         )
     except (KeyError, ValueError) as exc:
         available = rewindable_checkpoint_targets(ledger)
@@ -219,17 +216,13 @@ def prepare_rewind(
             f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint"
         )
     )
-    command_args = ["echelon", "spec", "rewind", target]
-    if checkpoint_commit:
-        command_args.extend(["--commit", checkpoint_commit])
-    if checkpoint_next_phase:
-        command_args.extend(["--next-phase", checkpoint_next_phase])
-    command_args.append("--confirm")
     message = (
         f"{action}\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
         "Continue with:\n  "
-        + shlex.join(command_args)
+        f"echelon spec rewind {target}"
+        + (f" --commit {checkpoint_commit}" if checkpoint_commit else "")
+        + " --confirm"
     )
     if dirty_paths:
         message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))

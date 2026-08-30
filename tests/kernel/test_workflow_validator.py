@@ -6,9 +6,7 @@ import pytest
 import yaml
 
 from harness.workflow_validator import (
-    CONTROLLER_RUNTIME_COMPATIBILITY_VERSION,
     validate_condition_expression,
-    validate_deployed_phase_runtime,
     validate_workflow_definition,
 )
 
@@ -70,31 +68,6 @@ def test_real_workflow_definition_is_valid() -> None:
     assert report.ok, report.format()
 
 
-def test_deployed_runtime_rejects_previous_controller_compatibility_version(
-    tmp_path: Path,
-) -> None:
-    definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
-    definition["controller_runtime_compatibility_version"] = (
-        CONTROLLER_RUNTIME_COMPATIBILITY_VERSION - 1
-    )
-    deployed = tmp_path / "definition.yaml"
-    deployed.write_text(
-        yaml.safe_dump(definition, sort_keys=False),
-        encoding="utf-8",
-    )
-    deployed.with_name("controller-state-contracts.yaml").write_bytes(
-        DEFINITION.with_name("controller-state-contracts.yaml").read_bytes()
-    )
-
-    report = validate_deployed_phase_runtime(definition_path=deployed)
-
-    assert not report.ok
-    assert any(
-        "unsupported controller runtime compatibility version" in issue.message
-        for issue in report.issues
-    ), report.format()
-
-
 def test_real_workflow_gate_edges_match_declared_outcomes() -> None:
     definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
     phases = {phase["id"]: phase for phase in definition["phases"]}
@@ -129,7 +102,6 @@ def _human_input_provider_policy(*, reason_code: str = "human_clarification_requ
     return {
         "reason_code": reason_code,
         "classification": "material",
-        "recommendation_mode": "controller",
         "semi_policy": "auto_if_recommended_low_risk",
         "resolution_handler": "clarification_resume",
         "allow_free_text": True,
@@ -144,7 +116,6 @@ def _human_input_gate_policy() -> dict:
     return {
         "reason_code": "checkpoint_plan_decision_required",
         "classification": "operational",
-        "recommendation_mode": "static",
         "semi_policy": "auto_if_recommended_low_risk",
         "resolution_handler": "gate_outcome",
         "allow_free_text": False,
@@ -217,47 +188,6 @@ def test_workflow_validator_allows_provider_policy_without_static_options(tmp_pa
     )
 
     assert report.ok, report.format()
-
-
-def test_static_policy_without_unique_recommendation_is_rejected(
-    tmp_path: Path,
-) -> None:
-    policy = _human_input_gate_policy()
-    policy["recommendation_mode"] = "static"
-    for option in policy["options"]:
-        option["recommended"] = False
-    definition = _write_definition(
-        tmp_path,
-        [
-            {
-                "id": "checkpoint",
-                "type": "human_gate",
-                "human_input": [policy],
-                "transitions": [
-                    {
-                        "to": "done",
-                        "condition": "human_input_outcome = approved",
-                        "outcome": "approved",
-                    },
-                    {
-                        "to": "terminal-blocked",
-                        "condition": "human_input_outcome = rejected",
-                        "outcome": "rejected",
-                    },
-                ],
-            },
-            {"id": "done", "type": "terminal"},
-            {"id": "terminal-blocked", "type": "terminal"},
-        ],
-    )
-
-    report = validate_workflow_definition(definition_path=definition)
-
-    assert not report.ok
-    assert any(
-        "exactly one recommended option" in issue.message
-        for issue in report.issues
-    )
 
 
 def test_workflow_validator_requires_complete_provider_coverage_after_opt_in(tmp_path: Path) -> None:
@@ -1537,43 +1467,7 @@ def test_reachable_phase_requires_checkpoint_policy(tmp_path: Path) -> None:
         discover_checkpoint=None,
     )
 
-    report = validate_workflow_definition(
-        definition_path=definition,
-        require_phase_a_checkpoint_policies=True,
-    )
-
-    assert any(
-        issue.phase_id == "phase1-discover"
-        and "checkpoint must be required or none" in issue.message
-        for issue in report.issues
-    ), report.format()
-
-
-def test_workflow_with_no_checkpoint_or_rewind_fields_is_invalid(
-    tmp_path: Path,
-) -> None:
-    definition = _write_definition(
-        tmp_path,
-        [
-            {
-                "id": "init",
-                "type": "commander_internal",
-                "transitions": [{"to": "phase1-discover", "condition": "always"}],
-            },
-            {
-                "id": "phase1-discover",
-                "type": "agent",
-                "agent": "echelon.scout",
-                "transitions": [{"to": "done", "condition": "always"}],
-            },
-            {"id": "done", "type": "terminal"},
-        ],
-    )
-
-    report = validate_workflow_definition(
-        definition_path=definition,
-        require_phase_a_checkpoint_policies=True,
-    )
+    report = validate_workflow_definition(definition_path=definition)
 
     assert any(
         issue.phase_id == "phase1-discover"

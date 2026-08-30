@@ -86,35 +86,6 @@ def test_prosaic_runtime_uses_echelon_canonical_constitution() -> None:
     assert ".echelon/constitution.md" in graph.get("phase1-why2").context_pack
 
 
-def test_phase3_governance_consumers_use_canonical_constitution() -> None:
-    graph = PhaseGraph(
-        PROSAIC_RUNTIME_DEFINITION,
-        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
-    )
-    guardian = next(
-        agent
-        for agent in graph.get("phase3-specialists").agents
-        if agent["id"] == "echelon.guardian"
-    )
-
-    for context_pack in (
-        graph.get("phase3-how").context_pack,
-        guardian["context_pack"],
-        graph.get("phase3-plan").context_pack,
-    ):
-        assert ".echelon/constitution.md" in context_pack
-        assert "constitution.md" not in context_pack
-
-    architect = (PROSAIC_SUBAGENTS / "echelon.architect.md").read_text(
-        encoding="utf-8"
-    )
-    assert (
-        "The controller injects the canonical `.echelon/constitution.md` "
-        "content into the prompt"
-    ) in architect
-    assert "snapshot in the spec directory" not in architect
-
-
 def test_workspace_graph_prefers_deployed_prosaic_runtime(tmp_path: Path) -> None:
     runtime = tmp_path / ".echelon/runtime"
     prose = tmp_path / ".echelon/prosaic/subagents"
@@ -377,13 +348,7 @@ class TestPhaseGraph:
             ),
             ("controller_safeguard", "phase_dispatch_limit", "phase_dispatch_limit"): (
                 "material", "require_human", "phase_dispatch_limit", False,
-                dispatch_phases,
-                frozenset({
-                    "phase1-what",
-                    "phase3-how",
-                    "phase3-sentinel",
-                    "phase3-plan",
-                }),
+                dispatch_phases, frozenset({"phase1-what"}),
                 (
                     "phase",
                     "phase_dispatch_limit_phase",
@@ -823,9 +788,6 @@ class TestPhaseGraph:
             "data-model.md",
             "contracts/",
             "quality-gates.md",
-            "tasks.md",
-            "dependencies.md",
-            "issues.md",
         }.issubset(set(node.context_pack))
 
     def test_why2_does_not_require_later_test_design_artifacts(self):

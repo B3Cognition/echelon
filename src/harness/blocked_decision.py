@@ -15,8 +15,6 @@ from harness.human_input import (
     HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
     HumanInputOption,
     HumanInputPolicyError,
-    PreparedHumanInput,
-    RecommendationEvidence,
     validate_human_input_answer_shape,
     validate_human_input_prompt_request_payload,
 )
@@ -24,7 +22,6 @@ from harness.human_input import (
 
 SCHEMA_VERSION = 1
 SCHEMA_V2 = 2
-SCHEMA_V3 = 3
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 _V2_STATUSES = frozenset({"pending", "resolving", "awaiting_human", "resolved", "failed"})
 _V2_SOURCE_KINDS = frozenset(
@@ -65,42 +62,6 @@ _V2_FIELDS = frozenset(
         "failure_code",
         "created_at",
         "resolved_at",
-    }
-)
-_V3_RECOMMENDATION_FIELDS = frozenset(
-    {
-        "recommended_option_id",
-        "recommended_action",
-        "automatic_eligible",
-        "recommendation_rationale",
-        "recommendation_confidence",
-        "recommendation_authority",
-        "recommendation_evidence",
-        "resolution_rationale",
-        "resolution_confidence",
-        "recommendation_followed",
-        "override_reason",
-    }
-)
-_V3_FIELDS = _V2_FIELDS | _V3_RECOMMENDATION_FIELDS
-_RECOMMENDATION_EVIDENCE_FIELDS = frozenset(
-    {"id", "kind", "reference", "digest"}
-)
-_RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
-_RECOMMENDATION_AUTHORITIES = frozenset(
-    {"workflow_policy", "controller_evidence", "provider_evidence"}
-)
-_V3_BUILD_RESOLUTION_FIELDS = frozenset(
-    {
-        "selected_option_id",
-        "answer_text",
-        "resolved_by",
-        "failure_code",
-        "resolved_at",
-        "resolution_rationale",
-        "resolution_confidence",
-        "recommendation_followed",
-        "override_reason",
     }
 )
 _DECISION_ID_RE = re.compile(r"dec-[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -437,296 +398,6 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
     return normalized
 
 
-def _validate_v3_recommendation_evidence(value: object) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        raise BlockedDecisionError("recommendation_evidence must be a list")
-    normalized: list[dict[str, str]] = []
-    for index, raw in enumerate(value):
-        if not isinstance(raw, Mapping):
-            raise BlockedDecisionError(
-                f"recommendation_evidence[{index}] must be an object"
-            )
-        if not all(isinstance(key, str) for key in raw):
-            raise BlockedDecisionError(
-                f"recommendation_evidence[{index}] field names must be strings"
-            )
-        unknown = set(raw) - _RECOMMENDATION_EVIDENCE_FIELDS
-        missing = _RECOMMENDATION_EVIDENCE_FIELDS - set(raw)
-        if unknown:
-            raise BlockedDecisionError(
-                "unknown recommendation evidence field: "
-                f"{sorted(unknown)[0]}"
-            )
-        if missing:
-            raise BlockedDecisionError(
-                "missing recommendation evidence field: "
-                f"{sorted(missing)[0]}"
-            )
-        try:
-            evidence = RecommendationEvidence(
-                id=raw["id"],
-                kind=raw["kind"],
-                reference=raw["reference"],
-                digest=raw["digest"],
-            )
-        except (HumanInputPolicyError, TypeError) as exc:
-            raise BlockedDecisionError(str(exc)) from exc
-        normalized.append(
-            {
-                "id": evidence.id,
-                "kind": evidence.kind,
-                "reference": evidence.reference,
-                "digest": evidence.digest,
-            }
-        )
-    return normalized
-
-
-def validate_blocked_decision_v3(value: object) -> dict[str, object]:
-    """Validate recommendation completeness plus resolver audit invariants."""
-    if not isinstance(value, Mapping):
-        raise BlockedDecisionError("blocked decision must be an object")
-    if not all(isinstance(key, str) for key in value):
-        raise BlockedDecisionError("blocked decision field names must be strings")
-    unknown = set(value) - _V3_FIELDS
-    missing = _V3_FIELDS - set(value)
-    if unknown:
-        raise BlockedDecisionError(
-            f"unknown blocked decision field: {sorted(unknown)[0]}"
-        )
-    if missing:
-        raise BlockedDecisionError(
-            f"missing blocked decision field: {sorted(missing)[0]}"
-        )
-    if type(value["schema_version"]) is not int or value["schema_version"] != SCHEMA_V3:
-        raise BlockedDecisionError("unsupported blocked decision schema")
-
-    if type(value["attempts"]) is not int:
-        raise BlockedDecisionError("attempts must be a non-negative integer")
-    legacy_shape = {field: value[field] for field in _V2_FIELDS}
-    legacy_shape["schema_version"] = SCHEMA_V2
-    awaiting_after_attempt = (
-        value["status"] == "awaiting_human" and value["attempts"] == 1
-    )
-    if awaiting_after_attempt and value["autonomy_mode"] != "banzai":
-        raise BlockedDecisionError(
-            "awaiting_human attempt 1 is only valid for a migrated Banzai decision"
-        )
-    migrated_awaiting_attempt = (
-        awaiting_after_attempt and value["autonomy_mode"] == "banzai"
-    )
-    if migrated_awaiting_attempt:
-        legacy_shape["attempts"] = 0
-    normalized = validate_blocked_decision_v2(legacy_shape)
-    normalized["schema_version"] = SCHEMA_V3
-    if migrated_awaiting_attempt:
-        normalized["attempts"] = 1
-
-    options = normalized["options"]
-    assert isinstance(options, list)
-    recommended_option_ids = [
-        str(option["id"]) for option in options if option["recommended"] is True
-    ]
-    recommended_option_id = _optional_v2_bounded_string(
-        value["recommended_option_id"],
-        "recommended_option_id",
-        max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
-    )
-    recommended_action = _optional_v2_bounded_string(
-        value["recommended_action"],
-        "recommended_action",
-        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
-    )
-    recommended_answer = normalized["recommended_answer"]
-    if options:
-        if len(recommended_option_ids) != 1:
-            raise BlockedDecisionError(
-                "choice decisions require exactly one recommended option"
-            )
-        if recommended_option_id != recommended_option_ids[0]:
-            raise BlockedDecisionError(
-                "recommended_option_id must identify the recommended option"
-            )
-        if recommended_answer is not None or recommended_action is not None:
-            raise BlockedDecisionError(
-                "choice recommendations cannot include free-text metadata"
-            )
-    elif recommended_answer is not None:
-        if recommended_option_id is not None or recommended_action is not None:
-            raise BlockedDecisionError(
-                "automatic free text cannot include a choice target or action"
-            )
-    elif recommended_option_id is not None or recommended_action is None:
-        raise BlockedDecisionError(
-            "human-only free text requires a recommended_action"
-        )
-
-    automatic_eligible = value["automatic_eligible"]
-    if type(automatic_eligible) is not bool:
-        raise BlockedDecisionError("automatic_eligible must be a boolean")
-    if automatic_eligible and recommended_option_id is None and recommended_answer is None:
-        raise BlockedDecisionError(
-            "automatic_eligible requires a recommended option or answer"
-        )
-    if normalized["status"] in {"pending", "resolving"} and not automatic_eligible:
-        raise BlockedDecisionError(
-            "pending and resolving decisions require automatic_eligible"
-        )
-    recommendation_rationale = _required_v2_bounded_string(
-        value["recommendation_rationale"],
-        "recommendation_rationale",
-        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
-    )
-    recommendation_confidence = value["recommendation_confidence"]
-    if (
-        not isinstance(recommendation_confidence, str)
-        or recommendation_confidence not in _RECOMMENDATION_CONFIDENCES
-    ):
-        raise BlockedDecisionError(
-            "recommendation_confidence must be high, medium, or low"
-        )
-    recommendation_authority = value["recommendation_authority"]
-    if (
-        not isinstance(recommendation_authority, str)
-        or recommendation_authority not in _RECOMMENDATION_AUTHORITIES
-    ):
-        raise BlockedDecisionError("recommendation_authority is not supported")
-    recommendation_evidence = _validate_v3_recommendation_evidence(
-        value["recommendation_evidence"]
-    )
-    if options or recommended_answer is not None:
-        if not recommendation_evidence:
-            raise BlockedDecisionError(
-                "prepared recommendations require recommendation_evidence"
-            )
-    elif recommendation_evidence:
-        raise BlockedDecisionError(
-            "human-only free text cannot retain recommendation_evidence"
-        )
-    try:
-        validate_human_input_prompt_request_payload(
-            {
-                "decision_id": normalized["id"],
-                "source_kind": normalized["source_kind"],
-                "producer_id": normalized["producer_id"],
-                "source_phase": normalized["source_phase"],
-                "reason_code": normalized["reason_code"],
-                "classification": normalized["classification"],
-                "question": normalized["question"],
-                "options": options,
-                "recommended_answer": recommended_answer,
-                "recommended_option_id": recommended_option_id,
-                "recommended_action": recommended_action,
-                "automatic_eligible": automatic_eligible,
-                "recommendation_rationale": recommendation_rationale,
-                "recommendation_confidence": recommendation_confidence,
-                "recommendation_authority": recommendation_authority,
-                "recommendation_evidence": recommendation_evidence,
-                "risk_level": normalized["risk_level"],
-            }
-        )
-    except HumanInputPolicyError as exc:
-        raise BlockedDecisionError(str(exc)) from exc
-
-    resolution_rationale = _optional_v2_bounded_string(
-        value["resolution_rationale"],
-        "resolution_rationale",
-        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
-    )
-    resolution_confidence = value["resolution_confidence"]
-    if (
-        resolution_confidence is not None
-        and (
-            not isinstance(resolution_confidence, str)
-            or resolution_confidence not in _RECOMMENDATION_CONFIDENCES
-        )
-    ):
-        raise BlockedDecisionError(
-            "resolution_confidence must be high, medium, low, or null"
-        )
-    recommendation_followed = value["recommendation_followed"]
-    if recommendation_followed is not None and type(recommendation_followed) is not bool:
-        raise BlockedDecisionError("recommendation_followed must be a boolean or null")
-    override_reason = _optional_v2_bounded_string(
-        value["override_reason"],
-        "override_reason",
-        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
-    )
-
-    status = normalized["status"]
-    if status != "resolved":
-        if any(
-            item is not None
-            for item in (
-                resolution_rationale,
-                resolution_confidence,
-                recommendation_followed,
-                override_reason,
-            )
-        ):
-            raise BlockedDecisionError(
-                "unresolved decisions cannot record resolution audit metadata"
-            )
-    else:
-        resolved_by = normalized["resolved_by"]
-        selected = normalized["selected_option_id"]
-        answer = normalized["answer_text"]
-        recommendation_target = recommended_option_id or recommended_answer
-        selected_target = selected or answer
-        if recommended_action is not None:
-            expected_followed: bool | None = None
-        else:
-            expected_followed = selected_target == recommendation_target
-        if recommendation_followed is not expected_followed:
-            raise BlockedDecisionError(
-                "recommendation_followed does not match the sealed recommendation"
-            )
-        if resolved_by in {"semi", "COMMANDER"}:
-            if not automatic_eligible:
-                raise BlockedDecisionError(
-                    "automatic resolution requires automatic_eligible"
-                )
-            if resolution_rationale is None or resolution_confidence is None:
-                raise BlockedDecisionError(
-                    "automatic resolution requires rationale and confidence"
-                )
-            if recommendation_followed is False and override_reason is None:
-                raise BlockedDecisionError(
-                    "automatic recommendation override requires override_reason"
-                )
-            if recommendation_followed is True and override_reason is not None:
-                raise BlockedDecisionError(
-                    "followed recommendations cannot record override_reason"
-                )
-        elif override_reason is not None:
-            raise BlockedDecisionError(
-                "human resolutions cannot record override_reason"
-            )
-        if resolved_by == "user" and (
-            (resolution_rationale is None) != (resolution_confidence is None)
-        ):
-            raise BlockedDecisionError(
-                "human resolution rationale and confidence must both be set or null"
-            )
-
-    normalized.update(
-        {
-            "recommended_option_id": recommended_option_id,
-            "recommended_action": recommended_action,
-            "automatic_eligible": automatic_eligible,
-            "recommendation_rationale": recommendation_rationale,
-            "recommendation_confidence": recommendation_confidence,
-            "recommendation_authority": recommendation_authority,
-            "recommendation_evidence": recommendation_evidence,
-            "resolution_rationale": resolution_rationale,
-            "resolution_confidence": resolution_confidence,
-            "recommendation_followed": recommendation_followed,
-            "override_reason": override_reason,
-        }
-    )
-    return normalized
-
-
 def validate_blocked_decision(value: object) -> dict[str, object]:
     """Dispatch blocked-decision validation by its exact integer schema version."""
     if not isinstance(value, Mapping):
@@ -738,8 +409,6 @@ def validate_blocked_decision(value: object) -> dict[str, object]:
         return deepcopy(dict(value))
     if schema_version == SCHEMA_V2:
         return validate_blocked_decision_v2(value)
-    if schema_version == SCHEMA_V3:
-        return validate_blocked_decision_v3(value)
     raise BlockedDecisionError("unsupported blocked decision schema")
 
 
@@ -794,83 +463,6 @@ def build_blocked_decision_v2(
             "resolved_at": resolved_at,
         }
     )
-
-
-def build_blocked_decision_v3(
-    *,
-    prepared: PreparedHumanInput,
-    decision_id: str,
-    status: str,
-    autonomy_mode: str,
-    attempts: int = 0,
-    created_at: str | None = None,
-    **resolution_fields: object,
-) -> dict[str, object]:
-    """Build the canonical fresh schema-v3 decision postimage."""
-    if type(prepared) is not PreparedHumanInput or prepared.schema_version != 2:
-        raise BlockedDecisionError("schema-v3 decisions require prepared human input")
-    unsupported = set(resolution_fields) - _V3_BUILD_RESOLUTION_FIELDS
-    if unsupported:
-        raise BlockedDecisionError(
-            "unsupported blocked decision resolution field: "
-            f"{sorted(unsupported)[0]}"
-        )
-    decision: dict[str, object] = {
-        "schema_version": SCHEMA_V3,
-        "id": decision_id,
-        "status": status,
-        "source_kind": prepared.source_kind,
-        "producer_id": prepared.producer_id,
-        "source_phase": prepared.phase_id,
-        "reason_code": prepared.reason_code,
-        "classification": prepared.classification,
-        "question": prepared.question,
-        "options": [
-            {
-                "id": option.id,
-                "label": option.label,
-                "description": option.description,
-                "recommended": option.recommended,
-                "risk_level": option.risk_level,
-                "next_phase": option.next_phase,
-                "outcome": option.outcome,
-            }
-            for option in prepared.options
-        ],
-        "recommended_answer": prepared.recommended_answer,
-        "risk_level": prepared.risk_level,
-        "resolution_handler": prepared.resolution_handler,
-        "autonomy_mode": autonomy_mode,
-        "source_state_revision": prepared.source_state_revision,
-        "selected_option_id": None,
-        "answer_text": None,
-        "resolved_by": None,
-        "attempts": attempts,
-        "failure_code": None,
-        "created_at": created_at or _utc_now(),
-        "resolved_at": None,
-        "recommended_option_id": prepared.recommended_option_id,
-        "recommended_action": prepared.recommended_action,
-        "automatic_eligible": prepared.automatic_eligible,
-        "recommendation_rationale": prepared.recommendation_rationale,
-        "recommendation_confidence": prepared.recommendation_confidence,
-        "recommendation_authority": prepared.recommendation_authority,
-        "recommendation_evidence": [
-            {
-                "id": evidence.id,
-                "kind": evidence.kind,
-                "reference": evidence.reference,
-                "digest": evidence.digest,
-            }
-            for evidence in prepared.recommendation_evidence
-        ],
-        "resolution_rationale": None,
-        "resolution_confidence": None,
-        "recommendation_followed": None,
-        "override_reason": None,
-    }
-    decision.update(resolution_fields)
-    return validate_blocked_decision_v3(decision)
 
 
 def normalize_escalation_options(options: object) -> list[dict[str, Any]]:
@@ -974,10 +566,7 @@ def build_blocked_decision(
 def ensure_blocked_decision(state: dict[str, Any]) -> None:
     """Attach typed decision metadata to a blocked escalation state in-place."""
     existing = state.get("blocked_decision")
-    if (
-        isinstance(existing, Mapping)
-        and existing.get("schema_version") in {SCHEMA_V2, SCHEMA_V3}
-    ):
+    if isinstance(existing, Mapping) and existing.get("schema_version") == SCHEMA_V2:
         return
     if state.get("status") != "blocked":
         return

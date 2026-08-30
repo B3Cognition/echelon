@@ -242,61 +242,6 @@ def test_schema_v2_certificate_binds_authoritative_sage_pass(
     )
 
 
-def test_schema_v2_certificate_accepts_current_passing_advisories(
-    tmp_path: Path,
-) -> None:
-    """A SAGE PASS may retain explicitly non-actionable handoff findings."""
-    state, spec_path, _report_path = _quality_state(tmp_path)
-    issues_path = _write_passing_sage_issues(spec_path)
-    issues_path.write_text(
-        issues_path.read_text(encoding="utf-8")
-        .replace("- **LOW:** 0", "- **LOW:** 1")
-        .replace(
-            "No issues found.\n",
-            """### ISS-ADVISORY: Non-blocking handoff
-- **Severity:** LOW
-- **Type:** incompleteness
-- **Description:** A future specialist may refine the test observation.
-- **Affected artifact:** spec.md
-- **Affected section:** Requirements
-- **Evidence:** Certified gates pass; no amendment is needed.
-- **Recommendation:** Carry this to test planning.
-- **Responsible agent:** HOW
-- **Action Required:** None — advisory. No amendment requested.
-""",
-        ),
-        encoding="utf-8",
-    )
-    snapshot = quality_module.load_authoritative_sage_evidence_snapshot(
-        issues_path,
-        project_root=tmp_path,
-    )
-    assessment = quality_module.AuthoritativeQualityAssessment(
-        numeric_pass=True,
-        provider_verdict="PASS",
-        sage_verdict="PASS",
-        authoritative_issues=tuple(dict(issue) for issue in snapshot.issues),
-        exact_routes=(),
-        ordinary_pass=True,
-        proportional_failure=False,
-        hard_blockers=(),
-        sage_evidence=snapshot,
-    )
-
-    certificate = build_phase1_quality_certificate(
-        state,
-        project_root=tmp_path,
-        authoritative_sage_assessment=assessment,
-    )
-
-    assert certificate is not None
-    state["spec_quality_certificate"] = certificate
-    assert has_current_phase1_quality_certificate(
-        state,
-        project_root=tmp_path,
-    )
-
-
 def test_schema_v2_certificate_rejects_float_schema_version(
     tmp_path: Path,
 ) -> None:

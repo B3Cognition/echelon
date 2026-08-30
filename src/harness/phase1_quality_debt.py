@@ -18,13 +18,12 @@ from typing import Mapping
 from harness.blocked_decision import (
     BlockedDecisionError,
     is_valid_decision_id,
-    validate_blocked_decision,
+    validate_blocked_decision_v2,
 )
 from echelon.strict_json import loads_strict_json
 from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateIntegrityError,
-    is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
     load_quality_candidate_manifest,
     require_current_authoritative_sage_evidence_snapshot,
@@ -256,15 +255,11 @@ def _validate_debt_decision(
     resolved: bool,
 ) -> dict[str, object]:
     try:
-        decision = validate_blocked_decision(value)
+        decision = validate_blocked_decision_v2(value)
     except (BlockedDecisionError, TypeError, ValueError) as exc:
         raise QualityCandidateIntegrityError(
             "quality-debt decision is invalid"
         ) from exc
-    if decision.get("schema_version") not in {2, 3}:
-        raise QualityCandidateIntegrityError(
-            "quality-debt decision is invalid"
-        )
     option_ids = {
         option.get("id")
         for option in decision["options"]
@@ -313,32 +308,15 @@ def _resolved_debt_decision(
     resolved_by: str,
     resolved_at: str,
 ) -> dict[str, object]:
-    if isinstance(decision, Mapping) and decision.get("status") == "resolved":
-        resolved = _validate_debt_decision(
-            decision,
-            decision_id=decision_id,
-            resolved_by=resolved_by,
-            resolved=True,
-        )
-        if resolved.get("resolved_at") != resolved_at:
-            raise QualityCandidateIntegrityError(
-                "quality-debt resolution timestamp changed"
-            )
-        _utc_timestamp(resolved_at)
-        return resolved
     active = _validate_debt_decision(
         decision,
         decision_id=decision_id,
         resolved_by=resolved_by,
         resolved=False,
     )
-    if active["schema_version"] != 2:
-        raise QualityCandidateIntegrityError(
-            "schema-v3 quality debt requires a canonical resolved decision"
-        )
     _utc_timestamp(resolved_at)
     try:
-        resolved = validate_blocked_decision(
+        resolved = validate_blocked_decision_v2(
             {
                 **active,
                 "status": "resolved",
@@ -453,9 +431,7 @@ def _verify_restored_candidate(
             "quality-debt candidate contains a hard SAGE blocker"
         )
     issues_by_id = {
-        issue["issue_id"]: issue
-        for issue in authoritative_issues
-        if is_actionable_sage_issue(issue)
+        issue["issue_id"]: issue for issue in authoritative_issues
     }
     route_issue_ids = [
         str(route.get("issue_id") or "")
@@ -1433,18 +1409,18 @@ def _current_quality_debt_authorization(
             "quality-debt candidate state linkage changed"
         )
 
-    resolved_snapshot = authorization.get("resolved_decision")
     decision = _validate_debt_decision(
-        resolved_snapshot,
+        state.get("blocked_decision"),
         decision_id=str(authorization["decision_id"]),
         resolved_by=str(authorization["resolved_by"]),
         resolved=True,
     )
+    resolved_snapshot = authorization.get("resolved_decision")
     if (
         not isinstance(resolved_snapshot, Mapping)
-        or decision != dict(resolved_snapshot)
         or _canonical_sha256(dict(resolved_snapshot))
         != authorization["resolved_decision_sha256"]
+        or decision != dict(resolved_snapshot)
     ):
         raise QualityCandidateIntegrityError(
             "quality-debt resolved decision changed"

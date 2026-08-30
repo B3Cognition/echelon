@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-import harness.human_input as human_input
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_decision_resolution_result,
@@ -23,24 +22,6 @@ OPTIONS = (
         outcome="approved",
     ),
 )
-
-
-def test_applied_resolution_retains_complete_nullable_audit() -> None:
-    resolution = human_input.AppliedHumanInputResolution(
-        selected_option_id="approve",
-        answer_text=None,
-        resolved_by="COMMANDER",
-        rationale="The sealed recommendation is supported by the evidence.",
-        confidence="low",
-    )
-
-    assert resolution.selected_option_id == "approve"
-    assert resolution.answer_text is None
-    assert resolution.resolved_by == "COMMANDER"
-    assert resolution.rationale == (
-        "The sealed recommendation is supported by the evidence."
-    )
-    assert resolution.confidence == "low"
 
 
 def _decision_resolution_payload(*, decision: dict[str, object] | None = None) -> dict[str, object]:
@@ -67,24 +48,6 @@ def test_decision_resolution_accepts_the_exact_choice_envelope() -> None:
     assert resolution.answer_text is None
     assert resolution.rationale == "The declared plan is internally consistent."
     assert resolution.confidence == "high"
-
-
-def test_decision_resolution_accepts_a_4096_character_rationale() -> None:
-    rationale = "r" * 4_096
-
-    resolution = validate_decision_resolution_result(
-        _decision_resolution_payload(
-            decision={
-                "selected_option_id": "approve",
-                "answer_text": None,
-                "rationale": rationale,
-                "confidence": "high",
-            }
-        ),
-        options=OPTIONS,
-    )
-
-    assert resolution.rationale == rationale
 
 
 @pytest.mark.parametrize(
@@ -217,7 +180,7 @@ def test_decision_resolution_rejects_mixed_type_extra_field_names(
                 decision={
                     "selected_option_id": "approve",
                     "answer_text": None,
-                    "rationale": "r" * 4_097,
+                    "rationale": "r" * 2_001,
                     "confidence": "high",
                 }
             ),

@@ -13,7 +13,6 @@ Read and include in the subagent prompt:
 - `spec.md` (acceptance criteria)
 - `contracts/`
 - `quality-gates.md` — specifically the "Testability Sub-Metrics" section (hard_constraint_ratio, constraint_density, negative_space_coverage) for testability-informed test strategy
-- `issues.md`, `tasks.md`, and `dependencies.md` when present from a prior WHY3 / PLAN pass
 - `.echelon/runtime/templates/test-strategy-template.md`
 - `.echelon/runtime/templates/test-architecture-template.md`
 - `.echelon/runtime/templates/coverage-map-template.md`
@@ -31,9 +30,8 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are SENTINEL. Read subagents/echelon.sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger. On the initial dispatch, PLAN has not run yet, so return `task_ids: []` when `tasks.md` is absent; ORCHESTRATOR adds task ownership in the next phase. On a later repair dispatch, preserve exact existing task IDs when the canonical task plan supplies them.
+  You are SENTINEL. Read subagents/echelon.sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger. PLAN has not run yet, so always return `task_ids: []`; ORCHESTRATOR adds task ownership in the next phase.
   Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to echelon.cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
-  When re-dispatched from WHY3, treat current `issues.md` as repair authority. Read current `tasks.md` and `dependencies.md` when they exist, apply every SENTINEL-owned correction to `test-strategy.md`, `test-architecture.md`, or `coverage-map.md`, and align all referenced paths/task IDs with those canonical planning artifacts. Do not repeat an issue as unresolved after its cited evidence has been corrected.
   </instructions>
   ```
 

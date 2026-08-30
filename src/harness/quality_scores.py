@@ -65,22 +65,6 @@ def resolve_quality_gate_thresholds(
     return resolved
 
 
-def effective_quality_gate_thresholds(
-    thresholds: dict[str, float],
-    feature_policy: object,
-) -> dict[str, float]:
-    """Return per-feature effective gates without mutating workspace defaults."""
-    effective = dict(thresholds)
-    if not isinstance(feature_policy, dict):
-        return effective
-    quality = feature_policy.get("quality")
-    if not isinstance(quality, dict):
-        return effective
-    if quality.get("behavioral") == "waived_for_feature":
-        effective.pop("behavioral", None)
-    return effective
-
-
 def render_quality_gate_context(gates: dict[str, Any]) -> str:
     """Render the authoritative gate block injected into agent prompts."""
     lines = [

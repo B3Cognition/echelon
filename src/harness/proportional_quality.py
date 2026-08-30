@@ -392,7 +392,6 @@ def _parse_authoritative_sage_assessment_bytes(
                 "title": heading.group(2).strip(),
                 "severity": severity_matches[0],
                 "type": type_matches[0],
-                "action_required": required_fields["Action Required"][0],
             }
         )
     observed = {
@@ -404,24 +403,6 @@ def _parse_authoritative_sage_assessment_bytes(
             "authoritative SAGE issue counts are contradictory"
         )
     return verdicts[0], tuple(issues)
-
-
-def is_actionable_sage_issue(issue: Mapping[str, object]) -> bool:
-    """Return whether an authoritative SAGE issue requires follow-up.
-
-    The issues template reserves ``None`` and ``None — advisory…`` for
-    explicit advisory findings. Treat a missing or malformed field as
-    actionable so a degraded artifact cannot silently bypass the repair-route
-    contract.
-    """
-    action_required = issue.get("action_required")
-    if not isinstance(action_required, str):
-        return True
-    return re.fullmatch(
-        r"none(?:\s*(?:—|--|-)\s*advisory\b.*)?",
-        action_required.strip(),
-        flags=re.IGNORECASE,
-    ) is None
 
 
 def load_authoritative_sage_issues(
