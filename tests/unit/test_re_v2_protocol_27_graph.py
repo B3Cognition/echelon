@@ -23,6 +23,7 @@ def _inputs(
     partial_sources: frozenset[str] = frozenset(),
     policy_seed: str = "policy",
     source_ids: tuple[str, ...] = ("api", "web"),
+    workspace_executor_contract_hash: str | None = None,
 ):
     from harness.re_v2.protocol_27.graph import (
         SynthesisGraphInputsV1,
@@ -85,6 +86,7 @@ def _inputs(
         policy_catalog=policy,
         response_schema_hashes=response_hashes,
         context_policy_hash=digest("context-policy"),
+        workspace_executor_contract_hash=workspace_executor_contract_hash,
     )
 
 
@@ -131,6 +133,41 @@ def test_graph_has_granular_source_domain_and_workspace_nodes() -> None:
     assert "workspace-relationships" in kinds
     assert "workspace-contracts" in kinds
     assert len(graph.public_paths) == len(graph.required_nodes) + 2
+
+
+@pytest.mark.unit
+def test_workspace_renderer_upgrade_preserves_all_lower_work_items() -> None:
+    from harness.re_v2.protocol_27.graph import build_synthesis_graph
+
+    before = build_synthesis_graph(_inputs())
+    workspace_executor = digest("workspace-renderer-v2")
+    after = build_synthesis_graph(
+        _inputs(workspace_executor_contract_hash=workspace_executor)
+    )
+
+    before_by_scope = {
+        (node.artifact_kind, node.scope.kind, node.scope.source_id, node.scope.workspace_domain_id): node
+        for node in before.required_nodes
+    }
+    after_by_scope = {
+        (node.artifact_kind, node.scope.kind, node.scope.source_id, node.scope.workspace_domain_id): node
+        for node in after.required_nodes
+    }
+    lower_keys = {
+        key for key in before_by_scope if key[1] != "workspace"
+    }
+    assert all(before_by_scope[key] == after_by_scope[key] for key in lower_keys)
+    assert all(
+        template.executor_contract_hash == workspace_executor
+        for template in after.templates
+        if template.scope_kind == "workspace"
+    )
+    assert all(
+        template.executor_contract_hash
+        == after.policy_catalog.implementation_authority.executor_contract_hash
+        for template in after.templates
+        if template.scope_kind != "workspace"
+    )
 
 
 @pytest.mark.unit

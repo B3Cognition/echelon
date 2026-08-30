@@ -7,7 +7,10 @@ import shutil
 import pytest
 from typer.testing import CliRunner
 
-from harness.re_v2.canonical import canonical_json_bytes
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.protocol_22.model import ArtifactKeyV2, ArtifactScope
+from harness.re_v2.protocol_24.artifacts import L2SourceRootEnvelopeV1
+from harness.re_v2.protocol_24.source_root_v2 import L2SourceBaselineRootV2
 from harness.re_v2.protocol_27.model import (
     PartialSourceAcceptanceV1,
     RunManifestV6,
@@ -31,6 +34,42 @@ def _completed_protocol_27_parent(tmp_path: Path) -> tuple[Path, RunManifestV6]:
         lambda: _ScriptedProvider(),  # type: ignore[arg-type]
     )
     return run_dir, context.inputs.manifest
+
+
+@pytest.mark.unit
+def test_synthesis_authority_decodes_v2_source_root_with_no_domains() -> None:
+    from harness.re_v2.protocol_27.authority import _source_root_decoder
+
+    overview_hash = content_digest(b"overview")
+    key = ArtifactKeyV2(
+        identity_schema_version=2,
+        scope=ArtifactScope(source_id="deployment", domain_key=None, content_id=None),
+        partition_id=content_digest(b"partition"),
+        artifact_kind="source-baseline-root",
+        layer="L2",
+        producer_protocol_version="source-baseline-root-v2",
+        layer_policy_hash=content_digest(b"policy"),
+        dependency_hashes=(overview_hash,),
+    )
+    payload = canonical_json_bytes(
+        L2SourceBaselineRootV2(
+            schema_version=1,
+            artifact=L2SourceRootEnvelopeV1(
+                artifact_kind=key.artifact_kind,
+                layer=key.layer,
+                scope=key.scope,
+                partition_id=key.partition_id,
+                layer_policy_hash=key.layer_policy_hash,
+                dependency_hashes=key.dependency_hashes,
+            ),
+            overview_artifact_hash=overview_hash,
+            domains=(),
+        ).to_json_dict()
+    )
+
+    root = _source_root_decoder(key)(payload)
+
+    assert root.domains == ()
 
 
 @pytest.mark.unit

@@ -574,7 +574,7 @@ def _build_input_closure(
     implementation = inputs.graph.policy_catalog.implementation_authority
     implementation_hashes = {
         implementation.producer_authority_hash,
-        implementation.executor_contract_hash,
+        *(item.executor_contract_hash for item in inputs.graph.templates),
         implementation.verifier_authority_hash,
     }
     context_hashes = {inputs.graph.context_policy_hash}
@@ -812,7 +812,7 @@ def _expect_semantic_authority_roles(
         "context-policy": {graph.context_policy_hash},
         "implementation-authority": {
             implementation.producer_authority_hash,
-            implementation.executor_contract_hash,
+            *(item.executor_contract_hash for item in graph.templates),
             implementation.verifier_authority_hash,
         },
     }

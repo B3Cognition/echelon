@@ -20,6 +20,10 @@ from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.protocol_25.materialization import materialize_accepted_l3
 from harness.re_v2.protocol_25.recovery import recover_protocol_25_run
 from harness.re_v2.protocol_24.artifacts import L2SourceBaselineRootV1
+from harness.re_v2.protocol_24.source_root_v2 import (
+    L2SourceBaselineRootV2,
+    SOURCE_ROOT_V2_PROTOCOL_VERSION,
+)
 from harness.re_v2.protocol_26.authority import resolve_run_authority
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
@@ -34,6 +38,21 @@ from .model import (
 
 class Protocol27AuthorityError(RuntimeError):
     """Raised when a synthesis parent is mutable, incomplete, or ambiguous."""
+
+
+def _source_root_decoder(key: object) -> Callable[[bytes], object]:
+    """Select the canonical source-root schema pinned by artifact authority."""
+    layer = getattr(key, "layer", None)
+    producer_version = getattr(key, "producer_protocol_version", None)
+    if layer == "L1":
+        decoder = SourceBaselineRootV1.from_json_dict
+    elif layer == "L2" and producer_version == SOURCE_ROOT_V2_PROTOCOL_VERSION:
+        decoder = L2SourceBaselineRootV2.from_json_dict
+    elif layer == "L2":
+        decoder = L2SourceBaselineRootV1.from_json_dict
+    else:
+        raise Protocol27AuthorityError("source root authority has unsupported layer")
+    return lambda payload: load_canonical_object(payload, decoder)
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,14 +434,7 @@ def _resolve_layer_parent(
                 f"parent source root has no accepted overview: {source_id}"
             )
         payload = context.object_store.read_blob(receipt.artifact_hash)
-        root_value = load_canonical_object(
-            payload,
-            (
-                SourceBaselineRootV1.from_json_dict
-                if layer == "L1"
-                else L2SourceBaselineRootV1.from_json_dict
-            ),
-        )
+        root_value = _source_root_decoder(receipt.artifact_key)(payload)
         if root_value.overview_artifact_hash != overview_receipt.artifact_hash:
             raise Protocol27AuthorityError(
                 f"source root overview dependency mismatch: {source_id}"

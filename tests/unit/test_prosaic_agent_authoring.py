@@ -133,6 +133,12 @@ def test_re_synthesizer_has_neutral_bounded_prosaic_contract() -> None:
         and len([line for line in section.splitlines() if line.startswith("NEVER ")]) == 1
         for section in _rule_sections(prompt.body)
     )
+    assert (
+        "set `authority_id` to the exact `object_hash` for `authority-object` "
+        "evidence and the exact `artifact_hash` for `dependency-artifact` evidence"
+        in prompt.body
+    )
+    assert "NEVER substitute `artifact_key_id`" in prompt.body
     assert len(_rule_sections(prompt.body)) >= 6
     assert "exactly `synthesis.json`" in prompt.body
     assert "live source repositories" in prompt.body

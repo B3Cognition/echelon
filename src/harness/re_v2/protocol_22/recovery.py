@@ -1413,6 +1413,36 @@ def _validate_existing_receipt_events(
 ) -> tuple[set[str], set[str]]:
     adopted_assessments: set[str] = set()
     adopted_acceptances: set[str] = set()
+    parent_bundle = getattr(
+        getattr(context, "inputs", None),
+        "parent_authority_bundle",
+        None,
+    )
+    parent_bundle_id = None if parent_bundle is None else parent_bundle.identity
+    parent_authorities = (
+        {}
+        if parent_bundle is None
+        else {item.identity: item for item in parent_bundle.artifacts}
+    )
+    checkpoint_by_work: dict[str, object] = {}
+    checkpoint_selection_id: str | None = None
+    if any(event.type == "checkpoint_artifact_adopted" for event in events):
+        from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+        from harness.re_v2.protocol_26.model import RunManifestV5
+        from harness.re_v2.run_store import load_run_manifest
+
+        outer = load_run_manifest(context.paths.root.parent)
+        if not isinstance(outer, RunManifestV5):
+            raise Protocol22RecoveryError(
+                "checkpoint adoption requires schema-5 authority"
+            )
+        frozen = load_protocol_26_inputs(context.paths, outer)
+        checkpoint_selection_id = frozen.checkpoint_selection.identity
+        checkpoint_by_work = {
+            selected.expected_work_item_id: selected
+            for selected in frozen.checkpoint_selection.selected
+            if selected.source_kind == "workspace_checkpoint"
+        }
     for event in events:
         payload = event.payload
         if event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}:
@@ -1422,40 +1452,20 @@ def _validate_existing_receipt_events(
                 payload["adopted_artifact_authority"]
             )
             if event.type == "artifact_adopted":
-                bundle = getattr(context.inputs, "parent_authority_bundle", None)
                 if (
-                    bundle is None
-                    or payload["parent_authority_bundle_hash"] != bundle.identity
-                    or authority not in bundle.artifacts
+                    parent_bundle_id is None
+                    or payload["parent_authority_bundle_hash"] != parent_bundle_id
+                    or parent_authorities.get(authority.identity) != authority
                 ):
                     raise Protocol22RecoveryError(
                         "artifact_adopted is outside immutable parent authority"
                     )
             else:
-                from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
-                from harness.re_v2.protocol_26.model import RunManifestV5
-                from harness.re_v2.run_store import load_run_manifest
-
-                outer = load_run_manifest(context.paths.root.parent)
-                if not isinstance(outer, RunManifestV5):
-                    raise Protocol22RecoveryError(
-                        "checkpoint adoption requires schema-5 authority"
-                    )
-                frozen = load_protocol_26_inputs(context.paths, outer)
-                expected = next(
-                    (
-                        selected
-                        for selected in frozen.checkpoint_selection.selected
-                        if selected.source_kind == "workspace_checkpoint"
-                        and selected.expected_work_item_id == payload["work_item_id"]
-                    ),
-                    None,
-                )
+                expected = checkpoint_by_work.get(str(payload["work_item_id"]))
                 if (
                     expected is None
-                    or expected.to_event_payload(
-                        frozen.checkpoint_selection.identity
-                    )
+                    or checkpoint_selection_id is None
+                    or expected.to_event_payload(checkpoint_selection_id)
                     != event.to_json_dict()["payload"]
                 ):
                     raise Protocol22RecoveryError(

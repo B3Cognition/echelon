@@ -424,6 +424,12 @@ def test_frozen_child_is_origin_independent_and_corruption_is_terminal(
     assert adopt_synthesis_checkpoints(loaded) == report
     assert loaded.paths.events.read_bytes() == event_bytes
 
+    # While the original checkpoint authority is still available, the child
+    # must not re-export adopted receipts as a second, much larger prefix chain.
+    # That keeps inventory reconstruction linear across repeated continuations.
+    forwarded = reconstruct_synthesis_checkpoints(tmp_path)
+    assert child_dir.name not in forwarded.by_origin
+
     # The adopted child replays without its origin or any workspace cache.
     origin_dir = origin_inputs.paths.root.parent
     renamed = tmp_path / "detached-origin"

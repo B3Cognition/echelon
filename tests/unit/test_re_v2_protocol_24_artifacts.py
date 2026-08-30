@@ -42,6 +42,12 @@ from harness.re_v2.protocol_24.artifacts import (
     parse_l2_authorial_candidate,
 )
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    L2SourceBaselineRootV2,
+    Protocol24SourceRootRuntimeV2,
+    build_l2_source_baseline_root_v2,
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_24_fixtures import manifest_v3
@@ -66,13 +72,17 @@ class _LooseSnapshot:
 
 
 def _l2_inputs(fixture: object) -> ValidatedProtocol22Inputs:
+    implementation = digest("deepening-implementation")
     return ValidatedProtocol22Inputs(
         workspace_partition=fixture.inputs.workspace_partition,
         artifact_policy=build_deepening_v1_policy_catalog(),
-        executor_contract=build_deepening_executor_catalog(
-            fixture.inputs.executor_contract,
-            digest("deepener-agent"),
-            digest("deepening-implementation"),
+        executor_contract=upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                fixture.inputs.executor_contract,
+                digest("deepener-agent"),
+                implementation,
+            ),
+            digest("source-root-v2-implementation"),
         ),
         immutable_objects={},
     )
@@ -568,14 +578,102 @@ def test_l2_source_root_binds_only_selected_domain_baselines() -> None:
     )
 
     root = load_canonical_object(
-        build_l2_source_baseline_root(
+        build_l2_source_baseline_root_v2(
             item,
             dependencies,
             inputs.workspace_partition,
         ),
-        L2SourceBaselineRootV1.from_json_dict,
+        L2SourceBaselineRootV2.from_json_dict,
     )
 
     assert root.artifact.layer == "L2"
     assert root.overview_artifact_hash == content_digest(overview)
     assert [entry.domain_key for entry in root.domains] == [domain_key]
+
+
+@pytest.mark.unit
+def test_l2_source_root_supports_selection_with_no_domains() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    overview = b'{"selected":"overview"}'
+    item, accepted = _l2_item(
+        inputs,
+        "source-baseline-root",
+        (("source-overview", overview),),
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={
+            "source_overview": accepted[digest("source-overview")],
+        },
+        payloads_by_hash={content_digest(overview): overview},
+    )
+
+    root = load_canonical_object(
+        build_l2_source_baseline_root_v2(
+            item,
+            dependencies,
+            inputs.workspace_partition,
+        ),
+        L2SourceBaselineRootV2.from_json_dict,
+    )
+
+    assert root.overview_artifact_hash == content_digest(overview)
+    assert root.domains == ()
+
+
+@pytest.mark.unit
+def test_source_root_v2_upgrade_preserves_every_other_executor_authority() -> None:
+    parent = _domain_fixture()
+    legacy = build_deepening_executor_catalog(
+        parent.inputs.executor_contract,
+        digest("deepener-agent"),
+        digest("deepening-implementation"),
+    )
+
+    upgraded = upgrade_source_root_executor_catalog_v2(
+        legacy,
+        digest("source-root-v2-implementation"),
+    )
+
+    for family in (
+        "compact-deepening",
+        "targeted-evidence-pack",
+        "deepening-context-bundle",
+    ):
+        assert upgraded.entry_for(family) == legacy.entry_for(family)
+    root = upgraded.entry_for("deepening-source-root")
+    assert root != legacy.entry_for("deepening-source-root")
+    assert root.producer_protocol_version == "source-baseline-root-v2"
+    assert root.executor_implementation_digest == digest(
+        "source-root-v2-implementation"
+    )
+    assert root.verifier.implementation_digest == digest(
+        "source-root-v2-implementation"
+    )
+
+
+@pytest.mark.unit
+def test_source_root_v2_runtime_produces_and_certifies_empty_domain_root() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    overview = b'{"selected":"overview"}'
+    item, accepted = _l2_item(
+        inputs,
+        "source-baseline-root",
+        (("source-overview", overview),),
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={"source_overview": accepted[digest("source-overview")]},
+        payloads_by_hash={content_digest(overview): overview},
+    )
+    runtime = Protocol24SourceRootRuntimeV2(inputs)
+
+    payload = runtime.produce(item, dependencies)
+    receipt = runtime.certify_deterministic(item, payload, dependencies)
+
+    assert receipt.verdict == "accepted"
+    assert receipt.certification_key.artifact_hash == content_digest(payload)

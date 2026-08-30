@@ -514,7 +514,7 @@ def _render_human(document: Mapping[str, object]) -> str:
     counts = document["artifact_counts"]
     budget = document["budget"]
     lines = [
-        "RE V2 — PROTOCOL 2.4",
+        f"RE V2 — PROTOCOL {document['engine_protocol_version']}",
         f"run: {document['run_id']}",
         f"protocol: {document['engine_protocol_version']}",
         f"status: {document['status']}",
@@ -543,7 +543,8 @@ def _render_human(document: Mapping[str, object]) -> str:
         lines.append(
             f"source {source['source_id']}: "
             f"{domain_counts['complete']}/{domain_counts['selected']} selected domains complete; "
-            f"{domain_counts['intentionally_unselected']} intentionally unselected"
+            f"{domain_counts['intentionally_unselected']} intentionally unselected; "
+            f"source root {source['selection_relative_root']}"
         )
     for failure in document["failures"]["work_items"]:
         lines.append(

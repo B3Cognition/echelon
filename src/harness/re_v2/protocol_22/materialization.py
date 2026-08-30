@@ -321,11 +321,21 @@ def _validate_projection_payload(key: ArtifactKeyV2, payload: bytes) -> None:
                 L2CompactBaselineArtifactV1,
                 L2SourceBaselineRootV1,
             )
+            from harness.re_v2.protocol_24.source_root_v2 import (
+                L2SourceBaselineRootV2,
+                SOURCE_ROOT_V2_PROTOCOL_VERSION,
+            )
+
+            source_root_decoder = (
+                L2SourceBaselineRootV2.from_json_dict
+                if key.producer_protocol_version == SOURCE_ROOT_V2_PROTOCOL_VERSION
+                else L2SourceBaselineRootV1.from_json_dict
+            )
 
             value = load_canonical_object(
                 payload,
                 (
-                    L2SourceBaselineRootV1.from_json_dict
+                    source_root_decoder
                     if key.artifact_kind == "source-baseline-root"
                     else L2CompactBaselineArtifactV1.from_json_dict
                 ),

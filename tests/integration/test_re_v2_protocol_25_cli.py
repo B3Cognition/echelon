@@ -14,6 +14,9 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_24.model import ParentAuthorityBundleV1
 from harness.re_v2.protocol_24.model import SelectionScopeV1
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_25.adoption import (
     ParentSemanticAuthorityV1,
     Protocol25ParentCandidateV1,
@@ -58,10 +61,13 @@ def test_new_audit_preparation_layers_schema4_over_authenticated_parent(
     )
     deepener = b"authenticated deepener role\n"
     semantic_objects[content_digest(deepener)] = deepener
-    l2_executor = build_deepening_executor_catalog(
-        parent.inputs.executor_contract,
-        content_digest(deepener),
-        content_digest(b"protocol-2.4 implementation"),
+    l2_executor = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent.inputs.executor_contract,
+            content_digest(deepener),
+            content_digest(b"protocol-2.4 implementation"),
+        ),
+        content_digest(b"protocol-2.4 source root v2 implementation"),
     )
     executor = build_semantic_executor_catalog(
         l2_executor,
@@ -134,10 +140,13 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
     deepener = b"authenticated deepener role\n"
     semantic_objects[content_digest(deepener)] = deepener
     executor = build_semantic_executor_catalog(
-        build_deepening_executor_catalog(
-            parent.inputs.executor_contract,
-            content_digest(deepener),
-            content_digest(b"protocol-2.4 implementation"),
+        upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                parent.inputs.executor_contract,
+                content_digest(deepener),
+                content_digest(b"protocol-2.4 implementation"),
+            ),
+            content_digest(b"protocol-2.4 source root v2 implementation"),
         ),
         authorities,
         content_digest(b"protocol-2.5 semantic renderer"),

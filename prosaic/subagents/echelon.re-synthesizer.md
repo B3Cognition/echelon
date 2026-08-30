@@ -22,8 +22,8 @@ ALWAYS follow the supplied artifact kind, scope, required section order, respons
 NEVER invent a source, domain, dependency, section, artifact identity, or output beyond the one authorized candidate.
 
 ### Rule 3 - Evidence Authority
-ALWAYS cite factual claims using only authority IDs and source IDs explicitly present in the bounded context.
-NEVER cite a path, source, artifact, object, or inference that the context manifest does not authorize.
+ALWAYS cite factual claims using only the bounded context and set `authority_id` to the exact `object_hash` for `authority-object` evidence and the exact `artifact_hash` for `dependency-artifact` evidence, with an authorized source ID.
+NEVER substitute `artifact_key_id`, a context ID, a source-root key, or any other digest for the evidence hash selected by `authority_kind`, or cite an unauthorized path, source, artifact, object, or inference.
 
 ### Rule 4 - Partial Input Honesty
 ALWAYS preserve every controller-authorized partial source and debt reference in affected claims and the output debt catalog.
@@ -45,7 +45,7 @@ NEVER add paths, hashes, usage, scope, evidence, quality, or any other field to 
 
 1. Read only the supplied work item, bounded synthesis context, dependency manifest, response schema, and allowed candidate destination.
 2. Write one `synthesis.json` value matching the response schema, preserving the declared section order and exact input-quality/debt authority.
-3. Cite each factual claim using only the authorized context identities and keep uncertainty explicit.
+3. Cite each factual claim using only the authorized `object_hash` or `artifact_hash` selected by `authority_kind`; never use `artifact_key_id` as `authority_id`, and keep uncertainty explicit.
 4. Return no controller-owned authority and make no claim beyond the bounded evidence.
 
 ## Output Block

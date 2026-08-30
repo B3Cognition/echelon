@@ -13080,6 +13080,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     import harness.re_v2.protocol_24.artifacts as artifacts_module
     import harness.re_v2.protocol_24.controller as controller_module
     import harness.re_v2.protocol_24.runtime as runtime_module
+    import harness.re_v2.protocol_24.source_root_v2 as source_root_v2_module
     from harness.re_v2.canonical import canonical_json_bytes
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
@@ -13113,6 +13114,11 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     from harness.re_v2.protocol_24.inputs import load_protocol_24_inputs
     from harness.re_v2.protocol_24.model import RunManifestV3
     from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
+    from harness.re_v2.protocol_24.source_root_v2 import (
+        Protocol24SourceRootRuntimeV2,
+        SOURCE_ROOT_V2_ADAPTER_ID,
+        SOURCE_ROOT_V2_VERIFIER_ID,
+    )
     from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.snapshot import validate_source_snapshot
     from harness.re_v2.protocol_26.events import protocol_26_events_for
@@ -13163,6 +13169,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         snapshot_reader,
         adopted_payloads,
     )
+    source_root_runtime = Protocol24SourceRootRuntimeV2(inputs)
     baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
     (
         inherited_executors,
@@ -13188,12 +13195,17 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         runtime_module,
         controller_module,
     )
+    source_root_v2_digest = _re_v22_implementation_digest(
+        source_root_v2_module,
+        artifacts_module,
+    )
     registry = replace(
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
             **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+            SOURCE_ROOT_V2_ADAPTER_ID: source_root_v2_digest,
         },
         calculator_implementations={
             **dict(registry.calculator_implementations),
@@ -13206,6 +13218,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         verifier_implementations={
             **dict(registry.verifier_implementations),
             DEEPENING_VERIFIER_ID: implementation_digest,
+            SOURCE_ROOT_V2_VERIFIER_ID: source_root_v2_digest,
         },
         agent_contracts={
             **dict(registry.agent_contracts),
@@ -13280,7 +13293,11 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         "deepening-source-root",
     }
     producers = {
-        entry.producer_family: deepening_runtime
+        entry.producer_family: (
+            source_root_runtime
+            if entry.producer_family == "deepening-source-root"
+            else deepening_runtime
+        )
         for entry in inputs.executor_contract.entries
         if entry.execution_mode == "in_process"
         and entry.producer_family in l2_families
@@ -13292,9 +13309,14 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         provider_factory=lambda: SquadCliProvider(_load_cli_config(project_root)),
     )
     verifiers = {
-        entry.verifier.verifier_id: deepening_runtime
+        entry.verifier.verifier_id: (
+            source_root_runtime
+            if entry.verifier.verifier_id == SOURCE_ROOT_V2_VERIFIER_ID
+            else deepening_runtime
+        )
         for entry in inputs.executor_contract.entries
-        if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
+        if entry.verifier.verifier_id
+        in {DEEPENING_VERIFIER_ID, SOURCE_ROOT_V2_VERIFIER_ID}
     }
     context = Protocol22RunContext(
         paths=paths,
@@ -13327,6 +13349,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     import harness.re_v2.protocol_24.artifacts as l2_artifacts_module
     import harness.re_v2.protocol_24.controller as l2_controller_module
     import harness.re_v2.protocol_24.runtime as l2_runtime_module
+    import harness.re_v2.protocol_24.source_root_v2 as l2_source_root_v2_module
     import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
     import harness.re_v2.protocol_25.cli_provider as l3_cli_provider_module
     import harness.re_v2.protocol_25.controller as l3_controller_module
@@ -13358,6 +13381,11 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     )
     from harness.re_v2.protocol_24.graph import reconstruct_adopted_parent_closure
     from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
+    from harness.re_v2.protocol_24.source_root_v2 import (
+        Protocol24SourceRootRuntimeV2,
+        SOURCE_ROOT_V2_ADAPTER_ID,
+        SOURCE_ROOT_V2_VERIFIER_ID,
+    )
     from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
     from harness.re_v2.protocol_25.graph import build_protocol_25_graph
     from harness.re_v2.protocol_25.inputs import load_protocol_25_inputs
@@ -13427,6 +13455,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         snapshot_reader,
         adopted_payloads,
     )
+    source_root_runtime = Protocol24SourceRootRuntimeV2(inputs)
     semantic_entries = semantic_inputs.executor_contract.semantic_entries
     verifier_digests = {
         entry.verifier.implementation_digest for entry in semantic_entries
@@ -13458,6 +13487,10 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         l2_artifacts_module,
         l2_runtime_module,
         l2_controller_module,
+    )
+    l2_source_root_v2_implementation = _re_v22_implementation_digest(
+        l2_source_root_v2_module,
+        l2_artifacts_module,
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
@@ -13497,10 +13530,12 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         executor_implementations={
             **dict(registry.executor_implementations),
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
+            SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
             DEEPENING_VERIFIER_ID: l2_implementation,
+            SOURCE_ROOT_V2_VERIFIER_ID: l2_source_root_v2_implementation,
             **semantic_verifiers,
         },
         renderer_implementations={
@@ -13598,7 +13633,9 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     }
     producers = {
         entry.producer_family: (
-            deepening_runtime
+            source_root_runtime
+            if entry.producer_family == "deepening-source-root"
+            else deepening_runtime
             if entry.producer_family in l2_families
             else inherited_runtime
         )
@@ -13620,6 +13657,8 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         entry.verifier.verifier_id: (
             semantic_runtime
             if entry.producer_family in role_by_family
+            else source_root_runtime
+            if entry.verifier.verifier_id == SOURCE_ROOT_V2_VERIFIER_ID
             else deepening_runtime
             if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
             else inherited_runtime
@@ -14941,6 +14980,7 @@ def _prepare_re_v24_creation(
     import harness.re_v2.protocol_24.artifacts as artifacts_module
     import harness.re_v2.protocol_24.controller as controller_module
     import harness.re_v2.protocol_24.runtime as runtime_module
+    import harness.re_v2.protocol_24.source_root_v2 as source_root_v2_module
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.protocol_22.authorities import validate_installed_authorities
     from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
@@ -14960,6 +15000,11 @@ def _prepare_re_v24_creation(
     from harness.re_v2.protocol_24.model import ParentLineageV1, RunManifestV3
     from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
+    from harness.re_v2.protocol_24.source_root_v2 import (
+        SOURCE_ROOT_V2_ADAPTER_ID,
+        SOURCE_ROOT_V2_VERIFIER_ID,
+        upgrade_source_root_executor_catalog_v2,
+    )
 
     if not isinstance(parent, ValidatedParentV1):
         raise ValueError("deepening parent validation returned no closed authority")
@@ -14985,11 +15030,18 @@ def _prepare_re_v24_creation(
         runtime_module,
         controller_module,
     )
+    source_root_v2_digest = _re_v22_implementation_digest(
+        source_root_v2_module,
+        artifacts_module,
+    )
     policy = build_deepening_v1_policy_catalog()
-    executors = build_deepening_executor_catalog(
-        parent.inputs.executor_contract,
-        deepener_hash,
-        implementation_digest,
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent.inputs.executor_contract,
+            deepener_hash,
+            implementation_digest,
+        ),
+        source_root_v2_digest,
     )
     compact = parent.inputs.executor_contract.entry_for("compact-baseline")
     (
@@ -15015,6 +15067,7 @@ def _prepare_re_v24_creation(
             **dict(registry.executor_implementations),
             **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+            SOURCE_ROOT_V2_ADAPTER_ID: source_root_v2_digest,
         },
         calculator_implementations={
             **dict(registry.calculator_implementations),
@@ -15027,6 +15080,7 @@ def _prepare_re_v24_creation(
         verifier_implementations={
             **dict(registry.verifier_implementations),
             DEEPENING_VERIFIER_ID: implementation_digest,
+            SOURCE_ROOT_V2_VERIFIER_ID: source_root_v2_digest,
         },
         agent_contracts={
             **dict(registry.agent_contracts),
@@ -15573,6 +15627,7 @@ def _prepare_re_v25_creation(
     import harness.re_v2.protocol_24.artifacts as l2_artifacts_module
     import harness.re_v2.protocol_24.controller as l2_controller_module
     import harness.re_v2.protocol_24.runtime as l2_runtime_module
+    import harness.re_v2.protocol_24.source_root_v2 as l2_source_root_v2_module
     import harness.re_v2.protocol_25.artifacts as l3_artifacts_module
     import harness.re_v2.protocol_25.cli_provider as l3_cli_provider_module
     import harness.re_v2.protocol_25.controller as l3_controller_module
@@ -15585,6 +15640,11 @@ def _prepare_re_v25_creation(
         DEEPENING_IN_PROCESS_ADAPTER_ID,
         DEEPENING_VERIFIER_ID,
         build_deepening_executor_catalog,
+    )
+    from harness.re_v2.protocol_24.source_root_v2 import (
+        SOURCE_ROOT_V2_ADAPTER_ID,
+        SOURCE_ROOT_V2_VERIFIER_ID,
+        upgrade_source_root_executor_catalog_v2,
     )
     from harness.re_v2.protocol_25.lifecycle import prepare_new_audit_epoch
     from harness.re_v2.protocol_25.policies import (
@@ -15623,10 +15683,17 @@ def _prepare_re_v25_creation(
         l2_runtime_module,
         l2_controller_module,
     )
-    l2_executors = build_deepening_executor_catalog(
-        parent.inputs.executor_contract,
-        content_digest(role_bytes[DEEPENER_AGENT_ID]),
-        l2_implementation,
+    l2_source_root_v2_implementation = _re_v22_implementation_digest(
+        l2_source_root_v2_module,
+        l2_artifacts_module,
+    )
+    l2_executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent.inputs.executor_contract,
+            content_digest(role_bytes[DEEPENER_AGENT_ID]),
+            l2_implementation,
+        ),
+        l2_source_root_v2_implementation,
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
@@ -15684,10 +15751,12 @@ def _prepare_re_v25_creation(
         executor_implementations={
             **dict(registry.executor_implementations),
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
+            SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
             DEEPENING_VERIFIER_ID: l2_implementation,
+            SOURCE_ROOT_V2_VERIFIER_ID: l2_source_root_v2_implementation,
             **{
                 authority.verifier_id: l3_implementation
                 for authority in authorities

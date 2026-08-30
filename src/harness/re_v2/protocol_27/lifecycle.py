@@ -271,6 +271,7 @@ def _protocol_27_input_set(
     )
     from .context import default_synthesis_context_policy
     from .execution import compose_synthesis_executor
+    from .execution_v2 import compose_synthesis_executor_v2
     from .graph import (
         SynthesisGraphInputsV1,
         build_synthesis_graph,
@@ -309,7 +310,7 @@ def _protocol_27_input_set(
             *graph.response_schema_hashes.values(),
             graph.context_policy_hash,
             implementation.producer_authority_hash,
-            implementation.executor_contract_hash,
+            *(item.executor_contract_hash for item in graph.templates),
             implementation.verifier_authority_hash,
         }
         old_objects = ObjectStore(inherited.paths.objects)
@@ -356,6 +357,11 @@ def _protocol_27_input_set(
             "harness.re_v2.protocol_27.context",
             "harness.re_v2.protocol_27.schemas",
         )
+        workspace_renderer_bytes = _implementation_authority_payload(
+            "harness.re_v2.protocol_27.execution_v2",
+            "harness.re_v2.protocol_27.context_v2",
+            "harness.re_v2.protocol_27.schemas",
+        )
         verifier_bytes = _implementation_authority_payload(
             "harness.re_v2.protocol_27.runtime",
             "harness.re_v2.protocol_27.schemas",
@@ -381,6 +387,16 @@ def _protocol_27_input_set(
             renderer_implementation_digest=content_digest(renderer_bytes),
             verifier_implementation_digest=content_digest(verifier_bytes),
         )
+        workspace_executor = compose_synthesis_executor_v2(
+            inherited_cli,
+            agent_contract_hash=content_digest(prosaic),
+            response_schema_hashes={
+                kind: content_digest(payload)
+                for kind, payload in response_bytes.items()
+            },
+            renderer_implementation_digest=content_digest(workspace_renderer_bytes),
+            verifier_implementation_digest=content_digest(verifier_bytes),
+        )
         implementation = SynthesisImplementationAuthorityV1(
             schema_version=1,
             producer_authority_hash=content_digest(prosaic),
@@ -398,6 +414,9 @@ def _protocol_27_input_set(
                     for kind, payload in response_bytes.items()
                 },
                 context_policy_hash=context_policy.identity,
+                workspace_executor_contract_hash=(
+                    workspace_executor.executor_contract_hash
+                ),
             )
         )
         authority_objects = dict(parent.authority_objects)
@@ -410,6 +429,9 @@ def _protocol_27_input_set(
                 content_digest(prosaic): prosaic,
                 executor.executor_contract_hash: canonical_json_bytes(
                     executor.to_json_dict()
+                ),
+                workspace_executor.executor_contract_hash: canonical_json_bytes(
+                    workspace_executor.to_json_dict()
                 ),
                 content_digest(verifier_bytes): verifier_bytes,
             }

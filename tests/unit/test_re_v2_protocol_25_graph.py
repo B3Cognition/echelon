@@ -10,6 +10,9 @@ from harness.re_v2.protocol_22.executors import ExecutorContractCatalogV1
 from harness.re_v2.protocol_22.graph import AcceptedArtifactV2, plan_next_v2
 from harness.re_v2.protocol_22.model import CatalogReferenceV1
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.protocol_25.policies import (
     SemanticExecutorContractCatalogV1,
     build_semantic_executor_catalog,
@@ -52,10 +55,13 @@ def _fixture(*, all_domains: bool = False):  # type: ignore[no-untyped-def]
             )
         ),
     )
-    deepening = build_deepening_executor_catalog(
-        parent_inputs.executor_contract,
-        digest("deepener-agent"),
-        digest("deepening-implementation"),
+    deepening = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            digest("deepener-agent"),
+            digest("deepening-implementation"),
+        ),
+        digest("source-root-v2-implementation"),
     )
     policies = build_semantic_v1_policy_catalog()
     semantic = build_semantic_executor_catalog(

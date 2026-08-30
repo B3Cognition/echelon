@@ -146,3 +146,29 @@ def test_domain_context_uses_only_participant_sources_and_generated_dependencies
     assert context.input_quality == "partial"
     assert len(context.dependency_artifacts) == 3
     assert all(entry.source_ids == ("web",) for entry in context.dependency_artifacts)
+
+
+@pytest.mark.unit
+def test_v2_excerpt_fitter_guarantees_total_context_ceiling() -> None:
+    from harness.re_v2.protocol_27.context_v2 import fit_excerpt_limit
+
+    payloads = tuple((f'{{"body":"{index}-' + ("x" * 20_000) + '"}').encode()
+                     for index in range(96))
+
+    limit = fit_excerpt_limit(
+        payloads,
+        max_excerpt_bytes=16_384,
+        max_context_bytes=262_144,
+        serialized_size=lambda excerpts: len(
+            canonical_json_bytes({"objects": list(excerpts)})
+        ),
+    )
+    excerpts = tuple(payload[:limit].decode() for payload in payloads)
+
+    assert 0 < limit < 16_384
+    assert len(canonical_json_bytes({"objects": list(excerpts)})) <= 262_144
+    assert len(
+        canonical_json_bytes(
+            {"objects": [payload[: limit + 1].decode() for payload in payloads]}
+        )
+    ) > 262_144

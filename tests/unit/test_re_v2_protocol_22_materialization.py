@@ -5,16 +5,20 @@ import shutil
 
 import pytest
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.baseline import render_baseline_markdown
 from harness.re_v2.protocol_22.controller import Protocol22Controller
 from harness.re_v2.protocol_22.materialization import (
     Protocol22MaterializationError,
+    _validate_projection_payload,
     materialize_accepted_l1,
     materialize_accepted_l2,
     validate_or_repair_materialization,
 )
+from harness.re_v2.protocol_22.model import ArtifactKeyV2, ArtifactScope
 from harness.re_v2.protocol_24.artifacts import render_l2_baseline_markdown
+from harness.re_v2.protocol_24.artifacts import L2SourceRootEnvelopeV1
+from harness.re_v2.protocol_24.source_root_v2 import L2SourceBaselineRootV2
 from harness.re_v2.protocol_24.controller import Protocol24Controller
 from tests.integration.test_re_v2_protocol_24_controller import _child_context
 from tests.unit.test_re_v2_protocol_22_controller import _baseline_context
@@ -25,6 +29,38 @@ def _completed_context(tmp_path: Path):
     result = Protocol22Controller(context).run_until_stopped()
     assert result.status == "completed"
     return context
+
+
+@pytest.mark.unit
+def test_materialization_accepts_v2_source_root_with_no_domains() -> None:
+    overview_hash = content_digest(b"overview")
+    key = ArtifactKeyV2(
+        identity_schema_version=2,
+        scope=ArtifactScope(source_id="deployment", domain_key=None, content_id=None),
+        partition_id=content_digest(b"partition"),
+        artifact_kind="source-baseline-root",
+        layer="L2",
+        producer_protocol_version="source-baseline-root-v2",
+        layer_policy_hash=content_digest(b"policy"),
+        dependency_hashes=(overview_hash,),
+    )
+    payload = canonical_json_bytes(
+        L2SourceBaselineRootV2(
+            schema_version=1,
+            artifact=L2SourceRootEnvelopeV1(
+                artifact_kind=key.artifact_kind,
+                layer=key.layer,
+                scope=key.scope,
+                partition_id=key.partition_id,
+                layer_policy_hash=key.layer_policy_hash,
+                dependency_hashes=key.dependency_hashes,
+            ),
+            overview_artifact_hash=overview_hash,
+            domains=(),
+        ).to_json_dict()
+    )
+
+    _validate_projection_payload(key, payload)
 
 
 @pytest.mark.unit

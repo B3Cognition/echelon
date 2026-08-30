@@ -151,6 +151,34 @@ class _ScriptedProvider:
 
 
 @pytest.mark.unit
+def test_provider_authority_failure_returns_incomplete_instead_of_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.re_v2.protocol_27 import controller as controller_module
+    from harness.re_v2.protocol_27.controller import Protocol27Controller
+    from harness.re_v2.protocol_27.execution import Protocol27ExecutionError
+
+    inputs = _validated_controller_inputs(tmp_path)
+
+    def fail_authority(*_args, **_kwargs):
+        raise Protocol27ExecutionError("synthesis context exceeds its byte ceiling")
+
+    monkeypatch.setattr(
+        controller_module,
+        "build_synthesis_provider_dependencies",
+        fail_authority,
+    )
+    result = Protocol27Controller(
+        inputs,
+        provider_factory=lambda: _ScriptedProvider(),  # type: ignore[arg-type]
+    ).run_to_closure()
+
+    assert result.synthesis_closure_complete is False
+    assert result.terminal_kind == "synthesis-provider-authority-unavailable"
+
+
+@pytest.mark.unit
 def test_planner_dispatches_only_dependency_ready_missing_work(tmp_path: Path) -> None:
     from harness.re_v2.protocol_27.controller import (
         SynthesisControllerStateV1,

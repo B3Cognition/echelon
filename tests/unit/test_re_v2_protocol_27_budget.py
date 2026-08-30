@@ -150,3 +150,38 @@ def test_untrusted_or_unavailable_usage_charges_reservation(tmp_path: Path) -> N
     assert decision.charged_active_ms == 100
     assert decision.unknown_token_dispatches == 1
     assert decision.unknown_active_dispatches == 1
+
+
+@pytest.mark.unit
+def test_untrusted_usage_above_reservation_is_conservative_not_a_breach(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_27.budget import evaluate_synthesis_budget
+    from harness.re_v2.protocol_27.ledger import Protocol27Ledger
+
+    inputs, item, store = _planned_source(tmp_path)
+    dispatch_id = append_dispatch_cycle(store, item, 1, "initial_generation")
+    store.append(
+        "dispatch_observed",
+        {
+            "active_usage_status": "trusted_exact",
+            "dispatch_id": dispatch_id,
+            "execution_capture_hash": digest("capture-untrusted-overage"),
+            "observed_active_ms": 25,
+            "raw_result_contract_status": "valid",
+            "reported_token_usage": 1_500,
+            "token_usage_status": "untrusted",
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    decision = evaluate_synthesis_budget(
+        inputs.manifest,
+        store.replay(),
+        Protocol27Ledger(inputs).replay(),
+    )
+
+    assert decision.charged_tokens == 1_500
+    assert decision.reservation_breaches == ()
+    assert decision.allowed is True

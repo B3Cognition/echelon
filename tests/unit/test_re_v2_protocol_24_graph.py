@@ -28,6 +28,9 @@ from harness.re_v2.protocol_24.model import (
 )
 from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
+from harness.re_v2.protocol_24.source_root_v2 import (
+    upgrade_source_root_executor_catalog_v2,
+)
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_protocol_22_graph import _Authority, _Budget, _fixture
 
@@ -74,10 +77,13 @@ def test_all_source_selection_deepens_source_without_domains() -> None:
         {"api": ("orders",), "deployment": ()}
     )
     policy = build_deepening_v1_policy_catalog()
-    executors = build_deepening_executor_catalog(
-        parent_inputs.executor_contract,
-        "sha256:" + "a" * 64,
-        "sha256:" + "b" * 64,
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+        ),
+        "sha256:" + "c" * 64,
     )
     inputs = ValidatedProtocol22Inputs(
         workspace_partition=parent_inputs.workspace_partition,
@@ -126,10 +132,13 @@ def _deepening_fixture() -> tuple[object, object, _Authority, object, object]:
         parent_work,
     ) = _accepted_parent_fixture()
     policy = build_deepening_v1_policy_catalog()
-    executors = build_deepening_executor_catalog(
-        parent_inputs.executor_contract,
-        "sha256:" + "a" * 64,
-        "sha256:" + "b" * 64,
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent_inputs.executor_contract,
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+        ),
+        "sha256:" + "c" * 64,
     )
     inputs = ValidatedProtocol22Inputs(
         workspace_partition=parent_inputs.workspace_partition,

@@ -74,6 +74,7 @@ def build_deepening_v1_policy_catalog() -> ArtifactPolicyCatalogV1:
     source_root = replace(
         policy_for(inherited, "L1", "source-baseline-root"),
         layer="L2",
+        producer_protocol_version="source-baseline-root-v2",
     )
 
     entries = (

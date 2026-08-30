@@ -47,6 +47,12 @@ from harness.re_v2.protocol_24.inputs import (
 )
 from harness.re_v2.protocol_24.policies import build_deepening_v1_policy_catalog
 from harness.re_v2.protocol_24.runtime import Protocol24DeterministicRuntime
+from harness.re_v2.protocol_24.source_root_v2 import (
+    Protocol24SourceRootRuntimeV2,
+    SOURCE_ROOT_V2_ADAPTER_ID,
+    SOURCE_ROOT_V2_VERIFIER_ID,
+    upgrade_source_root_executor_catalog_v2,
+)
 from harness.re_v2.run_store import load_run_manifest
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.unit.test_re_v2_protocol_22_controller import (
@@ -121,10 +127,13 @@ def _child_context(
     policy = build_deepening_v1_policy_catalog()
     deepener_bytes = canonical_prosaic_agent_bytes(_role_artifact())
     deepener_hash = content_digest(deepener_bytes)
-    executors = build_deepening_executor_catalog(
-        parent.inputs.executor_contract,
-        deepener_hash,
-        content_digest(b"protocol-2.4 test runtime"),
+    executors = upgrade_source_root_executor_catalog_v2(
+        build_deepening_executor_catalog(
+            parent.inputs.executor_contract,
+            deepener_hash,
+            content_digest(b"protocol-2.4 test runtime"),
+        ),
+        content_digest(b"protocol-2.4 source root v2 test runtime"),
     )
     source = parent.inputs.workspace_partition.sources[0]
     domain = source.domains[0]
@@ -248,6 +257,7 @@ def _child_context(
         _SnapshotReader(inputs.workspace_partition, snapshot_payloads),
         adopted_payloads,
     )
+    source_root_runtime = Protocol24SourceRootRuntimeV2(inputs)
     context_ref: dict[str, Protocol22RunContext] = {}
 
     def dependencies_for(item: object, _attempt_kind: str) -> object:
@@ -318,14 +328,22 @@ def _child_context(
         ),
         producers=MappingProxyType(
             {
-                entry.producer_family: runtime
+                entry.producer_family: (
+                    source_root_runtime
+                    if entry.producer_family == "deepening-source-root"
+                    else runtime
+                )
                 for entry in inputs.executor_contract.entries
                 if entry.execution_mode == "in_process"
             }
         ),
         verifiers=MappingProxyType(
             {
-                entry.verifier.verifier_id: runtime
+                entry.verifier.verifier_id: (
+                    source_root_runtime
+                    if entry.verifier.verifier_id == SOURCE_ROOT_V2_VERIFIER_ID
+                    else runtime
+                )
                 for entry in inputs.executor_contract.entries
             }
         ),
@@ -396,11 +414,17 @@ def _registry(parent: ValidatedParentV1):
             "re-v2-in-process-deepening-v1": content_digest(
                 b"protocol-2.4 test runtime"
             ),
+            SOURCE_ROOT_V2_ADAPTER_ID: content_digest(
+                b"protocol-2.4 source root v2 test runtime"
+            ),
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
             "deepening-verifier-v1": content_digest(
                 b"protocol-2.4 test runtime"
+            ),
+            SOURCE_ROOT_V2_VERIFIER_ID: content_digest(
+                b"protocol-2.4 source root v2 test runtime"
             ),
         },
         agent_contracts={

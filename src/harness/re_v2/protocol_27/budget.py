@@ -209,10 +209,12 @@ def evaluate_synthesis_budget(
                     "unknown active dispatches",
                 )
             if (
-                payload["reported_token_usage"] is not None
+                payload["token_usage_status"] == "trusted_exact"
+                and payload["reported_token_usage"] is not None
                 and int(payload["reported_token_usage"]) > dispatch.token_reservation
             ) or (
-                payload["observed_active_ms"] is not None
+                payload["active_usage_status"] == "trusted_exact"
+                and payload["observed_active_ms"] is not None
                 and int(payload["observed_active_ms"])
                 > dispatch.active_ms_reservation
             ):
