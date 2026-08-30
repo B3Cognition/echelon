@@ -7845,6 +7845,31 @@ class TestSignalDuringBuild:
 
 
 @pytest.mark.unit
+class TestVerifyLocallyNode:
+    """Node verification must never wait for an interactive package-manager prompt."""
+
+    def test_pnpm_verification_runs_noninteractively(self, tmp_path: Path) -> None:
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+        (worktree / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\n",
+            encoding="utf-8",
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert len(mock_run.call_args_list) == 3
+        for call in mock_run.call_args_list:
+            assert call.kwargs["stdin"] is subprocess.DEVNULL
+            assert call.kwargs["env"]["CI"] == "true"
+
+
+@pytest.mark.unit
 class TestVerifyLocallyUnknownProjectType:
     """Unknown project type must fail verification, not silently pass."""
 

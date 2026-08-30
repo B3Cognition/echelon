@@ -7518,10 +7518,10 @@ class TestProportionalQualityController:
         issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
         issues_path.write_text(
             issues_path.read_text(encoding="utf-8")
-            .replace("- **HIGH:** 0", "- **HIGH:** 1")
+            .replace("- **CRITICAL:** 0", "- **CRITICAL:** 1")
             .replace("- **LOW:** 1", "- **LOW:** 0")
             .replace("ISS-QUALITY-0", "ISS-001")
-            .replace("**Severity:** LOW", "**Severity:** HIGH")
+            .replace("**Severity:** LOW", "**Severity:** CRITICAL")
             .replace("**Type:** incompleteness", "**Type:** contradiction")
             .replace(
                 "Repair the certified failing dimension.",

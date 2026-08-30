@@ -285,7 +285,12 @@ class FulfillmentRunner:
             arguments += " --dry-run"
 
         prompt = _build_verify_spec_prompt(workflow_root, skill_path, arguments)
-        exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+        exit_code = _exec_verify_spec_prompt(
+            self._prompt_executor,
+            worktree_path=worktree_path,
+            prompt=prompt,
+            policy=artifact_policy,
+        )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
             policy=artifact_policy,
@@ -513,7 +518,17 @@ class FulfillmentRunner:
                 report.read_text(encoding="utf-8", errors="replace"),
                 encoding="utf-8",
             )
-            exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+            exit_code = _exec_verify_spec_prompt(
+                self._prompt_executor,
+                worktree_path=worktree_path,
+                prompt=prompt,
+                policy=_verify_spec_artifact_write_policy(
+                    worktree=worktree,
+                    spec_dir=spec_dir,
+                    orchestration_root=spec_dir.parent.parent,
+                    spec_id=spec_id,
+                ),
+            )
             artifact_write_violation = _verify_spec_artifact_write_violation(
                 self._prompt_executor,
                 policy=_verify_spec_artifact_write_policy(
@@ -1192,6 +1207,44 @@ def _verify_spec_artifact_write_policy(
         spec_dir=spec_dir.resolve() if spec_dir is not None else None,
         spec_id=spec_id,
     )
+
+
+def _exec_verify_spec_prompt(
+    prompt_executor: PromptExecutor,
+    *,
+    worktree_path: str,
+    prompt: str,
+    policy: VerifySpecArtifactWritePolicy,
+) -> int:
+    """Run fulfillment with narrowly scoped access to external artifacts."""
+    from harness.llm_provider import AICodingCliProvider
+
+    if not isinstance(prompt_executor, AICodingCliProvider):
+        return prompt_executor.exec_prompt(worktree_path, prompt)
+
+    read_roots = [str(Path(worktree_path).resolve())]
+    if policy.spec_dir is not None:
+        read_roots.append(str(policy.spec_dir.resolve()))
+    write_paths: list[str] = []
+    if policy.spec_dir is not None:
+        write_paths.extend(
+            [
+                str((policy.spec_dir / "fulfillment-report.md").resolve()),
+                str((policy.spec_dir / "fulfillment-gaps.md").resolve()),
+            ]
+        )
+    write_paths.append(str((policy.workspace_root / "runs").resolve()))
+    result = prompt_executor.run_prompt_result(
+        worktree_path,
+        prompt,
+        request_metadata={
+            "prompt_metadata": {
+                "tool_read_roots": read_roots,
+                "tool_write_paths": write_paths,
+            }
+        },
+    )
+    return int(result.exit_code)
 
 
 def _verify_spec_artifact_write_violation(

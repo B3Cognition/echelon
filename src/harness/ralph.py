@@ -2584,6 +2584,8 @@ class RalphController:
                 duration_s=0.0,
             )
 
+        verify_env = os.environ.copy()
+        verify_env["CI"] = "true"
         for stage, cmd in commands:
             try:
                 result = subprocess.run(
@@ -2591,6 +2593,8 @@ class RalphController:
                     cwd=worktree_path,
                     capture_output=True,
                     text=True,
+                    stdin=subprocess.DEVNULL,
+                    env=verify_env,
                     timeout=300,
                 )
                 if result.returncode != 0:

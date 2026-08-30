@@ -240,7 +240,7 @@ def run_multi_target(
                 )
             )
             source_git_role = source_git_roles.get(target_key, "source")
-            cmd = [echelon_bin, "harness", command, spec_id] + extra_args
+            cmd = [echelon_bin, "delivery", command, spec_id] + extra_args
             env = os.environ.copy()
             env["ECHELON_POLYREPO_ROOT"] = str(target_workspace_root)
             env["ECHELON_TARGET_REPO_PATH"] = str(target_resolved)

@@ -269,7 +269,7 @@ class TestRunMultiTarget:
         with patch("subprocess.Popen", side_effect=fake_popen):
             run_multi_target("024", [target], ["strategy=codegen", "max_outer=3"],
                              echelon_bin="echelon")
-        assert captured_cmd["cmd"] == ["echelon", "harness", "run", "024",
+        assert captured_cmd["cmd"] == ["echelon", "delivery", "run", "024",
                                        "strategy=codegen", "max_outer=3"]
 
     def test_single_target_metadata_env_includes_owned_task_ids(self, tmp_path: Path) -> None:

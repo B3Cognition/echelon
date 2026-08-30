@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
+from harness.llm_provider import AICodingCliProvider
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
 from kernel.fulfillment import read_fulfillment_metadata
 
@@ -416,6 +417,47 @@ class TestFulfillmentRunner:
             )
 
         assert result.status == "refreshed"
+
+    def test_target_scoped_refresh_grants_only_fulfillment_artifact_paths(
+        self, tmp_path
+    ):
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "runs" / "targets" / "web" / "worktree"
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        _write_verify_skill(worktree)
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        provider = object.__new__(AICodingCliProvider)
+        provider._cli = "codex"
+        provider.last_stdout = ""
+        provider.last_stderr = ""
+
+        def run_prompt(_worktree_path, _prompt, **_kwargs):
+            _write_matching_report(report)
+            return MagicMock(exit_code=0)
+
+        provider.run_prompt_result = MagicMock(side_effect=run_prompt)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=workspace,
+            )
+
+        assert result.status == "refreshed"
+        metadata = provider.run_prompt_result.call_args.kwargs["request_metadata"]
+        prompt_metadata = metadata["prompt_metadata"]
+        assert prompt_metadata["tool_read_roots"] == [
+            str(worktree),
+            str(spec_dir),
+        ]
+        assert prompt_metadata["tool_write_paths"] == [
+            str(spec_dir / "fulfillment-report.md"),
+            str(spec_dir / "fulfillment-gaps.md"),
+            str(workspace / "runs"),
+        ]
 
     def test_refresh_rejects_mapping_artifact_in_sibling_source_root(self, tmp_path):
         workspace = tmp_path / "workspace"
