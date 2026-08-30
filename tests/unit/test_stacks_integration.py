@@ -17,10 +17,11 @@ def _definitions():
 
 
 @pytest.mark.unit
-def test_loads_bundled_statsperform_stacks() -> None:
+def test_loads_bundled_stack_catalog() -> None:
     definitions = _definitions()
 
     assert sorted(definitions) == [
+        "game-persistence-postgres",
         "statsperform-msa-service",
         "statsperform-playbook",
         "statsperform-stark-webapp",

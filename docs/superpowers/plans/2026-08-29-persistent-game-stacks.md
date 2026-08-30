@@ -54,10 +54,7 @@ Add this expectation to `test_loads_bundled_statsperform_stacks`, renaming it to
 
 ```python
 assert sorted(definitions) == [
-    "browser-3d-game",
-    "browser-wasm-game",
     "game-persistence-postgres",
-    "ios-ar-game",
     "statsperform-msa-service",
     "statsperform-playbook",
     "statsperform-stark-webapp",
@@ -126,7 +123,8 @@ git commit -m "feat: add game persistence stack"
 
 - [ ] **Step 1: Write the failing valid-composition test**
 
-Add:
+Extend `test_loads_bundled_stack_catalog` so its expected list includes
+`"browser-3d-game"`, then add:
 
 ```python
 def test_resolves_browser_3d_game_with_shared_persistence() -> None:
@@ -185,7 +183,8 @@ git commit -m "feat: add browser 3d game stack"
 
 - [ ] **Step 1: Write failing composition and exclusivity tests**
 
-Add:
+Extend `test_loads_bundled_stack_catalog` so its expected list includes
+`"browser-wasm-game"` and `"ios-ar-game"`, then add:
 
 ```python
 @pytest.mark.parametrize(

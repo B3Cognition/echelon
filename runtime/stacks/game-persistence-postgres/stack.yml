@@ -1,0 +1,25 @@
+schema_version: "1.0"
+stack:
+  id: game-persistence-postgres
+  name: Game Persistence with Postgres
+  version: "1.0.0"
+  kind: capability
+  owner: echelon
+  description: Durable Postgres persistence and authority boundaries for persistent games.
+applies_to:
+  archetypes:
+    - browser_3d_game
+    - ios_ar_game
+    - browser_wasm_game
+provides:
+  data.database: postgres
+  data.migrations: checked-in
+  data.durability: checkpoint-snapshots
+  x.game.mutation_authority: server
+  x.game.persistence_cadence: bounded
+implies: []
+requires: {}
+context:
+  files:
+    - context.md
+conflicts: []
