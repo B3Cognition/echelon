@@ -5382,7 +5382,8 @@ class SquadStateStore:
                 state.get("run_id", "?"),
                 reason,
             )
-            self._transition_status(state, "blocked")
+            if state.get("status") != "blocked":
+                self._transition_status(state, "blocked")
             state["blocked_reason"] = reason
             self._save_unlocked(state)
 
