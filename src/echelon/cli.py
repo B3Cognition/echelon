@@ -13015,6 +13015,64 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     return context
 
 
+def _re_v24_inherited_in_process_authorities(
+    catalog: object,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Recover compatible L1 accounting authority not executed by the L2 adapter."""
+    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
+
+    entries = tuple(
+        entry
+        for entry in getattr(catalog, "entries", ())
+        if getattr(entry, "adapter_id", None) == IN_PROCESS_ADAPTER_ID
+    )
+    executor_digests = {
+        entry.executor_implementation_digest for entry in entries
+    }
+    if len(executor_digests) != 1:
+        raise ValueError("protocol-2.4 parent in-process authority is ambiguous")
+
+    def authority_map(
+        values: tuple[tuple[str, str], ...],
+        kind: str,
+    ) -> dict[str, str]:
+        resolved: dict[str, str] = {}
+        for authority_id, implementation_digest in values:
+            previous = resolved.get(authority_id)
+            if previous is not None and previous != implementation_digest:
+                raise ValueError(
+                    f"protocol-2.4 parent in-process {kind} authority is ambiguous"
+                )
+            resolved[authority_id] = implementation_digest
+        return resolved
+
+    calculators = authority_map(
+        tuple(
+            (
+                entry.reservation_calculator.calculator_id,
+                entry.reservation_calculator.implementation_digest,
+            )
+            for entry in entries
+        ),
+        "calculator",
+    )
+    normalizers = authority_map(
+        tuple(
+            (
+                entry.token_accounting.normalization_id,
+                entry.token_accounting.implementation_digest,
+            )
+            for entry in entries
+        ),
+        "normalizer",
+    )
+    return (
+        {IN_PROCESS_ADAPTER_ID: next(iter(executor_digests))},
+        calculators,
+        normalizers,
+    )
+
+
 def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> object:
     from dataclasses import replace
     from types import MappingProxyType
@@ -13033,7 +13091,6 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         Protocol22ExecutionStore,
         ProviderExecutionDependenciesV1,
     )
-    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.materialization import (
         validate_or_repair_materialization,
@@ -13107,14 +13164,11 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         adopted_payloads,
     )
     baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
-    inherited_base_digests = {
-        entry.executor_implementation_digest
-        for entry in inputs.executor_contract.entries
-        if entry.adapter_id == IN_PROCESS_ADAPTER_ID
-    }
-    if len(inherited_base_digests) != 1:
-        raise ValueError("protocol-2.4 parent in-process authority is ambiguous")
-    inherited_base_digest = next(iter(inherited_base_digests))
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(inputs.executor_contract)
     baseline_renderer = baseline_entry.request_renderer
     if baseline_renderer is None:
         raise ValueError("protocol-2.4 parent provider renderer is missing")
@@ -13138,8 +13192,16 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
-            IN_PROCESS_ADAPTER_ID: inherited_base_digest,
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
@@ -14881,7 +14943,6 @@ def _prepare_re_v24_creation(
     import harness.re_v2.protocol_24.runtime as runtime_module
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.protocol_22.authorities import validate_installed_authorities
-    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
     from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.protocol_24.adoption import (
@@ -14931,14 +14992,13 @@ def _prepare_re_v24_creation(
         implementation_digest,
     )
     compact = parent.inputs.executor_contract.entry_for("compact-baseline")
-    inherited_base_digests = {
-        entry.executor_implementation_digest
-        for entry in parent.inputs.executor_contract.entries
-        if entry.adapter_id == IN_PROCESS_ADAPTER_ID
-    }
-    if len(inherited_base_digests) != 1:
-        raise ValueError("completed parent in-process authority is ambiguous")
-    inherited_base_digest = next(iter(inherited_base_digests))
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(
+        parent.inputs.executor_contract
+    )
     renderer = compact.request_renderer
     if renderer is None:
         raise ValueError("completed parent has no pinned shared provider renderer")
@@ -14953,8 +15013,16 @@ def _prepare_re_v24_creation(
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
-            IN_PROCESS_ADAPTER_ID: inherited_base_digest,
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),

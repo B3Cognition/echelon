@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,11 @@ from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.ledger import (
     ExecutorFailureReceiptV1,
     Protocol22Ledger,
+)
+from harness.re_v2.protocol_22.executors import (
+    IN_PROCESS_ADAPTER_ID,
+    IN_PROCESS_CALCULATOR_ID,
+    ZERO_USAGE_NORMALIZER_ID,
 )
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
 from harness.re_v2.protocol_24.model import RunManifestV3
@@ -100,6 +106,63 @@ def test_deepen_creates_one_manifest_last_child_and_reuses_semantic_request(
     )
     assert ledger.accepted_artifacts == parent.ledger.accepted_artifacts
     assert contexts == [first, first]
+
+
+@pytest.mark.integration
+def test_deepen_preserves_pinned_in_process_accounting_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli as legacy_cli
+
+    parent = _completed_parent(tmp_path / "authority", provider_mode="cli")
+    workspace = tmp_path / "workspace"
+    (workspace / "runs").mkdir(parents=True)
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_24.adoption.validate_parent_for_deepening",
+        lambda _run, _workspace: parent,
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "ProsaicPromptLoader",
+        lambda _workspace: SimpleNamespace(
+            load_subagent=lambda _agent_id: _role_artifact()
+        ),
+    )
+    installed = _registry(parent)
+    drifted = replace(
+        installed,
+        executor_implementations={
+            **dict(installed.executor_implementations),
+            IN_PROCESS_ADAPTER_ID: digest("current-in-process-executor"),
+        },
+        calculator_implementations={
+            **dict(installed.calculator_implementations),
+            IN_PROCESS_CALCULATOR_ID: digest("current-in-process-calculator"),
+        },
+        normalizer_implementations={
+            **dict(installed.normalizer_implementations),
+            ZERO_USAGE_NORMALIZER_ID: digest("current-zero-usage-normalizer"),
+        },
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_schema2_installed_registry",
+        lambda agent, *, provider_mode: (drifted, agent, {}),
+    )
+    monkeypatch.setattr(
+        legacy_cli,
+        "_re_v2_context",
+        lambda _workspace, run_dir: SimpleNamespace(run_dir=run_dir),
+    )
+    monkeypatch.setattr(legacy_cli, "_run_re_v2_live", lambda _context: None)
+    options = legacy_cli._parse_re_deepen_options(
+        ["--to", "L2", "--source", "api", "--from-run", "re-parent"]
+    )
+
+    child = legacy_cli._run_re_v24_deepen(workspace, options)
+
+    assert child.is_dir()
 
 
 @pytest.mark.integration
