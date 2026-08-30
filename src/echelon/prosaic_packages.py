@@ -54,14 +54,26 @@ def install_prosaic_bundle(
 
     prose_source = project_root / ".echelon" / "packages" / "echelon-prose"
     runtime_source = project_root / ".echelon" / "packages" / "echelon-runtime"
+    prose_destination = project_root / ".echelon" / "prosaic"
+    runtime_destination = project_root / ".echelon" / "runtime"
     config_path = project_root / "prosaic.config.yaml"
+    manifest_path = project_root / ".prosaic-manifest.json"
+    legacy_destinations: dict[Path, Path | None] = {}
     try:
         _replace_managed_tree(source_root / "prosaic", prose_source)
         _replace_managed_tree(source_root / "runtime", runtime_source)
+        if not manifest_path.exists():
+            legacy_destinations = _quarantine_legacy_destinations(
+                (prose_destination, runtime_destination)
+            )
         config_path.write_text(_package_config(), encoding="utf-8")
         _run(run, ["prosaic", "package", "deploy", "echelon-prose"], project_root)
         _run(run, ["prosaic", "package", "deploy", "echelon-runtime"], project_root)
+        _discard_legacy_destinations(legacy_destinations)
     except (OSError, subprocess.CalledProcessError) as exc:
+        _restore_legacy_destinations(legacy_destinations)
+        if legacy_destinations:
+            manifest_path.unlink(missing_ok=True)
         raise ProsaicBundleInstallError(
             f"Prosaic package installation failed: {exc}"
         ) from exc
@@ -70,8 +82,8 @@ def install_prosaic_bundle(
         _remove_install_staging(prose_source, runtime_source)
 
     return ProsaicBundleInstallReport(
-        prose_root=project_root / ".echelon" / "prosaic",
-        runtime_root=project_root / ".echelon" / "runtime",
+        prose_root=prose_destination,
+        runtime_root=runtime_destination,
     )
 
 
@@ -120,6 +132,54 @@ def _remove_install_staging(*destinations: Path) -> None:
             parent.rmdir()
         except OSError:
             pass
+
+
+def _quarantine_legacy_destinations(
+    destinations: Sequence[Path],
+) -> dict[Path, Path | None]:
+    quarantined: dict[Path, Path | None] = {}
+    for destination in destinations:
+        backup = destination.with_name(f".{destination.name}.pre-prosaic-migration")
+        if backup.exists() or backup.is_symlink():
+            raise OSError(f"legacy Prosaic migration backup already exists: {backup}")
+    try:
+        for destination in destinations:
+            if destination.exists() or destination.is_symlink():
+                backup = destination.with_name(
+                    f".{destination.name}.pre-prosaic-migration"
+                )
+                destination.replace(backup)
+                quarantined[destination] = backup
+            else:
+                quarantined[destination] = None
+    except OSError:
+        _restore_legacy_destinations(quarantined)
+        raise
+    return quarantined
+
+
+def _restore_legacy_destinations(
+    destinations: dict[Path, Path | None],
+) -> None:
+    for destination, backup in destinations.items():
+        _remove_path(destination)
+        if backup is not None and (backup.exists() or backup.is_symlink()):
+            backup.replace(destination)
+
+
+def _discard_legacy_destinations(
+    destinations: dict[Path, Path | None],
+) -> None:
+    for backup in destinations.values():
+        if backup is not None:
+            _remove_path(backup)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.exists():
+        shutil.rmtree(path)
 
 
 def _package_config() -> str:

@@ -343,6 +343,13 @@ def plan_clean_workspace_sources(
             )
             issues.append(f"source(s) {source_label}: Git repository is dirty: {summary}")
 
+    for source in resolved:
+        commit = repository_commits.get(source.repository)
+        if commit is not None and not _source_has_snapshot_entries(source, commit):
+            issues.append(
+                f"source {source.source_id!r}: pinned Git tree has no tracked files"
+            )
+
     if issues:
         detail = "\n".join(f"- {issue}" for issue in issues)
         raise ReV2WorkspaceSourceError(
@@ -351,7 +358,8 @@ def plan_clean_workspace_sources(
             f"{detail}\n"
             "Commit the source changes, stash them including untracked files "
             "(`git stash --include-untracked`), or revert or remove them before "
-            "proceeding. Then retry `echelon re run --engine v2`."
+            "proceeding. Populate and commit an empty source, or remove it from "
+            ".echelon/config.yml. Then retry `echelon re run --engine v2`."
         )
 
     proofs = tuple(
@@ -416,6 +424,36 @@ def _append_overlap_issues(sources: list[_ResolvedSource], issues: list[str]) ->
                     f"sources {first.source_id!r} and {second.source_id!r}: "
                     "declared source paths overlap"
                 )
+
+
+def _source_has_snapshot_entries(source: _ResolvedSource, commit: str) -> bool:
+    pathspec = source.repository_path
+    result = _run_git_text(
+        source.repository,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "-z",
+        commit,
+        "--",
+        pathspec,
+    )
+    if result.returncode != 0:
+        return False
+    prefix = "" if pathspec == "." else pathspec + "/"
+    for tracked_path in result.stdout.split("\0"):
+        if not tracked_path:
+            continue
+        relative = (
+            tracked_path[len(prefix) :]
+            if prefix and tracked_path.startswith(prefix)
+            else tracked_path
+        )
+        if relative != ".echelon/re-v2/checkpoints" and not relative.startswith(
+            ".echelon/re-v2/checkpoints/"
+        ):
+            return True
+    return False
 
 
 def _repository_dirty_categories(repository: Path) -> dict[str, int]:

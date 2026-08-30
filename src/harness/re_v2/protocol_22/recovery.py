@@ -340,6 +340,8 @@ def installed_authority_mismatches(
 def recover_protocol_22_run_locked(
     context: Protocol22RunContext,
     fault_hook: FaultHook | None = None,
+    *,
+    validate_materialization: bool = True,
 ) -> Protocol22RecoveryResult:
     """Recover while the caller owns :func:`protocol_22_run_lock`.
 
@@ -368,7 +370,12 @@ def recover_protocol_22_run_locked(
                 operational_state="pinned_authority_unavailable",
                 unavailable=unavailable,
             )
-        return _recover_locked(context, authority, fault_hook)
+        return _recover_locked(
+            context,
+            authority,
+            fault_hook,
+            validate_materialization=validate_materialization,
+        )
     except Protocol22RecoveryError:
         raise
     except (
@@ -422,6 +429,8 @@ def _recover_locked(
     context: Protocol22RunContext,
     authority: ResolvedRunAuthorityV1,
     fault_hook: FaultHook | None,
+    *,
+    validate_materialization: bool = True,
 ) -> Protocol22RecoveryResult:
     """Run the mutating half while one process owns the run lock."""
     manifest = authority.layer_manifest
@@ -442,7 +451,8 @@ def _recover_locked(
         _validate_manifest_event(active_manifest, events)
         known_items = _validate_graph_ledger(graph, inputs, ledger, events)
         _validate_event_work_items(events, known_items)
-        _validate_materialization(context)
+        if validate_materialization:
+            _validate_materialization(context)
         actions, owner_state = _reconcile_dispatches(
             context,
             events,
@@ -983,7 +993,13 @@ def _observation_payload(
             raise Protocol22RecoveryError(
                 "provider dependencies disagree with capture mode"
             )
-        raw_status = "valid" if closure.stdout_bytes == _RESULT_STDOUT else "invalid"
+        raw_status = (
+            "execution_indeterminate"
+            if capture.result_kind == "provider_failure"
+            else "valid"
+            if closure.stdout_bytes == _RESULT_STDOUT
+            else "invalid"
+        )
         normalized = normalize_captured_provider_usage(
             capture.execution_mode,
             closure.provider_usage_bytes,
@@ -1062,6 +1078,12 @@ def _reconcile_candidate(
         if matching:
             raise Protocol22RecoveryError(
                 "deterministic capture has provider candidate authority"
+            )
+        return
+    if capture.result_kind == "provider_failure":
+        if matching:
+            raise Protocol22RecoveryError(
+                "indeterminate provider capture has candidate authority"
             )
         return
     if len(matching) > 1:

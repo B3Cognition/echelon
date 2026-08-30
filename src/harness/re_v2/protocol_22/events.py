@@ -22,7 +22,9 @@ _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
 _ATTEMPT_KINDS = frozenset(
     {"initial_generation", "result_contract_retry", "artifact_contract_retry"}
 )
-_RAW_RESULT_STATUSES = frozenset({"valid", "invalid", "not_applicable"})
+_RAW_RESULT_STATUSES = frozenset(
+    {"valid", "invalid", "execution_indeterminate", "not_applicable"}
+)
 _USAGE_STATUSES = frozenset({"trusted_exact", "unavailable", "untrusted"})
 _FAILURE_CLASSES = frozenset(
     {
@@ -30,6 +32,7 @@ _FAILURE_CLASSES = frozenset(
         "artifact_contract",
         "minimum_utility",
         "execution_indeterminate",
+        "deterministic_execution",
     }
 )
 _FAILURE_REASON_BY_CLASS = {
@@ -44,6 +47,7 @@ _FAILURE_REASON_BY_CLASS = {
     ),
     "minimum_utility": frozenset({"minimum_utility_not_met"}),
     "execution_indeterminate": frozenset({"execution_outcome_indeterminate"}),
+    "deterministic_execution": frozenset({"deterministic_execution_failed"}),
 }
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed"})
 _PAUSED_CONTROL_EVENTS = frozenset({"budget_authorized", "operator_pause_requested"})
@@ -519,7 +523,7 @@ class Protocol22ReplayState(EventReplayState):
         active.raw_result_status = status
         active.effective_result_status = status
         active.stage = "observed"
-        if status == "invalid":
+        if status in {"invalid", "execution_indeterminate"}:
             self.retry_eligibility[active.work_item_id] = "result_contract_retry"
         else:
             self.retry_eligibility.pop(active.work_item_id, None)
@@ -644,7 +648,19 @@ class Protocol22ReplayState(EventReplayState):
         ):
             raise ReV2EventError("work_item_failed conflicts with terminal work")
         if failure_class == "execution_indeterminate":
-            authorized = work_item_id in self.indeterminate_work_items
+            authorized = work_item_id in self.indeterminate_work_items or (
+                self.active is not None
+                and self.active.work_item_id == work_item_id
+                and self.active.stage == "observed"
+                and self.active.raw_result_status == "execution_indeterminate"
+            )
+        elif failure_class == "deterministic_execution":
+            authorized = (
+                self.active is not None
+                and self.active.work_item_id == work_item_id
+                and not self.active.provider_backed
+                and self.active.stage == "observed"
+            )
         elif failure_class == "result_contract":
             authorized = eligible == "result_contract_retry"
         else:

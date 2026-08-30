@@ -12839,6 +12839,7 @@ def _re_v22_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         Protocol22ExecutionStore,
         ProviderExecutionDependenciesV1,
     )
+    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
     from harness.re_v2.protocol_22.inputs import load_protocol_22_inputs
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
@@ -13032,6 +13033,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         Protocol22ExecutionStore,
         ProviderExecutionDependenciesV1,
     )
+    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
     from harness.re_v2.protocol_22.materialization import (
         validate_or_repair_materialization,
@@ -13041,7 +13043,6 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         DeterministicInvocationV1,
     )
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
-    from harness.re_v2.protocol_22.runtime import DeterministicRuntimeV1
     from harness.re_v2.protocol_24.artifacts import (
         DEEPENER_AGENT_ID,
         DEEPENING_IN_PROCESS_ADAPTER_ID,
@@ -13100,13 +13101,20 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         ): objects.read_blob(artifact.artifact_hash)
         for template, artifact in accepted_parent.values()
     }
-    inherited_runtime = DeterministicRuntimeV1(inputs, snapshot_reader)
     deepening_runtime = Protocol24DeterministicRuntime(
         inputs,
         snapshot_reader,
         adopted_payloads,
     )
     baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
+    inherited_base_digests = {
+        entry.executor_implementation_digest
+        for entry in inputs.executor_contract.entries
+        if entry.adapter_id == IN_PROCESS_ADAPTER_ID
+    }
+    if len(inherited_base_digests) != 1:
+        raise ValueError("protocol-2.4 parent in-process authority is ambiguous")
+    inherited_base_digest = next(iter(inherited_base_digests))
     baseline_renderer = baseline_entry.request_renderer
     if baseline_renderer is None:
         raise ValueError("protocol-2.4 parent provider renderer is missing")
@@ -13130,6 +13138,7 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            IN_PROCESS_ADAPTER_ID: inherited_base_digest,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
         },
         verifier_implementations={
@@ -13209,13 +13218,10 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         "deepening-source-root",
     }
     producers = {
-        entry.producer_family: (
-            deepening_runtime
-            if entry.producer_family in l2_families
-            else inherited_runtime
-        )
+        entry.producer_family: deepening_runtime
         for entry in inputs.executor_contract.entries
         if entry.execution_mode == "in_process"
+        and entry.producer_family in l2_families
     }
     from harness.squad_provider import SquadCliProvider
 
@@ -13224,12 +13230,9 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         provider_factory=lambda: SquadCliProvider(_load_cli_config(project_root)),
     )
     verifiers = {
-        entry.verifier.verifier_id: (
-            deepening_runtime
-            if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
-            else inherited_runtime
-        )
+        entry.verifier.verifier_id: deepening_runtime
         for entry in inputs.executor_contract.entries
+        if entry.verifier.verifier_id == DEEPENING_VERIFIER_ID
     }
     context = Protocol22RunContext(
         paths=paths,
@@ -14878,6 +14881,7 @@ def _prepare_re_v24_creation(
     import harness.re_v2.protocol_24.runtime as runtime_module
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.protocol_22.authorities import validate_installed_authorities
+    from harness.re_v2.protocol_22.executors import IN_PROCESS_ADAPTER_ID
     from harness.re_v2.protocol_22.model import BudgetPolicyV2, CatalogReferenceV1
     from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
     from harness.re_v2.protocol_24.adoption import (
@@ -14927,6 +14931,14 @@ def _prepare_re_v24_creation(
         implementation_digest,
     )
     compact = parent.inputs.executor_contract.entry_for("compact-baseline")
+    inherited_base_digests = {
+        entry.executor_implementation_digest
+        for entry in parent.inputs.executor_contract.entries
+        if entry.adapter_id == IN_PROCESS_ADAPTER_ID
+    }
+    if len(inherited_base_digests) != 1:
+        raise ValueError("completed parent in-process authority is ambiguous")
+    inherited_base_digest = next(iter(inherited_base_digests))
     renderer = compact.request_renderer
     if renderer is None:
         raise ValueError("completed parent has no pinned shared provider renderer")
@@ -14941,6 +14953,7 @@ def _prepare_re_v24_creation(
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            IN_PROCESS_ADAPTER_ID: inherited_base_digest,
             DEEPENING_IN_PROCESS_ADAPTER_ID: implementation_digest,
         },
         verifier_implementations={
@@ -15101,7 +15114,10 @@ def _find_re_v24_semantic_child(
     workspace_root: Path,
     semantic_request_id: str,
 ) -> Path | None:
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS
     from harness.re_v2.protocol_24.model import RunManifestV3
+    from harness.re_v2.protocol_26.events import protocol_26_events_for
     from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
     from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
@@ -15128,6 +15144,17 @@ def _find_re_v24_semantic_child(
             isinstance(candidate_manifest, RunManifestV3)
             and candidate_manifest.semantic_request_id == semantic_request_id
         ):
+            event_protocol = (
+                protocol_26_events_for("L2")
+                if isinstance(manifest, RunManifestV5)
+                else PROTOCOL_24_EVENTS
+            )
+            events = EventStore(
+                ReV2Paths.for_run(candidate),
+                protocol=event_protocol,
+            ).replay()
+            if events and events[-1].type == "run_failed":
+                continue
             return candidate
     return None
 

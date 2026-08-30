@@ -507,8 +507,6 @@ def _resolve_selection(
             for domain in source.domains
             if not requested_domains or domain.domain_key in requested_domains
         )
-        if not domains:
-            raise Protocol24GraphError("selection resolves to no domains")
         selected.append((source, domains))
     resolved_domains = {domain.domain_key for _source, domains in selected for domain in domains}
     if requested_domains != (requested_domains & resolved_domains):

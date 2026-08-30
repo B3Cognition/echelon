@@ -119,6 +119,112 @@ def test_install_prosaic_bundle_deploys_staged_content_with_prosaic(
     assert not (workspace / ".echelon/packages").exists()
 
 
+def test_install_prosaic_bundle_refreshes_legacy_destinations_without_manifest(
+    tmp_path: Path,
+) -> None:
+    from echelon.prosaic_packages import install_prosaic_bundle
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+    legacy_prose = workspace / ".echelon/prosaic/commands/echelon.demo.md"
+    legacy_runtime = workspace / ".echelon/runtime/workflow/definition.yaml"
+    legacy_prose.parent.mkdir(parents=True)
+    legacy_runtime.parent.mkdir(parents=True)
+    legacy_prose.write_text("legacy prose\n", encoding="utf-8")
+    legacy_runtime.write_text("legacy runtime\n", encoding="utf-8")
+
+    def run(command: list[str], *, cwd: Path, check: bool) -> None:
+        subprocess.run(command, cwd=cwd, check=check)
+
+    install_prosaic_bundle(workspace, echelon_root=echelon_root, run=run)
+
+    assert legacy_prose.read_text(encoding="utf-8").endswith("# Demo\n")
+    assert legacy_runtime.read_text(encoding="utf-8") == "phases: []\n"
+
+
+def test_install_prosaic_bundle_restores_legacy_destinations_when_refresh_fails(
+    tmp_path: Path,
+) -> None:
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+    legacy_prose = workspace / ".echelon/prosaic/legacy.md"
+    legacy_runtime = workspace / ".echelon/runtime/legacy.yaml"
+    legacy_prose.parent.mkdir(parents=True)
+    legacy_runtime.parent.mkdir(parents=True)
+    legacy_prose.write_text("legacy prose\n", encoding="utf-8")
+    legacy_runtime.write_text("legacy runtime\n", encoding="utf-8")
+    calls = 0
+
+    def run(command: list[str], *, cwd: Path, **_kwargs: object) -> None:
+        nonlocal calls
+        calls += 1
+        (cwd / ".echelon/prosaic/new.md").parent.mkdir(parents=True, exist_ok=True)
+        (cwd / ".echelon/prosaic/new.md").write_text("new\n", encoding="utf-8")
+        (cwd / ".prosaic-manifest.json").write_text("{}\n", encoding="utf-8")
+        if calls == 2:
+            raise subprocess.CalledProcessError(1, command)
+
+    with pytest.raises(ProsaicBundleInstallError, match="installation failed"):
+        install_prosaic_bundle(workspace, echelon_root=echelon_root, run=run)
+
+    assert legacy_prose.read_text(encoding="utf-8") == "legacy prose\n"
+    assert legacy_runtime.read_text(encoding="utf-8") == "legacy runtime\n"
+    assert not (workspace / ".echelon/prosaic/new.md").exists()
+    assert not (workspace / ".prosaic-manifest.json").exists()
+    assert not (workspace / ".echelon/.prosaic.pre-prosaic-migration").exists()
+    assert not (workspace / ".echelon/.runtime.pre-prosaic-migration").exists()
+
+
+def test_install_prosaic_bundle_rolls_back_partially_quarantined_legacy_trees(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+    legacy_prose = workspace / ".echelon/prosaic/legacy.md"
+    legacy_runtime = workspace / ".echelon/runtime/legacy.yaml"
+    legacy_prose.parent.mkdir(parents=True)
+    legacy_runtime.parent.mkdir(parents=True)
+    legacy_prose.write_text("legacy prose\n", encoding="utf-8")
+    legacy_runtime.write_text("legacy runtime\n", encoding="utf-8")
+    original_replace = Path.replace
+
+    def fail_second_quarantine(path: Path, target: Path) -> Path:
+        if path == workspace / ".echelon/runtime":
+            raise OSError("simulated second quarantine failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_second_quarantine)
+
+    with pytest.raises(ProsaicBundleInstallError, match="installation failed"):
+        install_prosaic_bundle(
+            workspace,
+            echelon_root=echelon_root,
+            run=lambda *_args, **_kwargs: None,
+        )
+
+    assert legacy_prose.read_text(encoding="utf-8") == "legacy prose\n"
+    assert legacy_runtime.read_text(encoding="utf-8") == "legacy runtime\n"
+    assert not (workspace / ".echelon/.prosaic.pre-prosaic-migration").exists()
+    assert not (workspace / ".echelon/.runtime.pre-prosaic-migration").exists()
+
+
 def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
     echelon_root = Path(__file__).resolve().parents[2]
     wheel_dir = tmp_path / "wheel"

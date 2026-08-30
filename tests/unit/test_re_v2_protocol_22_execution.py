@@ -668,6 +668,7 @@ def test_cli_capture_preserves_missing_provider_observation_as_unavailable(
 
     assert closure.capture.provider_name == "unavailable"
     assert closure.capture.resolved_model_revision is None
+    assert closure.capture.result_kind == "provider_failure"
 
 
 def test_empty_api_candidate_inventory_is_still_durable(tmp_path: Path) -> None:

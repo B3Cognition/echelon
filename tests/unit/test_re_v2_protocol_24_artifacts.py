@@ -36,6 +36,7 @@ from harness.re_v2.protocol_24.artifacts import (
     build_l2_domain_context_bundle,
     build_l2_domain_evidence_pack,
     build_l2_source_baseline_root,
+    build_l2_source_overview_context_bundle,
     certify_l2_compact_candidate,
     parse_l2_authorial_candidate,
 )
@@ -50,6 +51,7 @@ from tests.unit.test_re_v2_protocol_22_certification import (
 from tests.unit.test_re_v2_protocol_22_context import (
     _domain_baseline_bytes,
     _domain_fixture,
+    _source_fixture,
 )
 
 
@@ -187,6 +189,54 @@ def test_l2_candidate_reuses_compact_receipts_and_remains_unaudited() -> None:
     assert artifact.artifact.context_bundle_hash == content_digest(
         context.to_json_dict()
     )
+
+
+@pytest.mark.unit
+def test_l2_candidate_canonicalizes_unique_evidence_hash_alias() -> None:
+    (
+        _fixture,
+        _l1_item,
+        _l1_context,
+        item,
+        context,
+        candidate,
+        snapshot,
+        verifier,
+    ) = _l2_fixture()
+    raw = candidate.authorial_payload.to_json_dict()
+    alias = context.evidence[0].source_blob_hash
+    for surface in raw["surfaces"].values():
+        for claim in surface["items"]:
+            for reference in claim["evidence"]:
+                reference["evidence_authority_id"] = alias
+    aliased = replace(
+        candidate,
+        authorial_payload=parse_l2_authorial_candidate(
+            canonical_json_bytes(raw),
+            "domain-baseline",
+            context.target_artifact_policy,
+        ),
+    )
+
+    result = certify_l2_compact_candidate(
+        aliased,
+        item,
+        context,
+        snapshot,
+        verifier,
+    )
+    artifact = load_canonical_object(
+        result.artifact_bytes,
+        L2CompactBaselineArtifactV1.from_json_dict,
+    )
+
+    assert result.certification.verdict == "accepted"
+    assert {
+        reference.evidence_authority_id
+        for surface in artifact.surfaces.values()
+        for claim in surface.items
+        for reference in claim.evidence
+    } == {context.evidence[0].evidence_authority_id}
 
 
 @pytest.mark.unit
@@ -406,6 +456,45 @@ def test_l2_domain_context_binds_only_targeted_evidence() -> None:
     assert bundle.dependencies[0].artifact_hash == content_digest(evidence)
     assert bundle.evidence_pack_hash == content_digest(evidence)
     assert bundle.domain_projections == ()
+
+
+@pytest.mark.unit
+def test_l2_source_context_supports_selection_with_no_domains() -> None:
+    parent = _source_fixture(
+        {"orders": {"responsibilities": ("Owns order behavior",)}}
+    )
+    inputs = _l2_inputs(parent)
+    source_roles = (
+        "source_inventory",
+        "source_partition",
+        "source_evidence_pack",
+    )
+    payloads = tuple(
+        (role, parent.dependencies.payload_for_role(role)) for role in source_roles
+    )
+    item, accepted = _l2_item(
+        inputs,
+        "source-overview-context-bundle",
+        payloads,
+    )
+    dependencies = AcceptedDependencySetV2(
+        by_role={role: accepted[digest(role)] for role in source_roles},
+        payloads_by_hash={content_digest(payload): payload for _role, payload in payloads},
+    )
+
+    bundle = load_canonical_object(
+        build_l2_source_overview_context_bundle(
+            item,
+            dependencies,
+            inputs.artifact_policy,
+        ),
+        ContextBundleV1.from_json_dict,
+    )
+
+    assert bundle.scope == item.output_key.scope
+    assert bundle.domain_projections == ()
+    assert bundle.depth_debt.domain_depth_debt_rollup is not None
+    assert bundle.depth_debt.domain_depth_debt_rollup.domain_count == 0
 
 
 @pytest.mark.unit

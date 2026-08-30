@@ -17,6 +17,19 @@ def test_safe_relative_path_accepts_hidden_source_segments() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "relative",
+    (
+        ".agents/skills/compress/scripts/__init__.py",
+        "__mocks__/@statsperform/react-playbook.tsx",
+        "public/images/icons/Display Options Icon.svg",
+    ),
+)
+def test_safe_relative_path_accepts_normalized_git_filenames(relative: str) -> None:
+    assert safe_relative_path(relative, "source path") == relative
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("relative", (".", "..", "src/../secret", ".hidden/.."))
 def test_safe_relative_path_still_rejects_navigation(relative: str) -> None:
     with pytest.raises(Protocol22SchemaError, match="normalized relative path"):

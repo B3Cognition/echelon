@@ -107,6 +107,9 @@ class ObjectStore:
         self.root = Path(root)
         _ensure_directory(self.root, "object store")
         _ensure_directory(self.root / "sha256", "object namespace")
+        self._verified_blob_metadata: dict[
+            str, tuple[int, int, int, int, int, int]
+        ] = {}
 
     def put_blob(self, payload: bytes) -> str:
         """Durably publish *payload* without replacing an existing object."""
@@ -152,23 +155,43 @@ class ObjectStore:
 
     def verify(self, object_hash: str) -> bool:
         """Verify an object and, for tree manifests, every referenced blob."""
-        self._verify(object_hash, set())
+        self._verify(object_hash, set(), allow_cached=True)
         return True
 
     def read_blob(self, object_hash: str) -> bytes:
         """Return one verified immutable blob, never a tree manifest."""
-        payload = self._verify(object_hash, set())
+        payload = self._verify(object_hash, set(), allow_cached=False)
         if _parse_tree_manifest(payload) is not None:
             raise ReV2LedgerError("object is a tree, not a blob")
         return payload
 
-    def _verify(self, object_hash: str, active: set[str]) -> bytes:
+    def _verify(
+        self,
+        object_hash: str,
+        active: set[str],
+        *,
+        allow_cached: bool,
+    ) -> bytes:
         path = self._path(object_hash)
+        if allow_cached:
+            cached = self._verified_blob_metadata.get(object_hash)
+            if cached is not None and _lstat_metadata(
+                path,
+                f"object {object_hash}",
+            ) == cached:
+                return b""
+        before = _lstat_metadata(path, f"object {object_hash}")
         payload = _read_regular_file(path, f"object {object_hash}")
+        after = _lstat_metadata(path, f"object {object_hash}")
+        if before != after:
+            raise ReV2LedgerError(
+                f"object {object_hash} identity changed while being verified"
+            )
         if content_digest(payload) != object_hash:
             raise ReV2LedgerError(f"object hash mismatch: {object_hash}")
         manifest = _parse_tree_manifest(payload)
         if manifest is None:
+            self._verified_blob_metadata[object_hash] = after
             return payload
         if object_hash in active:
             raise ReV2LedgerError("tree object contains a reference cycle")
@@ -182,8 +205,13 @@ class ObjectStore:
                 blob_hash = entry["blob_hash"]
                 if not isinstance(blob_hash, str):
                     raise ReV2LedgerError("tree manifest blob hash is invalid")
-                blob = self._verify(blob_hash, active)
-                if len(blob) != entry["size"]:
+                blob = self._verify(blob_hash, active, allow_cached=allow_cached)
+                del blob
+                blob_path = self._path(blob_hash)
+                if _lstat_metadata(
+                    blob_path,
+                    f"object {blob_hash}",
+                )[3] != entry["size"]:
                     raise ReV2LedgerError(
                         f"tree entry {entry['path']!r} has wrong blob size"
                     )

@@ -20,11 +20,6 @@ T = TypeVar("T")
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
-_SAFE_PATH_SEGMENT_RE = re.compile(
-    r"(?:[A-Za-z0-9]|\.[A-Za-z0-9_])[A-Za-z0-9._-]*\Z"
-)
-
-
 def exact_object(
     value: object,
     fields: frozenset[str] | set[str],
@@ -157,10 +152,7 @@ def safe_relative_path(value: object, field: str) -> str:
         path.is_absolute()
         or path.as_posix() != text
         or not path.parts
-        or any(
-            part in {"", ".", ".."} or not _SAFE_PATH_SEGMENT_RE.fullmatch(part)
-            for part in path.parts
-        )
+        or any(part in {"", ".", ".."} for part in path.parts)
     ):
         raise Protocol22SchemaError(f"{field} must be a normalized relative path")
     return text

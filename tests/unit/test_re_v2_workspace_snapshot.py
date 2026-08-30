@@ -82,6 +82,23 @@ def test_preflight_pins_two_clean_child_repositories(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_preflight_rejects_clean_source_with_empty_git_tree(tmp_path: Path) -> None:
+    repo = tmp_path / "sources" / "empty"
+    repo.mkdir(parents=True)
+    _git(repo, "init")
+    _git(repo, "commit", "--allow-empty", "-m", "empty fixture")
+
+    with pytest.raises(ReV2WorkspaceSourceError) as exc:
+        plan_clean_workspace_sources(tmp_path, _sources(tmp_path, repo))
+
+    message = str(exc.value)
+    assert "source 'empty'" in message
+    assert "no tracked files" in message
+    assert "Populate and commit" in message
+    assert "remove it from .echelon/config.yml" in message
+
+
+@pytest.mark.unit
 def test_preflight_aggregates_dirty_sources_and_remediation(tmp_path: Path) -> None:
     first = _clean_repo(tmp_path / "sources" / "first", {"a.py": "a\n"})
     second = _clean_repo(tmp_path / "sources" / "second", {"b.py": "b\n"})

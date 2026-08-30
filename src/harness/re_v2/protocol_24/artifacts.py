@@ -635,10 +635,6 @@ def build_l2_source_overview_context_bundle(
         "source-overview-context-bundle",
         expected_roles,
     )
-    if not domain_roles:
-        raise Protocol22CertificationError(
-            "L2 source context requires at least one selected domain"
-        )
     parameters = context_policy.policy_parameters
     if not isinstance(parameters, ContextBundlePolicyParametersV1) or not isinstance(
         parameters.projection,
@@ -1087,6 +1083,11 @@ def certify_l2_compact_candidate(
     _validate_l2_invocation(candidate, work_item, context, snapshot, verifier)
     policy = context.target_artifact_policy
     context_hash = content_digest(context.to_json_dict())
+    authorial_payload = _canonicalize_evidence_hash_aliases(
+        candidate.authorial_payload,
+        context,
+        policy,
+    )
     artifact = L2CompactBaselineArtifactV1(
         schema_version=1,
         artifact=L2CompactArtifactEnvelopeV1(
@@ -1098,23 +1099,23 @@ def certify_l2_compact_candidate(
             dependency_hashes=work_item.output_key.dependency_hashes,
             context_bundle_hash=context_hash,
         ),
-        surfaces=candidate.authorial_payload.surfaces,
-        unknowns=candidate.authorial_payload.unknowns,
+        surfaces=authorial_payload.surfaces,
+        unknowns=authorial_payload.unknowns,
         depth_debt=context.depth_debt,
     )
     artifact_bytes = canonical_json_bytes(artifact.to_json_dict())
     authorities, evidence_diagnostics = _validate_context_and_references(
-        candidate.authorial_payload,
+        authorial_payload,
         context,
         snapshot,
     )
     referenced_keys = _referenced_authority_keys(
-        candidate.authorial_payload,
+        authorial_payload,
         authorities,
     )
     coverage = _coverage_assessment(context, referenced_keys)
     required_surfaces, minimum_utility = _minimum_utility(
-        candidate.authorial_payload,
+        authorial_payload,
         context,
         snapshot,
         bool(referenced_keys),
@@ -1127,7 +1128,7 @@ def certify_l2_compact_candidate(
         diagnostics.extend(evidence_diagnostics)
     if not minimum_utility.passed:
         diagnostics.append("minimum_utility_not_met")
-    if _duplicates_lower_layer_claim(candidate.authorial_payload, adopted_l1_artifacts):
+    if _duplicates_lower_layer_claim(authorial_payload, adopted_l1_artifacts):
         diagnostics.append("lower_layer_exact_duplicate")
     normalized_diagnostics = tuple(sorted(diagnostics))
     assessment = CompactCertificationAssessmentV2(
@@ -1152,7 +1153,7 @@ def certify_l2_compact_candidate(
         work_item_id=work_item.work_item_id,
         execution_capture_hash=candidate.execution_capture_hash,
         normalized_authorial_payload_hash=content_digest(
-            candidate.authorial_payload.to_json_dict()
+            authorial_payload.to_json_dict()
         ),
         artifact_hash=artifact_hash,
         certification_receipt_id=certification.identity,
@@ -1170,6 +1171,57 @@ def certify_l2_compact_candidate(
     )
 
 
+def _canonicalize_evidence_hash_aliases(
+    payload: NormalizedAuthorialPayloadV1,
+    context: ContextBundleV1,
+    policy: object,
+) -> NormalizedAuthorialPayloadV1:
+    """Rewrite an unambiguous excerpt hash alias to its authority identity."""
+    excerpts = tuple(context.evidence) + tuple(
+        excerpt
+        for projection in context.domain_projections
+        for excerpt in projection.evidence
+    )
+    authority_ids = {excerpt.evidence_authority_id for excerpt in excerpts}
+    aliases: dict[str, list[EvidenceExcerptV1]] = {}
+    for excerpt in excerpts:
+        for alias in (excerpt.source_blob_hash, excerpt.raw_excerpt_hash):
+            aliases.setdefault(alias, []).append(excerpt)
+    raw = payload.to_json_dict()
+
+    def canonicalize(reference: dict[str, object]) -> None:
+        supplied = reference.get("evidence_authority_id")
+        if not isinstance(supplied, str) or supplied in authority_ids:
+            return
+        path = reference.get("path")
+        start = reference.get("start_line")
+        end = reference.get("end_line")
+        matches = {
+            excerpt.evidence_authority_id
+            for excerpt in aliases.get(supplied, ())
+            if excerpt.source_relative_path == path
+            and isinstance(start, int)
+            and isinstance(end, int)
+            and excerpt.start_line <= start <= end <= excerpt.end_line
+        }
+        if len(matches) == 1:
+            reference["evidence_authority_id"] = next(iter(matches))
+
+    surfaces = raw["surfaces"]
+    assert isinstance(surfaces, dict)
+    for surface in surfaces.values():
+        assert isinstance(surface, dict)
+        for claim in surface["items"]:
+            for reference in claim["evidence"]:
+                canonicalize(reference)
+    for unknown in raw["unknowns"]:
+        for reference in unknown["inspected_evidence"]:
+            canonicalize(reference)
+    return parse_l2_authorial_candidate(
+        canonical_json_bytes(raw),
+        payload.artifact_kind,
+        policy,
+    )
 def parse_l2_authorial_candidate(
     raw: bytes,
     artifact_kind: str,
