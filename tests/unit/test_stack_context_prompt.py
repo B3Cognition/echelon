@@ -12,9 +12,18 @@ from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
 from harness.stacks.errors import StackResolutionError
 from harness.stacks.paths import find_stack_extension_root
+from harness.stacks.preflight import StackPreflightResult
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def mock_stack_preflight(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Keep prompt-context unit tests independent of registry availability."""
+    preflight = MagicMock(return_value=StackPreflightResult(findings=[]))
+    monkeypatch.setattr("harness.stacks.context.run_stack_preflight", preflight)
+    return preflight
 
 
 def _coordinator_with_stacks(
@@ -67,7 +76,9 @@ def test_no_selected_stacks_preserves_original_strategy_context() -> None:
 
 
 @pytest.mark.unit
-def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> None:
+def test_selected_stark_stack_context_resolves_playbook_dependency_first(
+    mock_stack_preflight: MagicMock,
+) -> None:
     coord = _coordinator_with_stacks(["statsperform-stark-webapp"], ROOT)
 
     stack_context = coord._build_stack_context()
@@ -80,6 +91,7 @@ def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> No
     assert "## Stack Guidance" in stack_context
     assert "Use Playbook for UI components" in stack_context
     assert "Use the Opta Stark Nx/Next.js archetype" in stack_context
+    mock_stack_preflight.assert_called_once()
 
 
 @pytest.mark.unit
