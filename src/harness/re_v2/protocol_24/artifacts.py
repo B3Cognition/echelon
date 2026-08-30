@@ -1083,7 +1083,7 @@ def certify_l2_compact_candidate(
     _validate_l2_invocation(candidate, work_item, context, snapshot, verifier)
     policy = context.target_artifact_policy
     context_hash = content_digest(context.to_json_dict())
-    authorial_payload = _canonicalize_evidence_hash_aliases(
+    authorial_payload = normalize_l2_authorial_candidate(
         candidate.authorial_payload,
         context,
         policy,
@@ -1171,39 +1171,50 @@ def certify_l2_compact_candidate(
     )
 
 
-def _canonicalize_evidence_hash_aliases(
+def normalize_l2_authorial_candidate(
     payload: NormalizedAuthorialPayloadV1,
     context: ContextBundleV1,
     policy: object,
 ) -> NormalizedAuthorialPayloadV1:
-    """Rewrite an unambiguous excerpt hash alias to its authority identity."""
+    """Resolve unambiguous pinned evidence references to canonical authority IDs."""
     excerpts = tuple(context.evidence) + tuple(
         excerpt
         for projection in context.domain_projections
         for excerpt in projection.evidence
     )
-    authority_ids = {excerpt.evidence_authority_id for excerpt in excerpts}
+    by_authority: dict[str, list[EvidenceExcerptV1]] = {}
     aliases: dict[str, list[EvidenceExcerptV1]] = {}
     for excerpt in excerpts:
+        by_authority.setdefault(excerpt.evidence_authority_id, []).append(excerpt)
         for alias in (excerpt.source_blob_hash, excerpt.raw_excerpt_hash):
             aliases.setdefault(alias, []).append(excerpt)
     raw = payload.to_json_dict()
 
     def canonicalize(reference: dict[str, object]) -> None:
         supplied = reference.get("evidence_authority_id")
-        if not isinstance(supplied, str) or supplied in authority_ids:
+        if not isinstance(supplied, str):
             return
         path = reference.get("path")
         start = reference.get("start_line")
         end = reference.get("end_line")
-        matches = {
-            excerpt.evidence_authority_id
-            for excerpt in aliases.get(supplied, ())
-            if excerpt.source_relative_path == path
-            and isinstance(start, int)
-            and isinstance(end, int)
-            and excerpt.start_line <= start <= end <= excerpt.end_line
-        }
+
+        def matching_authorities(
+            candidates: tuple[EvidenceExcerptV1, ...] | list[EvidenceExcerptV1],
+        ) -> set[str]:
+            return {
+                excerpt.evidence_authority_id
+                for excerpt in candidates
+                if excerpt.source_relative_path == path
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and excerpt.start_line <= start <= end <= excerpt.end_line
+            }
+
+        if matching_authorities(by_authority.get(supplied, [])) == {supplied}:
+            return
+        matches = matching_authorities(aliases.get(supplied, []))
+        if len(matches) != 1:
+            matches = matching_authorities(excerpts)
         if len(matches) == 1:
             reference["evidence_authority_id"] = next(iter(matches))
 
@@ -1433,5 +1444,6 @@ __all__ = (
     "build_l2_source_overview_context_bundle",
     "certify_l2_compact_candidate",
     "parse_l2_authorial_candidate",
+    "normalize_l2_authorial_candidate",
     "render_l2_baseline_markdown",
 )

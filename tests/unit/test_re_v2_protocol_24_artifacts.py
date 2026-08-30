@@ -38,6 +38,7 @@ from harness.re_v2.protocol_24.artifacts import (
     build_l2_source_baseline_root,
     build_l2_source_overview_context_bundle,
     certify_l2_compact_candidate,
+    normalize_l2_authorial_candidate,
     parse_l2_authorial_candidate,
 )
 from harness.re_v2.protocol_24.artifacts import build_deepening_executor_catalog
@@ -237,6 +238,52 @@ def test_l2_candidate_canonicalizes_unique_evidence_hash_alias() -> None:
         for claim in surface.items
         for reference in claim.evidence
     } == {context.evidence[0].evidence_authority_id}
+
+
+@pytest.mark.unit
+def test_l2_candidate_canonicalizes_unambiguous_mispaired_authority() -> None:
+    (
+        _fixture,
+        _l1_item,
+        _l1_context,
+        _item,
+        context,
+        candidate,
+        _snapshot,
+        _verifier,
+    ) = _l2_fixture()
+    intended = context.evidence[0]
+    other = replace(
+        intended,
+        evidence_authority_id=digest("other-evidence-authority"),
+        source_relative_path="orders/other.py",
+        source_blob_hash=digest("other-source-blob"),
+        raw_excerpt_hash=digest("other-raw-excerpt"),
+    )
+    expanded_context = replace(context, evidence=(intended, other))
+    raw = candidate.authorial_payload.to_json_dict()
+    for surface in raw["surfaces"].values():
+        for claim in surface["items"]:
+            for reference in claim["evidence"]:
+                reference["evidence_authority_id"] = other.evidence_authority_id
+    mispaired = parse_l2_authorial_candidate(
+        canonical_json_bytes(raw),
+        "domain-baseline",
+        context.target_artifact_policy,
+    )
+
+    normalized = normalize_l2_authorial_candidate(
+        mispaired,
+        expanded_context,
+        context.target_artifact_policy,
+    )
+
+    assert {
+        reference.evidence_authority_id
+        for surface in normalized.surfaces.values()
+        for claim in surface.items
+        for reference in claim.evidence
+    } == {intended.evidence_authority_id}
 
 
 @pytest.mark.unit

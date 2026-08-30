@@ -7,11 +7,15 @@ from types import MappingProxyType
 
 import pytest
 
-from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.canonical import (
+    canonical_json_bytes,
+    content_digest,
+)
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.controller import Protocol22Controller
 from harness.re_v2.protocol_22.controller import accepted_dependencies_for
+from harness.re_v2.protocol_22.baseline import ContextBundleV1
 from harness.re_v2.protocol_22.execution import (
     DeterministicExecutionDependenciesV1,
     Protocol22ExecutionStore,
@@ -24,6 +28,7 @@ from harness.re_v2.protocol_22.model import (
     DeterministicInvocationInputV1,
     DeterministicInvocationV1,
 )
+from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
 from harness.re_v2.protocol_24.adoption import (
@@ -105,6 +110,7 @@ def _child_context(
     paused: bool,
     provider_mode: str = "api",
     source_domains: dict[str, tuple[str, ...]] | None = None,
+    alias_evidence: bool = False,
 ) -> tuple[Protocol22RunContext, _ScriptedProvider | None]:
     parent = _completed_parent(
         tmp_path,
@@ -212,7 +218,9 @@ def _child_context(
             occurred_at=CHILD_NOW,
         )
     registry = _registry(parent)
-    provider = None if paused else _NovelL2Provider()
+    provider = None if paused else (
+        _AliasL2Provider() if alias_evidence else _NovelL2Provider()
+    )
     snapshot_payloads = {}
     for source in inputs.workspace_partition.sources:
         for record in source.files:
@@ -340,6 +348,41 @@ class _NovelL2Provider(_ScriptedProvider):
         return result
 
 
+class _AliasL2Provider(_NovelL2Provider):
+    def execute(self, *args: object, **kwargs: object):
+        result = super().execute(*args, **kwargs)
+        context_bytes = (
+            args[1].messages[1].content_utf8.encode("utf-8")
+            if len(args) == 5
+            else args[2]
+        )
+        context = load_canonical_object(
+            context_bytes,
+            ContextBundleV1.from_json_dict,
+        )
+        if context.target_artifact_kind != "domain-baseline":
+            return result
+        candidate_path = args[-2] / "baseline.json"
+        raw = json.loads(candidate_path.read_bytes())
+        excerpts = tuple(context.evidence) + tuple(
+            excerpt
+            for projection in context.domain_projections
+            for excerpt in projection.evidence
+        )
+        alias_by_authority = {
+            excerpt.evidence_authority_id: excerpt.source_blob_hash
+            for excerpt in excerpts
+        }
+        for surface in raw["surfaces"].values():
+            for claim in surface["items"]:
+                for reference in claim["evidence"]:
+                    reference["evidence_authority_id"] = alias_by_authority[
+                        reference["evidence_authority_id"]
+                    ]
+        candidate_path.write_bytes(canonical_json_bytes(raw))
+        return result
+
+
 def _registry(parent: ValidatedParentV1):
     from dataclasses import replace
 
@@ -417,6 +460,30 @@ def test_protocol_24_child_completes_selected_l2_through_shared_execution(
         is not None
         for template in l2_templates
     )
+
+
+@pytest.mark.integration
+def test_protocol_24_controller_persists_canonicalized_candidate_authority(
+    tmp_path: Path,
+) -> None:
+    context, provider = _child_context(
+        tmp_path,
+        paused=False,
+        provider_mode="cli",
+        alias_evidence=True,
+    )
+    assert provider is not None
+
+    result = Protocol24Controller(context).run_until_stopped()
+
+    assert result.status == "completed"
+    assert result.ledger is not None
+    assessments = tuple(result.ledger.candidate_assessments.values())
+    assert assessments
+    for assessment in assessments:
+        context.object_store.verify(
+            assessment.normalized_authorial_payload_hash
+        )
 
 
 @pytest.mark.integration
