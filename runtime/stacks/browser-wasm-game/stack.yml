@@ -1,0 +1,36 @@
+schema_version: "1.0"
+stack:
+  id: browser-wasm-game
+  name: Browser WASM Game
+  version: "1.0.0"
+  kind: archetype
+  owner: echelon
+  description: Browser-first game with a React shell and a Rust-to-WASM gameplay module.
+applies_to:
+  archetypes:
+    - browser_wasm_game
+provides:
+  web_app.framework: vite-react
+  web_app.workspace: pnpm
+  web_app.runtime: wasm-browser
+  test.frontend: vitest-playwright
+  delivery.web_app: docker-web
+  x.game.client_runtime: browser-wasm
+implies: []
+requires:
+  commands:
+    - pnpm
+    - cargo
+    - wasm-pack
+detection:
+  positive:
+    technologies:
+      - rust
+      - wasm-pack
+    files:
+      - Cargo.toml
+      - package.json
+context:
+  files:
+    - context.md
+conflicts: []
