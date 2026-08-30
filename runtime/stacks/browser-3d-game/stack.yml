@@ -1,0 +1,37 @@
+schema_version: "1.0"
+stack:
+  id: browser-3d-game
+  name: Browser 3D Game
+  version: "1.0.0"
+  kind: archetype
+  owner: echelon
+  description: Browser-first 3D game client using React, Three.js, and React Three Fiber.
+applies_to:
+  archetypes:
+    - browser_3d_game
+provides:
+  web_app.framework: vite-react
+  web_app.rendering: react-three-fiber
+  web_app.workspace: pnpm
+  test.frontend: vitest-playwright
+  delivery.web_app: docker-web
+  x.game.client_runtime: browser-3d
+implies: []
+requires:
+  commands:
+    - pnpm
+detection:
+  positive:
+    technologies:
+      - threejs
+      - react-three-fiber
+    dependencies:
+      - three
+      - "@react-three/fiber"
+      - "@react-three/drei"
+    files:
+      - package.json
+context:
+  files:
+    - context.md
+conflicts: []

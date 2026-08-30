@@ -21,11 +21,29 @@ def test_loads_bundled_stack_catalog() -> None:
     definitions = _definitions()
 
     assert sorted(definitions) == [
+        "browser-3d-game",
         "game-persistence-postgres",
         "statsperform-msa-service",
         "statsperform-playbook",
         "statsperform-stark-webapp",
     ]
+
+
+@pytest.mark.unit
+def test_resolves_browser_3d_game_with_shared_persistence() -> None:
+    resolved = resolve_stacks(
+        ["game-persistence-postgres", "browser-3d-game"],
+        _definitions(),
+        target_archetypes={"browser_3d_game"},
+    )
+
+    assert resolved.resolved_ids == [
+        "game-persistence-postgres",
+        "browser-3d-game",
+    ]
+    assert resolved.capabilities["data.database"].value == "postgres"
+    assert resolved.capabilities["web_app.rendering"].value == "react-three-fiber"
+    assert resolved.capabilities["x.game.client_runtime"].value == "browser-3d"
 
 
 @pytest.mark.unit
