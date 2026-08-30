@@ -7507,6 +7507,65 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_banzai_resolves_eligible_sage_issue_before_proportional_budget(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit SAGE authority drives targeted repair without spending a loop."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("- **HIGH:** 0", "- **HIGH:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("**Severity:** LOW", "**Severity:** HIGH")
+            .replace("**Type:** incompleteness", "**Type:** contradiction")
+            .replace(
+                "Repair the certified failing dimension.",
+                "Treat checkpoint inventory as authoritative when restoring a player.",
+            )
+            .replace(
+                "Immutable Understanding evidence.",
+                "The checkpoint requirements explicitly include inventory state.",
+            )
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes"),
+            encoding="utf-8",
+        )
+        finding = why2.echelon_result["state_updates"]["finding_routes"][
+            "findings"
+        ][0]
+        finding["issue_id"] = "ISS-001"
+        state = store.load()
+        state.update(updates)
+        state["autonomy_mode"] = "banzai"
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "terminal-blocked"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["status"] == "running"
+        assert persisted["blocked_decision"]["resolved_by"] == "controller"
+        assert persisted["selected_issue_resolution"] == "ISS-001"
+        selected = persisted["issue_resolution_ledger"]["ISS-001"]
+        assert selected["status"] == "selected"
+        assert selected["decision"] == (
+            "Treat checkpoint inventory as authoritative when restoring a player."
+        )
+        repair = persisted["phase1_quality_repair"]
+        assert repair["automatic_consumed"] == 0
+        assert repair["candidate_ids"] == []
+        assert "quality_gate_remediation" not in persisted
+        ctrl._provider.exec_agent.assert_not_called()
+
     def test_pending_evidence_routes_to_investigator_before_proportional_repair(
         self,
         tmp_path: Path,

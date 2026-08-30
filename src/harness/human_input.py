@@ -66,6 +66,7 @@ _RECOMMENDATION_AUTHORITIES = frozenset({
 _RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
 _RECOMMENDATION_MODES = frozenset({"static", "controller"})
 _RESOLUTION_HANDLERS = frozenset({
+    "banzai_issue_resolution",
     "clarification_resume",
     "gate_outcome",
     "phase_dispatch_limit",
@@ -1072,9 +1073,10 @@ def v2_automatic_decision_is_registered(
 
     dynamic_dispatch_cap = (
         policy.source_kind == "controller_safeguard"
-        and policy.producer_id == "phase_dispatch_limit"
-        and policy.reason_code == "phase_dispatch_limit"
-        and policy.resolution_handler == "phase_dispatch_limit"
+        and policy.producer_id
+        in {"phase_dispatch_limit", "banzai_issue_resolution"}
+        and policy.reason_code == policy.producer_id
+        and policy.resolution_handler == policy.producer_id
     )
     if dynamic_dispatch_cap:
         if not options:
@@ -1608,6 +1610,101 @@ def prepare_controller_proportional_quality_decision(
     )
 
 
+def prepare_controller_banzai_issue_resolution_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    option_contract: object,
+) -> PreparedHumanInput:
+    """Seal the first explicit Banzai-eligible issue as controller authority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "Banzai issue preparation requires a policy registry"
+        )
+    if reason_code != "banzai_issue_resolution":
+        raise HumanInputPolicyError(
+            "reason_code is not a Banzai issue resolution"
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if (
+        type(option_contract) is not tuple
+        or not option_contract
+        or not all(
+            isinstance(option, HumanInputOption)
+            for option in option_contract
+        )
+        or any(option.recommended for option in option_contract)
+        or any(option.outcome is not None for option in option_contract)
+    ):
+        raise HumanInputPolicyError(
+            "Banzai issue option contract is invalid"
+        )
+    _validate_options(
+        option_contract,
+        allowed_target_phases=policy.allowed_target_phases,
+    )
+    selected = option_contract[0]
+    prepared_options = tuple(
+        replace(option, recommended=index == 0)
+        for index, option in enumerate(option_contract)
+    )
+    evidence_payload = {
+        "kind": "banzai_issue_resolution",
+        "phase_id": normalized_phase,
+        "document_order": [option.id for option in option_contract],
+        "recommended_option": _recommendation_option_payload(
+            prepared_options[0]
+        ),
+    }
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=selected.id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "The selected issue is the first unresolved Banzai-eligible entry "
+            "in authoritative issues.md document order. Its sealed suggested "
+            "option and evidence provide deterministic repair authority."
+        ),
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"banzai-issue-resolution:{selected.id}",
+                kind="banzai_issue_resolution",
+                reference=f"issues.md#{selected.id}",
+                digest=_canonical_sha256(evidence_payload),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
 _CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
     (
         "human_gate",
@@ -1619,6 +1716,11 @@ _CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
         "phase_dispatch_limit",
         "phase_dispatch_limit",
     ): prepare_controller_phase_dispatch_limit_decision,
+    (
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        "banzai_issue_resolution",
+    ): prepare_controller_banzai_issue_resolution_decision,
     (
         "controller_safeguard",
         "proportional_quality_budget_exhausted",
@@ -1757,6 +1859,25 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
         "escalate",
     })
     return (
+        HumanInputPolicy(
+            source_kind="controller_safeguard",
+            producer_id="banzai_issue_resolution",
+            reason_code="banzai_issue_resolution",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="banzai_issue_resolution",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-why2"}),
+            allowed_target_phases=frozenset({"phase1-what"}),
+            context_state_keys=(
+                "phase",
+                "issue_resolution_ledger",
+                "phase1_quality_repair",
+                "understanding_evidence",
+            ),
+            context_paths=(),
+            options=(),
+        ),
         HumanInputPolicy(
             source_kind="controller_safeguard", producer_id="phase_dispatch_limit",
             reason_code="phase_dispatch_limit", classification="material",

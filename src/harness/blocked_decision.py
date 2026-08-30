@@ -36,7 +36,11 @@ _V2_CLASSIFICATIONS = frozenset(
 _V2_AUTONOMY_MODES = frozenset({"guided", "semi", "banzai"})
 _V2_RESOLVERS = frozenset({"user", "semi", "COMMANDER", "controller"})
 _V2_OPTION_REQUIRED_HANDLERS = frozenset(
-    {"phase_dispatch_limit", "proportional_quality_debt"}
+    {
+        "banzai_issue_resolution",
+        "phase_dispatch_limit",
+        "proportional_quality_debt",
+    }
 )
 _V2_OPTION_FIELDS = frozenset(
     {"id", "label", "description", "recommended", "risk_level", "next_phase", "outcome"}

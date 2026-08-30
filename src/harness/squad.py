@@ -2677,9 +2677,10 @@ class SquadController:
                 "controller_safeguard",
                 "legacy_recovery",
             }
-            and policy.producer_id == "phase_dispatch_limit"
-            and policy.reason_code == "phase_dispatch_limit"
-            and policy.resolution_handler == "phase_dispatch_limit"
+            and policy.producer_id
+            in {"phase_dispatch_limit", "banzai_issue_resolution"}
+            and policy.reason_code == policy.producer_id
+            and policy.resolution_handler == policy.producer_id
         )
 
     @staticmethod
@@ -3534,6 +3535,7 @@ class SquadController:
             request.source_kind == "controller_safeguard"
             and request.producer_id
             in {
+                "banzai_issue_resolution",
                 "consecutive_why_fails",
                 "why2_metric_stagnation",
                 "proportional_quality_budget_exhausted",
@@ -3995,6 +3997,46 @@ class SquadController:
             confidence=confidence,
         )
 
+    def _banzai_issue_controller_resolution(
+        self,
+        decision: Mapping[str, object],
+    ) -> AppliedHumanInputResolution | None:
+        """Apply sealed issues.md authority without a COMMANDER replay."""
+        if (
+            decision.get("schema_version") != 3
+            or decision.get("source_kind") != "controller_safeguard"
+            or decision.get("producer_id") != "banzai_issue_resolution"
+            or decision.get("reason_code") != "banzai_issue_resolution"
+            or decision.get("resolution_handler")
+            != "banzai_issue_resolution"
+            or decision.get("automatic_eligible") is not True
+            or decision.get("recommendation_authority")
+            != "controller_evidence"
+        ):
+            return None
+        options = self._human_input_options_from_decision(decision)
+        recommended = [option for option in options if option.recommended]
+        evidence = decision.get("recommendation_evidence")
+        if (
+            len(recommended) != 1
+            or recommended[0].id != decision.get("recommended_option_id")
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("kind") != "banzai_issue_resolution"
+                for item in evidence
+            )
+        ):
+            return None
+        return AppliedHumanInputResolution(
+            selected_option_id=recommended[0].id,
+            answer_text=None,
+            resolved_by="controller",
+            rationale=str(decision["recommendation_rationale"]),
+            confidence=str(decision["recommendation_confidence"]),
+        )
+
     @staticmethod
     def _validate_human_input_resolver(
         decision: Mapping[str, object],
@@ -4451,6 +4493,65 @@ class SquadController:
             route=route,
         )
 
+    def _banzai_issue_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        _resolution: AppliedHumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        """Route one sealed SAGE issue through the normal repair lifecycle."""
+        if selected is None:
+            raise HumanInputPolicyError(
+                "Banzai issue resolution must select one sealed issue option"
+            )
+        candidate = self._dispatch_cap_candidate_for_resolution(
+            state,
+            selected,
+        )
+        selection = self._validate_banzai_issue_resolution_selection(
+            {
+                "issue_id": candidate["issue_id"],
+                "decision": candidate["suggested_option"],
+                "rationale": candidate["evidence_basis"],
+                "confidence": "high",
+                "evidence_backed": True,
+            },
+            [candidate],
+        )
+        if selection is None:
+            raise HumanInputPolicyError(
+                "Banzai issue resolution is not evidence-backed"
+            )
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
+        if route != selection["repair_phase"]:
+            raise HumanInputPolicyError(
+                "Banzai issue repair route is not sealed by issue authority"
+            )
+        updates = self._issue_resolution_state_updates(
+            dict(state),
+            selection,
+            source_phase=str(decision["source_phase"]),
+        )
+        updates.update(
+            {
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+            }
+        )
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset({"quality_gate_remediation"}),
+            route=route,
+        )
+
     def _proportional_quality_debt_resolution(
         self,
         state: Mapping[str, object],
@@ -4783,6 +4884,7 @@ class SquadController:
             resolution,
         )
         handlers = {
+            "banzai_issue_resolution": self._banzai_issue_resolution,
             "clarification_resume": self._clarification_resume_resolution,
             "gate_outcome": self._gate_outcome_resolution,
             "phase_dispatch_limit": self._phase_dispatch_limit_resolution,
@@ -5623,6 +5725,15 @@ class SquadController:
             if decision.get("automatic_eligible") is not True:
                 return False
             policy = self._policy_for_human_input_decision(decision)
+            controller_resolution = (
+                self._banzai_issue_controller_resolution(decision)
+            )
+            if controller_resolution is not None:
+                return self.apply_human_input_resolution(
+                    str(decision["id"]),
+                    expected_state_revision=int(state["state_revision"]),
+                    resolution=controller_resolution,
+                )
             controller_resolution = self._proportional_controller_resolution(
                 decision,
                 state,
@@ -12012,6 +12123,55 @@ class SquadController:
             "blocked_reason": "proportional_quality_candidate_integrity_failed",
         }, None
 
+    def _prepare_banzai_quality_issue_resolution(
+        self,
+        snapshot: RoutingStateSnapshot,
+        assessment: AuthoritativeQualityAssessment,
+    ) -> PreparedHumanInput | None:
+        """Prepare the next explicit semantic repair before loop accounting."""
+        state = snapshot.state
+        if (
+            state.get("autonomy_mode") != "banzai"
+            or state.get("selected_issue_resolution")
+        ):
+            return None
+        try:
+            candidates = self._banzai_issue_resolution_candidates(dict(state))
+        except _DispatchCapEvidenceError:
+            return None
+        actionable_issue_ids = {
+            str(route.get("issue_id") or "").strip()
+            for route in assessment.exact_routes
+            if route.get("route") == "spec_repair"
+        }
+        raw_ledger = state.get("issue_resolution_ledger")
+        ledger = raw_ledger if isinstance(raw_ledger, Mapping) else {}
+        unresolved = [
+            candidate
+            for candidate in candidates
+            if candidate["issue_id"] in actionable_issue_ids
+            and (
+                not isinstance(ledger.get(candidate["issue_id"]), Mapping)
+                or ledger[candidate["issue_id"]].get("status")
+                not in {"selected", "repaired", "validated"}
+            )
+        ]
+        if not unresolved:
+            return None
+        options = self._dispatch_cap_options(unresolved)
+        return self._human_input_registry.prepare_controller(
+            source_kind="controller_safeguard",
+            producer_id="banzai_issue_resolution",
+            phase_id="phase1-why2",
+            reason_code="banzai_issue_resolution",
+            question=(
+                "Apply the first unresolved Banzai-eligible SAGE resolution "
+                "from authoritative issues.md before proportional repair."
+            ),
+            source_state_revision=snapshot.state_revision,
+            option_contract=options,
+        )
+
     def _coordinate_proportional_failure(
         self,
         assessment: AuthoritativeQualityAssessment,
@@ -12036,6 +12196,12 @@ class SquadController:
         existing_repair = validate_repair_state(
             snapshot.state.get("phase1_quality_repair")
         )
+        issue_request = self._prepare_banzai_quality_issue_resolution(
+            snapshot,
+            assessment,
+        )
+        if issue_request is not None:
+            return PHASE_TERMINAL_BLOCKED, {}, issue_request
         existing_evidence = snapshot.state.get(
             "proportional_quality_candidate_evidence"
         )

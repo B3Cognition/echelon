@@ -158,6 +158,7 @@ _HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
 )
 _PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS = frozenset(
     {
+        "banzai_issue_resolution",
         "consecutive_why_fails",
         "why2_metric_stagnation",
         "proportional_quality_budget_exhausted",
