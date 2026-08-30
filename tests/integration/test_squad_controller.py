@@ -7507,6 +7507,44 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_pending_evidence_routes_to_investigator_before_proportional_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A valid evidence request is workflow routing, not candidate corruption."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        why2_updates = why2.echelon_result["state_updates"]
+        why2_updates["evidence_resolution_status"] = "pending"
+        why2_updates["evidence_requests"] = {
+            "requests": [
+                {
+                    "id": "ER-001",
+                    "question": "Which browser baseline is authoritative?",
+                    "affected_requirements": ["FR-001"],
+                    "evidence_needed": "A declared support baseline.",
+                    "supplied_reference_ids": ["IN-REF-001"],
+                }
+            ]
+        }
+        why2_updates["finding_routes"]["findings"][0]["route"] = (
+            "evidence_resolution"
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-investigate"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+
     def test_restart_migrates_v2_proportional_decision_from_candidate_authority(
         self,
         tmp_path: Path,

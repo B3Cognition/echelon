@@ -11799,6 +11799,16 @@ class SquadController:
                 prepared,
                 snapshot,
             )
+        if prepared.state_updates.get("evidence_resolution_status") == "pending":
+            # The phase graph gives executable evidence collection precedence
+            # over quality repair.  A mixed WHY2 result may contain ordinary
+            # spec-repair findings and a project fact for INVESTIGATOR; that is
+            # valid workflow routing, not quality-candidate corruption.
+            return None, {
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+            }, None
         if prepared.state_updates.get("escalation_question"):
             return self._coordinate_why_transition_state_legacy(
                 node,
