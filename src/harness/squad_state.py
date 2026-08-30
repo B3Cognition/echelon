@@ -1123,7 +1123,7 @@ def build_human_input_resolution_postimage(
                 "recommendation_followed": followed,
                 "override_reason": (
                     resolution.rationale
-                    if resolution.resolved_by in {"semi", "COMMANDER"}
+                    if resolution.resolved_by in {"semi", "COMMANDER", "controller"}
                     and followed is False
                     else None
                 ),
@@ -2606,6 +2606,70 @@ class SquadStateStore:
                 desired,
                 recovered,
             )
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def reopen_failed_proportional_controller_decision(self) -> dict[str, Any]:
+        """Re-arm an intact pre-fix proportional recommendation for recovery."""
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            raw_decision = before.get("blocked_decision")
+            if not _is_human_input_decision(raw_decision):
+                return deepcopy(before)
+            decision = validate_blocked_decision(raw_decision)
+            validate_decision_recovery_pair(
+                decision,
+                before.get("recovery_instruction"),
+            )
+            options = decision.get("options")
+            recommended = [
+                option
+                for option in options
+                if isinstance(option, Mapping)
+                and option.get("recommended") is True
+            ] if isinstance(options, list) else []
+            evidence = decision.get("recommendation_evidence")
+            if (
+                decision.get("schema_version") != 3
+                or decision.get("status") != "failed"
+                or decision.get("failure_code")
+                not in {
+                    "invalid_resolution_result",
+                    "resolution_attempts_exhausted",
+                }
+                or decision.get("source_kind") != "controller_safeguard"
+                or decision.get("producer_id")
+                not in {
+                    "proportional_quality_budget_exhausted",
+                    "proportional_quality_extension_exhausted",
+                }
+                or decision.get("reason_code") != decision.get("producer_id")
+                or decision.get("autonomy_mode") != "banzai"
+                or decision.get("automatic_eligible") is not True
+                or decision.get("recommendation_authority")
+                != "controller_evidence"
+                or len(recommended) != 1
+                or recommended[0].get("id")
+                != decision.get("recommended_option_id")
+                or not isinstance(evidence, list)
+                or not evidence
+                or any(
+                    not isinstance(item, Mapping)
+                    or item.get("kind") != "proportional_quality"
+                    for item in evidence
+                )
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != decision.get("source_phase")
+            ):
+                return deepcopy(before)
+            desired = deepcopy(before)
+            reopened = {
+                **decision,
+                "status": "pending",
+                "attempts": 0,
+                "failure_code": None,
+            }
+            self._replace_human_input_decision_unlocked(desired, reopened)
             return self._commit_human_input_state_unlocked(before, desired)
 
     def record_human_input_resolution_failure(

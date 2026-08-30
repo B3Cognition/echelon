@@ -6417,6 +6417,61 @@ def test_qualitative_only_failure_never_vacuously_recommends_extension() -> None
     ).risk_level == "high"
 
 
+@pytest.mark.parametrize(
+    ("reason_code", "extension_authorized", "extension_consumed", "expected"),
+    (
+        ("proportional_quality_budget_exhausted", 0, 0, "extend_once"),
+        ("proportional_quality_extension_exhausted", 1, 1, "stop"),
+    ),
+)
+def test_qualitative_hard_blocker_never_recommends_impossible_debt(
+    reason_code: str,
+    extension_authorized: int,
+    extension_consumed: int,
+    expected: str,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        reason_code,
+        reason_code,
+    )
+    passing = (
+        ("overall", 0.90, 0.80, True),
+        ("structure", 0.85, 0.80, True),
+    )
+    evidence = ProportionalQualityRecommendationEvidence(
+        borderline_margin=0.05,
+        previous_gates=passing,
+        current_gates=passing,
+        previous_formal_statement_count=8,
+        formal_statement_count=8,
+        qualitative_failure_count=1,
+        qualitative_hard_blocker_count=1,
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code=reason_code,
+        phase_id="phase1-why2",
+        question="Resolve the residual SAGE contradiction.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(
+            extension_authorized=extension_authorized,
+            extension_consumed=extension_consumed,
+        ),
+        recommendation_evidence=evidence,
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        expected
+    ]
+    assert not next(
+        option for option in request.options if option.id == "continue_with_debt"
+    ).recommended
+
+
 def test_proportional_budget_policy_cannot_be_prepared_after_extension_authorization(
 ) -> None:
     registry = HumanInputPolicyRegistry(controller_safeguard_policies())

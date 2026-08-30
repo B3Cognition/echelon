@@ -712,7 +712,7 @@ class DecisionResolution:
 class AppliedHumanInputResolution:
     selected_option_id: str | None
     answer_text: str | None
-    resolved_by: Literal["user", "semi", "COMMANDER"]
+    resolved_by: Literal["user", "semi", "COMMANDER", "controller"]
     rationale: str | None = None
     confidence: Literal["high", "medium", "low"] | None = None
 
@@ -733,6 +733,7 @@ class ProportionalQualityRecommendationEvidence:
     previous_formal_statement_count: int
     formal_statement_count: int
     qualitative_failure_count: int = 0
+    qualitative_hard_blocker_count: int = 0
 
     def __post_init__(self) -> None:
         margin = self.borderline_margin
@@ -749,12 +750,17 @@ class ProportionalQualityRecommendationEvidence:
             "previous_formal_statement_count",
             "formal_statement_count",
             "qualitative_failure_count",
+            "qualitative_hard_blocker_count",
         ):
             count = getattr(self, field)
             if type(count) is not int or count < 0:
                 raise HumanInputPolicyError(
                     f"{field} must be a non-negative integer"
                 )
+        if self.qualitative_hard_blocker_count > self.qualitative_failure_count:
+            raise HumanInputPolicyError(
+                "qualitative hard blockers cannot exceed qualitative failures"
+            )
         previous = self._validate_gates(self.previous_gates, "previous_gates")
         current = self._validate_gates(self.current_gates, "current_gates")
         if {row[0] for row in previous} != {row[0] for row in current}:
@@ -1456,8 +1462,15 @@ def prepare_controller_proportional_quality_decision(
         for name, score, _threshold, _passed
         in recommendation_evidence.previous_gates
     }
+    has_hard_blocker = (
+        recommendation_evidence.qualitative_hard_blocker_count > 0
+    )
     should_extend = (
-        reason_code == "proportional_quality_budget_exhausted"
+        has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
+    ) or (
+        not has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
         and not no_artifact_progress
         and bool(current_failures)
         and all(
@@ -1475,7 +1488,13 @@ def prepare_controller_proportional_quality_decision(
         and recommendation_evidence.formal_statement_count
         <= recommendation_evidence.previous_formal_statement_count
     )
-    recommended_id = "extend_once" if should_extend else "continue_with_debt"
+    recommended_id = (
+        "extend_once"
+        if should_extend
+        else "stop"
+        if has_hard_blocker
+        else "continue_with_debt"
+    )
     if recommended_id not in {option.id for option in policy.options}:
         raise HumanInputPolicyError(
             "registered policy does not contain the controller recommendation"
@@ -1493,7 +1512,17 @@ def prepare_controller_proportional_quality_decision(
             source_state_revision=source_state_revision,
         )
     )
-    if should_extend:
+    if has_hard_blocker and should_extend:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, so the single available extension is required."
+        )
+    elif has_hard_blocker:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, and the bounded extension is exhausted."
+        )
+    elif should_extend:
         rationale = (
             "Residual gates improved within the configured borderline margin "
             "without formal-statement growth, so one final repair is favored."
@@ -1565,6 +1594,9 @@ def prepare_controller_proportional_quality_decision(
                         ),
                         "qualitative_failure_count": (
                             recommendation_evidence.qualitative_failure_count
+                        ),
+                        "qualitative_hard_blocker_count": (
+                            recommendation_evidence.qualitative_hard_blocker_count
                         ),
                     },
                 }),
