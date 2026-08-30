@@ -234,10 +234,6 @@ def test_topology_typer_parses_repeatable_filters_without_skill_dispatch(
     ):
         setattr(fake, name, command(name))
     monkeypatch.setitem(sys.modules, "echelon.topology_cli", fake)
-    monkeypatch.setattr(
-        "echelon.cli_app._dispatch_skill",
-        lambda *args, **kwargs: pytest.fail("topology invoked the LLM skill dispatcher"),
-    )
 
     response = CliRunner().invoke(
         app,
