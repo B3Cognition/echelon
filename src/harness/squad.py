@@ -4153,22 +4153,45 @@ class SquadController:
             os.close(directory_fd)
         from echelon.feature_policy import (
             derive_feature_policy,
+            load_feature_policy,
+            merge_feature_policies,
             persist_feature_policy,
             reconcile_feature_artifacts,
         )
 
-        feature_policy = derive_feature_policy(
+        incoming_feature_policy = derive_feature_policy(
             answer,
             decision_id=str(decision["id"]),
         )
         staging_dir = self._authoritative_human_input_roots(state)["{staging_dir}"]
         assert staging_dir is not None
+        feature_policy = merge_feature_policies(
+            load_feature_policy(staging_dir),
+            incoming_feature_policy,
+        )
         persist_feature_policy(staging_dir, feature_policy)
         updates: dict[str, object] = {
             "status": "running",
             "phase": route,
             "feature_policy": feature_policy,
         }
+        state_removals: set[str] = set()
+        if self._is_proportional_quality_state(state):
+            # A clarification can rewrite the requirements after a candidate
+            # was captured.  That candidate's immutable evidence then belongs
+            # to the superseded requirements and must not drive a later debt
+            # or restore decision.
+            repair = initialize_repair_state(
+                {"spec_authoring_mode": state.get("spec_authoring_mode")}
+            )
+            if repair is not None:
+                updates["phase1_quality_repair"] = repair
+            state_removals.update(
+                {
+                    "quality_gate_remediation",
+                    "proportional_quality_candidate_evidence",
+                }
+            )
         spec_dir = self._validated_spec_root(state)
         if spec_dir is not None and spec_dir.is_dir():
             reconciliation = reconcile_feature_artifacts(spec_dir, feature_policy)
@@ -4184,7 +4207,7 @@ class SquadController:
         updates["context_dir"] = str(context_result.context_dir)
         return _HumanInputResolutionEffects(
             state_updates=updates,
-            state_removals=frozenset(),
+            state_removals=frozenset(state_removals),
             route=route,
         )
 

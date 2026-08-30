@@ -84,7 +84,10 @@ def persist_feature_policy(staging_dir: Path, policy: Mapping[str, Any]) -> Path
     path = staging_dir / POLICY_FILENAME
     payload = json.dumps(dict(policy), indent=2, sort_keys=True) + "\n"
     if path.exists():
-        if path.read_text(encoding="utf-8") != payload:
+        existing_payload = path.read_text(encoding="utf-8")
+        if existing_payload != payload and not _is_append_only_extension(
+            json.loads(existing_payload), policy
+        ):
             raise ValueError("feature policy is immutable once persisted")
     else:
         path.write_text(payload, encoding="utf-8")
@@ -92,6 +95,102 @@ def persist_feature_policy(staging_dir: Path, policy: Mapping[str, Any]) -> Path
         render_feature_policy(policy), encoding="utf-8"
     )
     return path
+
+
+def load_feature_policy(staging_dir: Path) -> dict[str, Any] | None:
+    """Load the accumulated feature policy for a run, when one exists."""
+    path = staging_dir / POLICY_FILENAME
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("persisted feature policy must be an object")
+    return payload
+
+
+def merge_feature_policies(
+    existing: Mapping[str, Any] | None,
+    incoming: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Append an immutable clarification without replacing earlier decisions."""
+    if existing is None:
+        return dict(incoming)
+    merged = {
+        "schema_version": 2,
+        "provenance": {
+            "source": "user_clarification",
+            "immutable": True,
+            "decision_ids": _decision_ids(existing) + _decision_ids(incoming),
+        },
+        "source_answer_sha256": _answer_hashes(existing) + _answer_hashes(incoming),
+        "scope": _merge_section(existing, incoming, "scope"),
+        "verification": _merge_section(existing, incoming, "verification"),
+        "quality": _merge_section(existing, incoming, "quality"),
+    }
+    return merged
+
+
+def _decision_ids(policy: Mapping[str, Any]) -> list[str]:
+    provenance = policy.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("feature policy is missing provenance")
+    decision_ids = provenance.get("decision_ids")
+    if isinstance(decision_ids, list) and all(isinstance(item, str) for item in decision_ids):
+        return list(decision_ids)
+    decision_id = provenance.get("decision_id")
+    if isinstance(decision_id, str) and decision_id:
+        return [decision_id]
+    raise ValueError("feature policy provenance is missing a decision id")
+
+
+def _answer_hashes(policy: Mapping[str, Any]) -> list[str]:
+    value = policy.get("source_answer_sha256")
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    if isinstance(value, str) and value:
+        return [value]
+    raise ValueError("feature policy is missing an answer hash")
+
+
+def _merge_section(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any], section: str
+) -> dict[str, str]:
+    left = existing.get(section)
+    right = incoming.get(section)
+    if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+        raise ValueError(f"feature policy section {section} must be an object")
+    merged = dict(left)
+    for key, value in right.items():
+        if key in merged and merged[key] != value:
+            raise ValueError(f"feature policy decisions conflict for {section}.{key}")
+        merged[key] = value
+    return merged
+
+
+def _is_append_only_extension(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> bool:
+    """Allow new immutable decisions while forbidding changes to old ones."""
+    try:
+        existing_ids = _decision_ids(existing)
+        incoming_ids = _decision_ids(incoming)
+        existing_hashes = _answer_hashes(existing)
+        incoming_hashes = _answer_hashes(incoming)
+    except ValueError:
+        return False
+    if (
+        incoming_ids[: len(existing_ids)] != existing_ids
+        or incoming_hashes[: len(existing_hashes)] != existing_hashes
+    ):
+        return False
+    for section in ("scope", "verification", "quality"):
+        original = existing.get(section)
+        updated = incoming.get(section)
+        if not isinstance(original, Mapping) or not isinstance(updated, Mapping):
+            return False
+        if any(updated.get(key) != value for key, value in original.items()):
+            return False
+    return len(incoming_ids) > len(existing_ids)
 
 
 def render_feature_policy(policy: Mapping[str, Any]) -> str:

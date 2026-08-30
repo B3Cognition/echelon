@@ -1926,6 +1926,59 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     provider.exec_agent.assert_not_called()
 
 
+def test_clarification_discards_stale_proportional_quality_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A material clarification cannot reuse quality evidence for old requirements."""
+    from echelon.cli import _cmd_resume
+
+    _controller_instance, store, provider, _decision_id = (
+        _cli_awaiting_human_controller(tmp_path)
+    )
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda _config: provider,
+    )
+    state = store.load()
+    state.update(
+        {
+            "spec_authoring_mode": "proportional",
+            "phase1_quality_repair": {
+                "schema_version": 1,
+                "authoring_mode": "proportional",
+                "automatic_limit": 3,
+                "automatic_consumed": 1,
+                "extension_limit": 1,
+                "extension_authorized": 0,
+                "extension_consumed": 0,
+                "migration_basis": "fresh",
+                "baseline_candidate_id": "quality-candidate-0",
+                "candidate_ids": ["quality-candidate-0"],
+            },
+            "quality_gate_remediation": {"kind": "proportional_quality"},
+            "proportional_quality_candidate_evidence": {
+                "current_candidate_id": "quality-candidate-0"
+            },
+        }
+    )
+    store.save(state)
+
+    _cmd_resume(
+        ["Use only the latest checkpoint."],
+        project_root=tmp_path,
+        ext_dir=ROOT / "runtime",
+    )
+
+    resumed = store.load()
+    assert resumed["phase1_quality_repair"]["candidate_ids"] == []
+    assert resumed["phase1_quality_repair"]["automatic_consumed"] == 0
+    assert "quality_gate_remediation" not in resumed
+    assert "proportional_quality_candidate_evidence" not in resumed
+    capsys.readouterr()
+
+
 @contextmanager
 def _external_resume_lease(lock_type, lock_root: Path):
     acquired = Event()
