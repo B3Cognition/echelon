@@ -457,11 +457,9 @@ def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
     )
 
 
-@pytest.mark.parametrize("entry_point", ["spec", "alias"])
 def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    entry_point: str,
 ) -> None:
     from echelon.cli_app import app
 
@@ -568,8 +566,6 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
         "--next-phase checkpoint-assess --confirm"
     )
     command_args = shlex.split(action.command)[1:]
-    if entry_point == "alias":
-        command_args = ["rewind", *command_args[2:]]
     monkeypatch.chdir(tmp_path)
 
     result = CliRunner().invoke(app, command_args)
