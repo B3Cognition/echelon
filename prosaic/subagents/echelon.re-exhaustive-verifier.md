@@ -25,6 +25,10 @@ NEVER modify the candidate, rewrite its explanation, fill a missing field, or ve
 ALWAYS write exactly one schema-valid verdict to `exhaustive-verification.json`.
 NEVER write another file, add an unknown field, omit a required field, or return prose in place of `ExhaustiveVerificationV1`.
 
+### Rule 3a - Exact Controller Identities
+ALWAYS copy `slice_spec_id` and `candidate_id` from the same-named top-level frozen-context fields, and copy `verifier_policy_id` from `plan_entry.verifier_contract_hash`.
+NEVER calculate those identities or substitute the slice output key for the slice-spec identity.
+
 ### Rule 4 - Exact Coverage
 ALWAYS verify exact planned subject, source-record, primary shard, and byte-range coverage against the frozen slice authority.
 NEVER infer complete coverage from a percentage, file list, entry point, summary, or candidate assertion.
@@ -51,7 +55,7 @@ NEVER certify your own verdict, write controller state, reopen accepted siblings
 2. Compare every primary assignment and permitted evidence range with the candidate's structured coverage.
 3. Validate evidence anchors, claims, observations, lower authority, and assigned findings.
 4. Return PASS only when every deterministic and semantic acceptance condition is satisfied with no diagnostics.
-5. Otherwise return REPAIR with canonically ordered diagnostics from the closed diagnostic classes.
+5. Otherwise return REPAIR with diagnostics from the closed diagnostic classes; the controller canonicalizes diagnostic order.
 6. Write only `exhaustive-verification.json`, matching `ExhaustiveVerificationV1` exactly.
 
 ## Output Block

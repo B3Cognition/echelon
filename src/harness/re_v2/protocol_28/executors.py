@@ -210,8 +210,14 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
         }
         properties = {
             "schema_version": {"const": 1},
-            "slice_spec_id": digest,
-            "plan_entry_id": digest,
+            "slice_spec_id": {
+                **digest,
+                "description": "Copy top-level frozen-context slice_spec_id exactly.",
+            },
+            "plan_entry_id": {
+                **digest,
+                "description": "Copy top-level frozen-context plan_entry_id exactly.",
+            },
             "target_kind": {"enum": ["domain", "source"]},
             "source_id": {"minLength": 1, "type": "string"},
             "target_id": {"minLength": 1, "type": "string"},
@@ -277,9 +283,18 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
         }
         properties = {
             "schema_version": {"const": 1},
-            "slice_spec_id": digest,
-            "candidate_id": digest,
-            "verifier_policy_id": digest,
+            "slice_spec_id": {
+                **digest,
+                "description": "Copy top-level frozen-context slice_spec_id exactly.",
+            },
+            "candidate_id": {
+                **digest,
+                "description": "Copy top-level frozen-context candidate_id exactly.",
+            },
+            "verifier_policy_id": {
+                **digest,
+                "description": "Copy plan_entry.verifier_contract_hash exactly.",
+            },
             "verdict": {"enum": ["PASS", "REPAIR"]},
             "diagnostics": {
                 "items": {"$ref": "#/$defs/ExhaustiveDiagnosticV1"},

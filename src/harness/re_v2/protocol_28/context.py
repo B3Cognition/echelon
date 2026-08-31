@@ -198,6 +198,8 @@ def build_protocol_28_slice_context(
     payload: dict[str, object] = {
         "schema_version": 1,
         "role": role,
+        "slice_spec_id": slice_spec.identity,
+        "plan_entry_id": plan_entry.identity,
         "slice_spec": slice_spec.to_json_dict(),
         "plan_entry": plan_entry.to_json_dict(),
         "target_plan_id": target_plan.identity,

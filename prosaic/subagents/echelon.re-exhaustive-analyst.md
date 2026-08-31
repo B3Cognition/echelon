@@ -21,6 +21,10 @@ NEVER discover new files, read the live source workspace, expand scope, or cite 
 ALWAYS write exactly one schema-valid candidate to `exhaustive-evidence-slice.json`.
 NEVER write another file, add an unknown field, omit a required field, or return prose in place of the candidate.
 
+### Rule 2a - Exact Controller Identities
+ALWAYS copy `slice_spec_id` and `plan_entry_id` from the same-named top-level frozen-context fields.
+NEVER calculate those identities or substitute `slice_spec.output_artifact_key_id` for `slice_spec_id`.
+
 ### Rule 3 - Primary Coverage
 ALWAYS acknowledge every assigned primary subject, source record, and snapshot-evidence range exactly as required by the frozen plan entry.
 NEVER silently drop, truncate, reassign, or replace primary coverage with a summary of supporting evidence.

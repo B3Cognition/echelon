@@ -128,6 +128,8 @@ def test_slice_context_supplies_exact_copyable_anchor_ids(tmp_path: Path) -> Non
     )
 
     anchors = payload["permitted_evidence_anchors"]
+    assert payload["slice_spec_id"] == spec.identity
+    assert payload["plan_entry_id"] == entry.identity
     assert anchors
     assert all(
         item["anchor_id"] == content_digest(item["anchor"])
