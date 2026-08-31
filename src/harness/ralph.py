@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -57,6 +58,11 @@ from harness.task_progress import (
     update_task_progress_markdown,
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from harness.verification_evidence import (
+    VerificationStage,
+    write_verification_receipt,
+)
+from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
     blocking_fulfillment_gaps,
@@ -553,7 +559,45 @@ class RalphController:
                     # marker was missing/unreadable, while other statuses (for
                     # example "impasse") are explicit build outcomes.
                     if not build_result.get("passed", True):
-                        if self._should_continue_after_missing_marker(
+                        if _is_verification_environment_deferral(build_result):
+                            try:
+                                deferred_commit = (
+                                    self._checkpoint_verification_deferred_candidate(
+                                        worktree_path,
+                                        outer_iter=outer_iter,
+                                        inner_iter=0,
+                                        phase="build",
+                                    )
+                                )
+                                self._record_verification_environment_deferral(
+                                    build_result,
+                                    commit=deferred_commit,
+                                    outer_iter=outer_iter,
+                                    inner_iter=0,
+                                    phase="build",
+                                )
+                            except Exception as exc:
+                                preserve_worktree = True
+                                return self._finalize(
+                                    status="blocked",
+                                    reason="verification_evidence_invalid",
+                                    outer_iterations=outer_iter + 1,
+                                    inner_iterations=total_inner_iterations,
+                                    pr_url=pr_url,
+                                    tokens_used=tokens_used,
+                                    final_verify=VerifyResult(
+                                        passed=False,
+                                        failures=[
+                                            FailureEntry(
+                                                FailureCategory.OTHER,
+                                                "verification-evidence-invalid",
+                                                "could not checkpoint verification-deferred "
+                                                f"candidate: {exc}",
+                                            )
+                                        ],
+                                    ),
+                                )
+                        elif self._should_continue_after_missing_marker(
                             build_result,
                             worktree_path=worktree_path,
                             checkpoint=build_checkpoint,
@@ -1403,26 +1447,64 @@ class RalphController:
             )
 
             if fix_result.get("build_status") == "blocked":
-                blocker = str(
-                    fix_result.get("build_reason") or "build agent reported a blocker"
-                )
-                return {
-                    "converged": False,
-                    "blocked": True,
-                    "blocked_reason": "build_blocked",
-                    "inner_count": inner_iter,
-                    "tokens_used": tokens_used,
-                    "final_verify": VerifyResult(
-                        passed=False,
-                        failures=[
-                            FailureEntry(
-                                FailureCategory.OTHER,
-                                "build-blocked",
-                                blocker,
+                if _is_verification_environment_deferral(fix_result):
+                    try:
+                        deferred_commit = (
+                            self._checkpoint_verification_deferred_candidate(
+                                worktree_path,
+                                outer_iter=outer_iter,
+                                inner_iter=inner_iter,
+                                phase="fix",
                             )
-                        ],
-                    ),
-                }
+                        )
+                        self._record_verification_environment_deferral(
+                            fix_result,
+                            commit=deferred_commit,
+                            outer_iter=outer_iter,
+                            inner_iter=inner_iter,
+                            phase="fix",
+                        )
+                    except Exception as exc:
+                        return {
+                            "converged": False,
+                            "blocked": True,
+                            "blocked_reason": "verification_evidence_invalid",
+                            "inner_count": inner_iter,
+                            "tokens_used": tokens_used,
+                            "final_verify": VerifyResult(
+                                passed=False,
+                                failures=[
+                                    FailureEntry(
+                                        FailureCategory.OTHER,
+                                        "verification-evidence-invalid",
+                                        "could not checkpoint verification-deferred "
+                                        f"candidate: {exc}",
+                                    )
+                                ],
+                            ),
+                        }
+                else:
+                    blocker = str(
+                        fix_result.get("build_reason")
+                        or "build agent reported a blocker"
+                    )
+                    return {
+                        "converged": False,
+                        "blocked": True,
+                        "blocked_reason": "build_blocked",
+                        "inner_count": inner_iter,
+                        "tokens_used": tokens_used,
+                        "final_verify": VerifyResult(
+                            passed=False,
+                            failures=[
+                                FailureEntry(
+                                    FailureCategory.OTHER,
+                                    "build-blocked",
+                                    blocker,
+                                )
+                            ],
+                        ),
+                    }
 
             # Check termination
             termination = self._check_termination(
@@ -2504,27 +2586,97 @@ class RalphController:
         # intentionally does not contain source scripts.
         if self._config.verify_command:
             import subprocess as _sp
-            cmd = self._config.verify_command.split()
+            cmd = shlex.split(self._config.verify_command)
             verify_cwd = (
                 str(Path(worktree_path).resolve())
                 if worktree_path
                 else str(getattr(self._gitops, "base_dir", ""))
             )
+            fingerprint_before = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
+            candidate_commit = _current_git_commit(Path(worktree_path))
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
-                res = _sp.run(cmd, cwd=verify_cwd, capture_output=True, text=True, timeout=300)
+                res = _sp.run(
+                    cmd,
+                    cwd=verify_cwd,
+                    capture_output=True,
+                    timeout=300,
+                )
+                stdout = bytes(res.stdout or b"")
+                stderr = bytes(res.stderr or b"")
+                exit_code = int(res.returncode)
                 if res.returncode != 0:
-                    out = (res.stdout + res.stderr).strip()
+                    out = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.TEST,
                         id="verify-command",
                         error=out[-2000:] if len(out) > 2000 else out,
                     ))
+            except _sp.TimeoutExpired as exc:
+                stdout = bytes(exc.stdout or b"")
+                stderr = bytes(exc.stderr or b"")
+                exit_code = 124
+                failures.append(FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command-timeout",
+                    error="configured verifier timed out after 300 seconds",
+                ))
             except Exception as e:
                 failures.append(FailureEntry(
                     category=FailureCategory.OTHER, id="verify-command-error", error=str(e),
                 ))
+            stage_completed_at = datetime.now(timezone.utc).isoformat()
+            fingerprint_after = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
+            if (
+                fingerprint_before is not None
+                and fingerprint_after is not None
+                and fingerprint_before != fingerprint_after
+            ):
+                failures.append(
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="candidate-mutated-during-verification",
+                        error=(
+                            "configured verifier changed bounded candidate "
+                            "content during verification"
+                        ),
+                    )
+                )
             duration_s = time.monotonic() - start
-            return VerifyResult(passed=not failures, failures=failures, duration_s=duration_s)
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=fingerprint_after,
+                verifier_source="configured",
+                detection_evidence=("harness verify_command",),
+                stages=(
+                    VerificationStage(
+                        name="verify",
+                        command=tuple(cmd),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=stage_completed_at,
+                    ),
+                ),
+                failures=failures,
+                duration_s=duration_s,
+            )
 
         # Python project: skip all npm/pnpm/yarn steps, delegate to verify.sh
         # Python takes priority over Node when both pyproject.toml and package.json exist
@@ -2554,26 +2706,26 @@ class RalphController:
             return self._exec_verify_python(worktree_path, start)
 
         if is_swift:
-            return self._exec_verify_swift(str(swift_package_dir), start)
+            return self._exec_verify_swift(
+                str(swift_package_dir), start, worktree_path
+            )
 
+        detection = detect_verify_command(wt)
         if (wt / "pnpm-lock.yaml").exists():
             commands = [
                 ("install", "pnpm install --frozen-lockfile --ignore-scripts"),
-                ("test", "pnpm test"),
-                ("build", "pnpm run build"),
             ]
+            fallback_commands = [("test", "pnpm test"), ("build", "pnpm run build")]
         elif (wt / "yarn.lock").exists():
             commands = [
                 ("install", "yarn install --frozen-lockfile"),
-                ("test", "yarn test"),
-                ("build", "yarn run build"),
             ]
+            fallback_commands = [("test", "yarn test"), ("build", "yarn run build")]
         elif is_node:
             commands = [
                 ("install", "npm ci"),
-                ("test", "npm test"),
-                ("build", "npm run build"),
             ]
+            fallback_commands = [("test", "npm test"), ("build", "npm run build")]
         else:
             # Unknown project type — cannot verify locally.
             # Return passed=False so the harness does not falsely claim convergence.
@@ -2596,21 +2748,38 @@ class RalphController:
                 duration_s=0.0,
             )
 
+        if detection.command and detection.evidence == ["package.json scripts.verify"]:
+            commands.append(("verify", detection.command))
+        else:
+            commands.extend(fallback_commands)
+
         verify_env = os.environ.copy()
         verify_env["CI"] = "true"
+        candidate_commit = _current_git_commit(wt)
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+        verification_stages: list[VerificationStage] = []
         for stage, cmd in commands:
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
                 result = subprocess.run(
-                    cmd.split(),
+                    shlex.split(cmd),
                     cwd=worktree_path,
                     capture_output=True,
-                    text=True,
                     stdin=subprocess.DEVNULL,
                     env=verify_env,
                     timeout=300,
                 )
+                stdout = _output_bytes(result.stdout)
+                stderr = _output_bytes(result.stderr)
+                exit_code = int(result.returncode)
                 if result.returncode != 0:
-                    output = (result.stdout + result.stderr).strip()
+                    output = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.BUILD if stage in ("build", "install") else FailureCategory.TEST,
                         id=f"local-{stage}",
@@ -2620,6 +2789,7 @@ class RalphController:
                     if stage in ("install", "test"):
                         break
             except subprocess.TimeoutExpired:
+                exit_code = 124
                 failures.append(FailureEntry(
                     category=FailureCategory.BUILD if stage in ("build", "install") else FailureCategory.TEST,
                     id=f"local-{stage}-timeout",
@@ -2632,14 +2802,150 @@ class RalphController:
                     id=f"local-{stage}-error",
                     error=str(e),
                 ))
+            finally:
+                verification_stages.append(
+                    VerificationStage(
+                        name=stage,
+                        command=tuple(shlex.split(cmd)),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+            if failures:
                 break
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "detected verifier changed bounded candidate content "
+                        "during verification"
+                    ),
+                )
+            )
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=tuple(detection.evidence),
+            stages=tuple(verification_stages),
             failures=failures,
             duration_s=duration_s,
         )
+
+    def _attach_host_verification_receipt(
+        self,
+        *,
+        worktree_path: str,
+        candidate_commit: str | None,
+        fingerprint_before: str | None,
+        fingerprint_after: str | None,
+        verifier_source: str,
+        detection_evidence: tuple[str, ...],
+        stages: tuple[VerificationStage, ...],
+        failures: list[FailureEntry],
+        duration_s: float,
+    ) -> VerifyResult:
+        """Persist and attach evidence for one Ralph-owned host verification."""
+        if not candidate_commit or not fingerprint_before or not fingerprint_after:
+            missing = [
+                name
+                for name, value in (
+                    ("candidate commit", candidate_commit),
+                    ("pre-verification fingerprint", fingerprint_before),
+                    ("post-verification fingerprint", fingerprint_after),
+                )
+                if not value
+            ]
+            return VerifyResult(
+                passed=False,
+                failures=[
+                    *failures,
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="verification-evidence-invalid",
+                        error=(
+                            "could not bind host verification to the candidate "
+                            "commit and content fingerprint; missing "
+                            + ", ".join(missing)
+                        ),
+                    ),
+                ],
+                duration_s=duration_s,
+            )
+        evidence_dir = (
+            self._state_store.state_dir.parent
+            / "evidence"
+            / self._strategy_id
+            / "host-verification"
+        )
+        sequence = self._next_host_verification_attempt(evidence_dir)
+        try:
+            ref = write_verification_receipt(
+                evidence_dir=evidence_dir,
+                spec_id=self._spec_id,
+                strategy_id=self._strategy_id,
+                build_id=self._build_id
+                or str(self._state_store.read().get("run_id") or ""),
+                target_id=str(
+                    self._state_store.read().get("source_id") or ""
+                ),
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=fingerprint_after,
+                verifier_source=verifier_source,
+                detection_evidence=detection_evidence,
+                stages=stages,
+                attempt_sequence=sequence,
+                sensitive_environment=os.environ,
+                started_at=stages[0].started_at if stages else None,
+            )
+        except (OSError, ValueError) as exc:
+            return VerifyResult(
+                passed=False,
+                failures=[
+                    *failures,
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="verification-evidence-invalid",
+                        error=f"could not persist host verification evidence: {exc}",
+                    ),
+                ],
+                duration_s=duration_s,
+            )
+        return VerifyResult(
+            passed=ref.passed and not failures,
+            failures=failures,
+            duration_s=duration_s,
+            verification_evidence=ref.as_mapping(),
+        )
+
+    @staticmethod
+    def _next_host_verification_attempt(evidence_dir: Path) -> int:
+        if not evidence_dir.exists():
+            return 1
+        sequences: list[int] = []
+        for path in evidence_dir.glob("attempt-*.json"):
+            match = re.match(r"attempt-(\d+)-", path.name)
+            if match:
+                sequences.append(int(match.group(1)))
+        return max(sequences, default=0) + 1
 
     def _exec_verify_python(self, worktree_path: str, start: float) -> VerifyResult:
         """Run Python verification using uv (if uv.lock present) or pytest.
@@ -2657,6 +2963,8 @@ class RalphController:
 
         failures = []
         wt = Path(worktree_path)
+        candidate_commit = _current_git_commit(wt)
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
 
         # Prefer uv when a lockfile is present (handles venv + deps automatically)
         use_uv = (wt / "uv.lock").exists() and shutil.which("uv") is not None
@@ -2672,22 +2980,32 @@ class RalphController:
                   else ["python", "-m", "pytest"] + _pytest_args)
         )
 
+        stage_started_at = datetime.now(timezone.utc).isoformat()
+        stage_start = time.monotonic()
+        stdout = b""
+        stderr = b""
+        exit_code = 1
         try:
             result = subprocess.run(
                 pytest_cmd,
                 cwd=worktree_path,
                 capture_output=True,
-                text=True,
                 timeout=300,
             )
+            stdout = _output_bytes(result.stdout)
+            stderr = _output_bytes(result.stderr)
+            exit_code = int(result.returncode)
             if result.returncode != 0:
-                output = (result.stdout + result.stderr).strip()
+                output = (stdout + stderr).decode(
+                    "utf-8", errors="replace"
+                ).strip()
                 failures.append(FailureEntry(
                     category=FailureCategory.TEST,
                     id="pytest",
                     error=output[-2000:] if len(output) > 2000 else output,
                 ))
         except subprocess.TimeoutExpired:
+            exit_code = 124
             failures.append(FailureEntry(
                 category=FailureCategory.TEST,
                 id="pytest-timeout",
@@ -2701,13 +3019,49 @@ class RalphController:
             ))
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "pytest changed bounded candidate content during "
+                        "verification"
+                    ),
+                )
+            )
+        detection = detect_verify_command(wt)
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=tuple(detection.evidence),
+            stages=(
+                VerificationStage(
+                    name="pytest",
+                    command=tuple(str(item) for item in pytest_cmd),
+                    exit_code=exit_code,
+                    duration_ms=int((time.monotonic() - stage_start) * 1000),
+                    stdout=stdout,
+                    stderr=stderr,
+                    started_at=stage_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ),
+            ),
             failures=failures,
             duration_s=duration_s,
         )
 
-    def _exec_verify_swift(self, package_dir: str, start: float) -> VerifyResult:
+    def _exec_verify_swift(
+        self, package_dir: str, start: float, worktree_path: str
+    ) -> VerifyResult:
         """Run Swift Package Manager verification: ``swift build`` then ``swift test``.
 
         Runs from ``package_dir`` (the directory containing Package.swift).
@@ -2719,33 +3073,67 @@ class RalphController:
         import time
 
         failures = []
+        candidate_commit = _current_git_commit(Path(worktree_path))
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+        stages: list[VerificationStage] = []
 
         if not shutil.which("swift"):
             duration_s = time.monotonic() - start
-            return VerifyResult(
-                passed=False,
-                failures=[FailureEntry(
+            message = (
+                "swift toolchain not found on PATH. Install Xcode or the "
+                "Swift toolchain and ensure 'swift' is on PATH."
+            )
+            failures.append(FailureEntry(
                     category=FailureCategory.BUILD,
                     id="swift-not-found",
-                    error=(
-                        "swift toolchain not found on PATH. "
-                        "Install Xcode or the Swift toolchain and ensure 'swift' is on PATH."
-                    ),
-                )],
+                    error=message,
+                ))
+            stages.append(
+                VerificationStage(
+                    name="swift-build",
+                    command=("swift", "build"),
+                    exit_code=127,
+                    duration_ms=0,
+                    stdout=b"",
+                    stderr=message.encode("utf-8"),
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=_safe_product_evidence_fingerprint(
+                    worktree_path
+                ),
+                verifier_source="detected",
+                detection_evidence=("Package.swift",),
+                stages=tuple(stages),
+                failures=failures,
                 duration_s=duration_s,
             )
 
         for stage, cmd in [("build", "swift build"), ("test", "swift test")]:
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
                 result = subprocess.run(
                     cmd.split(),
                     cwd=package_dir,
                     capture_output=True,
-                    text=True,
                     timeout=600,
                 )
+                stdout = _output_bytes(result.stdout)
+                stderr = _output_bytes(result.stderr)
+                exit_code = int(result.returncode)
                 if result.returncode != 0:
-                    output = (result.stdout + result.stderr).strip()
+                    output = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
                         id=f"swift-{stage}",
@@ -2753,6 +3141,7 @@ class RalphController:
                     ))
                     break
             except subprocess.TimeoutExpired:
+                exit_code = 124
                 failures.append(FailureEntry(
                     category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
                     id=f"swift-{stage}-timeout",
@@ -2765,11 +3154,48 @@ class RalphController:
                     id=f"swift-{stage}-error",
                     error=str(e),
                 ))
+            finally:
+                stages.append(
+                    VerificationStage(
+                        name=f"swift-{stage}",
+                        command=tuple(cmd.split()),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+            if failures:
                 break
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "Swift verification changed bounded candidate content"
+                    ),
+                )
+            )
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=("Package.swift",),
+            stages=tuple(stages),
             failures=failures,
             duration_s=duration_s,
         )
@@ -4144,6 +4570,91 @@ class RalphController:
         except Exception as exc:
             logger.warning("Could not create harness checkpoint commit: %s", exc)
             return None
+
+    def _checkpoint_verification_deferred_candidate(
+        self,
+        worktree_path: str,
+        *,
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> str:
+        """Commit a neutral candidate without claiming task completion."""
+        marker = Path(worktree_path) / BUILD_STATUS_FILENAME
+        marker.unlink(missing_ok=True)
+        if self._has_non_verify_worktree_changes(worktree_path):
+            message = build_echelon_commit_message(
+                (
+                    f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+                    f"iter-{outer_iter} {phase} verification-deferred"
+                ),
+                EchelonCommitMetadata(
+                    origin="delivery",
+                    action="checkpoint",
+                    spec_id=self._spec_id,
+                    run_id=self._build_id,
+                    phase=phase,
+                    strategy=self._strategy_id,
+                ),
+            )
+            reported_commit = self._gitops.commit(worktree_path, message)
+            commit = _current_git_commit(Path(worktree_path))
+            if not commit or (
+                reported_commit and str(reported_commit) != commit
+            ):
+                raise RuntimeError(
+                    "verification-deferred checkpoint did not bind current HEAD"
+                )
+        else:
+            commit = _current_git_commit(Path(worktree_path))
+            if not commit:
+                raise RuntimeError(
+                    "verification-deferred candidate has no Git commit"
+                )
+        state = self._state_store.read()
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            checkpoints = []
+        checkpoints.append(
+            {
+                "commit": commit,
+                "outer_iter": outer_iter,
+                "inner_iter": inner_iter,
+                "phase": phase,
+                "task_ids": [],
+                "provenance": "verification_deferred",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        state["checkpoint_commits"] = checkpoints
+        self._state_store.write(state)
+        return commit
+
+    def _record_verification_environment_deferral(
+        self,
+        result: Mapping[str, object],
+        *,
+        commit: str,
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> None:
+        state = self._state_store.read()
+        deferrals = state.get("verification_environment_deferrals")
+        if not isinstance(deferrals, list):
+            deferrals = []
+        deferrals.append(
+            {
+                "commit": commit,
+                "outer_iter": outer_iter,
+                "inner_iter": inner_iter,
+                "phase": phase,
+                "reason": str(result.get("build_reason") or ""),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        state["verification_environment_deferrals"] = deferrals
+        self._state_store.write(state)
 
     def _checkpoint_progress_commit(
         self,
@@ -5662,6 +6173,14 @@ def _safe_product_evidence_fingerprint(worktree_path: str) -> str | None:
         return None
 
 
+def _output_bytes(value: object) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if value is None:
+        return b""
+    return str(value).encode("utf-8", errors="replace")
+
+
 def _clean_task_ids(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -6829,4 +7348,5 @@ def _verify_to_dict(verify: VerifyResult) -> Dict[str, Any]:
         ],
         "duration_s": verify.duration_s,
         "token_usage": verify.token_usage,
+        "verification_evidence": dict(verify.verification_evidence),
     }

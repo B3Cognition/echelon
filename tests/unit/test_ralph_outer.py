@@ -114,6 +114,25 @@ def test_only_explicit_verification_environment_blocker_is_deferral() -> None:
     )
 
 
+def test_verify_state_serialization_preserves_evidence_reference() -> None:
+    evidence = {
+        "path": "/tmp/receipt.json",
+        "receipt_sha256": "a" * 64,
+        "evidence_sha256": "b" * 64,
+        "candidate_commit": "c" * 40,
+        "candidate_fingerprint": "d" * 64,
+        "passed": True,
+    }
+
+    payload = ralph._verify_to_dict(
+        VerifyResult(
+            passed=True, failures=[], verification_evidence=evidence
+        )
+    )
+
+    assert payload["verification_evidence"] == evidence
+
+
 # === Mock SandboxProvider ===
 
 
@@ -326,7 +345,32 @@ def _init_git_repo(path: Path) -> None:
 
 def _commit_all(path: Path, message: str = "base") -> None:
     subprocess.run(["git", "add", "."], cwd=path, check=True)
-    subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_worktree_changes(path: str, message: str) -> str:
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    if subprocess.run(
+        ["git", "diff", "--cached", "--quiet"], cwd=path
+    ).returncode != 0:
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=path,
+            check=True,
+            capture_output=True,
+        )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _write_no_impact_documentation_report(spec_dir: Path) -> None:
@@ -389,6 +433,156 @@ class TestOuterLoopConvergence:
 
         assert build["blocker_kind"] == "verification_environment"
         assert feedback["blocker_kind"] == "verification_environment"
+
+    def test_verification_deferral_checkpoints_without_task_progress(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _, gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        (worktree / "candidate.txt").write_text(
+            "implemented\n", encoding="utf-8"
+        )
+        before = state_store.read().get("build", {}).get(
+            "completed_tasks", 0
+        )
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        commit = controller._checkpoint_verification_deferred_candidate(
+            str(worktree), outer_iter=0, inner_iter=0, phase="build"
+        )
+
+        assert commit == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        gitops.commit.assert_called_once()
+        after = state_store.read().get("build", {}).get("completed_tasks", 0)
+        assert after == before
+        checkpoint = state_store.read()["checkpoint_commits"][-1]
+        assert checkpoint["provenance"] == "verification_deferred"
+
+    def test_outer_verification_deferral_runs_host_verify_and_fulfillment(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+
+        def defer_after_implementation(*_args, **_kwargs):
+            (worktree / "candidate.txt").write_text(
+                "implemented\n", encoding="utf-8"
+            )
+            return BuildResult(
+                exit_code=0,
+                status="blocked",
+                blocker_kind="verification_environment",
+                reason="Chromium unavailable",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1,
+            )
+
+        build_runner.exec_build.side_effect = defer_after_implementation
+        fulfillment = MagicMock()
+        fulfillment.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed", exit_code=0, reason="verified"
+        )
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        result = controller.run_loop(
+            max_outer=1, max_inner=0, build_prompt="finish"
+        )
+
+        assert result.status == "verified"
+        assert result.termination_reason == "converged"
+        fulfillment.refresh.assert_called_once()
+        assert result.final_verify is not None
+        assert result.final_verify.verification_evidence["passed"] is True
+
+    def test_feedback_verification_deferral_returns_to_host_verify(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+
+        def defer_fix(*_args, **_kwargs):
+            (worktree / "fixed.txt").write_text("fixed\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="blocked",
+                blocker_kind="verification_environment",
+                reason="Postgres unavailable",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1,
+            )
+
+        build_runner.exec_feedback.side_effect = defer_fix
+        fulfillment = MagicMock()
+        fulfillment.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed", exit_code=0, reason="verified"
+        )
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        result = controller._run_inner_loop(
+            handle=SandboxHandle(id="sandbox", session_id="session"),
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        FailureCategory.TEST, "journey", "journey failed"
+                    )
+                ],
+            ),
+            outer_iter=0,
+            max_inner=1,
+            tokens_used=0,
+            token_budget=None,
+            state={},
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="fix",
+        )
+
+        assert result["converged"] is True
+        assert result["blocked"] is False
+        assert result["final_verify"].verification_evidence["passed"] is True
 
     """Test outer loop converges on first iteration."""
 
@@ -2668,7 +2862,15 @@ class TestOuterLoopConvergence:
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
         ) -> int:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             (spec_dir / "fulfillment-report.md").write_text(
+                f"---\nverified_commit: {head}\n---\n"
                 "| ID | Status | Evidence | Confidence | Notes |\n"
                 "|---|---|---|---|---|\n"
                 "| FR-001 | MISSING | none | high | absent |\n",
@@ -2687,6 +2889,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -2793,6 +2997,21 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            f"---\nverified_commit: {head}\n---\n"
+            + report.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
         result = controller.run_loop(
             max_outer=1,
@@ -2857,6 +3076,8 @@ class TestOuterLoopConvergence:
         controller._changed_files_since_head = MagicMock(
             return_value=["src/a.py", "tests/test_a.py"]
         )
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(max_outer=1, max_inner=0, build_prompt="implement")
 
@@ -2936,6 +3157,8 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
         controller._changed_files_since_head = MagicMock(return_value=["src/a.py"])
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
@@ -3080,6 +3303,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
@@ -3160,6 +3385,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(max_outer=1, max_inner=0, build_prompt="build")
 
@@ -3209,7 +3436,15 @@ class TestOuterLoopConvergence:
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
         ) -> int:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             (spec_dir / "fulfillment-report.md").write_text(
+                f"---\nverified_commit: {head}\n---\n"
                 "**Fulfillment status (170 checklist items)**: "
                 "IMPLEMENTED=80, PARTIAL=31, UNVERIFIED=5, MISSING=53, "
                 "DEVIATED=1, OBSOLETE_SPEC=0\n",
@@ -3228,6 +3463,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -3283,6 +3520,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = orchestration_root
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(
             max_outer=1,
@@ -4377,6 +4616,9 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -4444,6 +4686,10 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -4915,6 +5161,10 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -6623,6 +6873,9 @@ class TestOuterLoopConvergence:
         state["workspace_root"] = str(workspace)
         state["source_root"] = str(target)
         state_store.write(state)
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -7938,7 +8191,12 @@ class TestVerifyLocallyNode:
             encoding="utf-8",
         )
 
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.run") as mock_run, patch(
+            "harness.ralph._safe_product_evidence_fingerprint",
+            return_value="b" * 64,
+        ), patch(
+            "harness.ralph._current_git_commit", return_value="a" * 40
+        ):
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             result = controller._exec_verify_locally(str(worktree))
 
@@ -7947,6 +8205,51 @@ class TestVerifyLocallyNode:
         for call in mock_run.call_args_list:
             assert call.kwargs["stdin"] is subprocess.DEVNULL
             assert call.kwargs["env"]["CI"] == "true"
+
+    def test_pnpm_verify_script_is_authoritative_and_receipted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "test": "exit 9",
+                        "verify": "lint-and-browser-journey",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (worktree / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        command_log = tmp_path / "pnpm-commands.txt"
+        executable_dir = tmp_path / "bin"
+        executable_dir.mkdir()
+        pnpm = executable_dir / "pnpm"
+        pnpm.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {command_log}\n",
+            encoding="utf-8",
+        )
+        pnpm.chmod(0o755)
+        monkeypatch.setenv(
+            "PATH", f"{executable_dir}{os.pathsep}{os.environ['PATH']}"
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        commands = command_log.read_text(encoding="utf-8").splitlines()
+        assert commands == [
+            "install --frozen-lockfile --ignore-scripts",
+            "verify",
+        ]
 
 
 @pytest.mark.unit
@@ -8018,6 +8321,8 @@ class TestVerifyCommandNeeded:
         marker = tmp_path / "verify-cwd.txt"
         script.write_text(f"pwd > {marker}\n", encoding="utf-8")
         script.chmod(0o755)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
         gitops.base_dir = workspace
         controller._config = HarnessConfig(
             **{
@@ -8030,6 +8335,94 @@ class TestVerifyCommandNeeded:
 
         assert result.passed is True
         assert marker.read_text(encoding="utf-8").strip() == str(worktree)
+
+    def test_configured_verify_writes_candidate_bound_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "verify.py").write_text(
+            "print('journey passed')\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        controller._config = HarnessConfig(
+            **{
+                **controller._config.__dict__,
+                "verify_command": f"{sys.executable} verify.py",
+            }
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        receipt = Path(str(result.verification_evidence["path"]))
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        assert payload["candidate_commit"] == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert payload["stages"][0]["stdout_tail"] == "journey passed\n"
+
+    def test_verifier_mutation_fails_receipt(self, tmp_path: Path) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "verify.py").write_text(
+            "from pathlib import Path\n"
+            "Path('generated.txt').write_text('changed')\n",
+            encoding="utf-8",
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        controller._config = HarnessConfig(
+            **{
+                **controller._config.__dict__,
+                "verify_command": f"{sys.executable} verify.py",
+            }
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "candidate-mutated-during-verification"
+        payload = json.loads(
+            Path(str(result.verification_evidence["path"])).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert payload["failure_id"] == "candidate_mutated_during_verification"
+
+    def test_detected_python_verify_writes_receipt(self, tmp_path: Path) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "pyproject.toml").write_text(
+            "[project]\nname = 'receipt-fixture'\nversion = '0.0.0'\n",
+            encoding="utf-8",
+        )
+        (worktree / "test_demo.py").write_text(
+            "def test_demo():\n    assert True\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        payload = json.loads(
+            Path(str(result.verification_evidence["path"])).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert payload["verifier_source"] == "detected"
+        assert payload["stages"][0]["name"] == "pytest"
 
     def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
         """Unknown project type → escalation banner printed to stderr."""
@@ -8178,6 +8571,19 @@ class TestVerifyCommandNeeded:
 class TestVerifyLocallySwift:
     """Swift project detection and verification."""
 
+    @pytest.fixture(autouse=True)
+    def _bind_candidate_evidence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ralph, "_current_git_commit", lambda _path: "a" * 40
+        )
+        monkeypatch.setattr(
+            ralph,
+            "_safe_product_evidence_fingerprint",
+            lambda _path: "b" * 64,
+        )
+
     def test_root_package_swift_detected(self, tmp_path: Path) -> None:
         """Package.swift at worktree root → swift build + swift test."""
         controller, _, _, _ = _make_controller(tmp_path)
@@ -8186,11 +8592,14 @@ class TestVerifyLocallySwift:
         (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
 
         with patch("subprocess.run") as mock_run, \
-             patch("shutil.which", return_value="/usr/bin/swift"):
+             patch("shutil.which", return_value="/usr/bin/swift"), \
+             patch("harness.ralph._current_git_commit", return_value="a" * 40), \
+             patch("harness.ralph._safe_product_evidence_fingerprint", return_value="b" * 64):
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             result = controller._exec_verify_locally(str(worktree))
 
         assert result.passed is True
+        assert result.verification_evidence["passed"] is True
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert ["swift", "build"] in calls
         assert ["swift", "test"] in calls
