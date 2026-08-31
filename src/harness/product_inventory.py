@@ -15,7 +15,15 @@ import subprocess
 SCHEMA_VERSION = 1
 CONTROL_ROOTS = frozenset({".echelon", ".git"})
 CONTROL_PATHS = frozenset({".harness-build-status.json"})
-FINGERPRINT_IGNORED_PARTS = frozenset({"__pycache__", ".pytest_cache"})
+FINGERPRINT_IGNORED_PARTS = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        "coverage",
+        "playwright-report",
+        "test-results",
+    }
+)
 
 
 @dataclass(frozen=True)

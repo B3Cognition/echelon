@@ -150,6 +150,29 @@ def test_product_evidence_fingerprint_ignores_control_plane_but_tracks_product(
     assert product_evidence_fingerprint(project) != original
 
 
+def test_product_evidence_fingerprint_ignores_verifier_output_roots(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-b", "main")
+    (project / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    _git(project, "add", "app.ts")
+    original = product_evidence_fingerprint(project)
+
+    for relative in (
+        "test-results/run/trace.zip",
+        "playwright-report/index.html",
+        "coverage/coverage-final.json",
+    ):
+        output = project / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("generated\n", encoding="utf-8")
+        _git(project, "add", relative)
+
+    assert product_evidence_fingerprint(project) == original
+
+
 def test_write_product_inventory_cli_stamps_existing_verify_state(
     tmp_path: Path,
 ) -> None:

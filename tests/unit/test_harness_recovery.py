@@ -9,7 +9,11 @@ import pytest
 
 from harness.config import HarnessConfig
 from harness.gitops import GitOpsManager
-from harness.recovery import _find_branch_without_fetch, recover_blocked_run
+from harness.recovery import (
+    HarnessRecoveryError,
+    _find_branch_without_fetch,
+    recover_blocked_run,
+)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -93,6 +97,120 @@ def test_recover_blocked_run_cherry_picks_last_strategy_commit_from_mirror(
     assert result.applied is True
     assert _git(project, "rev-parse", "HEAD") != scaffold
     assert (project / "src" / "generated.txt").read_text(encoding="utf-8") == "generated\n"
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_fast_forwards_complete_checkpoint_chain(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    first = _commit_file(
+        worktree,
+        "src/generated.txt",
+        "first\n",
+        "harness-checkpoint: 001-feature/default iter-0 build verification-deferred",
+    )
+    second = _commit_file(
+        worktree,
+        "src/generated.txt",
+        "second\n",
+        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+    )
+    recovered = _commit_file(
+        worktree,
+        "src/generated.txt",
+        "verified\n",
+        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+    )
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "checkpoint_commits": [
+                {"commit": first, "task_ids": ["verification-deferred"]},
+                {"commit": second, "task_ids": ["verification-deferred"]},
+                {"commit": recovered, "task_ids": ["verification-deferred"]},
+            ],
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert _git(project, "rev-parse", "HEAD") == recovered
+    assert _git(project, "rev-list", "--count", f"{first}^..{recovered}") == "3"
+    assert (project / "src" / "generated.txt").read_text(encoding="utf-8") == "verified\n"
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_aborts_conflicted_cherry_pick_before_reporting_error(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "src/shared.txt", "base\n", "spec scaffold")
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+
+    _commit_file(project, "src/shared.txt", "target\n", "target branch advanced")
+    recovered = _commit_file(
+        worktree,
+        "src/shared.txt",
+        "recovered\n",
+        "harness-checkpoint: 001-feature/default iter-0 fix verification-deferred",
+    )
+
+    with pytest.raises(HarnessRecoveryError, match="Could not cherry-pick recovered commit"):
+        recover_blocked_run(
+            project_dir=project,
+            spec_id="001-feature",
+            strategy_id="default",
+            state={
+                "termination_reason": "build_incomplete",
+                "checkpoint_commits": [
+                    {"commit": recovered, "task_ids": ["verification-deferred"]},
+                ],
+            },
+            gitops=_make_gitops(project),
+            build_id="build-test",
+        )
+
+    assert _git(project, "rev-parse", "HEAD") != recovered
+    assert (
+        subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"],
+            cwd=project,
+            capture_output=True,
+            check=False,
+        ).returncode
+        != 0
+    )
+    assert _git(project, "status", "--porcelain", "--untracked-files=no") == ""
 
 
 @pytest.mark.unit

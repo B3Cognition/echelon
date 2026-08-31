@@ -1818,6 +1818,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         current_commit = _current_git_commit(Path(worktree_path))
@@ -1840,6 +1841,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         deferred_scope_issues = validate_deferred_scope_rows(report, spec_dir)
@@ -1854,6 +1856,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         if not fulfillment_has_blocking_gaps(report, strict=True):
@@ -1904,6 +1907,7 @@ class RalphController:
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _apply_documentation_gate(
@@ -1963,6 +1967,7 @@ class RalphController:
             failures=[gate.failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _documentation_delivery_changes(
@@ -2138,6 +2143,7 @@ class RalphController:
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _apply_build_task_progress(
@@ -2303,6 +2309,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         refresh_kwargs: dict[str, object] = {
@@ -2372,6 +2379,7 @@ class RalphController:
                     failures=[failure],
                     duration_s=verify_result.duration_s,
                     token_usage=verify_result.token_usage,
+                    verification_evidence=dict(verify_result.verification_evidence),
                 )
             return verify_result
 
@@ -2389,6 +2397,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         failure = FailureEntry(
@@ -2404,6 +2413,7 @@ class RalphController:
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _task_progress_counts(self) -> tuple[int, int]:

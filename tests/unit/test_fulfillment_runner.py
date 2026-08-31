@@ -507,6 +507,10 @@ class TestFulfillmentRunner:
         assert verify_run_dir.startswith(str(workspace / "runs"))
         assert verify_run_dir != str(workspace / "runs")
         assert str(receipt.path.parent) not in prompt_metadata["tool_write_paths"]
+        prompt = provider.run_prompt_result.call_args.args[1]
+        assert "Authoritative Host Verification Evidence" in prompt
+        assert receipt.evidence_sha256 in prompt
+        assert "passed" in prompt
 
     def test_tampered_verification_evidence_fails_before_provider(self, tmp_path):
         worktree = tmp_path / "worktree"

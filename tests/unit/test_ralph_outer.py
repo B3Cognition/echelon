@@ -2908,6 +2908,7 @@ class TestOuterLoopConvergence:
         assert result.status == "blocked"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
+        assert result.final_verify.verification_evidence["passed"] is True
 
     def test_refresh_uses_state_workspace_root_for_external_spec_artifacts(
         self, tmp_path: Path

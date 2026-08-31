@@ -318,6 +318,8 @@ class FulfillmentRunner:
             arguments += " --dry-run"
 
         prompt = _build_verify_spec_prompt(workflow_root, skill_path, arguments)
+        if evidence is not None:
+            prompt += "\n\n" + _verification_evidence_prompt_block(evidence)
         exit_code = _exec_verify_spec_prompt(
             self._prompt_executor,
             worktree_path=worktree_path,
@@ -578,6 +580,10 @@ class FulfillmentRunner:
                 f" verification_evidence_sha256={verification_evidence.evidence_sha256}"
             )
         prompt = _build_verify_spec_prompt(spec_dir.parent.parent, skill_path, arguments)
+        if verification_evidence is not None:
+            prompt += "\n\n" + _verification_evidence_prompt_block(
+                verification_evidence
+            )
         with tempfile.TemporaryDirectory() as temp_dir:
             base_snapshot = Path(temp_dir) / "base-full-fulfillment-report.md"
             base_snapshot.write_text(
@@ -1259,6 +1265,42 @@ def _validated_verification_evidence(
         candidate_fingerprint=fingerprint,
     )
     return ref if validation.valid else None
+
+
+def _verification_evidence_prompt_block(ref: VerificationEvidenceRef) -> str:
+    payload = json.loads(ref.path.read_text(encoding="utf-8"))
+    stages: list[dict[str, object]] = []
+    for raw_stage in payload.get("stages", []):
+        if not isinstance(raw_stage, dict):
+            continue
+        stages.append(
+            {
+                "name": raw_stage.get("name"),
+                "command": raw_stage.get("command"),
+                "exit_code": raw_stage.get("exit_code"),
+                "stdout_tail": str(raw_stage.get("stdout_tail") or "")[-8192:],
+                "stderr_tail": str(raw_stage.get("stderr_tail") or "")[-2048:],
+            }
+        )
+    summary = {
+        "authority": payload.get("authority"),
+        "candidate_commit": ref.candidate_commit,
+        "candidate_fingerprint": ref.candidate_fingerprint,
+        "evidence_sha256": ref.evidence_sha256,
+        "status": payload.get("status"),
+        "verifier_source": payload.get("verifier_source"),
+        "stages": stages,
+    }
+    return (
+        "## Authoritative Host Verification Evidence\n\n"
+        "This validated Ralph-owned evidence is authoritative for what commands "
+        "ran and whether they passed on the exact candidate. Do not retain or "
+        "repeat an older environment failure that conflicts with this evidence. "
+        "Use it as measured evidence while still judging requirement coverage.\n\n"
+        "```json\n"
+        + json.dumps(summary, indent=2, sort_keys=True)
+        + "\n```"
+    )
 
 
 @dataclass(frozen=True)
