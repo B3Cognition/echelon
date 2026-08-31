@@ -33,6 +33,7 @@ from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.re_v2_protocol_25_fixtures import manifest_v4
 from tests.re_v2_protocol_26_fixtures import manifest_v5
 from tests.re_v2_protocol_27_fixtures import manifest_v6
+from tests.re_v2_protocol_28_fixtures import closure_manifest_v7, exhaustive_manifest_v7
 
 
 def _manifest(*, run_id: str) -> RunManifest:
@@ -58,6 +59,35 @@ def _manifest(*, run_id: str) -> RunManifest:
         artifact_policy_versions={"L0": "egr-164-v1"},
         parent_run_id=None,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("manifest", (exhaustive_manifest_v7(), closure_manifest_v7()))
+def test_run_store_round_trips_schema_7_manifest_variants(
+    tmp_path: Path,
+    manifest: object,
+) -> None:
+    run_dir = tmp_path / "runs" / manifest.run_id
+    paths = ReV2Paths.for_run(run_dir)
+
+    paths.root.mkdir(parents=True)
+    paths.manifest.write_bytes(canonical_json_bytes(manifest.to_json_dict()))
+
+    assert load_run_manifest(run_dir) == manifest
+
+
+@pytest.mark.unit
+def test_run_store_rejects_schema_7_with_protocol_2_7(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-l4"
+    manifest = exhaustive_manifest_v7(run_id="re-l4")
+    raw = manifest.to_json_dict()
+    raw["engine_protocol_version"] = "2.7"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    paths.manifest.write_bytes(canonical_json_bytes(raw))
+
+    with pytest.raises(ReV2RunStoreError, match="schema/protocol"):
+        load_run_manifest(run_dir)
 
 
 @pytest.mark.unit
@@ -194,6 +224,7 @@ def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
     assert getattr(re_v2, "RE_V2_SCHEMA_4_PROTOCOLS", None) == ("2.5",)
     assert getattr(re_v2, "RE_V2_SCHEMA_5_PROTOCOLS", None) == ("2.6",)
     assert getattr(re_v2, "RE_V2_SCHEMA_6_PROTOCOLS", None) == ("2.7",)
+    assert getattr(re_v2, "RE_V2_SCHEMA_7_PROTOCOLS", None) == ("2.8",)
     assert RE_V2_SUPPORTED_PROTOCOLS == (
         "2.0",
         "2.1",
@@ -203,6 +234,7 @@ def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
         "2.5",
         "2.6",
         "2.7",
+        "2.8",
     )
 
 
