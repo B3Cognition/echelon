@@ -24,6 +24,7 @@ import pytest
 
 from harness.config import HarnessConfig, ResourceLimits, NetworkConfig
 from harness.documentation_gate import DocumentationGateResult
+from harness.errors import SandboxCreationError
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.fulfillment_runner import FulfillmentRefreshResult
@@ -332,6 +333,16 @@ def _make_controller(
         fresh_delivery=fresh_delivery,
     )
     return controller, provider, gitops, state_store
+
+
+def test_sandbox_setup_error_is_a_typed_verification_failure(tmp_path: Path) -> None:
+    controller, provider, *_ = _make_controller(tmp_path)
+    provider.create = MagicMock(side_effect=SandboxCreationError("daemon unavailable"))
+
+    result = controller._exec_verify(None, worktree_path=str(tmp_path))
+
+    assert result.passed is False
+    assert result.failures[0].id == "sandbox-verification-unavailable"
 
 
 def _init_git_repo(path: Path) -> None:
@@ -2882,10 +2893,10 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
 
-    def test_host_llm_runner_does_not_create_a_sandbox_before_fulfillment_gate(
+    def test_llm_runner_creates_sandbox_for_verification_before_fulfillment_gate(
         self, tmp_path: Path
     ) -> None:
-        """Host LLM delivery verifies without requiring the configured sandbox."""
+        """LLM delivery verifies inside the configured sandbox by default."""
         from harness.build_result import BuildResult
         from harness.llm_build_runner import LlmBuildRunner
 
@@ -2949,7 +2960,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert provider.created is False
+        assert provider.created is True
         fulfillment_runner.refresh.assert_called_once()
         assert fulfillment_runner.refresh.call_args.kwargs[
             "verification_evidence"

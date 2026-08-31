@@ -240,6 +240,7 @@ class TestVerificationSidecars:
             provider.start_services(handle, (service,))
 
         assert run.call_args_list[1].args[0] == ["exec", "service-id", "pg_isready"]
+        assert run.call_args_list[1].kwargs["check"] is False
 
 
 @pytest.mark.integration

@@ -14,6 +14,7 @@ import pytest
 
 from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+from harness.delivery_results import DeliveryResult, DeliveryRunOutcome, LandingOutcome
 from harness.run_intent import parse_intent
 from harness.state import StateStore
 
@@ -56,6 +57,26 @@ src/
 
 
 SPEC_WITH_LOCAL_TARGET = "---\ntargets:\n  - .\n---\n# Spec\n"
+
+
+def test_delivery_outcome_exit_code_reports_blocked_typed_outcome() -> None:
+    from echelon.cli import _delivery_outcome_exit_code
+
+    outcome = DeliveryRunOutcome(
+        results=(DeliveryResult(
+            status="blocked",
+            termination_reason="sandbox_verification_unavailable",
+            outer_iterations=1,
+            inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            final_verify=None,
+            blocked_phase="implementation",
+        ),),
+        landing=LandingOutcome("not_requested"),
+    )
+
+    assert _delivery_outcome_exit_code(outcome) == 1
 
 
 def _write_phase_a_build_inputs(spec_dir: Path) -> None:

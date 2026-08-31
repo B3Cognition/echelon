@@ -40,6 +40,7 @@ from harness.documentation_gate import (
 )
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
+from harness.errors import NotSupportedError, SandboxError
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
 from harness.fulfillment_runner import FulfillmentRunner
@@ -62,6 +63,7 @@ from harness.verification_evidence import (
     VerificationStage,
     write_verification_receipt,
 )
+from harness.verification_plan import build_verification_plan, materialize_services
 from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
@@ -895,6 +897,24 @@ class RalphController:
                         return self._finalize(
                             status="blocked",
                             reason="verify_command_needed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
+                    # Infrastructure cannot be repaired by the product agent.
+                    # Block immediately with a durable reason instead of consuming
+                    # build retries and misreporting a coordinator exception.
+                    if any(
+                        f.id == "sandbox-verification-unavailable"
+                        for f in verify_result.failures
+                    ):
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="sandbox_verification_unavailable",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -1823,10 +1843,9 @@ class RalphController:
     def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
 
-        When the LLM build runner path is active and worktree_path is provided, runs verification
-        locally on the host via the detected package manager's install + test + build
-        commands (avoids Docker networking issues where the internal network blocks
-        package downloads). Falls back to sandbox provider path otherwise.
+        Verification runs in a managed sandbox by default.  Host execution is an
+        explicit compatibility fallback only; the LLM build process itself may
+        still run on the host.
 
         Returns parsed VerifyResult.
         """
@@ -1838,26 +1857,27 @@ class RalphController:
             return self._exec_verify_locally(worktree_path)
 
         owned_handle = False
-        if handle is None:
-            handle = self._provider.create(self._build_sandbox_spec(worktree_path, 0))
-            owned_handle = True
-
         try:
-            plan = __import__("harness.verification_plan", fromlist=["build_verification_plan"])
-            verification_plan = plan.build_verification_plan(
+            if handle is None:
+                handle = self._provider.create(
+                    self._build_sandbox_spec(worktree_path, 0)
+                )
+                owned_handle = True
+            verification_plan = build_verification_plan(
                 Path(worktree_path), self._config,
             )
             service_env: dict[str, str] = {}
             if verification_plan.services:
                 start_services = getattr(self._provider, "start_services", None)
                 if start_services is None:
-                    raise RuntimeError("sandbox provider does not support verification services")
-                start_services(handle, verification_plan.services)
-                for service in verification_plan.services:
-                    if service.service_name == "postgres":
-                        uri = "postgresql://echelon:echelon@postgres:5432/echelon_verify"
-                        for name in service.environment_names:
-                            service_env[name] = uri
+                    raise NotSupportedError(
+                        "sandbox provider does not support verification services"
+                    )
+                materialized_services = materialize_services(
+                    verification_plan.services, session_id=handle.session_id
+                )
+                start_services(handle, materialized_services.services)
+                service_env = dict(materialized_services.verifier_environment)
             for command in verification_plan.bootstrap_commands:
                 bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
                 if bootstrap.exit_code != 0:
@@ -1874,7 +1894,12 @@ class RalphController:
 
             command = self._config.verify_command or "echelon verify"
             fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
-            candidate_commit = _current_git_commit(Path(worktree_path))
+            candidate_path = Path(worktree_path)
+            candidate_commit = (
+                _current_git_commit(candidate_path)
+                if candidate_path.is_dir()
+                else None
+            )
             stage_started_at = datetime.now(timezone.utc).isoformat()
             result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
 
@@ -1918,8 +1943,17 @@ class RalphController:
                     duration_s=result.duration_ms / 1000.0,
                     token_usage=_estimate_tokens(result),
                 )
+        except SandboxError as exc:
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="sandbox-verification-unavailable",
+                    error=str(exc),
+                )],
+            )
         finally:
-            if owned_handle:
+            if owned_handle and handle is not None:
                 self._provider.destroy(handle)
 
     def _apply_fulfillment_gate(

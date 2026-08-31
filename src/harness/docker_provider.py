@@ -592,10 +592,21 @@ class DockerWorktreeProvider(SandboxProvider):
                     )
                 started.append(service_id)
                 if service.health_command:
-                    _run_docker(
-                        ["exec", service_id, *service.health_command],
-                        cli=self._container_cli,
-                    )
+                    deadline = time.monotonic() + 30
+                    while True:
+                        health = _run_docker(
+                            ["exec", service_id, *service.health_command],
+                            cli=self._container_cli,
+                            check=False,
+                        )
+                        if health.returncode == 0:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise SandboxCreationError(
+                                f"verification service {service.service_name!r} "
+                                "did not become healthy within 30 seconds"
+                            )
+                        time.sleep(0.5)
             info.service_ids.extend(started)
             return tuple(started)
         except Exception:

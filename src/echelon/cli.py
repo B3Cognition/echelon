@@ -2348,7 +2348,7 @@ def _cmd_harness_run(
         _write_spec_status(spec_dir, "in_progress")
 
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -2358,6 +2358,10 @@ def _cmd_harness_run(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        # A child target process is the authority for its own delivery outcome.
+        # Multi-target orchestration must never infer success from rendered text.
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -2381,6 +2385,19 @@ def _cmd_harness_run(
             command=rerun_command,
             exc=exc,
         )
+
+
+def _delivery_outcome_exit_code(outcome: object) -> int:
+    """Return a process outcome from typed delivery state, never rendered text."""
+    from harness.delivery_results import DeliveryRunOutcome
+
+    if not isinstance(outcome, DeliveryRunOutcome):
+        # Keeps CLI adapters compatible with legacy/mocked run adapters. The
+        # production run skill always returns a typed DeliveryRunOutcome.
+        return 0
+    if outcome.landing.status == "blocked":
+        return 1
+    return 0 if any(result.status == "converged" for result in outcome.results) else 1
 
 
 def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
