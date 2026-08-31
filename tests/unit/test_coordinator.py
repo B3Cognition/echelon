@@ -26,6 +26,8 @@ from harness.run_intent import RunIntent
 from harness.state import StateStore
 from harness.verify_result import VerifyResult
 from harness.spec_frontmatter import read_frontmatter
+from harness.product_inventory import product_evidence_fingerprint
+from harness.verification_evidence import VerificationStage, write_verification_receipt
 
 
 class MockProvider(SandboxProvider):
@@ -280,6 +282,84 @@ class TestSingleStrategy:
         assert result.status == "blocked"
         assert result.blocked_phase == "finalization"
         assert result.termination_reason == "verified_provenance_mismatch"
+
+    def test_finalization_accepts_verified_fingerprint_equivalent_descendant(
+        self, tmp_path: Path
+    ) -> None:
+        """Ignored verification output may be committed after host verification."""
+        coord = _make_coordinator(tmp_path)
+        worktree = _initialize_git_worktree(tmp_path / "worktree")
+        (worktree / "app.txt").write_text("verified product\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.txt"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "product"], cwd=worktree, check=True, capture_output=True
+        )
+        evidence_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        fingerprint = product_evidence_fingerprint(worktree)
+        receipt = write_verification_receipt(
+            evidence_dir=tmp_path / "evidence",
+            spec_id="spec-001",
+            strategy_id="default",
+            build_id="run-1",
+            candidate_commit=evidence_commit,
+            fingerprint_before=fingerprint,
+            fingerprint_after=fingerprint,
+            verifier_source="test",
+            stages=[
+                VerificationStage(
+                    name="verify", command=("test",), exit_code=0,
+                    duration_ms=1, stdout=b"ok", stderr=b"",
+                )
+            ],
+            attempt_sequence=1,
+            sensitive_environment={},
+        )
+        (worktree / "test-results").mkdir()
+        (worktree / "test-results" / "last-run.json").write_text("{}\n", encoding="utf-8")
+        subprocess.run(["git", "add", "test-results"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "verification output"],
+            cwd=worktree, check=True, capture_output=True,
+        )
+
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {evidence_commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
+        )
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi", declared_targets=["sources/api"])
+        store.transition("running")
+        coord._gitops.get_latest_worktree.return_value = str(worktree)
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0,
+            VerifyResult(passed=True, verification_evidence=receipt.as_mapping()),
+        )
+
+        assert coord._checkpoint_verified_result(
+            store,
+            spec_id="spec-001",
+            strategy_id="default",
+            implementation=implementation,
+            outer_iterations=1,
+            tokens_used=0,
+        ) is None
+        result = coord._finalize_delivery(
+            store,
+            spec_dir=spec_dir,
+            declared_targets=["sources/api"],
+            implementation=implementation,
+            outer_iterations=1,
+            tokens_used=0,
+            final_verify=implementation.final_verify,
+        )
+
+        assert result.status == "converged"
 
     def test_finalization_blocks_when_fulfillment_discovery_raises(self, tmp_path: Path) -> None:
         """Fulfillment I/O failures are recoverable finalization blocks."""
