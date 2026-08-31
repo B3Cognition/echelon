@@ -42,7 +42,7 @@ benchmark_app = typer.Typer(
 )
 stack_app = typer.Typer(
     add_completion=False,
-    help="Stack detection and preflight commands.",
+    help="Stack detection, preflight, and provisioning commands.",
     no_args_is_help=True,
 )
 delivery_app = typer.Typer(
@@ -1594,6 +1594,36 @@ def stack_preflight(
     _extend_option(args, "--from-detect", from_detect)
     if probe_tools:
         args.append("--probe-tools")
+    if json_output:
+        args.append("--json")
+    args.extend(_ctx_args(ctx))
+    legacy_cli._cmd_stack(args, project_root=Path.cwd())
+
+
+@stack_app.command("provision", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def stack_provision(
+    ctx: typer.Context,
+    stack: Optional[list[str]] = typer.Option(
+        None,
+        "--stack",
+        help="Stack id to provision; repeat for multiple stacks.",
+    ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Target directory for verification-only provisioning files.",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing provisioning files."),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
+) -> None:
+    """Render verification provisioning files without starting Docker."""
+    legacy_cli = _legacy_cli()
+
+    args = ["provision"]
+    _extend_repeated_option(args, "--stack", stack)
+    _extend_option(args, "--target", target)
+    if force:
+        args.append("--force")
     if json_output:
         args.append("--json")
     args.extend(_ctx_args(ctx))

@@ -18,6 +18,12 @@ from harness.stacks.preflight import (
     render_preflight_markdown,
     run_stack_preflight,
 )
+from harness.stacks.provisioning import (
+    ProvisioningError,
+    ProvisioningStatus,
+    provisioning_statuses,
+    render_provisioner,
+)
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
 from harness.stacks.resolver import (
     ResolvedStackProvisioner,
@@ -36,15 +42,19 @@ __all__ = [
     "StackPreflightResult",
     "StackProvisioner",
     "StackProvisionerSatisfier",
+    "ProvisioningError",
+    "ProvisioningStatus",
     "detect_stacks",
     "detection_report_from_file",
     "detection_report_to_yaml",
     "load_stack_definitions",
     "preflight_to_dict",
+    "provisioning_statuses",
     "render_detection_markdown",
     "render_preflight_markdown",
     "render_resolved_markdown",
     "resolve_stacks",
+    "render_provisioner",
     "resolved_to_dict",
     "run_stack_preflight",
     "write_detection_report",

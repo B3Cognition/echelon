@@ -17378,8 +17378,11 @@ from harness.stacks import (  # noqa: E402  (CLI command helpers)
     detection_report_to_yaml,
     load_stack_definitions,
     preflight_to_dict,
+    provisioning_statuses,
+    ProvisioningError,
     render_detection_markdown,
     render_preflight_markdown,
+    render_provisioner,
     resolve_stacks,
     resolved_to_dict,
     run_stack_preflight,
@@ -17404,6 +17407,7 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
             "[--write] [--format text|yaml] [--json]\n"
             "  echelon stack preflight [--stack <id>] "
             "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]\n"
+            "  echelon stack provision [--stack <id>] [--target <path>] [--force] [--json]\n"
             "  echelon stack selected [--json]\n"
             "  echelon stack enable <stack-id>... [--dry-run]\n"
             "  echelon stack disable <stack-id>... [--dry-run]\n"
@@ -17422,6 +17426,10 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
 
     if subcmd == "preflight":
         _cmd_stack_preflight(args[1:], project_root=project_root)
+        return
+
+    if subcmd == "provision":
+        _cmd_stack_provision(args[1:], project_root=project_root)
         return
 
     if subcmd == "enable":
@@ -17658,7 +17666,12 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    result = run_stack_preflight(resolved, probe_tools=probe_tools)
+    result = run_stack_preflight(
+        resolved,
+        probe_tools=probe_tools,
+        target_root=project_root,
+        environment=os.environ,
+    )
 
     if json_output:
         import json
@@ -17681,6 +17694,128 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
 
     if result.has_errors:
         sys.exit(1)
+
+
+def _cmd_stack_provision(args: list[str], *, project_root: Path) -> None:
+    selected, target_root, force, json_output = _parse_stack_provision_args(
+        args, project_root=project_root
+    )
+    if not selected:
+        selected = list(_load_cli_config(project_root).stacks.selected)
+    if not selected:
+        message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
+        if json_output:
+            print(json.dumps({"target": str(target_root), "generated": [], "message": message}, indent=2))
+        else:
+            print(message)
+        return
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        resolved = resolve_stacks(selected, definitions)
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+        generated = _render_missing_provisioners(
+            resolved, statuses, target_root=target_root, force=force
+        )
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+    except (StackError, ProvisioningError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "target": str(target_root),
+                    "generated": [str(path) for path in generated],
+                    "provisioners": [
+                        {
+                            "id": status.provisioner_id,
+                            "stack_id": status.owner_stack_id,
+                            "state": status.state,
+                            "message": status.message,
+                            "path": str(status.path) if status.path is not None else None,
+                        }
+                        for status in statuses
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not resolved.provisioners:
+        print("Selected stacks declare no verification provisioners.")
+        return
+
+    if generated:
+        print("Generated verification provisioning files:")
+        for path in generated:
+            print(f"- {path}")
+    else:
+        print("No verification provisioning files were generated.")
+    print("Echelon did not start Docker. Review the files, then run:")
+    print("  docker compose -f docker-compose.echelon-verify.yml up -d")
+    print("  export DATABASE_URL='postgresql://<user>:<password>@<host>/<database>'")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres pg_isready -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres psql -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml down -v")
+
+
+def _render_missing_provisioners(
+    resolved,
+    statuses,
+    *,
+    target_root: Path,
+    force: bool,
+) -> list[Path]:
+    generated: list[Path] = []
+    rendered_ids: set[str] = set()
+    for item, status in zip(resolved.provisioners, statuses):
+        if status.provisioner_id in rendered_ids:
+            continue
+        if status.state == "ready" or (status.state == "prepared" and not force):
+            continue
+        generated.extend(render_provisioner(item, target_root, force=force))
+        rendered_ids.add(status.provisioner_id)
+    return generated
+
+
+def _parse_stack_provision_args(
+    args: list[str], *, project_root: Path
+) -> tuple[list[str], Path, bool, bool]:
+    selected: list[str] = []
+    target_root = project_root
+    force = False
+    json_output = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--stack":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --stack requires a value", file=sys.stderr)
+                sys.exit(1)
+            selected.append(args[index])
+        elif arg.startswith("--stack="):
+            selected.append(arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--force":
+            force = True
+        elif arg == "--json":
+            json_output = True
+        else:
+            print(f"echelon stack provision: unknown argument '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+    return selected, target_root, force, json_output
 
 
 def _parse_stack_preflight_args(
@@ -17801,6 +17936,25 @@ def _stack_definition_to_dict(stack) -> dict:
         },
         "detection": stack.detection.to_dict(),
         "tools": sorted(stack.tools),
+        "provisioners": [
+            {
+                "id": provisioner.id,
+                "scope": provisioner.scope,
+                "services": provisioner.services,
+                "environment": {"required": provisioner.required_environment},
+                "readiness": {"command": provisioner.readiness_command},
+                "satisfiers": [
+                    {
+                        "kind": satisfier.kind,
+                        "variable": satisfier.variable,
+                        "output": satisfier.output,
+                        "env_example": satisfier.env_example,
+                    }
+                    for satisfier in provisioner.satisfiers
+                ],
+            }
+            for provisioner in stack.provisioners
+        ],
     }
 
 
