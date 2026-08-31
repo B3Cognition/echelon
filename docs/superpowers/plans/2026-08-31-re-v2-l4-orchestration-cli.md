@@ -38,12 +38,12 @@
 - `OrchestrationPaths`, `OrchestrationEventStore`, and `DeepenOrchestrationController`.
 - `find_exact_orchestration(workspace_root, request_id)`, `find_open_orchestrations_for_child(workspace_root, child_run_id)`, and `recover_orchestration(path)`.
 
-- [ ] Write failing closed-request, content-free-event, duplicate-child, hash-mismatch, projection-loss, crash-transition, and hidden-namespace-enumeration tests.
-- [ ] Run RED: `pytest -q tests/unit/test_re_v2_protocol_28_orchestration.py`.
-- [ ] Implement canonical request storage, a closed append-only event vocabulary, controller-only transitions, atomic projection rebuild, and authenticated child-link recovery.
-- [ ] Prove repeated semantic commands reuse the intent, higher authorization appends an event, ambiguous reverse lookup blocks, and source-authority change requires a new request.
-- [ ] Run GREEN with protocol-2.8 events/recovery and protocol-2.6 reconstruction tests.
-- [ ] Commit `feat(re): persist L4 orchestration intent`.
+- [x] Write failing closed-request, content-free-event, duplicate-child, hash-mismatch, projection-loss, crash-transition, and hidden-namespace-enumeration tests.
+- [x] Run RED: `pytest -q tests/unit/test_re_v2_protocol_28_orchestration.py`.
+- [x] Implement canonical request storage, a closed append-only event vocabulary, controller-only transitions, atomic projection rebuild, and authenticated child-link recovery.
+- [x] Prove repeated semantic commands reuse the intent, higher authorization appends an event, ambiguous reverse lookup blocks, and source-authority change requires a new request.
+- [x] Run GREEN with protocol-2.8 events/recovery and protocol-2.6 reconstruction tests.
+- [x] Commit `feat(re): persist L4 orchestration intent`.
 
 ### Task 2: Assemble and Execute Exact Exhaustive Children
 
