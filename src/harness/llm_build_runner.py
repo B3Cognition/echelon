@@ -109,6 +109,32 @@ class LlmBuildRunner:
             stderr=stderr,
             duration_ms=duration_ms,
         )
+        if result.status == "unknown" and not status_file.exists() and exit_code == 0:
+            recovery_prompt = _missing_marker_recovery_prompt(status_file)
+            if prompt_metadata and callable(run_prompt_result):
+                provider_result = run_prompt_result(
+                    worktree_path,
+                    recovery_prompt,
+                    extra_env=extra_env,
+                    request_metadata={"prompt_metadata": dict(prompt_metadata)},
+                )
+                exit_code = int(provider_result.exit_code)
+            else:
+                exit_code = self._prompt_executor.exec_prompt(
+                    worktree_path,
+                    recovery_prompt,
+                    extra_env=extra_env,
+                )
+            duration_ms = int((time.monotonic() - start) * 1000)
+            stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")
+            stderr = str(getattr(self._prompt_executor, "last_stderr", "") or "")
+            result = BuildResult.from_status_file(
+                status_file,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+            )
         if result.status == "unknown" and not status_file.exists():
             legacy_result_file = Path(worktree_path) / ECHELON_RESULT_FILENAME
             if legacy_result_file.exists():
@@ -152,6 +178,19 @@ class LlmBuildRunner:
             containment_policy_file=containment_policy_file,
             prompt_metadata=prompt_metadata,
         )
+
+
+def _missing_marker_recovery_prompt(status_file: Path) -> str:
+    """Return the narrow retry when a provider omitted the delivery marker."""
+    return (
+        "RECOVERY: the previous build invocation returned successfully but did not "
+        "write the required delivery status marker. Do not begin new implementation. "
+        "Inspect the current worktree only enough to determine whether the previous "
+        "slice completed an assigned task. Then write exactly one JSON object to "
+        f"{status_file}: use status `done` with only exact completed_task_ids that "
+        "were actually completed and verified, otherwise use status `blocked` with "
+        "a concrete reason. This file write is mandatory before you finish."
+    )
 
 
 def _containment_policy_env(

@@ -238,6 +238,31 @@ class TestLlmBuildRunner:
         assert result.status == "unknown"
         assert result.succeeded is False
 
+    def test_exec_build_recovers_missing_marker_with_one_status_only_retry(self, tmp_path):
+        executor = MagicMock()
+
+        def run_prompt_result(_worktree_path, prompt, *, extra_env, request_metadata):
+            if "RECOVERY: the previous build invocation" in prompt:
+                Path(extra_env["HARNESS_BUILD_STATUS_FILE"]).write_text(
+                    json.dumps({"status": "done", "completed_task_ids": ["T-001"]}),
+                    encoding="utf-8",
+                )
+            return MagicMock(exit_code=0)
+
+        executor.run_prompt_result.side_effect = run_prompt_result
+
+        result = LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            prompt_metadata={"tool_read_roots": [str(tmp_path)]},
+        )
+
+        assert result.succeeded is True
+        assert result.task_ids == ["T-001"]
+        assert executor.run_prompt_result.call_count == 2
+        recovery_prompt = executor.run_prompt_result.call_args_list[1].args[1]
+        assert str(tmp_path / ".harness-build-status.json") in recovery_prompt
+
     def test_exec_build_recovers_blocked_legacy_echelon_result_marker(self, tmp_path):
         executor = _executor()
 
