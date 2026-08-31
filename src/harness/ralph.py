@@ -1820,7 +1820,7 @@ class RalphController:
             "stderr": result.stderr,
         }
 
-    def _exec_verify(self, handle: SandboxHandle, worktree_path: str = "") -> VerifyResult:
+    def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
 
         When the LLM build runner path is active and worktree_path is provided, runs verification
@@ -1830,23 +1830,66 @@ class RalphController:
 
         Returns parsed VerifyResult.
         """
-        if self._llm_build_runner and worktree_path:
+        if (
+            self._llm_build_runner
+            and worktree_path
+            and self._config.verification.execution == "host"
+        ):
             return self._exec_verify_locally(worktree_path)
 
-        result = self._provider.exec(handle, "echelon verify", timeout_ms=600_000)
+        owned_handle = False
+        if handle is None:
+            handle = self._provider.create(self._build_sandbox_spec(worktree_path, 0))
+            owned_handle = True
 
-        # Parse verify result from stdout
         try:
-            data = json.loads(result.stdout)
-            return VerifyResult.from_dict(data)
-        except (json.JSONDecodeError, Exception):
-            # If parsing fails, create a failed VerifyResult
-            return VerifyResult(
-                passed=result.exit_code == 0,
-                failures=[],
-                duration_s=result.duration_ms / 1000.0,
-                token_usage=_estimate_tokens(result),
+            plan = __import__("harness.verification_plan", fromlist=["build_verification_plan"])
+            verification_plan = plan.build_verification_plan(
+                Path(worktree_path), self._config,
             )
+            for command in verification_plan.bootstrap_commands:
+                bootstrap = self._provider.exec(handle, command, timeout_ms=600_000)
+                if bootstrap.exit_code != 0:
+                    return VerifyResult(
+                        passed=False,
+                        failures=[FailureEntry(
+                            category=FailureCategory.BUILD,
+                            id="sandbox-bootstrap",
+                            error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
+                        )],
+                        duration_s=bootstrap.duration_ms / 1000.0,
+                        token_usage=0,
+                    )
+
+            command = self._config.verify_command or "echelon verify"
+            result = self._provider.exec(handle, command, timeout_ms=600_000)
+
+            if self._config.verify_command:
+                return VerifyResult(
+                    passed=result.exit_code == 0,
+                    failures=[] if result.exit_code == 0 else [FailureEntry(
+                        category=FailureCategory.TEST,
+                        id="verify-command",
+                        error=(result.stdout + result.stderr)[-2000:],
+                    )],
+                    duration_s=result.duration_ms / 1000.0,
+                    token_usage=_estimate_tokens(result),
+                )
+
+            # Parse verifier result from stdout for the legacy sandbox command.
+            try:
+                data = json.loads(result.stdout)
+                return VerifyResult.from_dict(data)
+            except (json.JSONDecodeError, Exception):
+                return VerifyResult(
+                    passed=result.exit_code == 0,
+                    failures=[],
+                    duration_s=result.duration_ms / 1000.0,
+                    token_usage=_estimate_tokens(result),
+                )
+        finally:
+            if owned_handle:
+                self._provider.destroy(handle)
 
     def _apply_fulfillment_gate(
         self,
@@ -5360,8 +5403,11 @@ class RalphController:
         """Build SandboxSpec from config and context."""
         from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
 
+        from harness.verification_plan import build_verification_plan
+
+        verification_plan = build_verification_plan(Path(worktree_path), self._config)
         return SandboxSpec(
-            image=self._config.base_image or "python:3.9-slim",
+            image=verification_plan.image,
             image_source="config_override" if self._config.base_image else "fingerprint",
             worktree_mount=worktree_path,
             container_mount="/workspace",

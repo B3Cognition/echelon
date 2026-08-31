@@ -7873,7 +7873,9 @@ class TestLlmProviderDispatch:
         )
 
         controller, provider, _, _ = _make_controller(
-            tmp_path, llm_build_runner=build_runner
+            tmp_path,
+            llm_build_runner=build_runner,
+            verify_results=[{"passed": True, "failures": []}],
         )
         result = controller._exec_build(
             handle=MagicMock(),
@@ -8063,7 +8065,9 @@ class TestLlmProviderDispatch:
 
         build_runner = MagicMock(spec=LlmBuildRunner)
         controller, provider, _, _ = _make_controller(
-            tmp_path, llm_build_runner=build_runner
+            tmp_path,
+            llm_build_runner=build_runner,
+            verify_results=[{"passed": True, "failures": []}],
         )
 
         result = controller._exec_build(
@@ -8404,6 +8408,24 @@ class TestVerifyCommandNeeded:
 
         assert result.passed is True
         assert marker.read_text(encoding="utf-8").strip() == str(worktree)
+
+    def test_llm_delivery_verifies_in_sandbox_by_default(self, tmp_path: Path) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, provider, _, _ = _make_controller(
+            tmp_path,
+            llm_build_runner=build_runner,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        controller._config = HarnessConfig(**{
+            **controller._config.__dict__, "verify_command": "pnpm verify",
+        })
+        result = controller._exec_verify(None, str(tmp_path))
+
+        assert result.passed is True
+        assert provider.created is True
+        assert provider.destroyed is True
 
     def test_configured_verify_writes_candidate_bound_receipt(
         self, tmp_path: Path
