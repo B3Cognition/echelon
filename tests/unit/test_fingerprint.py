@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.fingerprint import Fingerprint, fingerprint_repo
+from harness.fingerprint import Fingerprint, playwright_version, fingerprint_repo
 
 
 @pytest.mark.unit
@@ -47,7 +47,7 @@ class TestFingerprint:
         assert fp.language == "generic"
         assert "ubuntu" in fp.image
 
-    def test_playwright_overrides_image(self, tmp_path: Path) -> None:
+    def test_playwright_is_detected_without_selecting_host_dependent_image(self, tmp_path: Path) -> None:
         pkg = {
             "name": "test",
             "devDependencies": {"@playwright/test": "^1.42.0"},
@@ -57,4 +57,11 @@ class TestFingerprint:
         fp = fingerprint_repo(tmp_path)
         assert fp.language == "node"
         assert fp.has_playwright is True
-        assert "playwright" in fp.image.lower()
+        assert fp.image == "node:20-slim"
+
+    def test_extracts_pinned_playwright_version(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(json.dumps({
+            "devDependencies": {"@playwright/test": "1.62.1"},
+        }))
+
+        assert playwright_version(tmp_path) == "1.62.1"

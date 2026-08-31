@@ -85,6 +85,7 @@ VALID_FULFILLMENT_REFRESH_POLICIES = {
     "convergence_only",
     "scoped",
 }
+VALID_VERIFICATION_EXECUTIONS = {"sandbox", "host"}
 
 # Simple semver range pattern: supports ^, ~, >=, <=, =, -, x ranges
 SEMVER_RANGE_PATTERN = re.compile(
@@ -216,6 +217,13 @@ class FulfillmentConfig:
 
 
 @dataclass
+class VerificationConfig:
+    """Where authoritative delivery verification is allowed to execute."""
+
+    execution: str = "sandbox"
+
+
+@dataclass
 class StacksConfig:
     """Selected Echelon stacks from committed project config."""
     selected: List[str] = field(default_factory=list)
@@ -252,6 +260,7 @@ class HarnessConfig:
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
     fulfillment: FulfillmentConfig = field(default_factory=FulfillmentConfig)
+    verification: VerificationConfig = field(default_factory=VerificationConfig)
     stacks: StacksConfig = field(default_factory=StacksConfig)
     verify_command: Optional[str] = None
 
@@ -771,6 +780,20 @@ def _parse_fulfillment(data: Dict[str, Any]) -> FulfillmentConfig:
     return FulfillmentConfig(refresh_policy=refresh_policy)
 
 
+def _parse_verification(data: Dict[str, Any]) -> VerificationConfig:
+    raw = data.get("verification", {})
+    if not isinstance(raw, dict):
+        raise ValidationError("verification must be a mapping", field_path="verification")
+    execution = str(raw.get("execution", "sandbox"))
+    if execution not in VALID_VERIFICATION_EXECUTIONS:
+        raise ValidationError(
+            f"Invalid verification execution '{execution}'. Must be one of: "
+            f"{sorted(VALID_VERIFICATION_EXECUTIONS)}",
+            field_path="verification.execution",
+        )
+    return VerificationConfig(execution=execution)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -834,6 +857,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
         fulfillment=_parse_fulfillment(data),
+        verification=_parse_verification(data),
         stacks=_parse_stacks(data),
         verify_command=data.get("verify_command") or None,
     )

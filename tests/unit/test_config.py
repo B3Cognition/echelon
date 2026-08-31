@@ -121,6 +121,15 @@ class TestParseConfigValid:
         assert config.fulfillment.refresh_policy == "milestone"
         assert isinstance(config.stacks, StacksConfig)
         assert config.stacks.selected == []
+        assert config.verification.execution == "sandbox"
+
+    def test_host_verification_requires_explicit_opt_in(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "verification": {"execution": "host"},
+        })
+
+        assert config.verification.execution == "host"
 
     def test_fulfillment_refresh_policy_can_be_configured(self) -> None:
         config = _parse_config({
