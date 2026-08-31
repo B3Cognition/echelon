@@ -86,6 +86,33 @@ def _write_target_delivery_state(project_root: Path) -> Path:
     return state_file
 
 
+def _write_escalation(project_root: Path) -> Path:
+    path = project_root / "runs" / "build-20260710-101500-000000" / "escalation.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Escalation: same_failure_repeat\n\n"
+        "## Question\n\n"
+        "Which database should verification use?\n\n"
+        "## Context\n\n"
+        "DATABASE_URL is missing from the isolated verification environment.\n\n"
+        "## Decision Metadata\n\n"
+        "```json\n"
+        "{\n"
+        "  \"suggested_answers\": [\n"
+        "    {\n"
+        "      \"label\": \"Retry with the recorded context\",\n"
+        "      \"answer\": \"Continue with the isolated verification database.\",\n"
+        "      \"consequence\": \"The delivery loop retries.\",\n"
+        "      \"recommended\": true\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 @pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
@@ -153,3 +180,24 @@ def test_delivery_status_discovers_target_delivery_state(
     assert "browser-3d-game" in out
     assert "blocker_escalation" in out
     assert str(state_file) in out
+
+
+@pytest.mark.unit
+def test_delivery_status_renders_escalation_question_and_recommended_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    _write_delivery_state(tmp_path)
+    escalation_path = _write_escalation(tmp_path)
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Which database should verification use?" in out
+    assert "DATABASE_URL is missing" in out
+    assert "Retry with the recorded context" in out
+    assert "Continue with the isolated verification database." in out
+    assert str(escalation_path) in out
+    assert "echelon delivery resume 001 'Continue with the isolated verification database.'" in out

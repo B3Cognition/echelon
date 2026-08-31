@@ -5883,7 +5883,72 @@ def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
     return spec_id, strategy, json_output
 
 
-def _delivery_status_next_step(state: dict, spec_id: str) -> str:
+def _delivery_status_escalation(state: dict, project_root: Path) -> dict[str, object] | None:
+    """Read optional human-decision details without making status fragile."""
+    raw_path = str(state.get("escalation_file") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = project_root / path
+    escalation: dict[str, object] = {"path": str(path)}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return escalation
+
+    def section(name: str) -> str:
+        match = re.search(
+            rf"^## {re.escape(name)}\s*$\n(.*?)(?=^## |\Z)",
+            text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    question = section("Question")
+    context = section("Context")
+    if question:
+        escalation["question"] = question
+    if context:
+        escalation["context"] = context
+    metadata = re.search(
+        r"^## Decision Metadata\s*$\n```json\s*(\{.*?\})\s*```",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not metadata:
+        return escalation
+    try:
+        decision = json.loads(metadata.group(1))
+    except (json.JSONDecodeError, TypeError):
+        return escalation
+    suggestions = decision.get("suggested_answers") if isinstance(decision, dict) else None
+    if not isinstance(suggestions, list):
+        return escalation
+    choices: list[dict[str, str | bool]] = []
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        answer = str(suggestion.get("answer") or "").strip()
+        if not answer:
+            continue
+        choice = {
+            "label": str(suggestion.get("label") or "Suggested answer").strip(),
+            "answer": answer,
+            "consequence": str(suggestion.get("consequence") or "").strip(),
+            "recommended": bool(suggestion.get("recommended")),
+        }
+        choices.append(choice)
+    if choices:
+        escalation["choices"] = choices
+    return escalation
+
+
+def _delivery_status_next_step(
+    state: dict,
+    spec_id: str,
+    escalation: dict[str, object] | None = None,
+) -> str:
     status = str(state.get("status") or "unknown")
     termination_reason = str(state.get("termination_reason") or "")
     effective_spec = spec_id or str(state.get("spec_id") or "<spec_id>")
@@ -5891,6 +5956,20 @@ def _delivery_status_next_step(state: dict, spec_id: str) -> str:
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
         if str(state.get("escalation_file") or ""):
+            choices = escalation.get("choices") if escalation else None
+            if isinstance(choices, list):
+                recommended = next(
+                    (
+                        choice
+                        for choice in choices
+                        if isinstance(choice, dict) and choice.get("recommended")
+                    ),
+                    None,
+                )
+                if isinstance(recommended, dict):
+                    answer = str(recommended.get("answer") or "").strip()
+                    if answer:
+                        return f"echelon delivery resume {effective_spec} {shlex.quote(answer)}"
             return f'echelon delivery resume {effective_spec} "<answer>"'
         if termination_reason == "verify_command_needed":
             return "set delivery.verify_command, then echelon delivery continue " + effective_spec
@@ -5912,6 +5991,7 @@ def _delivery_status_summary(
     status = str(state.get("status") or "unknown")
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
+    escalation = _delivery_status_escalation(state, project_root)
     summary = {
         "spec_id": spec_id,
         "strategy": strategy,
@@ -5938,8 +6018,10 @@ def _delivery_status_summary(
         "salvage_commit": str(state.get("salvage_commit") or ""),
         "checkpoint_count": checkpoint_count,
         "state_file": str(state.get("state_file") or ""),
-        "next": _delivery_status_next_step(state, spec_id),
+        "next": _delivery_status_next_step(state, spec_id, escalation),
     }
+    if escalation is not None:
+        summary["escalation"] = escalation
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -6012,6 +6094,31 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         value = str(summary.get(key) or "").strip()
         if value:
             fields.append((label, value[:12] if key.endswith("_commit") else value))
+    escalation = summary.get("escalation")
+    if isinstance(escalation, dict):
+        question = str(escalation.get("question") or "").strip()
+        context = str(escalation.get("context") or "").strip()
+        if question:
+            fields.append(("question", question))
+        if context:
+            fields.append(("context", context))
+        choices = escalation.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                label = str(choice.get("label") or "Suggested answer").strip()
+                answer = str(choice.get("answer") or "").strip()
+                consequence = str(choice.get("consequence") or "").strip()
+                marker = " (recommended)" if choice.get("recommended") else ""
+                if answer:
+                    details = answer
+                    if consequence:
+                        details += f" — {consequence}"
+                    fields.append((f"choice{marker}", f"{label}: {details}"))
+        path = str(escalation.get("path") or "").strip()
+        if path:
+            fields.append(("escalation", path))
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
