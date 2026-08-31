@@ -227,7 +227,7 @@ Prove domain selection includes selected-domain plus source-unowned records, uns
 pytest -q tests/unit/test_re_v2_protocol_28_evidence.py tests/unit/test_re_v2_workspace_snapshot.py tests/unit/test_re_v2_snapshot.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/evidence.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_evidence.py
@@ -246,7 +246,7 @@ git commit -m "feat(re): stage complete L4 snapshot evidence"
 - Produces `ParentAuthorityBundleV3` and zero-provider `L4ClosureParentBundleV1`.
 - Produces `build_l3_target_projections(validated_l3_parent, selection)`.
 
-- [ ] **Step 1: Write failing local-identity tests**
+- [x] **Step 1: Write failing local-identity tests**
 
 ```python
 def test_target_projection_survives_unrelated_selection_expansion() -> None:
@@ -265,11 +265,11 @@ def test_projection_rejects_mixed_epoch_authority() -> None:
         build_l3_target_projections(fixture.parent, fixture.selection)
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_authority.py`
 
-- [ ] **Step 3: Implement projections and bundles**
+- [x] **Step 3: Implement projections and bundles**
 
 Projection identity includes only target candidate authority, findings, overlays, closure state, relevant L2 roots, and audit/executor policies. Epoch membership lives outside that identity:
 
@@ -283,11 +283,11 @@ class L3TargetEpochMembershipV1:
 
 Reject unfinished targets, mixed epochs, mismatched snapshots/partitions, unsupported blocker classes, and missing source projections.
 
-- [ ] **Step 4: Add closure-bundle negative tests**
+- [x] **Step 4: Add closure-bundle negative tests**
 
 Reject incomplete L4 roots, mismatched selection/terminal hashes, checkpoint provenance, executor authority, and resource policy.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_authority.py tests/unit/test_re_v2_protocol_25_model.py tests/unit/test_re_v2_protocol_25_findings.py
