@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 
 import pytest
 
 from harness.re_v2.canonical import content_digest
+from harness.re_v2.protocol_28.artifacts import ExhaustiveEvidenceSliceV1
 from harness.re_v2.protocol_28.executors import (
     L4ExecutorCatalogV1,
     Protocol28ExecutorError,
@@ -56,3 +58,26 @@ def test_response_schemas_are_role_specific_closed_authority() -> None:
     assert b'"additionalProperties":false' in producer
     assert b'"ExhaustiveEvidenceSliceV1"' in producer
     assert b'"ExhaustiveVerificationV1"' in verifier
+
+
+@pytest.mark.unit
+def test_response_schemas_exactly_name_model_and_nested_contract_fields() -> None:
+    producer = json.loads(canonical_exhaustive_response_schema_bytes("producer"))
+    verifier = json.loads(canonical_exhaustive_response_schema_bytes("verifier"))
+
+    assert producer["required"] == list(ExhaustiveEvidenceSliceV1.FIELDS)
+    assert set(producer["properties"]) == set(producer["required"])
+    assert producer["properties"]["rendered_markdown"]["type"] == "string"
+    assert "rendered_explanation" not in producer["properties"]
+    assert producer["$defs"]["EvidenceAnchorV1"]["required"] == [
+        "schema_version",
+        "evidence_id",
+        "source_id",
+        "source_relative_path",
+        "byte_start",
+        "byte_end",
+        "raw_hash",
+    ]
+    assert verifier["required"][-2] == "verified_primary_evidence_ids"
+    assert "assessed_primary_evidence_ids" not in verifier["properties"]
+    assert set(verifier["properties"]) == set(verifier["required"])

@@ -123,6 +123,23 @@ class L4ExecutorCatalogV1:
 
 def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
     """Return closed human- and machine-readable result authority for one role."""
+    digest = {"pattern": "^sha256:[0-9a-f]{64}$", "type": "string"}
+    digest_array = {
+        "items": digest,
+        "type": "array",
+        "uniqueItems": True,
+    }
+
+    def closed_object(
+        fields: tuple[str, ...], properties: dict[str, object]
+    ) -> dict[str, object]:
+        return {
+            "additionalProperties": False,
+            "properties": properties,
+            "required": list(fields),
+            "type": "object",
+        }
+
     if role == "producer":
         title = "ExhaustiveEvidenceSliceV1"
         fields = (
@@ -131,31 +148,163 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
             "covered_primary_subject_ids", "covered_primary_source_record_ids",
             "covered_primary_evidence_ids", "evidence_anchors", "claims",
             "observations", "addressed_finding_ids", "unresolved_finding_ids",
-            "rendered_explanation",
+            "rendered_markdown",
         )
+        anchor_fields = (
+            "schema_version", "evidence_id", "source_id", "source_relative_path",
+            "byte_start", "byte_end", "raw_hash",
+        )
+        claim_fields = (
+            "schema_version", "claim_kind", "subject_ids", "evidence_anchor_ids",
+            "statement",
+        )
+        observation_fields = (
+            "schema_version", "disposition", "category_id", "subject_ids",
+            "evidence_ids", "finding_ids", "detail",
+        )
+        definitions = {
+            "EvidenceAnchorV1": closed_object(
+                anchor_fields,
+                {
+                    "schema_version": {"const": 1},
+                    "evidence_id": digest,
+                    "source_id": {"minLength": 1, "type": "string"},
+                    "source_relative_path": {"minLength": 1, "type": "string"},
+                    "byte_start": {"minimum": 0, "type": "integer"},
+                    "byte_end": {"minimum": 0, "type": "integer"},
+                    "raw_hash": digest,
+                },
+            ),
+            "ExhaustiveClaimV1": closed_object(
+                claim_fields,
+                {
+                    "schema_version": {"const": 1},
+                    "claim_kind": {
+                        "enum": [
+                            "behavioral", "boundary", "failure", "invariant",
+                            "configuration", "security", "operational",
+                            "negative-space",
+                        ]
+                    },
+                    "subject_ids": digest_array,
+                    "evidence_anchor_ids": digest_array,
+                    "statement": {"maxLength": 4096, "type": "string"},
+                },
+            ),
+            "ExhaustiveObservationV1": closed_object(
+                observation_fields,
+                {
+                    "schema_version": {"const": 1},
+                    "disposition": {
+                        "enum": [
+                            "applicable", "not-applicable", "unknown", "unresolved"
+                        ]
+                    },
+                    "category_id": {"minLength": 1, "type": "string"},
+                    "subject_ids": digest_array,
+                    "evidence_ids": digest_array,
+                    "finding_ids": digest_array,
+                    "detail": {"maxLength": 4096, "type": "string"},
+                },
+            ),
+        }
+        properties = {
+            "schema_version": {"const": 1},
+            "slice_spec_id": digest,
+            "plan_entry_id": digest,
+            "target_kind": {"enum": ["domain", "source"]},
+            "source_id": {"minLength": 1, "type": "string"},
+            "target_id": {"minLength": 1, "type": "string"},
+            "category_id": {"minLength": 1, "type": "string"},
+            "covered_primary_subject_ids": digest_array,
+            "covered_primary_source_record_ids": digest_array,
+            "covered_primary_evidence_ids": digest_array,
+            "evidence_anchors": {
+                "items": {"$ref": "#/$defs/EvidenceAnchorV1"},
+                "type": "array",
+                "uniqueItems": True,
+            },
+            "claims": {
+                "items": {"$ref": "#/$defs/ExhaustiveClaimV1"},
+                "type": "array",
+                "uniqueItems": True,
+            },
+            "observations": {
+                "items": {"$ref": "#/$defs/ExhaustiveObservationV1"},
+                "type": "array",
+                "uniqueItems": True,
+            },
+            "addressed_finding_ids": digest_array,
+            "unresolved_finding_ids": digest_array,
+            "rendered_markdown": {"maxLength": 98_304, "type": "string"},
+        }
     elif role == "verifier":
         title = "ExhaustiveVerificationV1"
         fields = (
             "schema_version", "slice_spec_id", "candidate_id",
             "verifier_policy_id", "verdict", "diagnostics",
-            "assessed_primary_evidence_ids", "assessed_finding_ids",
+            "verified_primary_evidence_ids", "assessed_finding_ids",
         )
+        diagnostic_fields = (
+            "schema_version", "candidate_id", "verifier_policy_id",
+            "diagnostic_class", "subject_ids", "evidence_ids", "finding_ids",
+            "detail",
+        )
+        definitions = {
+            "ExhaustiveDiagnosticV1": closed_object(
+                diagnostic_fields,
+                {
+                    "schema_version": {"const": 1},
+                    "candidate_id": digest,
+                    "verifier_policy_id": digest,
+                    "diagnostic_class": {
+                        "enum": [
+                            "missing-planned-coverage", "unsupported-claim",
+                            "contradictory-claim", "invalid-or-insufficient-evidence",
+                            "incomplete-boundary-behavior",
+                            "incomplete-failure-recovery-behavior",
+                            "incomplete-negative-space",
+                            "unresolved-assigned-l3-finding",
+                            "malformed-result-contract",
+                        ]
+                    },
+                    "subject_ids": digest_array,
+                    "evidence_ids": digest_array,
+                    "finding_ids": digest_array,
+                    "detail": {"maxLength": 4096, "type": "string"},
+                },
+            )
+        }
+        properties = {
+            "schema_version": {"const": 1},
+            "slice_spec_id": digest,
+            "candidate_id": digest,
+            "verifier_policy_id": digest,
+            "verdict": {"enum": ["PASS", "REPAIR"]},
+            "diagnostics": {
+                "items": {"$ref": "#/$defs/ExhaustiveDiagnosticV1"},
+                "type": "array",
+                "uniqueItems": True,
+            },
+            "verified_primary_evidence_ids": digest_array,
+            "assessed_finding_ids": digest_array,
+        }
     else:
         raise Protocol28ExecutorError(f"unknown L4 response role: {role!r}")
-    return canonical_json_bytes(
+    schema = closed_object(fields, properties)
+    schema.update(
         {
+            "$defs": definitions,
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "additionalProperties": False,
-            "required": list(fields),
             "schema_version": 1,
             "title": title,
-            "type": "object",
             "x-echelon-contract": (
-                "Exact closed object. Nested evidence, claim, observation, and "
-                "diagnostic objects must match their named protocol-2.8 V1 schemas."
+                "Exact closed object. Copy all scope and coverage identities exactly "
+                "from the frozen context. Arrays must be sorted and unique."
             ),
         }
     )
+    return canonical_json_bytes(schema)
 
 
 def build_l4_executor_catalog(
