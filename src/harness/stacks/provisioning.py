@@ -98,16 +98,40 @@ def _compose_outputs(provisioner: StackProvisioner, root: Path) -> list[Path]:
 def _compose_artifacts(
     provisioner: StackProvisioner, root: Path
 ) -> list[tuple[Path, str]]:
-    artifacts: list[tuple[Path, str]] = []
-    for satisfier in provisioner.satisfiers:
-        if satisfier.kind != "compose-template" or satisfier.output is None:
-            continue
-        artifacts.append((_target_path(root, satisfier.output), _compose_content(provisioner)))
+    templates = [
+        satisfier
+        for satisfier in provisioner.satisfiers
+        if satisfier.kind == "compose-template"
+    ]
+    if not templates:
+        return []
+
+    for satisfier in templates:
+        if satisfier.output is not None:
+            _target_path(root, satisfier.output)
         if satisfier.env_example is not None:
-            artifacts.append(
-                (_target_path(root, satisfier.env_example), _env_example_content(provisioner))
-            )
-    return artifacts
+            _target_path(root, satisfier.env_example)
+
+    if len(templates) != 1:
+        raise ProvisioningError("compose-template must declare the fixed artifact pair")
+
+    template = templates[0]
+    if (
+        template.output != "docker-compose.echelon-verify.yml"
+        or template.env_example != ".env.echelon-verify.example"
+    ):
+        raise ProvisioningError("compose-template must declare the fixed artifact pair")
+
+    return [
+        (
+            _target_path(root, "docker-compose.echelon-verify.yml"),
+            _compose_content(provisioner),
+        ),
+        (
+            _target_path(root, ".env.echelon-verify.example"),
+            _env_example_content(provisioner),
+        ),
+    ]
 
 
 def _provisioner_definition(

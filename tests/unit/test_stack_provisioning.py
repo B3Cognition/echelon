@@ -110,3 +110,44 @@ def test_render_rejects_outputs_outside_target_root(tmp_path: Path) -> None:
 
     with pytest.raises(ProvisioningError, match="outside target root"):
         render_provisioner(unsafe, tmp_path)
+
+
+@pytest.mark.unit
+def test_render_rejects_compose_template_with_nonstandard_output(tmp_path: Path) -> None:
+    provisioner = _resolved_postgres().provisioners[0].provisioner
+    wrong_output = StackProvisioner(
+        **{
+            **provisioner.__dict__,
+            "satisfiers": [
+                StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL"),
+                StackProvisionerSatisfier(
+                    kind="compose-template",
+                    output="nested/compose.yml",
+                    env_example=".env.echelon-verify.example",
+                ),
+            ],
+        }
+    )
+
+    with pytest.raises(ProvisioningError, match="fixed artifact pair"):
+        render_provisioner(wrong_output, tmp_path)
+
+
+@pytest.mark.unit
+def test_render_rejects_compose_template_without_env_example(tmp_path: Path) -> None:
+    provisioner = _resolved_postgres().provisioners[0].provisioner
+    missing_example = StackProvisioner(
+        **{
+            **provisioner.__dict__,
+            "satisfiers": [
+                StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL"),
+                StackProvisionerSatisfier(
+                    kind="compose-template",
+                    output="docker-compose.echelon-verify.yml",
+                ),
+            ],
+        }
+    )
+
+    with pytest.raises(ProvisioningError, match="fixed artifact pair"):
+        render_provisioner(missing_example, tmp_path)
