@@ -189,7 +189,11 @@ def run_multi_target(
 
     results: dict[int, int] = {}
     lock = threading.Lock()
-    ordered_targets, task_ids_by_target = _target_execution_plan(
+    (
+        ordered_targets,
+        task_ids_by_target,
+        dependencies_by_target,
+    ) = _target_execution_plan(
         spec_id=spec_id,
         targets=targets,
         workspace_root=resolved_workspace_root,
@@ -292,10 +296,31 @@ def run_multi_target(
     if task_ids_by_target and len(ordered_targets) > 1:
         # Target builds share the canonical tasks.md progress ledger. Execute in
         # dependency order so each subprocess can update it without write races.
+        # A failed target blocks only its dependency descendants; unrelated
+        # targets must still receive their own delivery attempt.
+        failed_targets: set[str] = set()
         for result_id, (target, display_label) in target_runs:
+            target_key = str(target.resolve())
+            failed_dependencies = [
+                dependency
+                for dependency in dependencies_by_target.get(target_key, ())
+                if dependency in failed_targets
+            ]
+            if failed_dependencies:
+                results[result_id] = 1
+                failed_targets.add(target_key)
+                dependency_labels = ", ".join(
+                    Path(dependency).name for dependency in failed_dependencies
+                )
+                print(
+                    f"✗ [{display_label}]: skipped because dependency target(s) "
+                    f"failed: {dependency_labels}",
+                    file=sys.stderr,
+                )
+                continue
             _run_one(result_id, target, display_label)
             if results.get(result_id, 1) != 0:
-                break
+                failed_targets.add(target_key)
     else:
         threads = [
             threading.Thread(
@@ -400,14 +425,18 @@ def _target_execution_plan(
     targets: List[Path],
     workspace_root: Path | None,
     command: str,
-) -> tuple[List[Path], dict[str, tuple[str, ...]]]:
-    """Return dependency-ordered targets and their canonical task IDs."""
+) -> tuple[
+    List[Path],
+    dict[str, tuple[str, ...]],
+    dict[str, tuple[str, ...]],
+]:
+    """Return ordered targets, owned task IDs, and target dependencies."""
     if command not in {"run", "resume", "continue"} or workspace_root is None:
-        return targets, {}
+        return targets, {}, {}
     spec_dir = find_spec_dir(spec_id, workspace_root)
     tasks_path = spec_dir / "tasks.md" if spec_dir is not None else None
     if tasks_path is None or not tasks_path.is_file():
-        return targets, {}
+        return targets, {}, {}
 
     markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
     analysis = analyze_task_targets(markdown)
@@ -416,12 +445,12 @@ def _target_execution_plan(
         try:
             rel = target.resolve().relative_to(workspace_root).as_posix()
         except ValueError:
-            return targets, {}
+            return targets, {}, {}
         target_by_rel[rel] = target
     if set(target_by_rel) != set(analysis.target_tasks):
-        return targets, {}
+        return targets, {}, {}
     if analysis.unowned_tasks or analysis.cross_target_tasks:
-        return targets, {}
+        return targets, {}, {}
 
     owner_by_task = {
         task_id: target
@@ -444,7 +473,7 @@ def _target_execution_plan(
         ready = sorted(target for target, required in remaining.items() if not required)
         if not ready:
             # A cross-target dependency cycle cannot be serialized safely.
-            return targets, {}
+            return targets, {}, {}
         for target in ready:
             ordered_rel.append(target)
             remaining.pop(target)
@@ -455,6 +484,13 @@ def _target_execution_plan(
         [target_by_rel[target] for target in ordered_rel],
         {
             str(target_by_rel[target].resolve()): analysis.target_tasks[target]
+            for target in ordered_rel
+        },
+        {
+            str(target_by_rel[target].resolve()): tuple(
+                str(target_by_rel[dependency].resolve())
+                for dependency in sorted(dependencies[target])
+            )
             for target in ordered_rel
         },
     )

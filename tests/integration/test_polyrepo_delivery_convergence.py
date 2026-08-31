@@ -538,6 +538,59 @@ def test_delivery_provisioning_gate_is_scoped_to_each_polyrepo_target(
     assert _delivery_provisioning_blockers(workspace, prepared_target) == []
 
 
+def test_multi_target_delivery_runs_ready_target_after_independent_provisioning_block(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.orchestrator import run_multi_target
+
+    workspace = tmp_path / "workspace"
+    blocked = workspace / "sources" / "a-blocked"
+    ready = workspace / "sources" / "b-ready"
+    blocked.mkdir(parents=True)
+    ready.mkdir(parents=True)
+    spec_dir = workspace / "specs" / "001-provisioning-isolation"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=api req=FR-001 "
+        "depends=none target=sources/a-blocked\n"
+        "- [ ] T-002 complexity=standard phase=worker req=FR-002 "
+        "depends=none target=sources/b-ready\n",
+        encoding="utf-8",
+    )
+    child = tmp_path / "echelon-child"
+    child.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "target = Path(os.environ['ECHELON_TARGET_REPO_PATH'])\n"
+        "if target.name == 'a-blocked':\n"
+        "    print('STACK_PROVISIONING_MISSING: postgres verification is missing')\n"
+        "    raise SystemExit(1)\n"
+        "(target / 'delivery-ran').write_text('ready target executed\\n')\n",
+        encoding="utf-8",
+    )
+    child.chmod(0o755)
+
+    result = run_multi_target(
+        "001-provisioning-isolation",
+        [ready, blocked],
+        [],
+        echelon_bin=str(child),
+        workspace_root=workspace,
+    )
+
+    assert result == 1
+    assert not (blocked / "delivery-ran").exists()
+    assert (ready / "delivery-ran").read_text(encoding="utf-8") == (
+        "ready target executed\n"
+    )
+    out = capsys.readouterr().out
+    assert "[a-blocked] STACK_PROVISIONING_MISSING" in out
+    assert "✗ [a-blocked]: exit 1" in out
+    assert "✓ [b-ready]: exit 0" in out
+
+
 def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
