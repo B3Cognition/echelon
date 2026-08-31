@@ -276,12 +276,15 @@ def run_multi_target(
                 env=env,
             )
             assert proc.stdout is not None
+            reported_blocked = False
             for line in proc.stdout:
+                if "HARNESS — BLOCKED" in line or "✗ BLOCKED" in line:
+                    reported_blocked = True
                 with lock:
                     sys.stdout.write(f"[{display_label}] {line}")
                     sys.stdout.flush()
             proc.wait()
-            returncode = proc.returncode
+            returncode = proc.returncode or (1 if reported_blocked else 0)
         except Exception as exc:
             with lock:
                 print(
