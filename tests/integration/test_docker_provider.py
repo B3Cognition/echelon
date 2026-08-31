@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 from typing import Optional
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -206,6 +208,8 @@ class TestVerificationSidecars:
         command = run.call_args.args[0]
         assert "--network" in command
         assert "internal-net" in command
+        assert "--network-alias" in command
+        assert "postgres" in command
         assert "-p" not in command
 
     def test_destroy_removes_sidecar_before_network(self) -> None:
@@ -241,6 +245,51 @@ class TestVerificationSidecars:
 
         assert run.call_args_list[1].args[0] == ["exec", "service-id", "pg_isready"]
         assert run.call_args_list[1].kwargs["check"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+@pytest.mark.docker_image("postgres:16.4-alpine")
+def test_real_verification_sidecar_and_dependency_volume_are_isolated(
+    tmp_path: Path,
+) -> None:
+    """A verifier reaches its sidecar without exposing state to the host."""
+    host_dependencies = tmp_path / "node_modules"
+    host_dependencies.mkdir()
+    (host_dependencies / "host-marker").write_text("host", encoding="utf-8")
+    provider = DockerWorktreeProvider()
+    handle = provider.create(_make_spec(worktree_mount=str(tmp_path), ephemeral_volumes=["node_modules"]))
+    service = SandboxServiceSpec(
+        service_name="postgres",
+        image="postgres:16.4-alpine",
+        health_command=(
+            "pg_isready", "-h", "127.0.0.1", "-U", "echelon", "-d", "echelon_verify"
+        ),
+        environment=(
+            ("POSTGRES_USER", "echelon"),
+            ("POSTGRES_PASSWORD", "test-only-password"),
+            ("POSTGRES_DB", "echelon_verify"),
+        ),
+    )
+    volume_name = provider._containers[handle.session_id].volume_names[0]
+    try:
+        provider.start_services(handle, (service,))
+        result = provider.exec(
+            handle,
+            "test ! -e /workspace/node_modules/host-marker "
+            "&& touch /workspace/node_modules/sandbox-marker "
+            "&& python -c \"import socket; socket.create_connection(('postgres', 5432), 5)\"",
+        )
+        assert result.exit_code == 0, result.stderr
+    finally:
+        provider.destroy(handle)
+
+    assert not (host_dependencies / "sandbox-marker").exists()
+    assert (host_dependencies / "host-marker").is_file()
+    volume = subprocess.run(
+        ["docker", "volume", "inspect", volume_name], capture_output=True, text=True, check=False
+    )
+    assert volume.returncode != 0
 
 
 @pytest.mark.integration

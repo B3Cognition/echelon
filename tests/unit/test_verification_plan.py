@@ -30,7 +30,7 @@ def test_pinned_playwright_dependency_selects_matching_image(tmp_path: Path) -> 
 
     assert plan.image == "mcr.microsoft.com/playwright:v1.62.1-noble"
     assert plan.browser_requirement == "chromium"
-    assert plan.bootstrap_commands == ("pnpm install --frozen-lockfile",)
+    assert plan.bootstrap_commands == ("corepack enable && pnpm install --frozen-lockfile",)
 
 
 def test_ranged_playwright_dependency_bootstraps_inside_sandbox(tmp_path: Path) -> None:
@@ -44,7 +44,7 @@ def test_ranged_playwright_dependency_bootstraps_inside_sandbox(tmp_path: Path) 
 
     assert plan.image == "node:20-slim"
     assert plan.bootstrap_commands == (
-        "pnpm install --frozen-lockfile",
+        "corepack enable && pnpm install --frozen-lockfile",
         "pnpm exec playwright install --with-deps chromium",
     )
 
@@ -66,3 +66,4 @@ def test_postgres_service_credentials_are_unique_per_sandbox_attempt() -> None:
     assert dict(first.verifier_environment)["TEST_DATABASE_URL"].startswith(
         "postgresql://" + first_environment["POSTGRES_USER"] + ":"
     )
+    assert first.services[0].health_command[:3] == ("pg_isready", "-h", "127.0.0.1")

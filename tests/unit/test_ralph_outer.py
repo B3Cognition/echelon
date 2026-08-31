@@ -8432,6 +8432,8 @@ class TestVerifyCommandNeeded:
         controller._config = HarnessConfig(**{
             **controller._config.__dict__, "verify_command": "pnpm verify",
         })
+        _init_git_repo(tmp_path)
+        _commit_all(tmp_path)
         result = controller._exec_verify(None, str(tmp_path))
 
         assert result.passed is True

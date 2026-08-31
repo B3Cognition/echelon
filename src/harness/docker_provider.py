@@ -578,6 +578,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 result = _run_docker([
                     "run", "-d",
                     "--network", info.network_name,
+                    "--network-alias", service.service_name,
                     "--label", f"echelon-harness.session_id={handle.session_id}",
                     "--label", "echelon-harness.type=verification-service",
                     "--label", f"echelon-harness.service={service.service_name}",

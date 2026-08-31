@@ -1892,7 +1892,32 @@ class RalphController:
                         token_usage=0,
                     )
 
-            command = self._config.verify_command or "echelon verify"
+            command = self._config.verify_command
+            detection_evidence: tuple[str, ...] = ("harness verify_command",)
+            legacy_sandbox_verifier = False
+            if not command:
+                if self._llm_build_runner is None:
+                    # Existing sandbox-native build providers return the
+                    # structured result from their harness verifier. Keep that
+                    # contract while LLM delivery uses detected project commands.
+                    command = "echelon verify"
+                    legacy_sandbox_verifier = True
+                else:
+                    detection = detect_verify_command(Path(worktree_path))
+                    if detection.command is None:
+                        return VerifyResult(
+                            passed=False,
+                            failures=[FailureEntry(
+                                category=FailureCategory.BUILD,
+                                id="local-verify-skipped",
+                                error=(
+                                    "no high-confidence verifier was detected; "
+                                    "set harness.verify_command"
+                                ),
+                            )],
+                        )
+                    command = detection.command
+                    detection_evidence = tuple(detection.evidence)
             fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
             candidate_path = Path(worktree_path)
             candidate_commit = (
@@ -1903,46 +1928,48 @@ class RalphController:
             stage_started_at = datetime.now(timezone.utc).isoformat()
             result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
 
-            if self._config.verify_command:
-                verify = VerifyResult(
-                    passed=result.exit_code == 0,
-                    failures=[] if result.exit_code == 0 else [FailureEntry(
-                        category=FailureCategory.TEST,
-                        id="verify-command",
-                        error=(result.stdout + result.stderr)[-2000:],
-                    )],
-                    duration_s=result.duration_ms / 1000.0,
-                    token_usage=_estimate_tokens(result),
-                )
-                return self._attach_host_verification_receipt(
-                    worktree_path=worktree_path,
-                    candidate_commit=candidate_commit,
-                    fingerprint_before=fingerprint_before,
-                    fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
-                    verifier_source="sandbox",
-                    detection_evidence=("sandbox provider",),
-                    stages=(VerificationStage(
-                        name="verify", command=tuple(shlex.split(command)),
-                        exit_code=result.exit_code, duration_ms=result.duration_ms,
-                        stdout=result.stdout.encode(), stderr=result.stderr.encode(),
-                        started_at=stage_started_at,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    ),),
-                    failures=verify.failures,
-                    duration_s=verify.duration_s,
-                )
+            if legacy_sandbox_verifier:
+                try:
+                    return VerifyResult.from_dict(json.loads(result.stdout))
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    return VerifyResult(
+                        passed=result.exit_code == 0,
+                        failures=[] if result.exit_code == 0 else [FailureEntry(
+                            category=FailureCategory.TEST,
+                            id="verify-command",
+                            error=(result.stdout + result.stderr)[-2000:],
+                        )],
+                        duration_s=result.duration_ms / 1000.0,
+                        token_usage=_estimate_tokens(result),
+                    )
 
-            # Parse verifier result from stdout for the legacy sandbox command.
-            try:
-                data = json.loads(result.stdout)
-                return VerifyResult.from_dict(data)
-            except (json.JSONDecodeError, Exception):
-                return VerifyResult(
-                    passed=result.exit_code == 0,
-                    failures=[],
-                    duration_s=result.duration_ms / 1000.0,
-                    token_usage=_estimate_tokens(result),
-                )
+            verify = VerifyResult(
+                passed=result.exit_code == 0,
+                failures=[] if result.exit_code == 0 else [FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command",
+                    error=(result.stdout + result.stderr)[-2000:],
+                )],
+                duration_s=result.duration_ms / 1000.0,
+                token_usage=_estimate_tokens(result),
+            )
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                verifier_source="sandbox",
+                detection_evidence=("sandbox provider", *detection_evidence),
+                stages=(VerificationStage(
+                    name="verify", command=tuple(shlex.split(command)),
+                    exit_code=result.exit_code, duration_ms=result.duration_ms,
+                    stdout=result.stdout.encode(), stderr=result.stderr.encode(),
+                    started_at=stage_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ),),
+                failures=verify.failures,
+                duration_s=verify.duration_s,
+            )
         except SandboxError as exc:
             return VerifyResult(
                 passed=False,

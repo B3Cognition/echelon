@@ -87,7 +87,10 @@ def _is_pinned_version(value: str) -> bool:
 def _node_install_command(worktree: Path) -> str | None:
     """Return the reproducible Node dependency install for a clean sandbox."""
     if (worktree / "pnpm-lock.yaml").is_file():
-        return "pnpm install --frozen-lockfile"
+        # The official Node and Playwright images include Corepack, but do not
+        # promise a globally-installed pnpm binary.  Enable it inside the
+        # disposable sandbox before both installation and the verify command.
+        return "corepack enable && pnpm install --frozen-lockfile"
     if (worktree / "package-lock.json").is_file() or (
         worktree / "npm-shrinkwrap.json"
     ).is_file():
@@ -117,7 +120,9 @@ def materialize_services(
             service_name=service.service_name,
             image=service.image,
             environment_names=service.environment_names,
-            health_command=("pg_isready", "-U", username, "-d", database),
+            health_command=(
+                "pg_isready", "-h", "127.0.0.1", "-U", username, "-d", database
+            ),
             environment=(
                 ("POSTGRES_USER", username),
                 ("POSTGRES_PASSWORD", password),
