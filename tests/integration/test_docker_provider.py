@@ -110,6 +110,11 @@ def test_generated_proxy_policy_allows_registry_without_host_network() -> None:
     assert "registry.example.test" in content
 
 
+def test_podman_proxy_uses_podman_egress_network() -> None:
+    provider = DockerWorktreeProvider(container_cli="podman")
+    assert provider._container_cli == "podman"
+
+
 @pytest.mark.integration
 class TestBufferTruncation:
     """FR-STREAM-001a/b: bounded buffer with tail preservation."""

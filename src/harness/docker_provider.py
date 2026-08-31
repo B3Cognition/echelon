@@ -315,8 +315,9 @@ class DockerWorktreeProvider(SandboxProvider):
                 # The verifier remains on the internal network only. The proxy
                 # has a second bridge attachment solely to reach allowlisted
                 # registries and browser-download hosts.
+                egress_network = "podman" if self._container_cli == "podman" else "bridge"
                 _run_docker(
-                    ["network", "connect", "bridge", proxy_container_id],
+                    ["network", "connect", egress_network, proxy_container_id],
                     cli=self._container_cli,
                 )
 
