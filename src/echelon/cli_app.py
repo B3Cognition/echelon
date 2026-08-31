@@ -1582,6 +1582,11 @@ def stack_preflight(
         "--from-detect",
         help="Load stack selections from a detection report.",
     ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Target directory for target-aware verification preflight.",
+    ),
     probe_tools: bool = typer.Option(False, "--probe-tools", help="Probe selected stack tools."),
     json_output: bool = typer.Option(False, "--json", help="Print JSON output."),
 ) -> None:
@@ -1592,6 +1597,7 @@ def stack_preflight(
     _extend_repeated_option(args, "--stack", stack)
     _extend_repeated_option(args, "--target-archetype", target_archetype)
     _extend_option(args, "--from-detect", from_detect)
+    _extend_option(args, "--target", target)
     if probe_tools:
         args.append("--probe-tools")
     if json_output:

@@ -17728,6 +17728,7 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         selected,
         target_archetypes,
         from_detect,
+        target_root,
         probe_tools,
         json_output,
     ) = _parse_stack_preflight_args(args, project_root=project_root)
@@ -17769,7 +17770,7 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
     result = run_stack_preflight(
         resolved,
         probe_tools=probe_tools,
-        target_root=project_root,
+        target_root=target_root or project_root,
         environment=os.environ,
     )
 
@@ -17922,10 +17923,11 @@ def _parse_stack_preflight_args(
     args: list[str],
     *,
     project_root: Path,
-) -> tuple[list[str], list[str], Path | None, bool, bool]:
+) -> tuple[list[str], list[str], Path | None, Path | None, bool, bool]:
     selected: list[str] = []
     target_archetypes: list[str] = []
     from_detect: Path | None = None
+    target_root: Path | None = None
     probe_tools = False
     json_output = False
 
@@ -17962,6 +17964,14 @@ def _parse_stack_preflight_args(
             from_detect = _resolve_cli_path(project_root, args[index])
         elif arg.startswith("--from-detect="):
             from_detect = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack preflight: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
         elif arg == "--probe-tools":
             probe_tools = True
         elif arg == "--json":
@@ -17971,7 +17981,7 @@ def _parse_stack_preflight_args(
             sys.exit(1)
         index += 1
 
-    return selected, target_archetypes, from_detect, probe_tools, json_output
+    return selected, target_archetypes, from_detect, target_root, probe_tools, json_output
 
 
 def _stack_selection_from_detection(report) -> tuple[list[str], list[str]]:
