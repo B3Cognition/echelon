@@ -141,7 +141,7 @@ pytest -q tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_s
 
 Expected: PASS and schemas 2 through 6 retain their canonical fixtures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28 src/harness/re_v2/model.py src/harness/re_v2/__init__.py src/harness/re_v2/run_store.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py
@@ -162,7 +162,7 @@ git commit -m "feat(re): register protocol 2.8 authority"
 - Produces `stage_snapshot_evidence(snapshot, partition, selection, policy, object_store)`.
 - Produces `validate_snapshot_evidence_closure(catalog, snapshot, partition, selection)`.
 
-- [ ] **Step 1: Write failing exact-byte tests**
+- [x] **Step 1: Write failing exact-byte tests**
 
 ```python
 def test_utf8_shards_cover_exact_raw_bytes_without_gaps(tmp_path: Path) -> None:
@@ -185,13 +185,13 @@ def test_behavioral_binary_blocks_before_publication(tmp_path: Path) -> None:
         )
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_evidence.py`
 
 Expected: FAIL because evidence authority is absent.
 
-- [ ] **Step 3: Implement deterministic sharding and dispositions**
+- [x] **Step 3: Implement deterministic sharding and dispositions**
 
 ```python
 def split_utf8_ranges(payload: bytes, byte_limit: int) -> tuple[tuple[int, int], ...]:
@@ -217,11 +217,11 @@ def split_utf8_ranges(payload: bytes, byte_limit: int) -> tuple[tuple[int, int],
 
 Validate mode, byte count, content digest, ownership, no gaps/overlaps, unique primary assignment, empty-file receipts, and exact round trips.
 
-- [ ] **Step 4: Add selection and changed-source tests**
+- [x] **Step 4: Add selection and changed-source tests**
 
 Prove domain selection includes selected-domain plus source-unowned records, unselected supporting paths never count as primary, `--all` assigns every record exactly once, and source mutation raises `source_snapshot_changed`.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_evidence.py tests/unit/test_re_v2_workspace_snapshot.py tests/unit/test_re_v2_snapshot.py
