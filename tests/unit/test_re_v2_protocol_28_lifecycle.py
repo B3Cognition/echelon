@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -29,6 +30,7 @@ from harness.re_v2.protocol_28.checkpoints import (
     CheckpointSelectionBundleV2,
     CheckpointSelectionEntryV2,
 )
+from harness.re_v2.protocol_28.checkpoint_cache import load_checkpoint_cache_v2
 from tests.unit.test_re_v2_protocol_28_checkpoints import _checkpoint
 
 
@@ -288,6 +290,88 @@ def test_exhaustive_runner_accepts_pair_builds_root_and_replays_zero_call(
     assert calls_after_completion == ("producer", "verifier")
     assert tuple(backend.roles) == calls_after_completion
     assert replayed.run_root_id == completed.run_root_id
+
+
+@pytest.mark.unit
+def test_completed_slice_is_exported_as_an_authentic_v2_checkpoint(
+    tmp_path: Path,
+) -> None:
+    _manifest, inputs = _fixture("re-l4-exported")
+    run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
+
+    completed = run_protocol_28_exhaustive(run_dir, lambda: _PassingBackend())
+    index, manifests, quarantine = load_checkpoint_cache_v2(tmp_path)
+
+    assert completed.accepted_slices == 1
+    assert len(index.entries) == len(manifests) == 1
+    assert quarantine == ()
+    checkpoint = next(iter(manifests.values()))
+    assert checkpoint.origin_run_id == run_dir.name
+    assert checkpoint.plan_entry in inputs.exhaustive_plan.target_plans[0].entries
+    assert checkpoint.origin_manifest_hash in checkpoint.immutable_object_hashes
+    assert checkpoint.origin_event_prefix_hash in checkpoint.immutable_object_hashes
+    assert checkpoint.origin_ledger_prefix_hash in checkpoint.immutable_object_hashes
+
+
+@pytest.mark.unit
+def test_exported_checkpoint_adoption_survives_origin_and_cache_removal(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.ledger import ObjectStore
+
+    origin_workspace = tmp_path / "origin-workspace"
+    sibling_workspace = tmp_path / "sibling-workspace"
+    origin_workspace.mkdir()
+    sibling_workspace.mkdir()
+    _manifest, origin_inputs = _fixture("re-l4-origin")
+    origin_run = create_or_reuse_protocol_28_child(origin_workspace, origin_inputs)
+    run_protocol_28_exhaustive(origin_run, lambda: _PassingBackend())
+    _index, manifests, _quarantine = load_checkpoint_cache_v2(origin_workspace)
+    checkpoint = next(iter(manifests.values()))
+    origin_store = ObjectStore(origin_run / "v2" / "objects")
+    checkpoint_objects = {
+        object_id: origin_store.read_blob(object_id)
+        for object_id in checkpoint.immutable_object_hashes
+    }
+    selection = CheckpointSelectionBundleV2(
+        2,
+        (
+            CheckpointSelectionEntryV2(
+                checkpoint.slice_spec.output_artifact_key_id,
+                checkpoint.identity,
+                checkpoint.accepted_slice.identity,
+            ),
+        ),
+        (),
+        (),
+        (),
+    )
+    _sibling_manifest, sibling_inputs = _fixture("re-l4-sibling")
+    sibling_run = create_or_reuse_protocol_28_child(
+        sibling_workspace,
+        sibling_inputs,
+        checkpoint_adoption=Protocol28CheckpointAdoptionV1(
+            selection,
+            {checkpoint.identity: checkpoint},
+            {checkpoint.identity: checkpoint_objects},
+        ),
+    )
+    backend = _PassingBackend()
+
+    completed = run_protocol_28_exhaustive(sibling_run, lambda: backend)
+    shutil.rmtree(origin_workspace)
+    replayed = run_protocol_28_exhaustive(sibling_run, lambda: backend)
+
+    assert completed.state == replayed.state == "evidence_complete"
+    assert completed.run_root_id == replayed.run_root_id
+    assert backend.roles == []
+    _index, sibling_manifests, _quarantine = load_checkpoint_cache_v2(
+        sibling_workspace
+    )
+    assert any(
+        item.origin_run_id == sibling_run.name
+        for item in sibling_manifests.values()
+    )
 
 
 @pytest.mark.unit

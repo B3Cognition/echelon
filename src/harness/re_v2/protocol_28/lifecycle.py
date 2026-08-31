@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import os
 from typing import Callable, Literal, Mapping, Protocol
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
@@ -16,10 +17,15 @@ from harness.re_v2.protocol_28.artifacts import (
     ExhaustiveVerificationV1,
 )
 from harness.re_v2.protocol_28.budget import PairedReservationCommitV1
-from harness.re_v2.protocol_28.checkpoint_cache import copy_selected_checkpoint_objects
+from harness.re_v2.protocol_28.checkpoint_cache import (
+    copy_selected_checkpoint_objects,
+    load_checkpoint_cache_v2,
+    publish_checkpoint_cache_v2,
+)
 from harness.re_v2.protocol_28.checkpoints import (
     CheckpointManifestV2,
     CheckpointSelectionBundleV2,
+    Protocol28CheckpointError,
 )
 from harness.re_v2.protocol_28.context import (
     Protocol28RunContext,
@@ -1479,6 +1485,7 @@ def _result(
     run_root_id: str | None,
     reason: str | None,
 ) -> Protocol28RunResult:
+    export_protocol_28_checkpoints(context)
     view = context.ledger.replay()
     return Protocol28RunResult(
         context.inputs.manifest.run_id,
@@ -1493,6 +1500,197 @@ def _result(
     )
 
 
+def export_protocol_28_checkpoints(
+    context: Protocol28RunContext,
+) -> tuple[CheckpointManifestV2, ...]:
+    """Project every durable accepted slice into the disposable V2 cache."""
+    if not isinstance(context, Protocol28RunContext):
+        raise Protocol28LifecycleError("checkpoint export requires an exhaustive run")
+    events = context.events.replay()
+    ledger_history, view = context.ledger.replay_with_history()
+    if not view.accepted_slices:
+        return ()
+    manifest_bytes = _read_regular_bytes(context.paths.manifest)
+    manifest_hash = context.objects.put_blob(manifest_bytes)
+    entries = {
+        entry.identity: entry
+        for target in context.inputs.exhaustive_plan.target_plans
+        for entry in target.entries
+    }
+    target_roots = _load_recorded_target_roots(
+        context, replay_protocol_28(events).target_root_ids
+    )
+    root_by_plan = {item.target_plan_id: item.identity for item in target_roots}
+    evidence = {
+        item.identity: item
+        for item in (
+            *context.inputs.snapshot_evidence_catalog.shards,
+            *context.inputs.snapshot_evidence_catalog.empty_receipts,
+            *context.inputs.snapshot_evidence_catalog.nontext_dispositions,
+        )
+    }
+    manifests: list[CheckpointManifestV2] = []
+    for output_id, accepted in sorted(view.accepted_slices.items()):
+        entry = entries.get(accepted.plan_entry_id)
+        if entry is None:
+            raise Protocol28LifecycleError(
+                "accepted checkpoint has no frozen plan entry"
+            )
+        spec = realize_slice(
+            entry,
+            {
+                dependency: root_by_plan[dependency]
+                for dependency in entry.planned_dependency_root_ids
+            },
+        )
+        if spec.identity != accepted.slice_spec_id:
+            raise Protocol28LifecycleError(
+                "accepted checkpoint slice realization changed"
+            )
+        context.objects.put_blob(canonical_json_bytes(spec.to_json_dict()))
+        candidate = load_canonical_object(
+            context.objects.read_blob(accepted.candidate_hash),
+            ExhaustiveEvidenceSliceV1.from_json_dict,
+        )
+        verification = load_canonical_object(
+            context.objects.read_blob(accepted.verifier_result_hash),
+            ExhaustiveVerificationV1.from_json_dict,
+        )
+        certification = view.certifications[accepted.certification_receipt_hash]
+        acceptance = view.acceptances[output_id]
+        producer_envelope, producer_capture = _checkpoint_execution(
+            context, accepted.producer_execution_capture_hash
+        )
+        verifier_envelope, verifier_capture = _checkpoint_execution(
+            context, accepted.verifier_execution_capture_hash
+        )
+        terminal_event = next(
+            (
+                item
+                for item in events
+                if item.type == "accepted_slice_recorded"
+                and item.payload["accepted_slice_id"] == accepted.identity
+            ),
+            None,
+        )
+        terminal_record = next(
+            (
+                item
+                for item in ledger_history
+                if item.type == "l4_accepted_slice"
+                and item.payload["output_artifact_key_id"] == output_id
+            ),
+            None,
+        )
+        if terminal_event is None or terminal_record is None:
+            raise Protocol28LifecycleError(
+                "accepted checkpoint prefix authority is incomplete"
+            )
+        event_prefix = b"".join(
+            canonical_json_bytes(item.to_json_dict())
+            for item in events[: events.index(terminal_event) + 1]
+        )
+        ledger_prefix = b"".join(
+            canonical_json_bytes(item.to_json_dict())
+            for item in ledger_history[: ledger_history.index(terminal_record) + 1]
+        )
+        event_prefix_hash = context.objects.put_blob(event_prefix)
+        ledger_prefix_hash = context.objects.put_blob(ledger_prefix)
+        object_ids = {
+            manifest_hash,
+            event_prefix_hash,
+            ledger_prefix_hash,
+            spec.identity,
+            entry.identity,
+            context.inputs.exhaustive_policy.identity,
+            context.inputs.manifest.inherited_artifact_policy_catalog_id,
+            accepted.identity,
+            candidate.identity,
+            verification.identity,
+            certification.identity,
+            acceptance.identity,
+            producer_envelope.identity,
+            producer_capture.identity,
+            producer_capture.raw_result_hash,
+            verifier_envelope.identity,
+            verifier_capture.identity,
+            verifier_capture.raw_result_hash,
+            entry.target_l3_projection_id,
+            entry.target_evidence_projection_id,
+            entry.producer_contract_hash,
+            entry.verifier_contract_hash,
+            *entry.primary_subject_ids,
+            *entry.supporting_subject_ids,
+            *entry.primary_source_record_ids,
+            *entry.supporting_source_record_ids,
+            *entry.primary_snapshot_evidence_ids,
+            *entry.supporting_snapshot_evidence_ids,
+            *entry.required_lower_authority_ids,
+            *spec.accepted_dependency_artifact_ids,
+        }
+        for evidence_id in (
+            *entry.primary_snapshot_evidence_ids,
+            *entry.supporting_snapshot_evidence_ids,
+        ):
+            item = evidence.get(evidence_id)
+            raw_object_hash = getattr(item, "raw_object_hash", None)
+            if isinstance(raw_object_hash, str):
+                object_ids.add(raw_object_hash)
+            membership_proof_id = getattr(item, "membership_proof_id", None)
+            if isinstance(membership_proof_id, str):
+                object_ids.add(membership_proof_id)
+        objects = {
+            object_id: context.objects.read_blob(object_id)
+            for object_id in sorted(object_ids)
+        }
+        manifests.append(
+            CheckpointManifestV2(
+                2,
+                context.inputs.manifest.run_id,
+                manifest_hash,
+                event_prefix_hash,
+                ledger_prefix_hash,
+                spec,
+                entry,
+                context.inputs.exhaustive_policy.identity,
+                context.inputs.manifest.inherited_artifact_policy_catalog_id,
+                accepted,
+                candidate,
+                verification,
+                certification,
+                acceptance,
+                tuple(objects),
+                {key: len(value) for key, value in objects.items()},
+                (2,),
+            )
+        )
+    workspace = context.run_dir.parent.parent
+    try:
+        _index, cached, quarantine = load_checkpoint_cache_v2(workspace)
+    except Protocol28CheckpointError:
+        cached, quarantine = {}, ()
+    merged = dict(cached)
+    merged.update({item.identity: item for item in manifests})
+    publish_checkpoint_cache_v2(
+        workspace,
+        tuple(sorted(merged.values(), key=lambda item: item.identity)),
+        quarantine,
+    )
+    return tuple(sorted(manifests, key=lambda item: item.identity))
+
+
+def _read_regular_bytes(path: Path) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise Protocol28LifecycleError("checkpoint origin manifest is unavailable") from exc
+    try:
+        return os.read(descriptor, os.fstat(descriptor).st_size)
+    finally:
+        os.close(descriptor)
+
+
 __all__ = (
     "L4DispatchResultV1",
     "L4ExecutionBackend",
@@ -1503,6 +1701,7 @@ __all__ = (
     "continue_protocol_28_run",
     "adopt_protocol_28_checkpoints",
     "create_or_reuse_protocol_28_child",
+    "export_protocol_28_checkpoints",
     "find_exact_protocol_28_child",
     "prepare_protocol_28_request",
     "run_protocol_28_exhaustive",
