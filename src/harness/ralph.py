@@ -26,7 +26,7 @@ import sys
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
@@ -81,6 +81,17 @@ _BANZAI_MILESTONE_DEFER_REASON = (
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
+
+
+def _is_verification_environment_deferral(
+    result: Mapping[str, object],
+) -> bool:
+    return (
+        result.get("completion_marker_explicit") is True
+        and str(result.get("build_status") or "") == "blocked"
+        and str(result.get("blocker_kind") or "")
+        == "verification_environment"
+    )
 
 
 def _current_git_commit(worktree: Path) -> str | None:
@@ -1633,6 +1644,7 @@ class RalphController:
                 "build_status": result.status,
                 "completion_marker_explicit": True,
                 "build_reason": result.reason,
+                "blocker_kind": result.blocker_kind,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
                 "provider_invocation": result.provider_invocation,
@@ -2794,6 +2806,7 @@ class RalphController:
                 "build_status": result.status,
                 "completion_marker_explicit": True,
                 "build_reason": result.reason,
+                "blocker_kind": result.blocker_kind,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
                 "provider_invocation": result.provider_invocation,

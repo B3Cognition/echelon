@@ -1,5 +1,8 @@
 """Tests for BuildResult dataclass."""
 from __future__ import annotations
+
+import json
+
 import pytest
 from harness.build_result import BuildResult, recover_done_result_from_output
 
@@ -59,6 +62,48 @@ class TestBuildResult:
         )
 
         assert r.task_ids == ["T-001", "T-002"]
+
+    def test_from_status_file_preserves_verification_environment_blocker(
+        self, tmp_path
+    ):
+        path = tmp_path / "status.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "reason": "Chromium unavailable",
+                    "blocker_kind": "verification_environment",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = BuildResult.from_status_file(
+            path, exit_code=0, stdout="", stderr="", duration_ms=10
+        )
+
+        assert result.status == "blocked"
+        assert result.blocker_kind == "verification_environment"
+
+    def test_from_status_file_reads_nested_blocker_kind(self, tmp_path):
+        path = tmp_path / "status.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocker_kind": "verification_environment",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = BuildResult.from_status_file(
+            path, exit_code=0, stdout="", stderr="", duration_ms=10
+        )
+
+        assert result.blocker_kind == "verification_environment"
 
     def test_from_status_file_impasse(self, tmp_path):
         p = tmp_path / "status.json"

@@ -65,6 +65,7 @@ class BuildResult:
     reason: Optional[str] = None
     task_ids: list[str] | None = None
     provider_invocation: dict[str, object] | None = None
+    blocker_kind: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.status = _normalize_status(self.status)
@@ -178,11 +179,21 @@ class BuildResult:
             impasse_file=data.get("impasse_file"),
             reason=str(reason) if reason is not None else None,
             task_ids=_task_ids(data),
+            blocker_kind=_blocker_kind(data),
             stdout=stdout,
             stderr=stderr,
             duration_ms=duration_ms,
             token_usage=None,
         )
+
+
+def _blocker_kind(data: dict[str, object]) -> str | None:
+    raw = data.get("blocker_kind")
+    state_updates = data.get("state_updates")
+    if raw is None and isinstance(state_updates, dict):
+        raw = state_updates.get("blocker_kind")
+    value = str(raw or "").strip()
+    return value or None
 
 
 def _task_ids(data: dict[str, object]) -> list[str]:

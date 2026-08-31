@@ -354,6 +354,20 @@ if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
 fi
 ```
 
+When the implementation is ready but verification cannot execute only because
+the coding provider lacks a host-bound dependency, ALWAYS classify that exact
+condition with `"blocker_kind":"verification_environment"`. NEVER use this
+classification for a real test failure, implementation defect, missing secret,
+requirement ambiguity, or another blocker that would remain on the host:
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  printf '{"status":"blocked","blocker_kind":"verification_environment","reason":"Chromium is unavailable in the coding sandbox"}' > "$HARNESS_BUILD_STATUS_FILE"
+fi
+```
+
+This is a deferral to Ralph's authoritative verifier, not a passing result.
+
 Do not write `impasse` for ordinary partial progress. An incomplete MVP is not a blocker by itself.
 
 If `HARNESS_BUILD_STATUS_FILE` is not set (standalone invocation), skip this step entirely.

@@ -78,6 +78,42 @@ def test_provider_budget_arithmetic_counts_only_reported_positive_usage() -> Non
     assert ralph._known_token_count(0) == 0
 
 
+def test_plain_blocker_is_not_verification_deferral() -> None:
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": True,
+                "build_status": "blocked",
+                "blocker_kind": None,
+            }
+        )
+        is False
+    )
+
+
+def test_only_explicit_verification_environment_blocker_is_deferral() -> None:
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": True,
+                "build_status": "blocked",
+                "blocker_kind": "verification_environment",
+            }
+        )
+        is True
+    )
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": False,
+                "build_status": "blocked",
+                "blocker_kind": "verification_environment",
+            }
+        )
+        is False
+    )
+
+
 # === Mock SandboxProvider ===
 
 
@@ -310,6 +346,50 @@ def _write_no_impact_documentation_report(spec_dir: Path) -> None:
 
 @pytest.mark.unit
 class TestOuterLoopConvergence:
+    def test_llm_build_and_feedback_propagate_blocker_kind(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        blocked = BuildResult(
+            exit_code=0,
+            status="blocked",
+            blocker_kind="verification_environment",
+            reason="Chromium unavailable",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=1,
+        )
+        build_runner.exec_build.return_value = blocked
+        build_runner.exec_feedback.return_value = blocked
+        controller, *_ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        handle = SandboxHandle(id="sandbox", session_id="session")
+
+        build = controller._exec_build(
+            handle,
+            "echelon build",
+            "",
+            worktree_path=str(worktree),
+            prompt="build",
+        )
+        feedback = controller._exec_feedback(
+            handle,
+            VerifyResult(passed=False, failures=[]),
+            "echelon build",
+            "",
+            worktree_path=str(worktree),
+            prompt="fix",
+        )
+
+        assert build["blocker_kind"] == "verification_environment"
+        assert feedback["blocker_kind"] == "verification_environment"
+
     """Test outer loop converges on first iteration."""
 
     def test_sync_phase_a_inputs_overwrites_stale_worktree_constitution(
