@@ -715,6 +715,12 @@ def load_orchestration(path: Path) -> DeepenOrchestrationIntentV1:
     return DeepenOrchestrationIntentV1(paths, request, events)
 
 
+def recover_orchestration(path: Path) -> DeepenOrchestrationProjectionV1:
+    """Replay one authenticated intent without mutating its projection cache."""
+    intent = load_orchestration(path)
+    return _replay_projection(intent.events.replay())
+
+
 def create_or_load_orchestration(
     workspace_root: Path,
     request: DeepenOrchestrationRequestV1,
@@ -1122,6 +1128,10 @@ def execute_deepen_orchestration(
         create_or_reuse_protocol_28_child,
         run_protocol_28_exhaustive,
     )
+    from harness.re_v2.protocol_28.materialization import (
+        Protocol28MaterializationError,
+        materialize_l4_closure,
+    )
     from harness.re_v2.run_store import load_run_manifest
 
     if not isinstance(options, Protocol28OrchestrationOptions):
@@ -1162,8 +1172,13 @@ def execute_deepen_orchestration(
             l3_dir = root / "runs" / projection.l3_run_id
         try:
             resolved = resolve_l4_parent(root, l3_dir, options.selection)
-        except DeepenOrchestrationError:
-            controller.block("l3", "l3_prerequisite_not_terminal")
+        except DeepenOrchestrationError as exc:
+            reason = (
+                "l3_prerequisite_resource_blocked"
+                if "terminal-ineligible: paused" in str(exc)
+                else "l3_prerequisite_ineligible"
+            )
+            controller.block("l3", reason)
             return _orchestration_result(controller.rebuild_projection())
 
     if resolved.selected_l3 is None:
@@ -1227,10 +1242,24 @@ def execute_deepen_orchestration(
         controller.block("l4", l4_result.reason_code or l4_result.state)
         return _orchestration_result(controller.rebuild_projection())
     l4_context = load_protocol_28_run_context(l4_dir)
+    try:
+        materialize_l4_closure(l4_context)
+    except (Protocol28MaterializationError, OSError):
+        l4_context.controller.block_run(
+            "execution", "l4_materialization_failed"
+        )
+        if controller.rebuild_projection().state != "complete":
+            controller.block("l4", "l4_materialization_failed")
+            return _orchestration_result(controller.rebuild_projection())
+        raise
+    closure_required = bool(l3.blocker_classes)
+    if not closure_required:
+        l4_context.controller.complete_run(
+            l4_result.run_root_id, closure_required=False
+        )
     l4_events = l4_context.events.replay()
     if not l4_events:
         raise DeepenOrchestrationError("L4 child has no completion boundary event")
-    closure_required = bool(l3.blocker_classes)
     controller.complete_l4(
         l4_result.run_id,
         l4_events[-1].event_hash,
@@ -1243,24 +1272,29 @@ def execute_deepen_orchestration(
         controller.block("closure", "closure_inputs_required")
         return _orchestration_result(controller.rebuild_projection())
     projection = controller.rebuild_projection()
-    if projection.closure_run_id is None:
-        closure_inputs = options.closure_inputs_factory(resolved, l4_dir)
-        if not isinstance(closure_inputs, Protocol28ClosureInputs):
-            raise DeepenOrchestrationError(
-                "closure input factory did not return Protocol28ClosureInputs"
+    try:
+        if projection.closure_run_id is None:
+            closure_inputs = options.closure_inputs_factory(resolved, l4_dir)
+            if not isinstance(closure_inputs, Protocol28ClosureInputs):
+                raise DeepenOrchestrationError(
+                    "closure input factory did not return Protocol28ClosureInputs"
+                )
+            closure_dir = create_or_reuse_l4_closure_successor(root, closure_inputs)
+            closure_manifest = load_run_manifest(closure_dir)
+            controller.bind_closure_child(
+                closure_manifest.run_id,
+                content_digest(canonical_json_bytes(closure_manifest.to_json_dict())),
             )
-        closure_dir = create_or_reuse_l4_closure_successor(root, closure_inputs)
-        closure_manifest = load_run_manifest(closure_dir)
-        controller.bind_closure_child(
-            closure_manifest.run_id,
-            content_digest(canonical_json_bytes(closure_manifest.to_json_dict())),
-        )
-    else:
-        closure_dir = root / "runs" / projection.closure_run_id
-        # Exact replay is provider-free and repairs a missing deterministic suffix.
-        from harness.re_v2.protocol_28.closure import complete_l4_closure_successor
+        else:
+            closure_dir = root / "runs" / projection.closure_run_id
+            # Exact replay is provider-free and repairs a missing deterministic suffix.
+            from harness.re_v2.protocol_28.closure import complete_l4_closure_successor
 
-        complete_l4_closure_successor(closure_dir)
+            complete_l4_closure_successor(closure_dir)
+    except Exception as exc:
+        reason = str(getattr(exc, "reason_code", "closure_authority_mismatch"))
+        controller.block("closure", reason)
+        return _orchestration_result(controller.rebuild_projection())
     closure_context = load_protocol_28_run_context(closure_dir)
     closure_events = closure_context.events.replay()
     if not closure_events:
@@ -1301,4 +1335,5 @@ __all__ = (
     "execute_deepen_orchestration",
     "resolve_l4_parent",
     "load_orchestration",
+    "recover_orchestration",
 )

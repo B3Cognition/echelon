@@ -320,6 +320,10 @@ def create_or_reuse_l4_closure_successor(
 
 def complete_l4_closure_successor(run_dir: Path) -> str:
     """Recover and finish deterministic closure authority without an executor seam."""
+    from harness.re_v2.protocol_28.materialization import (
+        validate_or_repair_l4_materialization,
+    )
+
     context = load_protocol_28_run_context(Path(run_dir))
     if not isinstance(context, Protocol28ClosureRunContext):
         raise Protocol28ClosureError(
@@ -330,6 +334,7 @@ def complete_l4_closure_successor(run_dir: Path) -> str:
     if state.terminal:
         if state.closure_root_id is None:
             raise Protocol28ClosureError("completed closure has no closure root")
+        validate_or_repair_l4_materialization(context)
         return state.closure_root_id
 
     parent_id = context.inputs.l4_run_root.parent_authority_bundle_id
@@ -369,10 +374,7 @@ def complete_l4_closure_successor(run_dir: Path) -> str:
     context.controller.record_closure_root(
         closure_root, context.inputs.manifest.run_manifest_id
     )
-    # Materialization is a deterministic projection.  Task 5 replaces this
-    # event-only seam with exact run-local file-set validation before the same
-    # idempotent event is accepted.
-    context.controller.record_materialization(closure_root.identity)
+    validate_or_repair_l4_materialization(context)
     context.controller.complete_run(
         context.inputs.l4_run_root.identity, closure_required=True
     )

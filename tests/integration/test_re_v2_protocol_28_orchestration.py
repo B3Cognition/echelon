@@ -14,10 +14,14 @@ from harness.re_v2.protocol_28.authority import (
     ValidatedL3ParentV1,
     ValidatedL3TargetV1,
 )
+from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+from harness.re_v2.protocol_28.events import replay_protocol_28
 from harness.re_v2.protocol_28.orchestration import (
+    DeepenOrchestrationController,
     DeepenOrchestrationRequestV1,
     Protocol28OrchestrationOptions,
     ResolvedL4ParentV1,
+    create_or_load_orchestration,
     execute_deepen_orchestration,
 )
 from tests.integration.test_re_v2_protocol_25_recovery import (
@@ -230,3 +234,60 @@ def test_durable_orchestration_completes_exact_l4_and_replays_zero_calls(
     assert first.state == second.state == "complete"
     assert first.l4_run_id == manifest.run_id
     assert backend.roles == ["producer", "verifier"]
+    l4_context = load_protocol_28_run_context(
+        tmp_path / "runs" / manifest.run_id
+    )
+    assert replay_protocol_28(l4_context.events.replay()).lifecycle_state == "complete"
+    assert (tmp_path / "runs" / manifest.run_id / "re" / "l4" / "materialization.json").is_file()
+
+
+@pytest.mark.integration
+def test_l3_status_retains_true_header_and_links_pending_l4_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.re_v2.status import render_v2_status
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture as _l3_fixture
+    import harness.re_v2.protocol_25.status as l3_status
+
+    workspace = tmp_path / "workspace"
+    l3_inputs, l3_manifest = _l3_fixture()
+    run_dir = workspace / "runs" / l3_manifest.run_id
+    create_protocol_25_run_store(run_dir, l3_manifest, l3_inputs)
+    monkeypatch.setattr(
+        l3_status,
+        "render_protocol_25_status",
+        lambda *_args, **_kwargs: (
+            "RE V2 — PROTOCOL 2.5\n"
+            + "=" * 72
+            + "\nL3 SELECTED SCOPE IN PROGRESS\n"
+        ),
+    )
+    manifest = l3_manifest
+    request = DeepenOrchestrationRequestV1(
+        1,
+        "re-input",
+        content_digest(b"input-manifest"),
+        content_digest(b"input-terminal"),
+        manifest.source_snapshot_id,
+        manifest.partition_manifest_id,
+        manifest.selection,
+        content_digest(b"l4-policy"),
+        content_digest(b"l4-executors"),
+        content_digest(b"l3-request"),
+    )
+    intent = create_or_load_orchestration(
+        workspace,
+        request,
+        clock=lambda: "2026-08-31T12:00:00Z",
+    )
+    DeepenOrchestrationController(
+        intent, clock=lambda: "2026-08-31T12:00:00Z"
+    ).bind_l3_child(manifest.run_id, content_digest(b"l3-manifest"))
+
+    output = render_v2_status(run_dir)
+
+    assert output.startswith("RE V2 — PROTOCOL 2.5\n")
+    assert f"pending L4 orchestration: {request.request_id}" in output
+    assert output.rstrip().endswith("L3 SELECTED SCOPE IN PROGRESS")

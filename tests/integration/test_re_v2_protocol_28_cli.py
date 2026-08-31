@@ -120,7 +120,9 @@ def test_schema7_context_and_exhaustive_continuation_dispatch_by_manifest(
     output = capsys.readouterr().out
     assert backend.roles == ["producer", "verifier"]
     assert "PROTOCOL 2.8" in output
-    assert "accepted slices: 1/1" in output
+    assert "accepted=1" in output
+    assert output.rstrip().endswith("L4 SELECTED SCOPE COMPLETE")
+    assert (run_dir / "re" / "l4" / "materialization.json").is_file()
 
 
 @pytest.mark.integration

@@ -63,18 +63,25 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
         if detect_re_engine(run_path) != "v2":
             raise ReV2StatusError(f"RE run is not pinned to v2: {run_path.name}")
         manifest = load_run_manifest(run_path)
+        if getattr(manifest, "engine_protocol_version", None) == "2.8":
+            from .protocol_28.status import render_protocol_28_status
+
+            return render_protocol_28_status(run_path, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) == "2.7":
             from .protocol_27.status import render_protocol_27_status
 
-            return render_protocol_27_status(run_path, as_json=as_json)
+            rendered = render_protocol_27_status(run_path, as_json=as_json)
+            return _attach_pending_l4(run_path, rendered, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) == "2.6":
             from .protocol_26.status import render_protocol_26_status
 
-            return render_protocol_26_status(run_path, as_json=as_json)
+            rendered = render_protocol_26_status(run_path, as_json=as_json)
+            return _attach_pending_l4(run_path, rendered, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) == "2.5":
             from .protocol_25.status import render_protocol_25_status
 
-            return render_protocol_25_status(run_path, as_json=as_json)
+            rendered = render_protocol_25_status(run_path, as_json=as_json)
+            return _attach_pending_l4(run_path, rendered, as_json=as_json)
         if getattr(manifest, "engine_protocol_version", None) in RE_V2_SCHEMA_3_PROTOCOLS:
             from .protocol_24.status import render_protocol_24_status
 
@@ -123,6 +130,42 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
     if as_json:
         return json.dumps(status, indent=2, sort_keys=True) + "\n"
     return _render_human(status)
+
+
+def _attach_pending_l4(run_path: Path, rendered: str, *, as_json: bool) -> str:
+    """Attach a unique authenticated open intent without replacing run authority."""
+    workspace = run_path.resolve().parent.parent
+    namespace = workspace / "runs" / ".re-v2-orchestrations"
+    if not namespace.is_dir() or namespace.is_symlink():
+        return rendered
+    from .protocol_28.orchestration import (
+        find_open_orchestrations_for_child,
+        load_orchestration,
+        recover_orchestration,
+    )
+
+    matches = find_open_orchestrations_for_child(
+        workspace, run_path.name, require_unique=True
+    )
+    if not matches:
+        return rendered
+    intent = load_orchestration(matches[0])
+    projection = recover_orchestration(matches[0])
+    link = {
+        "request_id": intent.request.request_id,
+        "state": projection.state,
+        "l4_run_id": projection.l4_run_id,
+    }
+    if as_json:
+        document = json.loads(rendered)
+        document["pending_l4_orchestration"] = link
+        return json.dumps(document, indent=2, sort_keys=True) + "\n"
+    lines = rendered.rstrip("\n").splitlines()
+    insertion = max(0, len(lines) - 2)
+    lines[insertion:insertion] = [
+        f"pending L4 orchestration: {link['request_id']} ({link['state']})"
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _plan(

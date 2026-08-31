@@ -128,12 +128,12 @@
 - `materialize_l4_closure(context)` and `validate_or_repair_l4_materialization(context)`.
 - Manifest-first shared status router selects `2.8` dynamically and attaches a unique open orchestration without changing explicit-run authority.
 
-- [ ] Write failing text/JSON tests for protocol header, intent chain, selected/all scope, per-target progress, producer/verifier usage, avoided reservations, historical failures, L3 closure, synthesis `not run`, exact next action, and every specified final banner.
-- [ ] Write failing materialization tests for `runs/<run-id>/re/l4/`, deterministic ordering, manifest-last publication, crash repair, tamper quarantine, and no lower/workspace output mutation.
-- [ ] Implement content-free document projection and prominent final banner precedence, including pending L3, pre-activation, evidence-incomplete, closure-integrity, selected-complete, and all-scope-synthesis-required cases.
-- [ ] Implement root-bound Markdown/JSON projection from durable accepted objects and record materialization only after exact file-set validation.
-- [ ] Run GREEN with protocol-2.4-through-2.7 status/materialization regressions.
-- [ ] Commit `feat(re): report and materialize exhaustive L4`.
+- [x] Write failing text/JSON tests for protocol header, intent chain, selected/all scope, per-target progress, producer/verifier usage, avoided reservations, historical failures, L3 closure, synthesis `not run`, exact next action, and every specified final banner.
+- [x] Write failing materialization tests for `runs/<run-id>/re/l4/`, deterministic ordering, manifest-last publication, crash repair, tamper quarantine, and no lower/workspace output mutation.
+- [x] Implement content-free document projection and prominent final banner precedence, including pending L3, pre-activation, evidence-incomplete, closure-integrity, selected-complete, and all-scope-synthesis-required cases.
+- [x] Implement root-bound Markdown/JSON projection from durable accepted objects and record materialization only after exact file-set validation.
+- [x] Run GREEN with protocol-2.4-through-2.7 status/materialization regressions.
+- [x] Commit `feat(re): report and materialize exhaustive L4`.
 
 ### Task 6: Install, Exercise Providers, and Prove a Real Workspace
 

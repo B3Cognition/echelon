@@ -14258,15 +14258,11 @@ def _run_re_v2_continue(
             complete_l4_closure_successor,
         )
 
-        root_id = complete_l4_closure_successor(run_dir)
-        print(
-            "RE V2 — PROTOCOL 2.8\n"
-            f"run: {run_dir.name}\n"
-            "mode: l4-closure-successor\n"
-            "status: complete\n"
-            f"closure root: {root_id}\n"
-        )
-        _advance_re_v28_open_intent(project_root, run_dir.name)
+        complete_l4_closure_successor(run_dir)
+        if not _advance_re_v28_open_intent(project_root, run_dir.name):
+            from harness.re_v2.protocol_28.status import render_protocol_28_status
+
+            print(render_protocol_28_status(run_dir), end="")
         return
     if isinstance(context, Protocol28RunContext):
         if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
@@ -14289,16 +14285,21 @@ def _run_re_v2_continue(
             ),
             provider_factory=lambda: SquadCliProvider(config),
         )
-        print(
-            "RE V2 — PROTOCOL 2.8\n"
-            f"run: {result.run_id}\n"
-            "mode: exhaustive-depth\n"
-            f"status: {result.state}\n"
-            f"accepted slices: {result.accepted_slices}/{result.planned_slices}\n"
-            f"reason: {result.reason_code or 'none'}\n"
-        )
         if result.run_root_id is not None:
-            _advance_re_v28_open_intent(project_root, result.run_id)
+            from harness.re_v2.protocol_28.materialization import (
+                materialize_l4_closure,
+            )
+
+            materialize_l4_closure(context)
+            if not context.inputs.parent_authority_bundle.unresolved_deeper_finding_ids:
+                context.controller.complete_run(
+                    result.run_root_id, closure_required=False
+                )
+            if _advance_re_v28_open_intent(project_root, result.run_id):
+                return
+        from harness.re_v2.protocol_28.status import render_protocol_28_status
+
+        print(render_protocol_28_status(run_dir), end="")
         return
     if isinstance(context, Protocol27RunContext):
         if any(
@@ -16026,15 +16027,26 @@ def _run_re_v28_deepen(
         ),
         lambda: SquadCliProvider(config),
     )
-    print(
-        "RE V2 — PROTOCOL 2.8 ORCHESTRATION\n"
-        f"request: {result.request_id}\n"
-        f"state: {result.state}\n"
-        f"L3 run: {result.l3_run_id or 'pending'}\n"
-        f"L4 run: {result.l4_run_id or 'pending'}\n"
-        f"closure run: {result.closure_run_id or 'not required/pending'}\n"
-        f"blocker: {result.blocked_reason_code or 'none'}\n"
+    from harness.re_v2.protocol_28.orchestration import find_exact_orchestration
+    from harness.re_v2.protocol_28.status import (
+        render_protocol_28_orchestration_status,
+        render_protocol_28_status,
     )
+
+    intent_path = find_exact_orchestration(workspace, result.request_id)
+    if intent_path is None:
+        raise ValueError("protocol-2.8 orchestration authority disappeared")
+    final_run_id = result.closure_run_id or result.l4_run_id
+    if final_run_id is None:
+        print(render_protocol_28_orchestration_status(intent_path), end="")
+    else:
+        print(
+            render_protocol_28_status(
+                workspace / "runs" / final_run_id,
+                intent_path,
+            ),
+            end="",
+        )
     return result
 
 

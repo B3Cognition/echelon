@@ -93,6 +93,8 @@ def test_closure_successor_completes_and_replays_without_provider_seam(
     state = replay_protocol_28(load_protocol_28_run_context(first).events.replay())
     assert state.lifecycle_state == "complete"
     assert state.closure_root_id is not None
+    assert (first / "re" / "l4" / "materialization.json").is_file()
+    assert (first / "re" / "l4" / "roots" / "closure.json").is_file()
     assert not any(
         "dispatch" in event.type
         for event in load_protocol_28_run_context(first).events.replay()
