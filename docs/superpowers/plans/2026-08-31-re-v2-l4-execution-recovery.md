@@ -136,12 +136,12 @@
 - distinct response schemas and fresh verifier context;
 - no provider-specific model naming or state-writing authority.
 
-- [ ] Write failing role/resource-resolution tests.
-- [ ] Run RED.
-- [ ] Implement role prose and runtime contracts.
-- [ ] Run dry-run and focused execution/recovery gate.
-- [ ] Verify older protocol and V1 checkpoint bytes remain unchanged.
-- [ ] Commit `feat(re): register exhaustive analyst and verifier`.
+- [x] Write failing role/resource-resolution tests.
+- [x] Run RED.
+- [x] Implement role prose and runtime contracts.
+- [x] Run dry-run and focused execution/recovery gate.
+- [x] Verify older protocol and V1 checkpoint bytes remain unchanged.
+- [x] Commit `feat(re): register exhaustive analyst and verifier`.
 
 ## Execution Completion Gate
 
