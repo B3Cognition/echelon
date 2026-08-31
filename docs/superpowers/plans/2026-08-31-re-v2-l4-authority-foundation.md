@@ -457,7 +457,7 @@ git commit -m "feat(re): enforce exact L4 root closure"
 - Produces `publish_protocol_28_run(private_stage, final_run_dir, manifest)`.
 - Produces `load_protocol_28_inputs(run_dir)` using run-local objects only.
 
-- [ ] **Step 1: Write failing publication tests**
+- [x] **Step 1: Write failing publication tests**
 
 ```python
 def test_failed_private_staging_publishes_no_run_or_pointer(tmp_path: Path) -> None:
@@ -477,25 +477,25 @@ def test_loaded_inputs_need_no_source_or_parent(tmp_path: Path) -> None:
     assert loaded.snapshot_evidence_catalog.identity == fixture.evidence.identity
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_inputs.py`
 
-- [ ] **Step 3: Implement staging and publication**
+- [x] **Step 3: Implement staging and publication**
 
 Write every canonical object through the existing object store, authenticate the transitive closure, write the schema-7 manifest last, fsync files/directories, atomically rename the private directory, and only then permit active-pointer update. Reject symlinks, missing objects, hash mismatches, cross-mode fields, unsafe paths, and changed manifests.
 
-- [ ] **Step 4: Add crash and corruption tests**
+- [x] **Step 4: Add crash and corruption tests**
 
 Inject failure after each authority group and before manifest publication. Delete source and parent after success and reconstruct. Remove/mutate one shard, projection, plan, parent bundle, or closure object and require corruption rather than source reread.
 
-- [ ] **Step 5: Run the foundation gate**
+- [x] **Step 5: Run the foundation gate**
 
 ```bash
 pytest -q   tests/unit/test_re_v2_protocol_28_model.py   tests/unit/test_re_v2_protocol_28_authority.py   tests/unit/test_re_v2_protocol_28_evidence.py   tests/unit/test_re_v2_protocol_28_policies.py   tests/unit/test_re_v2_protocol_28_planning.py   tests/unit/test_re_v2_protocol_28_graph.py   tests/unit/test_re_v2_protocol_28_inputs.py   tests/unit/test_re_v2_protocol_compatibility.py   tests/unit/test_re_v2_run_store.py
 ```
 
-- [ ] **Step 6: Verify frozen code and commit**
+- [x] **Step 6: Verify frozen code and commit**
 
 ```bash
 git diff --exit-code -- src/harness/re_v2/protocol_22 src/harness/re_v2/protocol_24 src/harness/re_v2/protocol_25 src/harness/re_v2/protocol_26 src/harness/re_v2/protocol_27
