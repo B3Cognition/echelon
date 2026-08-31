@@ -497,13 +497,20 @@ class ExhaustivePlanV1:
     evidence_catalog_id: str
     subject_catalog_id: str
     policy_id: str
+    completion_scope: Literal["selected-scope", "all-scope"]
     target_plans: tuple[ExhaustiveTargetPlanV1, ...]
 
     def __post_init__(self) -> None:
         _schema(literal, self.schema_version, 1, "ExhaustivePlanV1.schema_version")
         for field in self.__dataclass_fields__:  # type: ignore[attr-defined]
-            if field not in {"schema_version", "target_plans"}:
+            if field not in {"schema_version", "completion_scope", "target_plans"}:
                 _schema(digest_value, getattr(self, field), f"ExhaustivePlanV1.{field}")
+        _schema(
+            one_of,
+            self.completion_scope,
+            frozenset({"selected-scope", "all-scope"}),
+            "ExhaustivePlanV1.completion_scope",
+        )
         object.__setattr__(self, "target_plans", _typed(
             self.target_plans, ExhaustiveTargetPlanV1, "ExhaustivePlanV1.target_plans",
             key=lambda item: item.sort_key,
@@ -595,6 +602,7 @@ def _target_plan(
     policy: ExhaustivePolicyV1,
     evidence_catalog: SnapshotEvidenceCatalogV1,
     composition_dependency_root_ids: tuple[str, ...] = (),
+    required_finding_ids: tuple[str, ...] = (),
 ) -> ExhaustiveTargetPlanV1:
     categories = policy.domain_categories if target.target_kind == "domain" else policy.source_categories
     allowed = set(categories)
@@ -629,7 +637,9 @@ def _target_plan(
         evidence_category[evidence_id] = candidates[0] if candidates else categories[-1]
 
     finding_category: dict[str, str] = {}
-    for finding_id in target.finding_ids:
+    if not set(required_finding_ids).issubset(target.finding_ids):
+        raise Protocol28PlanningError("required deeper finding is absent from target authority")
+    for finding_id in required_finding_ids:
         candidates = sorted(
             category for subject in subjects if finding_id in subject.finding_ids
             for category in subject.category_ids
@@ -770,7 +780,7 @@ def _target_plan(
         raise Protocol28PlanningError("primary snapshot evidence assignment is not exact")
     ledger = TargetCoverageLedgerV1(
         1, tuple(sorted(subject_assignment_ids)), tuple(sorted(record_category)),
-        assigned_evidence, tuple(sorted(target.finding_ids)), tuple(sorted(categories)),
+        assigned_evidence, tuple(sorted(required_finding_ids)), tuple(sorted(categories)),
     )
     return ExhaustiveTargetPlanV1(
         1, target.target_kind, target.source_id, target.target_id,
@@ -827,10 +837,28 @@ def build_exhaustive_plan(
         if key not in subjects_by_target:
             raise Protocol28PlanningError("subject references unknown selected target")
         subjects_by_target[key].append(subject)
+    finding_targets: dict[str, tuple[str, str, str]] = {}
+    for finding_id in parent.unresolved_deeper_finding_ids:
+        matches = tuple(
+            key for key, target in l3_by_target.items() if finding_id in target.finding_ids
+        )
+        if len(matches) != 1:
+            raise Protocol28PlanningError(
+                "deeper finding must belong to exactly one selected L3 target"
+            )
+        finding_targets[finding_id] = matches[0]
+    findings_by_target = {
+        key: tuple(sorted(
+            finding_id for finding_id, finding_target in finding_targets.items()
+            if finding_target == key
+        ))
+        for key in l3_by_target
+    }
     domain_plans = tuple(
         _target_plan(
             l3_by_target[key], evidence_by_target[key],
             tuple(subjects_by_target[key]), policy, evidence,
+            required_finding_ids=findings_by_target[key],
         )
         for key in sorted(l3_by_target)
         if key[1] == "domain"
@@ -842,6 +870,7 @@ def build_exhaustive_plan(
             tuple(sorted(
                 item.identity for item in domain_plans if item.source_id == key[0]
             )),
+            findings_by_target[key],
         )
         for key in sorted(l3_by_target)
         if key[1] == "source"
@@ -851,5 +880,6 @@ def build_exhaustive_plan(
         raise Protocol28PlanningError("exhaustive plan exceeds run entry cap")
     return ExhaustivePlanV1(
         1, parent.source_snapshot_id, parent.partition_manifest_id, selection.identity,
-        parent.identity, l3.identity, evidence.identity, subjects.identity, policy.identity, plans,
+        parent.identity, l3.identity, evidence.identity, subjects.identity, policy.identity,
+        "all-scope" if selection.all_sources else "selected-scope", plans,
     )

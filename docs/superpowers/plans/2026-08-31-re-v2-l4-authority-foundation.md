@@ -399,7 +399,7 @@ git commit -m "feat(re): freeze deterministic L4 plans"
 - Produces `L4FindingClosureReceiptV1` and `L4SemanticClosureRootV1`.
 - Produces `build_target_root`, `build_source_root`, `build_run_root`, and `build_l4_semantic_closure`.
 
-- [ ] **Step 1: Write failing exact-root tests**
+- [x] **Step 1: Write failing exact-root tests**
 
 ```python
 def test_target_root_rejects_one_missing_plan_entry() -> None:
@@ -418,25 +418,25 @@ def test_closure_missing_verifier_is_integrity_failure() -> None:
     assert raised.value.reason_code == "closure_verifier_receipt_missing"
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_graph.py`
 
-- [ ] **Step 3: Implement exact constructors**
+- [x] **Step 3: Implement exact constructors**
 
 Compare exact planned and accepted key sets, authenticate candidate/verifier/certification/acceptance hashes, re-run coverage closure, and reject extras. The run root stores only `selected-scope` or `all-scope`.
 
 Closure maps each finding to one primary accepted slice plus supporting slices, requires source-composition authority for source/cross-domain findings, and returns authority-ID diagnostics on mismatch.
 
-- [ ] **Step 4: Add mutation tests**
+- [x] **Step 4: Add mutation tests**
 
 Mutate one shard, L3 projection, verifier receipt, slice key, selected-domain root, composition root, finding assignment, and selection mode. Each mutation blocks the narrowest constructor without returning a partial root.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_graph.py tests/unit/test_re_v2_protocol_28_planning.py`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/graph.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_graph.py
