@@ -1873,10 +1873,13 @@ class RalphController:
                     )
 
             command = self._config.verify_command or "echelon verify"
+            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+            candidate_commit = _current_git_commit(Path(worktree_path))
+            stage_started_at = datetime.now(timezone.utc).isoformat()
             result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
 
             if self._config.verify_command:
-                return VerifyResult(
+                verify = VerifyResult(
                     passed=result.exit_code == 0,
                     failures=[] if result.exit_code == 0 else [FailureEntry(
                         category=FailureCategory.TEST,
@@ -1885,6 +1888,23 @@ class RalphController:
                     )],
                     duration_s=result.duration_ms / 1000.0,
                     token_usage=_estimate_tokens(result),
+                )
+                return self._attach_host_verification_receipt(
+                    worktree_path=worktree_path,
+                    candidate_commit=candidate_commit,
+                    fingerprint_before=fingerprint_before,
+                    fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                    verifier_source="sandbox",
+                    detection_evidence=("sandbox provider",),
+                    stages=(VerificationStage(
+                        name="verify", command=tuple(shlex.split(command)),
+                        exit_code=result.exit_code, duration_ms=result.duration_ms,
+                        stdout=result.stdout.encode(), stderr=result.stderr.encode(),
+                        started_at=stage_started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    ),),
+                    failures=verify.failures,
+                    duration_s=verify.duration_s,
                 )
 
             # Parse verifier result from stdout for the legacy sandbox command.
