@@ -63,13 +63,8 @@ def build_verification_plan(
     if install_command:
         bootstrap.insert(0, install_command)
 
-    selected = set(config.stacks.selected)
-    if "game-persistence-postgres" in selected and not services:
-        services = (SandboxServiceSpec(
-            service_name="postgres",
-            image="postgres:16.4-alpine",
-            environment_names=("TEST_DATABASE_URL", "DATABASE_URL"),
-        ),)
+    if not services:
+        services = tuple(config.verification_services)
     return VerificationPlan(
         execution=config.verification.execution,
         image=image,

@@ -262,6 +262,9 @@ class HarnessConfig:
     fulfillment: FulfillmentConfig = field(default_factory=FulfillmentConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
     stacks: StacksConfig = field(default_factory=StacksConfig)
+    # Runtime-resolved sidecars are derived from the selected stack contract by
+    # the delivery adapter. They are never read from user configuration.
+    verification_services: List[Any] = field(default_factory=list)
     verify_command: Optional[str] = None
 
 

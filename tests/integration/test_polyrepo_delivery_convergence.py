@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.build_result import BuildResult
-from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
+from harness.config import HarnessConfig, ReviewLoopConfig, VerificationConfig, VisualTestsConfig
 from harness.coordinator import StrategyCoordinator
 from harness.delivery_results import ImplementationResult, ReviewResult, VisualResult
 from harness.escalation import EscalationHandler
@@ -168,6 +168,7 @@ def _real_ralph_for_target(
             target_repo=str(target),
             target_default_branch="main",
             provider="docker",
+            verification=VerificationConfig(execution="host"),
         ),
         llm_provider=fulfillment_provider,
         llm_build_runner=build_runner,
@@ -240,7 +241,7 @@ def test_provider_verification_environment_deferral_converges_via_ralph(
         state_store.state_dir.parent
         / "evidence"
         / "default"
-        / "host-verification"
+            / "verification"
     )
     latest_pointer = json.loads(
         (evidence_root / "latest.json").read_text(encoding="utf-8")

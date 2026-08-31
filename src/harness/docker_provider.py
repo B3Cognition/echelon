@@ -80,6 +80,27 @@ TRUNCATION_TAIL_RATIO = 0.80
 
 # Timeout for docker commands themselves
 DOCKER_CMD_TIMEOUT = 30
+_SAFE_PROXY_HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
+
+
+def _generate_squid_conf(allowlist: List[str]) -> str:
+    """Create one private proxy policy file for this sandbox lifecycle."""
+    template = Path(__file__).resolve().parents[2] / "network" / "squid.conf.template"
+    try:
+        content = template.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SandboxCreationError(f"could not load squid policy template: {exc}") from exc
+    additions = "\n".join(
+        f"acl allowlist dstdomain {host}"
+        for host in allowlist
+        if _SAFE_PROXY_HOST.fullmatch(host)
+    )
+    content = content.replace("# {{ADDITIONAL_ALLOWLIST}}", additions)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", prefix="echelon-squid-", suffix=".conf", delete=False
+    ) as output:
+        output.write(content)
+        return output.name
 
 
 def _run_docker(
@@ -264,6 +285,7 @@ class DockerWorktreeProvider(SandboxProvider):
         network_name = f"harness-net-{session_id}"
         proxy_container_id = None
         sandbox_container_id = None
+        generated_squid_conf: str | None = None
 
         try:
             # Create internal Docker network
@@ -274,13 +296,17 @@ class DockerWorktreeProvider(SandboxProvider):
             ], cli=self._container_cli)
             network_id = result.stdout.strip()
 
-            # Start Squid proxy sidecar (if squid conf available)
-            if self._squid_conf_path and os.path.isfile(self._squid_conf_path):
+            # The private network needs a proxy for package/bootstrap traffic.
+            squid_conf_path = self._squid_conf_path
+            if not squid_conf_path or not os.path.isfile(squid_conf_path):
+                generated_squid_conf = _generate_squid_conf(spec.network_policy.allowlist)
+                squid_conf_path = generated_squid_conf
+            if squid_conf_path:
                 proxy_result = _run_docker([
                     "run", "-d",
                     "--network", network_name,
                     "--name", f"harness-proxy-{session_id}",
-                    "--volume", f"{self._squid_conf_path}:/etc/squid/squid.conf:ro",
+                    "--volume", f"{squid_conf_path}:/etc/squid/squid.conf:ro",
                     "--label", f"echelon-harness.session_id={session_id}",
                     "--label", "echelon-harness.type=squid-proxy",
                     spec.network_policy.proxy_image,
@@ -364,6 +390,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 proxy_id=proxy_container_id,
                 network_name=network_name,
                 volume_names=ephemeral_volumes,
+                generated_squid_conf=generated_squid_conf,
             )
 
             return handle
@@ -371,6 +398,8 @@ class DockerWorktreeProvider(SandboxProvider):
         except Exception as e:
             # Clean up partial resources on failure
             self._cleanup_partial(sandbox_container_id, proxy_container_id, network_name)
+            if generated_squid_conf:
+                Path(generated_squid_conf).unlink(missing_ok=True)
             if isinstance(e, (CredentialLeakError, SandboxCreationError, SandboxExecError)):
                 raise
             raise SandboxCreationError(
@@ -558,6 +587,9 @@ class DockerWorktreeProvider(SandboxProvider):
                 [self._container_cli, "volume", "rm", "-f", volume_name],
                 capture_output=True, timeout=10, check=False,
             )
+        generated_squid_conf = getattr(info, "generated_squid_conf", None)
+        if generated_squid_conf:
+            Path(generated_squid_conf).unlink(missing_ok=True)
 
     def capabilities(self) -> Set[Capability]:
         """Phase 1: no optional capabilities."""
@@ -647,7 +679,7 @@ class DockerWorktreeProvider(SandboxProvider):
 class _ContainerInfo:
     """Internal tracking of container resources for cleanup."""
 
-    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids", "volume_names")
+    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids", "volume_names", "generated_squid_conf")
 
     def __init__(
         self,
@@ -655,12 +687,14 @@ class _ContainerInfo:
         proxy_id: Optional[str],
         network_name: str,
         volume_names: list[str] | None = None,
+        generated_squid_conf: str | None = None,
     ) -> None:
         self.sandbox_id = sandbox_id
         self.proxy_id = proxy_id
         self.network_name = network_name
         self.service_ids: list[str] = []
         self.volume_names = volume_names or []
+        self.generated_squid_conf = generated_squid_conf
 
 
 # --- Registration ---

@@ -1865,8 +1865,10 @@ class RalphController:
                 owned_handle = True
             verification_plan = build_verification_plan(
                 Path(worktree_path), self._config,
+                services=tuple(self._config.verification_services),
             )
             service_env: dict[str, str] = {}
+            verification_stages: list[VerificationStage] = []
             if verification_plan.services:
                 start_services = getattr(self._provider, "start_services", None)
                 if start_services is None:
@@ -1879,7 +1881,15 @@ class RalphController:
                 start_services(handle, materialized_services.services)
                 service_env = dict(materialized_services.verifier_environment)
             for command in verification_plan.bootstrap_commands:
+                bootstrap_started_at = datetime.now(timezone.utc).isoformat()
                 bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
+                verification_stages.append(VerificationStage(
+                    name="bootstrap", command=tuple(shlex.split(command)),
+                    exit_code=bootstrap.exit_code, duration_ms=bootstrap.duration_ms,
+                    stdout=bootstrap.stdout.encode(), stderr=bootstrap.stderr.encode(),
+                    started_at=bootstrap_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ))
                 if bootstrap.exit_code != 0:
                     return VerifyResult(
                         passed=False,
@@ -1960,15 +1970,21 @@ class RalphController:
                 fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
                 verifier_source="sandbox",
                 detection_evidence=("sandbox provider", *detection_evidence),
-                stages=(VerificationStage(
+                stages=(*verification_stages, VerificationStage(
                     name="verify", command=tuple(shlex.split(command)),
                     exit_code=result.exit_code, duration_ms=result.duration_ms,
                     stdout=result.stdout.encode(), stderr=result.stderr.encode(),
                     started_at=stage_started_at,
                     completed_at=datetime.now(timezone.utc).isoformat(),
-                ),),
+                )),
                 failures=verify.failures,
                 duration_s=verify.duration_s,
+                execution_context={
+                    "mode": "sandbox",
+                    "image": verification_plan.image,
+                    "network": "internal",
+                    "services": [service.service_name for service in verification_plan.services],
+                },
             )
         except SandboxError as exc:
             return VerifyResult(
@@ -3109,8 +3125,9 @@ class RalphController:
         stages: tuple[VerificationStage, ...],
         failures: list[FailureEntry],
         duration_s: float,
+        execution_context: Mapping[str, object] | None = None,
     ) -> VerifyResult:
-        """Persist and attach evidence for one Ralph-owned host verification."""
+        """Persist and attach evidence for one Ralph-owned verification."""
         if not candidate_commit or not fingerprint_before or not fingerprint_after:
             missing = [
                 name
@@ -3129,7 +3146,7 @@ class RalphController:
                         category=FailureCategory.OTHER,
                         id="verification-evidence-invalid",
                         error=(
-                            "could not bind host verification to the candidate "
+                            "could not bind verification to the candidate "
                             "commit and content fingerprint; missing "
                             + ", ".join(missing)
                         ),
@@ -3141,7 +3158,7 @@ class RalphController:
             self._state_store.state_dir.parent
             / "evidence"
             / self._strategy_id
-            / "host-verification"
+            / "verification"
         )
         sequence = self._next_host_verification_attempt(evidence_dir)
         try:
@@ -3159,6 +3176,7 @@ class RalphController:
                 fingerprint_after=fingerprint_after,
                 verifier_source=verifier_source,
                 detection_evidence=detection_evidence,
+                execution_context=execution_context,
                 stages=stages,
                 attempt_sequence=sequence,
                 sensitive_environment=os.environ,
@@ -3172,7 +3190,7 @@ class RalphController:
                     FailureEntry(
                         category=FailureCategory.OTHER,
                         id="verification-evidence-invalid",
-                        error=f"could not persist host verification evidence: {exc}",
+                        error=f"could not persist verification evidence: {exc}",
                     ),
                 ],
                 duration_s=duration_s,
@@ -5497,7 +5515,11 @@ class RalphController:
 
         from harness.verification_plan import build_verification_plan
 
-        verification_plan = build_verification_plan(Path(worktree_path), self._config)
+        verification_plan = build_verification_plan(
+            Path(worktree_path),
+            self._config,
+            services=tuple(self._config.verification_services),
+        )
         return SandboxSpec(
             image=verification_plan.image,
             image_source="config_override" if self._config.base_image else "fingerprint",

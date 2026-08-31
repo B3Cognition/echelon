@@ -1187,6 +1187,38 @@ def _delivery_provisioning_blockers(
     return blockers
 
 
+def _resolve_delivery_verification_services(
+    config: object,
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    """Attach target-applicable sandbox services from the stack contract."""
+    from harness.config import get_full_resolved_config
+
+    target_config_dir = target_root.resolve() / ".echelon"
+    stack_config_root = (
+        target_root.resolve()
+        if target_root.resolve() != project_root.resolve()
+        and any((target_config_dir / name).is_file() for name in ("config.yml", "local.yml"))
+        else project_root.resolve()
+    )
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not isinstance(archetypes, list):
+        raise StackSelectionError("stack selection must use list values")
+    resolved = resolve_stacks(
+        [str(value) for value in selected],
+        _load_stack_definitions_for_project(project_root),
+        target_archetypes={str(value) for value in archetypes} or None,
+    )
+    config.verification_services = list(resolved.services)
+
+
 def _block_if_delivery_provisioning_incomplete(
     *,
     project_root: Path,
@@ -2285,6 +2317,11 @@ def _cmd_harness_run(
             project_root=config_root,
             target_root=Path(config.target_repo),
         )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)

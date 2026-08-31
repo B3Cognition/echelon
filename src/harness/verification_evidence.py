@@ -1,4 +1,4 @@
-"""Immutable, redacted evidence from Ralph-owned host verification."""
+"""Immutable, redacted evidence from Ralph-owned verification."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from harness.durable_json import write_json_atomic
 from harness.secret_scan import RULES
 
 
-AUTHORITY = "ralph-host-verifier"
+AUTHORITY = "ralph-verifier"
+_LEGACY_AUTHORITIES = {"ralph-host-verifier"}
 SCHEMA_VERSION = 1
 OUTPUT_TAIL_BYTES = 64 * 1024
 _SENSITIVE_ENV_NAME = re.compile(
@@ -130,6 +131,7 @@ def write_verification_receipt(
     started_at: str | None = None,
     target_id: str = "",
     detection_evidence: Sequence[str] = (),
+    execution_context: Mapping[str, object] | None = None,
 ) -> VerificationEvidenceRef:
     """Persist one immutable attempt and atomically select it as latest."""
     root = Path(evidence_dir)
@@ -167,6 +169,7 @@ def write_verification_receipt(
         "fingerprint_before": fingerprint_before,
         "fingerprint_after": fingerprint_after,
         "verifier_source": verifier_source,
+        "execution": dict(execution_context or {"mode": "host"}),
         "detection_evidence": [
             redact_verification_text(str(item), sensitive_environment)
             for item in detection_evidence
@@ -232,7 +235,7 @@ def validate_verification_receipt(
             )
         ):
             return _invalid("receipt digest mismatch")
-        if payload.get("authority") != AUTHORITY:
+        if payload.get("authority") not in {AUTHORITY, *_LEGACY_AUTHORITIES}:
             return _invalid("receipt authority mismatch")
         observed_evidence_digest = _stable_evidence_sha256(payload)
         embedded_evidence_digest = str(payload.get("evidence_sha256") or "")

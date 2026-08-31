@@ -67,3 +67,13 @@ def test_postgres_service_credentials_are_unique_per_sandbox_attempt() -> None:
         "postgresql://" + first_environment["POSTGRES_USER"] + ":"
     )
     assert first.services[0].health_command[:3] == ("pg_isready", "-h", "127.0.0.1")
+
+
+def test_verification_plan_consumes_resolved_stack_services(tmp_path: Path) -> None:
+    service = SandboxServiceSpec(service_name="postgres", image="postgres:16.4-alpine")
+    config = _parse_config({"provider": "docker"})
+    config.verification_services = [service]
+
+    plan = build_verification_plan(tmp_path, config)
+
+    assert plan.services == (service,)

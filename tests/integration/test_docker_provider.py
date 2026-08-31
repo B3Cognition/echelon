@@ -23,6 +23,7 @@ import pytest
 
 from harness.docker_provider import (
     DockerWorktreeProvider,
+    _generate_squid_conf,
     _check_credential_leak,
     _run_docker,
     _truncate_output,
@@ -96,6 +97,17 @@ class TestCredentialLeakDetection:
     def test_credential_in_secrets_env_blocked(self) -> None:
         with pytest.raises(CredentialLeakError):
             _check_credential_leak(env={}, secrets_env={"GIT_TOKEN": "secret"})
+
+
+def test_generated_proxy_policy_allows_registry_without_host_network() -> None:
+    path = Path(_generate_squid_conf(["registry.example.test"]))
+    try:
+        content = path.read_text(encoding="utf-8")
+    finally:
+        path.unlink(missing_ok=True)
+
+    assert "registry.npmjs.org" in content
+    assert "registry.example.test" in content
 
 
 @pytest.mark.integration
