@@ -295,7 +295,14 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
                 **digest,
                 "description": "Copy plan_entry.verifier_contract_hash exactly.",
             },
-            "verdict": {"enum": ["PASS", "REPAIR"]},
+            "verdict": {
+                "description": (
+                    "REPAIR is mandatory when candidate.unresolved_finding_ids is "
+                    "nonempty or any candidate observation disposition is unknown "
+                    "or unresolved; PASS is deterministically rejected in those cases."
+                ),
+                "enum": ["PASS", "REPAIR"],
+            },
             "diagnostics": {
                 "items": {"$ref": "#/$defs/ExhaustiveDiagnosticV1"},
                 "type": "array",

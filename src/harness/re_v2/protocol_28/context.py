@@ -22,6 +22,7 @@ from harness.re_v2.protocol_28.inputs import (
 from harness.re_v2.protocol_28.ledger import Protocol28Ledger
 from harness.re_v2.protocol_28.artifacts import (
     EvidenceAnchorV1,
+    ExhaustiveDiagnosticV1,
     ExhaustiveEvidenceSliceV1,
 )
 from harness.re_v2.protocol_28.planning import (
@@ -81,6 +82,7 @@ def build_protocol_28_slice_context(
     role: str,
     candidate: ExhaustiveEvidenceSliceV1 | None = None,
     repair_diagnostic_ids: tuple[str, ...] = (),
+    repair_diagnostics: tuple[ExhaustiveDiagnosticV1, ...] = (),
     producer_attempt_number: int = 1,
     verifier_attempt_number: int | None = None,
 ) -> bytes:
@@ -113,6 +115,20 @@ def build_protocol_28_slice_context(
         verifier_attempt_number = 1
     if role == "verifier" and verifier_attempt_number not in {1, 2}:
         raise Protocol28ContextError("verifier attempt number must be 1 or 2")
+    if any(
+        not isinstance(item, ExhaustiveDiagnosticV1)
+        for item in repair_diagnostics
+    ):
+        raise Protocol28ContextError("repair diagnostics are invalid")
+    normalized_diagnostic_ids = tuple(
+        sorted(set(repair_diagnostic_ids))
+    )
+    if repair_diagnostics and normalized_diagnostic_ids != tuple(
+        item.identity for item in repair_diagnostics
+    ):
+        raise Protocol28ContextError(
+            "repair diagnostic objects do not match their identities"
+        )
 
     inputs = context.inputs
     l3 = next(
@@ -212,7 +228,10 @@ def build_protocol_28_slice_context(
             for item in permitted_anchors
         ],
         "lower_authority_objects": lower_objects,
-        "repair_diagnostic_ids": list(sorted(set(repair_diagnostic_ids))),
+        "repair_diagnostic_ids": list(normalized_diagnostic_ids),
+        "repair_diagnostics": [
+            item.to_json_dict() for item in repair_diagnostics
+        ],
         "producer_attempt_number": producer_attempt_number,
         "verifier_attempt_number": verifier_attempt_number,
         "candidate_id": None if candidate is None else candidate.identity,

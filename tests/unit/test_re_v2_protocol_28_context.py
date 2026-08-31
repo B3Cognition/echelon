@@ -16,6 +16,7 @@ from harness.re_v2.protocol_28.context import (
     load_protocol_28_run_context,
 )
 from harness.re_v2.protocol_28.planning import realize_slice
+from harness.re_v2.protocol_28.artifacts import ExhaustiveDiagnosticV1
 from tests.unit.test_re_v2_protocol_28_artifacts import _candidate_fixture
 from harness.re_v2.protocol_28.inputs import (
     publish_protocol_28_run,
@@ -166,3 +167,39 @@ def test_verifier_context_is_fresh_and_binds_candidate(tmp_path: Path) -> None:
 
     assert producer != verifier
     assert candidate.identity.encode("ascii") in verifier
+
+
+@pytest.mark.unit
+def test_repair_context_contains_full_normalized_diagnostics(tmp_path: Path) -> None:
+    run_dir = _published(tmp_path)
+    context = load_protocol_28_run_context(run_dir)
+    assert isinstance(context, Protocol28RunContext)
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+    spec = realize_slice(entry, {})
+    diagnostic = ExhaustiveDiagnosticV1(
+        1,
+        digest("candidate"),
+        entry.verifier_contract_hash,
+        "invalid-or-insufficient-evidence",
+        entry.primary_subject_ids,
+        entry.primary_snapshot_evidence_ids,
+        entry.assigned_finding_ids,
+        "Explain the exact repair using the permitted evidence.",
+    )
+
+    payload = json.loads(
+        build_protocol_28_slice_context(
+            context,
+            target,
+            entry,
+            spec,
+            role="producer",
+            repair_diagnostic_ids=(diagnostic.identity,),
+            repair_diagnostics=(diagnostic,),
+            producer_attempt_number=2,
+        )
+    )
+
+    assert payload["repair_diagnostic_ids"] == [diagnostic.identity]
+    assert payload["repair_diagnostics"] == [diagnostic.to_json_dict()]

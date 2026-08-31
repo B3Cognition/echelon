@@ -41,6 +41,10 @@ NEVER accept a citation merely because it exists or overlook uncited behavioral 
 ALWAYS assess applicable boundaries, failures, recovery, invariants, configuration, security, operations, and negative space for the category.
 NEVER issue PASS while required category behavior is missing, shallow, contradictory, or unresolved.
 
+### Rule 6a - Unresolved Verdict
+ALWAYS return REPAIR when `unresolved_finding_ids` is nonempty or any candidate observation has disposition `unknown` or `unresolved`, using an exact closed diagnostic class.
+NEVER return PASS for such a candidate; deterministic certification rejects that verdict even when all cited evidence is valid.
+
 ### Rule 7 - Findings and Diagnostics
 ALWAYS issue REPAIR with normalized closed-class diagnostics when an assigned finding lacks support or any acceptance condition fails.
 NEVER invent diagnostic classes; use `malformed-result-contract` only for a result-contract defect and not as a semantic catch-all.

@@ -38,12 +38,12 @@ ALWAYS copy each required anchor object and its `anchor_id` exactly from `permit
 NEVER calculate an anchor hash, substitute an evidence ID for an anchor ID, or alter a controller-supplied anchor object.
 
 ### Rule 5 - Exhaustive Behavior
-ALWAYS examine the category's applicable behavior, boundaries, failures, recovery, invariants, configuration, security, operations, and negative space.
-NEVER treat entry-point naming, type shape, comments, or happy-path behavior alone as exhaustive evidence.
+ALWAYS examine behavior, boundaries, failures, recovery, invariants, configuration, security, operations, and negative space only where they are applicable to the assigned category and subjects.
+NEVER expand one category into unrelated categories or treat entry-point naming, type shape, comments, or happy-path behavior alone as exhaustive evidence.
 
 ### Rule 6 - Honest Uncertainty
-ALWAYS encode unsupported or conflicting conclusions as explicit unknown or unresolved observations with the inspected evidence.
-NEVER convert missing evidence into affirmative absence, certainty, or an unsupported resolved finding.
+ALWAYS encode unsupported or conflicting conclusions as unknown or unresolved only when they prevent completion of the assigned category or an assigned finding.
+NEVER convert missing evidence into affirmative absence or certainty, and never add unresolved observations for behavior outside the assigned category and subjects.
 
 ### Rule 7 - Assigned Findings
 ALWAYS address every assigned deeper-evidence finding with new permitted evidence or leave it explicitly unresolved.
@@ -56,11 +56,12 @@ NEVER write controller state, claim PASS, claim complete coverage, claim full qu
 ## Protocol
 
 1. Use only the supplied immutable slice context and strict response schema.
-2. Cover every primary assignment and inspect supporting evidence only within its declared role.
-3. Copy the controller-normalized permitted evidence anchors before claims and observations.
-4. Record category-complete supported behavior plus honest unresolved observations.
-5. Derive the bounded rendered explanation from the structured payload.
-6. Write only `exhaustive-evidence-slice.json`, matching `ExhaustiveEvidenceSliceV1` exactly.
+2. On repair attempts, read every full object in `repair_diagnostics` and address its exact class and detail; diagnostic IDs alone are not repair instructions.
+3. Cover every primary assignment and inspect supporting evidence only within its declared role.
+4. Copy the controller-normalized permitted evidence anchors before claims and observations.
+5. Record category-complete supported behavior plus honest category-local unresolved observations.
+6. Derive the bounded rendered explanation from the structured payload.
+7. Write only `exhaustive-evidence-slice.json`, matching `ExhaustiveEvidenceSliceV1` exactly.
 
 ## Output Block
 

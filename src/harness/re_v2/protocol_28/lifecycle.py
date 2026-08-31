@@ -12,6 +12,7 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.protocol_28.artifacts import (
+    ExhaustiveDiagnosticV1,
     ExhaustiveEvidenceSliceV1,
     ExhaustiveRepairPacketV1,
     ExhaustiveVerificationV1,
@@ -481,8 +482,8 @@ def _execute_slice(
     entry: SlicePlanEntryV1,
     slice_spec: SliceSpecV1,
 ):  # type: ignore[no-untyped-def]
-    diagnostics: tuple[str, ...] = ()
-    previous_diagnostics: tuple[str, ...] = ()
+    diagnostics: tuple[ExhaustiveDiagnosticV1, ...] = ()
+    previous_diagnostic_ids: tuple[str, ...] = ()
     policy = context.inputs.exhaustive_policy
     executors = context.inputs.executor_catalog
     producer_entry = executors.entry("producer")
@@ -505,7 +506,7 @@ def _execute_slice(
     )
     if isinstance(resumed, tuple):
         diagnostics = resumed
-        previous_diagnostics = resumed
+        previous_diagnostic_ids = tuple(item.identity for item in resumed)
     elif resumed is not None:
         return resumed
     prior_pairs = tuple(
@@ -527,7 +528,8 @@ def _execute_slice(
             entry,
             slice_spec,
             role="producer",
-            repair_diagnostic_ids=diagnostics,
+            repair_diagnostic_ids=tuple(item.identity for item in diagnostics),
+            repair_diagnostics=diagnostics,
             producer_attempt_number=producer_attempt,
         )
         producer_reservation = _reservation(
@@ -714,19 +716,19 @@ def _execute_slice(
             _record_acceptance_events(context, accepted)
             return accepted
 
-        diagnostics = tuple(item.identity for item in verdict.diagnostics)
+        diagnostic_ids = tuple(item.identity for item in verdict.diagnostics)
         packet = ExhaustiveRepairPacketV1(
             1,
             slice_spec.identity,
             candidate.identity,
-            diagnostics,
+            diagnostic_ids,
             candidate.covered_primary_evidence_ids,
             min(producer_attempt + 1, policy.producer_attempt_limit),
         )
         packet_id = context.objects.put_blob(
             canonical_json_bytes(packet.to_json_dict())
         )
-        diagnostic_set_id = content_digest(list(diagnostics))
+        diagnostic_set_id = content_digest(list(diagnostic_ids))
         context.controller.append_once(
             "repair_packet_recorded",
             {
@@ -735,7 +737,7 @@ def _execute_slice(
                 "repair_packet_id": packet_id,
             },
         )
-        if diagnostics and diagnostics == previous_diagnostics:
+        if diagnostic_ids and diagnostic_ids == previous_diagnostic_ids:
             context.controller.append_once(
                 "plateau_reached",
                 {
@@ -746,7 +748,8 @@ def _execute_slice(
             reason = "non_improving_verification"
             _fail_slice(context, slice_spec, reason)
             return reason
-        previous_diagnostics = diagnostics
+        previous_diagnostic_ids = diagnostic_ids
+        diagnostics = verdict.diagnostics
 
     reason = "semantic_repair_attempts_exhausted"
     _fail_slice(context, slice_spec, reason)
@@ -1146,7 +1149,7 @@ def _resume_existing_candidate(
             },
         )
     if verification.verdict == "REPAIR":
-        return tuple(item.identity for item in verification.diagnostics)
+        return verification.diagnostics
     producer = PersistedL4ExecutionV1(
         view.execution_envelopes[producer_dispatch],
         view.execution_captures[producer_dispatch],
