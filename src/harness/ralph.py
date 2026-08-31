@@ -1880,6 +1880,19 @@ class RalphController:
                 )
                 start_services(handle, materialized_services.services)
                 service_env = dict(materialized_services.verifier_environment)
+            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+            candidate_path = Path(worktree_path)
+            candidate_commit = (
+                _current_git_commit(candidate_path)
+                if candidate_path.is_dir()
+                else None
+            )
+            sandbox_context = {
+                "mode": "sandbox",
+                "image": verification_plan.image,
+                "network": "internal",
+                "services": [service.service_name for service in verification_plan.services],
+            }
             for command in verification_plan.bootstrap_commands:
                 bootstrap_started_at = datetime.now(timezone.utc).isoformat()
                 bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
@@ -1891,15 +1904,22 @@ class RalphController:
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 ))
                 if bootstrap.exit_code != 0:
-                    return VerifyResult(
-                        passed=False,
-                        failures=[FailureEntry(
-                            category=FailureCategory.BUILD,
-                            id="sandbox-bootstrap",
-                            error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
-                        )],
+                    failures = [FailureEntry(
+                        category=FailureCategory.BUILD,
+                        id="sandbox-bootstrap",
+                        error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
+                    )]
+                    return self._attach_host_verification_receipt(
+                        worktree_path=worktree_path,
+                        candidate_commit=candidate_commit,
+                        fingerprint_before=fingerprint_before,
+                        fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                        verifier_source="sandbox",
+                        detection_evidence=("sandbox bootstrap",),
+                        stages=tuple(verification_stages),
+                        failures=failures,
                         duration_s=bootstrap.duration_ms / 1000.0,
-                        token_usage=0,
+                        execution_context=sandbox_context,
                     )
 
             command = self._config.verify_command
@@ -1928,13 +1948,6 @@ class RalphController:
                         )
                     command = detection.command
                     detection_evidence = tuple(detection.evidence)
-            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
-            candidate_path = Path(worktree_path)
-            candidate_commit = (
-                _current_git_commit(candidate_path)
-                if candidate_path.is_dir()
-                else None
-            )
             stage_started_at = datetime.now(timezone.utc).isoformat()
             result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
 
@@ -1979,12 +1992,7 @@ class RalphController:
                 )),
                 failures=verify.failures,
                 duration_s=verify.duration_s,
-                execution_context={
-                    "mode": "sandbox",
-                    "image": verification_plan.image,
-                    "network": "internal",
-                    "services": [service.service_name for service in verification_plan.services],
-                },
+                execution_context=sandbox_context,
             )
         except SandboxError as exc:
             return VerifyResult(

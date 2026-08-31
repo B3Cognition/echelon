@@ -2902,6 +2902,11 @@ def _cmd_harness_resume(
             project_root=config_root,
             target_root=Path(config.target_repo),
         )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.

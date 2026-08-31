@@ -312,6 +312,13 @@ class DockerWorktreeProvider(SandboxProvider):
                     spec.network_policy.proxy_image,
                 ], cli=self._container_cli)
                 proxy_container_id = proxy_result.stdout.strip()
+                # The verifier remains on the internal network only. The proxy
+                # has a second bridge attachment solely to reach allowlisted
+                # registries and browser-download hosts.
+                _run_docker(
+                    ["network", "connect", "bridge", proxy_container_id],
+                    cli=self._container_cli,
+                )
 
             # Build sandbox container args
             docker_args = [
