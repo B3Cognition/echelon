@@ -71,12 +71,12 @@
 - paired producer-plus-verifier reservation preview/commit;
 - next-action state machine for producer, verifier, verifier-contract retry, producer repair, plateau, terminal failure, and acceptance.
 
-- [ ] Write failing no-orphaned-producer-spend and fixed-attempt tests.
-- [ ] Run RED.
-- [ ] Implement deterministic reservation and attempt transitions.
-- [ ] Add unknown usage, authorization raise, malformed producer, verifier-only retry, semantic repair, identical-diagnostic plateau, and accepted-sibling tests.
-- [ ] Run GREEN with protocol-2.5 budget regressions.
-- [ ] Commit `feat(re): bound exhaustive repair scheduling`.
+- [x] Write failing no-orphaned-producer-spend and fixed-attempt tests.
+- [x] Run RED.
+- [x] Implement deterministic reservation and attempt transitions.
+- [x] Add unknown usage, authorization raise, malformed producer, verifier-only retry, semantic repair, identical-diagnostic plateau, and accepted-sibling tests.
+- [x] Run GREEN with protocol-2.5 budget regressions.
+- [x] Commit `feat(re): bound exhaustive repair scheduling`.
 
 ### Task 4: Add Physically Versioned L4 Checkpoints
 
