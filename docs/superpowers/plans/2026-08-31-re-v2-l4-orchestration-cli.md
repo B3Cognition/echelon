@@ -84,13 +84,13 @@
 - `execute_deepen_orchestration(workspace_root, options, provider_factory)` advances one durable chain.
 - `create_or_reuse_l4_closure_successor(intent, blocked_l3, complete_l4)` builds and completes one schema-7 closure run with zero provider calls.
 
-- [ ] Write failing parent matrix tests for direct L3, missing L3, ineligible L3, synthesis complete/partial selected/unselected/next-epoch, strict selection, and zero-domain sources.
-- [ ] Write crash/idempotency tests before and after each child bind and transition.
-- [ ] Implement automatic protocol-2.5 prerequisite creation/reuse, pause retention, continuation advancement, exact L4 binding, deterministic finding-to-evidence closure, and closure-integrity blockers.
-- [ ] Prove an L3 child linked to exactly one open intent auto-advances after continuation; multiple open intents block.
-- [ ] Prove completed closure replay performs zero calls and cannot start a new L3 epoch.
-- [ ] Run GREEN with protocol-2.5 audit/closure and protocol-2.7 synthesis lineage regressions.
-- [ ] Commit `feat(re): orchestrate L3 to L4 closure`.
+- [x] Write failing parent matrix tests for direct L3, missing L3, ineligible L3, synthesis complete/partial selected/unselected/next-epoch, strict selection, and zero-domain sources.
+- [x] Write crash/idempotency tests before and after each child bind and transition.
+- [x] Implement automatic protocol-2.5 prerequisite creation/reuse, pause retention, continuation advancement, exact L4 binding, deterministic finding-to-evidence closure, and closure-integrity blockers.
+- [x] Prove an L3 child linked to exactly one open intent auto-advances after continuation; multiple open intents block.
+- [x] Prove completed closure replay performs zero calls and cannot start a new L3 epoch.
+- [x] Run GREEN with protocol-2.5 audit/closure and protocol-2.7 synthesis lineage regressions.
+- [x] Commit `feat(re): orchestrate L3 to L4 closure`.
 
 ### Task 4: Register L4 CLI, Continue, and Shadow
 

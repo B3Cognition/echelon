@@ -197,9 +197,7 @@ def build_protocol_28_slice_context(
     if role == "verifier":
         maximum += inputs.exhaustive_policy.max_candidate_output_bytes
     if len(encoded) > maximum:
-        raise Protocol28ContextError(
-            f"{role} slice context exceeds frozen byte bound"
-        )
+        raise Protocol28ContextError(f"{role} slice context exceeds frozen byte bound")
     return encoded
 
 
@@ -243,6 +241,16 @@ def initialize_protocol_28_run(context: Protocol28Context) -> None:
         "l4_run_created", {"run_manifest_id": manifest.run_manifest_id}
     )
     if isinstance(context, Protocol28ClosureRunContext):
+        controller.append_once(
+            "l4_closure_inputs_staged",
+            {
+                "closure_parent_bundle_id": (
+                    context.inputs.closure_parent_bundle.identity
+                ),
+                "closure_run_manifest_id": manifest.run_manifest_id,
+                "l4_run_root_id": context.inputs.l4_run_root.identity,
+            },
+        )
         return
     inputs = context.inputs
     planned = tuple(

@@ -527,12 +527,12 @@ def build_run_root(
     )
 
 
-def build_l4_semantic_closure(
+def build_l4_finding_closure_receipts(
     parent: ParentAuthorityBundleV3,
     run_root: L4RunRootV1,
     accepted_slices: tuple[AcceptedExhaustiveSliceV1, ...],
     verifier_receipts: tuple[ExhaustiveVerificationReceiptV1, ...],
-) -> L4SemanticClosureRootV1:
+) -> tuple[L4FindingClosureReceiptV1, ...]:
     if not isinstance(parent, ParentAuthorityBundleV3) or not isinstance(run_root, L4RunRootV1):
         raise Protocol28ClosureIntegrityError("closure_parent_mismatch", "closure authority types are invalid")
     if parent.identity != run_root.parent_authority_bundle_id:
@@ -584,8 +584,20 @@ def build_l4_semantic_closure(
             1, finding_id, primary.identity, tuple(item.identity for item in supporting),
             tuple(sorted(by_slice[item.identity].identity for item in resolving)), run_root.identity,
         ))
+    return tuple(closure_receipts)
+
+
+def build_l4_semantic_closure(
+    parent: ParentAuthorityBundleV3,
+    run_root: L4RunRootV1,
+    accepted_slices: tuple[AcceptedExhaustiveSliceV1, ...],
+    verifier_receipts: tuple[ExhaustiveVerificationReceiptV1, ...],
+) -> L4SemanticClosureRootV1:
+    closure_receipts = build_l4_finding_closure_receipts(
+        parent, run_root, accepted_slices, verifier_receipts
+    )
     return L4SemanticClosureRootV1(
         1, parent.identity, parent.frozen_epoch_id, run_root.identity,
         tuple(sorted(item.identity for item in closure_receipts)),
-        tuple(sorted(item.identity for item in receipts)), "complete",
+        tuple(sorted(item.identity for item in verifier_receipts)), "complete",
     )

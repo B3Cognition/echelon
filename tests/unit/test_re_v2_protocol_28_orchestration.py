@@ -11,11 +11,13 @@ from harness.re_v2.protocol_28.orchestration import (
     DeepenOrchestrationError,
     DeepenOrchestrationRequestV1,
     create_or_load_orchestration,
+    evaluate_l3_eligibility,
     find_exact_orchestration,
     find_open_orchestrations_for_child,
     load_orchestration,
 )
 from tests.re_v2_protocol_28_fixtures import digest, selection_scope_v1
+from tests.unit.test_re_v2_protocol_28_authority import _parent, _selection
 
 
 NOW = "2026-08-31T12:00:00Z"
@@ -40,7 +42,9 @@ def _request(**changes: object) -> DeepenOrchestrationRequestV1:
 @pytest.mark.unit
 def test_request_is_closed_and_resource_independent() -> None:
     request = _request()
-    assert DeepenOrchestrationRequestV1.from_json_dict(request.to_json_dict()) == request
+    assert (
+        DeepenOrchestrationRequestV1.from_json_dict(request.to_json_dict()) == request
+    )
     with pytest.raises(DeepenOrchestrationError, match="unknown fields"):
         DeepenOrchestrationRequestV1.from_json_dict(
             {**request.to_json_dict(), "token_limit": 9}
@@ -98,7 +102,9 @@ def test_transition_binds_at_most_one_child_and_exact_hashes(tmp_path: Path) -> 
     with pytest.raises(DeepenOrchestrationError, match="already binds"):
         controller.bind_l3_child("re-other", digest("other-manifest"))
     with pytest.raises(DeepenOrchestrationError, match="does not match"):
-        controller.satisfy_l3("re-l3", digest("wrong-terminal"), manifest_hash=digest("wrong"))
+        controller.satisfy_l3(
+            "re-l3", digest("wrong-terminal"), manifest_hash=digest("wrong")
+        )
 
 
 @pytest.mark.unit
@@ -142,7 +148,9 @@ def test_reverse_lookup_authenticates_unique_open_intent(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
-def test_crash_after_event_recovers_without_duplicate_transition(tmp_path: Path) -> None:
+def test_crash_after_event_recovers_without_duplicate_transition(
+    tmp_path: Path,
+) -> None:
     intent = create_or_load_orchestration(tmp_path, _request(), clock=lambda: NOW)
 
     def crash(seam: str) -> None:
@@ -160,3 +168,43 @@ def test_crash_after_event_recovers_without_duplicate_transition(tmp_path: Path)
 
     assert len(recovered.events.replay()) == before
     assert stable.rebuild_projection().l3_run_id == "re-l3"
+
+
+@pytest.mark.unit
+def test_l3_eligibility_accepts_only_complete_or_deeper_evidence_scope() -> None:
+    domain = digest("eligible-domain")
+    complete = _parent((domain,), epoch_seed="complete")
+    deeper = _parent(
+        (domain,),
+        epoch_seed="deeper",
+        blocker_classes=("requires_deeper_evidence",),
+        unresolved_domain=domain,
+    )
+
+    assert evaluate_l3_eligibility(complete, _selection(domain)) is complete
+    assert evaluate_l3_eligibility(deeper, _selection(domain)) is deeper
+
+    mixed = replace(
+        deeper,
+        blocker_classes=("requires_deeper_evidence", "requires_human_decision"),
+    )
+    with pytest.raises(DeepenOrchestrationError, match="exclusively"):
+        evaluate_l3_eligibility(mixed, _selection(domain))
+
+
+@pytest.mark.unit
+def test_l3_eligibility_is_strict_about_selected_target_coverage() -> None:
+    available = digest("available-domain")
+    missing = digest("missing-domain")
+    parent = _parent((available,), epoch_seed="strict")
+
+    with pytest.raises(Exception, match="incomplete"):
+        evaluate_l3_eligibility(parent, _selection(missing))
+
+
+@pytest.mark.unit
+def test_zero_domain_source_is_valid_l3_selection() -> None:
+    parent = _parent((), epoch_seed="zero-domain")
+    selection = _selection()
+
+    assert evaluate_l3_eligibility(parent, selection) is parent

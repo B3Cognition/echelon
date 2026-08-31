@@ -84,6 +84,11 @@ _BLOCKER_KIND = _choice("resource", "execution", "closure_integrity")
 
 _PAYLOAD_SCHEMAS: dict[str, dict[str, Validator]] = {
     "l4_run_created": {"run_manifest_id": _digest},
+    "l4_closure_inputs_staged": {
+        "closure_parent_bundle_id": _digest,
+        "closure_run_manifest_id": _digest,
+        "l4_run_root_id": _digest,
+    },
     "l4_inputs_staged": {
         "coverage_proof_id": _digest,
         "exhaustive_plan_id": _digest,
@@ -332,6 +337,18 @@ class Protocol28ReplayState(EventReplayState):
             raise ReV2EventError("protocol-2.8 inputs were staged out of order")
         self.inputs_staged = True
 
+    def _on_l4_closure_inputs_staged(self, payload: Mapping[str, object]) -> None:
+        """Activate an immutable provider-free closure successor."""
+        self._require_created("closure input staging")
+        if self.inputs_staged or self.activated or self.run_root_id is not None:
+            raise ReV2EventError("protocol-2.8 closure inputs were staged twice")
+        if payload["closure_run_manifest_id"] != self.run_manifest_id:
+            raise ReV2EventError("closure input staging does not match its manifest")
+        self.inputs_staged = True
+        self.activated = True
+        self.run_root_id = str(payload["l4_run_root_id"])
+        self.linked_closure_manifest_id = str(payload["closure_run_manifest_id"])
+
     def _on_l4_activated(self, payload: Mapping[str, object]) -> None:
         if not self.inputs_staged or self.activated:
             raise ReV2EventError("protocol-2.8 activation is out of order")
@@ -534,7 +551,8 @@ class Protocol28ReplayState(EventReplayState):
     def _on_materialization_completed(self, payload: Mapping[str, object]) -> None:
         root_id = str(payload["root_id"])
         if root_id not in self.target_root_ids | self.source_root_ids | {
-            self.run_root_id
+            self.run_root_id,
+            self.closure_root_id,
         }:
             raise ReV2EventError("materialization requires a durable root")
         self.materialized_root_ids.add(root_id)
@@ -574,15 +592,18 @@ class Protocol28ReplayState(EventReplayState):
     def _on_run_completed(self, payload: Mapping[str, object]) -> None:
         if self.run_root_id != payload["run_root_id"]:
             raise ReV2EventError("completion requires the exact run root")
-        if self.run_root_id not in self.materialized_root_ids:
-            raise ReV2EventError("completion requires run-root materialization")
-        if (
-            payload["completion_kind"] == "semantic_closure"
-            and self.closure_root_id is None
-        ):
+        completion_kind = payload["completion_kind"]
+        required_materialization = (
+            self.closure_root_id
+            if completion_kind == "semantic_closure"
+            else self.run_root_id
+        )
+        if required_materialization not in self.materialized_root_ids:
+            raise ReV2EventError("completion requires terminal-root materialization")
+        if completion_kind == "semantic_closure" and self.closure_root_id is None:
             raise ReV2EventError("semantic completion requires a closure root")
         if (
-            payload["completion_kind"] == "evidence_only"
+            completion_kind == "evidence_only"
             and self.linked_closure_manifest_id is not None
         ):
             raise ReV2EventError(

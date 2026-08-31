@@ -17,6 +17,7 @@ from harness.re_v2.protocol_28.events import (
     project_protocol_28,
 )
 from harness.re_v2.protocol_28.graph import (
+    L4FindingClosureReceiptV1,
     L4RunRootV1,
     L4SemanticClosureRootV1,
     L4SourceRootV1,
@@ -181,6 +182,27 @@ class Protocol28Controller:
                 "closure_root_id": closure_root.identity,
                 "closure_run_manifest_id": closure_run_manifest_id,
                 "l4_run_root_id": closure_root.l4_run_root_id,
+            },
+        )
+
+    def record_closure_receipt(
+        self,
+        receipt: L4FindingClosureReceiptV1,
+    ) -> EventRecord:
+        """Persist one deterministic finding closure before exposing its ID."""
+        if not isinstance(receipt, L4FindingClosureReceiptV1):
+            raise Protocol28ControllerError("closure receipt authority is invalid")
+        object_id = self.object_store.put_blob(
+            canonical_json_bytes(receipt.to_json_dict())
+        )
+        if object_id != receipt.identity:
+            raise Protocol28ControllerError("closure receipt object identity changed")
+        self._fault("after_closure_receipt_object")
+        return self.append_once(
+            "closure_receipt_recorded",
+            {
+                "closure_receipt_id": receipt.identity,
+                "finding_id": receipt.finding_id,
             },
         )
 
