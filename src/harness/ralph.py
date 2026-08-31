@@ -87,6 +87,55 @@ _BANZAI_MILESTONE_DEFER_REASON = (
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
+_TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
+_BACKTICK_PATH_RE = re.compile(r"`(?P<path>[^`]+)`")
+
+
+def _missing_completed_task_deliverables(
+    markdown: str,
+    *,
+    task_statuses: Mapping[str, str],
+    worktree_path: Path,
+    implementation_target: str,
+) -> list[str]:
+    """Return completed task deliverables absent from the target worktree."""
+    target = implementation_target.strip().strip("/")
+    missing: list[str] = []
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        match = _TASK_HEADER_RE.match(line)
+        if match is None or task_statuses.get(match.group("task_id")) not in {
+            "DONE", "DONE_WITH_CONCERNS"
+        }:
+            continue
+        task_id = match.group("task_id")
+        end = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _TASK_HEADER_RE.match(lines[candidate]) is not None
+            ),
+            len(lines),
+        )
+        in_files = False
+        for task_line in lines[index + 1:end]:
+            if task_line.strip() == "**Files:**":
+                in_files = True
+                continue
+            if in_files and task_line.startswith("  **"):
+                break
+            if not in_files:
+                continue
+            for path_match in _BACKTICK_PATH_RE.finditer(task_line):
+                declared = path_match.group("path").strip().lstrip("./")
+                relative = (
+                    declared[len(target) + 1:]
+                    if target and declared.startswith(target + "/")
+                    else declared
+                )
+                if relative and not (worktree_path / relative).is_file():
+                    missing.append(f"{task_id}: {relative}")
+    return missing
 
 
 def _is_verification_environment_deferral(
@@ -788,7 +837,7 @@ class RalphController:
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
                     verify_result = self._apply_task_progress_gate(
-                        verify_result, worktree_path
+                        verify_result, worktree_path, require_completion=False
                     )
                     verify_result = self._refresh_fulfillment_report(
                         verify_result,
@@ -803,6 +852,9 @@ class RalphController:
                         verify_result,
                         worktree_path,
                         changed_files=scoped_changed_files,
+                    )
+                    verify_result = self._apply_task_progress_gate(
+                        verify_result, worktree_path, require_completion=True
                     )
                     tokens_used += verify_result.token_usage
 
@@ -1286,8 +1338,10 @@ class RalphController:
 
         Returns dict with: converged, blocked, inner_count, tokens_used, final_verify.
         """
-        if _is_fulfillment_refresh_deferred(verify_result) or _is_fulfillment_freshness_failure(
-            verify_result
+        if (
+            _is_fulfillment_refresh_deferred(verify_result)
+            or _is_fulfillment_freshness_failure(verify_result)
+            or _is_task_progress_incomplete(verify_result)
         ):
             return {
                 "converged": False,
@@ -1535,6 +1589,9 @@ class RalphController:
                 current_verify,
                 worktree_path,
                 changed_files=inner_changed_files,
+            )
+            current_verify = self._apply_task_progress_gate(
+                current_verify, worktree_path, require_completion=True
             )
             tokens_used += current_verify.token_usage
 
@@ -2108,6 +2165,8 @@ class RalphController:
         self,
         verify_result: VerifyResult,
         worktree_path: str,
+        *,
+        require_completion: bool = True,
     ) -> VerifyResult:
         """Treat task progress mismatches as verification failures."""
         if not verify_result.passed or not worktree_path:
@@ -2127,18 +2186,51 @@ class RalphController:
             state.get("build") if isinstance(state.get("build"), dict) else {},
             selected_task_ids=self._target_task_ids(),
         )
-        if summary.valid:
+        if not summary.valid:
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="task-progress-mismatch",
+                error=(
+                    "task progress tracking is inconsistent: "
+                    + "; ".join(summary.errors)
+                    + ". Update tasks.md canonical rows and state.json build progress before convergence."
+                ),
+            )
+        elif require_completion:
+            incomplete = sorted(
+                task_id
+                for task_id, status in summary.task_statuses.items()
+                if status in {"PENDING", "BLOCKED"}
+            )
+            if incomplete:
+                failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="task-progress-incomplete",
+                    error=(
+                        "canonical delivery tasks remain open: "
+                        + ", ".join(incomplete)
+                        + ". Complete them or record approved deferred scope before convergence."
+                    ),
+                )
+            else:
+                missing = _missing_completed_task_deliverables(
+                    tasks_path.read_text(encoding="utf-8", errors="replace"),
+                    task_statuses=summary.task_statuses,
+                    worktree_path=Path(worktree_path),
+                    implementation_target=str(state.get("implementation_target") or ""),
+                )
+                if not missing:
+                    return verify_result
+                failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="task-deliverable-missing",
+                    error=(
+                        "completed task deliverables are absent from the target worktree: "
+                        + ", ".join(missing)
+                    ),
+                )
+        else:
             return verify_result
-
-        failure = FailureEntry(
-            category=FailureCategory.OTHER,
-            id="task-progress-mismatch",
-            error=(
-                "task progress tracking is inconsistent: "
-                + "; ".join(summary.errors)
-                + ". Update tasks.md canonical rows and state.json build progress before convergence."
-            ),
-        )
         return VerifyResult(
             passed=False,
             failures=[failure],
@@ -6099,6 +6191,10 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _is_task_progress_incomplete(verify_result: VerifyResult) -> bool:
+    return any(f.id == "task-progress-incomplete" for f in verify_result.failures)
 
 
 def _is_fulfillment_freshness_failure(verify_result: VerifyResult) -> bool:

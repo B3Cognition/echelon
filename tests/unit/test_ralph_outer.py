@@ -2316,6 +2316,54 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "task-progress-mismatch"
         assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in result.failures[0].error
 
+    def test_open_canonical_task_turns_passing_verify_into_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A passing test suite cannot converge before every target task is terminal."""
+        controller, *_rest = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-015 complexity=standard phase=verification req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        result = controller._apply_task_progress_gate(
+            VerifyResult(passed=True, failures=[]), str(worktree)
+        )
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-progress-incomplete"
+        assert "T-015" in result.failures[0].error
+
+    def test_completed_task_missing_declared_file_turns_passing_verify_into_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A task cannot be complete when a declared source deliverable is absent."""
+        controller, *_rest, state_store = _make_controller(tmp_path)
+        state = state_store.read()
+        state["implementation_target"] = "sources/demo"
+        state_store.write(state)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-015 complexity=standard phase=verification req=INFRA depends=none\n"
+            "\n"
+            "  **Files:**\n"
+            "  - `sources/demo/README.md` - setup guide\n",
+            encoding="utf-8",
+        )
+
+        result = controller._apply_task_progress_gate(
+            VerifyResult(passed=True, failures=[]), str(worktree)
+        )
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-deliverable-missing"
+        assert "T-015: README.md" in result.failures[0].error
+
     def test_build_reported_task_ids_mark_canonical_tasks_done(
         self, tmp_path: Path
     ) -> None:
