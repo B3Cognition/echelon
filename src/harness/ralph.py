@@ -435,9 +435,14 @@ class RalphController:
                         },
                     )
 
-                # Create sandbox
-                sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
-                handle = self._provider.create(sandbox_spec)
+                # Host-side LLM builds and verification do not use the sandbox.
+                # Avoid creating it here: doing so makes Codex/Claude delivery
+                # fail when Docker is unavailable despite no sandbox operation
+                # being required.
+                handle: Optional[SandboxHandle] = None
+                if not (self._llm_build_runner and build_prompt):
+                    sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
+                    handle = self._provider.create(sandbox_spec)
 
                 try:
                     # Clear stale build status before each iteration so a
@@ -1253,11 +1258,12 @@ class RalphController:
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
 
                 finally:
-                    try:
-                        self._provider.destroy(handle)
-                    except Exception as exc:
-                        self._record_cleanup_warning("sandbox_destroy", exc)
-                        logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
+                    if handle is not None:
+                        try:
+                            self._provider.destroy(handle)
+                        except Exception as exc:
+                            self._record_cleanup_warning("sandbox_destroy", exc)
+                            logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
 
             except BaseException:
                 # An unexpected interruption may leave uncommitted evidence that
@@ -1322,7 +1328,7 @@ class RalphController:
 
     def _run_inner_loop(
         self,
-        handle: SandboxHandle,
+        handle: Optional[SandboxHandle],
         verify_result: VerifyResult,
         outer_iter: int,
         max_inner: int,
@@ -1743,7 +1749,7 @@ class RalphController:
 
     def _exec_build(
         self,
-        handle: SandboxHandle,
+        handle: Optional[SandboxHandle],
         build_command: str,
         strategy_context: str,
         worktree_path: str = "",

@@ -2882,10 +2882,10 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
 
-    def test_runs_verify_spec_before_fulfillment_gate_when_runner_available(
+    def test_host_llm_runner_does_not_create_a_sandbox_before_fulfillment_gate(
         self, tmp_path: Path
     ) -> None:
-        """Ralph refreshes fulfillment evidence after sandbox verification passes."""
+        """Host LLM delivery verifies without requiring the configured sandbox."""
         from harness.build_result import BuildResult
         from harness.llm_build_runner import LlmBuildRunner
 
@@ -2949,6 +2949,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
+        assert provider.created is False
         fulfillment_runner.refresh.assert_called_once()
         assert fulfillment_runner.refresh.call_args.kwargs[
             "verification_evidence"
@@ -3745,7 +3746,7 @@ class TestOuterLoopConvergence:
         assert ".harness-build-status.json" in captured.err
         assert "echelon delivery continue spec-001" in captured.err
         assert "missing Phase A artifacts" not in captured.err
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4001,8 +4002,7 @@ class TestOuterLoopConvergence:
         assert state["termination_reason"] == "build_incomplete"
         assert state["build_status"] == "host_tool_permission_denied"
         assert "do not enable unsafe host execution" in state["build_reason"]
-        assert state["cleanup_warnings"][0]["operation"] == "sandbox_destroy"
-        assert "podman rm timed out" in state["cleanup_warnings"][0]["error"]
+        assert "cleanup_warnings" not in state
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4043,7 +4043,7 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["build_status"] == "impasse"
         assert state["build_reason"] == "scope exceeds build budget"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4083,7 +4083,7 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["build_status"] == "blocked"
         assert state["build_reason"] == "NFR-008 requires an owner spec decision"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4171,7 +4171,7 @@ class TestOuterLoopConvergence:
         assert "COMMANDER wrote the harness completion marker" not in captured.err
         state = state_store.read()
         assert state["build_status"] == "timeout"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4219,7 +4219,7 @@ class TestOuterLoopConvergence:
         assert state["build_exit_code"] == 1
         assert state["provider_reset_hint"] == "9:10pm"
         assert state["provider_limit_message"] == "You've hit your session limit · resets 9:10pm"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
