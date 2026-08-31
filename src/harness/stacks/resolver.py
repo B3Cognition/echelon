@@ -5,6 +5,7 @@ from typing import Iterable
 
 from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.schema import StackDefinition, StackProvisioner, StackTool
+from harness.verification_plan import SandboxServiceSpec
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class ResolvedStacks:
     required_registries: list[str]
     context_files: list[str]
     provisioners: list[ResolvedStackProvisioner] = field(default_factory=list)
+    services: list[SandboxServiceSpec] = field(default_factory=list)
 
 
 def resolve_stacks(
@@ -48,6 +50,7 @@ def resolve_stacks(
             required_registries=[],
             context_files=[],
             provisioners=[],
+            services=[],
         )
 
     normalized_selected = _normalize_stack_ids(selected_ids)
@@ -104,6 +107,7 @@ def resolve_stacks(
     required_registries: list[str] = []
     context_files: list[str] = []
     provisioners: list[ResolvedStackProvisioner] = []
+    services: list[SandboxServiceSpec] = []
     provisioners_by_id: dict[str, StackProvisioner] = {}
 
     for stack_id in resolved_ids:
@@ -162,6 +166,15 @@ def resolve_stacks(
                     provisioner=provisioner,
                 )
             )
+            if provisioner.id == "postgres-verify":
+                services.append(
+                    SandboxServiceSpec(
+                        service_name="postgres",
+                        image="postgres:16.4-alpine",
+                        environment_names=("TEST_DATABASE_URL",),
+                        health_command=("pg_isready", "-U", "echelon", "-d", "echelon_verify"),
+                    )
+                )
 
     return ResolvedStacks(
         selected_ids=normalized_selected,
@@ -173,6 +186,7 @@ def resolve_stacks(
         required_registries=required_registries,
         context_files=context_files,
         provisioners=provisioners,
+        services=services,
     )
 
 

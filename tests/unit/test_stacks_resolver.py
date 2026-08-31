@@ -103,6 +103,25 @@ def test_resolve_no_selected_stacks_is_empty() -> None:
     assert resolved.provisioners == []
 
 
+def test_postgres_verification_provisioner_resolves_sandbox_service() -> None:
+    provisioner = StackProvisioner(
+        id="postgres-verify",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[],
+    )
+
+    resolved = resolve_stacks(
+        ["postgres"],
+        {"postgres": _stack("postgres", provides={}, provisioners=[provisioner])},
+    )
+
+    assert resolved.services[0].image == "postgres:16.4-alpine"
+    assert resolved.services[0].environment_names == ("TEST_DATABASE_URL",)
+
+
 @pytest.mark.unit
 def test_resolve_provisioners_preserves_resolution_order_and_owner() -> None:
     provisioner = StackProvisioner(
