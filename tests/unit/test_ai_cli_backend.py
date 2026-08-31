@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.error
 from dataclasses import replace
 from pathlib import Path
@@ -4220,13 +4221,32 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
         backend.run_prompt(request)
 
     command = captured["command"]
-    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
-    profile = command[2]
-    assert f'(literal "{forbidden_root}")' in profile
-    assert f'(subpath "{forbidden_root}")' in profile
-    assert f'(allow file-read* (subpath "{run_root}"))' in profile
-    assert f'(allow file-write* (literal "{write_path}"))' in profile
-    assert "codex" in command[3]
+    assert command[0].endswith("codex")
+    assert "/usr/bin/sandbox-exec" not in command
+    assert "--sandbox" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--strict-config" in command
+    assert command[command.index("--ask-for-approval") + 1] == "never"
+
+    config_overrides = [
+        command[index + 1]
+        for index, value in enumerate(command)
+        if value == "-c"
+    ]
+    assert 'default_permissions="echelon_product_plane"' in config_overrides
+    profile = next(
+        value
+        for value in config_overrides
+        if value.startswith("permissions.echelon_product_plane=")
+    )
+    parsed_profile = tomllib.loads(
+        f"profile={profile.split('=', 1)[1]}"
+    )["profile"]
+    assert 'extends=":workspace"' in profile
+    assert parsed_profile["network"] == {"enabled": True}
+    assert f'{json.dumps(str(forbidden_root))}="deny"' in profile
+    assert f'{json.dumps(str(run_root))}="read"' in profile
+    assert f'{json.dumps(str(write_path))}="write"' in profile
 
 
 def test_codex_backend_uses_native_sandbox_for_isolated_non_git_root(

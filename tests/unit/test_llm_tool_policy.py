@@ -103,6 +103,20 @@ def test_codex_command_can_request_a_specific_model() -> None:
     assert cmd[cmd.index("--model") + 1] == "gpt-5.6-terra"
 
 
+def test_codex_command_accepts_a_native_permission_profile() -> None:
+    cmd = build_llm_cli_command(
+        "codex",
+        "codex",
+        "Do the work.",
+        LlmToolPolicy(),
+        codex_permission_profile=("product_plane", '{ filesystem = "readonly" }'),
+    )
+
+    assert cmd[:5] == ["codex", "--ask-for-approval", "never", "exec", "--strict-config"]
+    assert "default_permissions=\"product_plane\"" in cmd
+    assert 'permissions.product_plane={ filesystem = "readonly" }' in cmd
+
+
 def test_opencode_prompt_command_can_request_json() -> None:
     cmd = build_llm_cli_command(
         "opencode",
