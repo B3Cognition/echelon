@@ -5819,21 +5819,27 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
     runs = project_root / "runs"
     if not runs.exists():
         return states
-    for build in sorted(runs.glob("build-*/"), reverse=True):
-        state_dir = build / "state"
-        if not state_dir.exists():
-            continue
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = _json.loads(state_file.read_text(encoding="utf-8"))
-            except Exception:
+    build_roots: list[tuple[Path, str]] = [(runs, "")]
+    for target_runs in sorted(runs.glob("targets/*/runs")):
+        build_roots.append((target_runs, target_runs.parent.name))
+    for build_root, target_id in build_roots:
+        for build in sorted(build_root.glob("build-*/"), reverse=True):
+            state_dir = build / "state"
+            if not state_dir.exists():
                 continue
-            if isinstance(data, dict):
-                data.setdefault("build_id", build.name)
-                data.setdefault("strategy_id", state_file.stem)
-                data.setdefault("state_file", str(state_file))
-                states.append(data)
-    return states
+            for state_file in sorted(state_dir.glob("*.json")):
+                try:
+                    data = _json.loads(state_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(data, dict):
+                    data.setdefault("build_id", build.name)
+                    data.setdefault("strategy_id", state_file.stem)
+                    data.setdefault("state_file", str(state_file))
+                    if target_id:
+                        data.setdefault("target_id", target_id)
+                    states.append(data)
+    return sorted(states, key=lambda state: str(state.get("build_id") or ""), reverse=True)
 
 
 def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
@@ -5922,6 +5928,12 @@ def _delivery_status_summary(
         "pr_url": str(state.get("pr_url") or ""),
         "target_branch": str(state.get("target_branch") or ""),
         "target_commit": str(state.get("target_commit") or ""),
+        "target": str(
+            state.get("target_id")
+            or state.get("target_repo")
+            or state.get("implementation_target")
+            or ""
+        ),
         "salvage_branch": str(state.get("salvage_branch") or ""),
         "salvage_commit": str(state.get("salvage_commit") or ""),
         "checkpoint_count": checkpoint_count,
@@ -5971,6 +5983,8 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
     ]
     if summary.get("spec_status"):
         fields.append(("spec status", str(summary["spec_status"])))
+    if summary.get("target"):
+        fields.append(("target", str(summary["target"])))
     if summary.get("mode"):
         fields.append(("mode", str(summary["mode"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))

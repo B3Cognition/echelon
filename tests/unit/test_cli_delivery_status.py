@@ -52,6 +52,40 @@ def _write_spec(project_root: Path) -> Path:
     return spec_dir
 
 
+def _write_target_delivery_state(project_root: Path) -> Path:
+    state_dir = (
+        project_root
+        / "runs"
+        / "targets"
+        / "browser-3d-game"
+        / "runs"
+        / "build-20260711-101500-000000"
+        / "state"
+    )
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "default.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "spec_id": "001",
+                "strategy_id": "default",
+                "status": "blocked",
+                "target_repo": "browser-3d-game",
+                "implementation_target": "sources/browser-3d-game",
+                "outer_iter": 3,
+                "inner_iter": 2,
+                "tokens_used": 3939746,
+                "termination_reason": "blocker_escalation",
+                "build_status": "blocked",
+                "build_reason": "same_failure_repeat",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return state_file
+
+
 @pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
@@ -101,3 +135,21 @@ def test_delivery_status_without_state_points_to_run(
     out = capsys.readouterr().out
     assert "No delivery runs found" in out
     assert "echelon delivery run 001" in out
+
+
+@pytest.mark.unit
+def test_delivery_status_discovers_target_delivery_state(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    state_file = _write_target_delivery_state(tmp_path)
+    _write_spec(tmp_path)
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "browser-3d-game" in out
+    assert "blocker_escalation" in out
+    assert str(state_file) in out
