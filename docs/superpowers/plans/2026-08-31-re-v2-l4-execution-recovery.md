@@ -51,12 +51,12 @@
 - certification and acceptance constructors that create `AcceptedExhaustiveSliceV1` only from controller-validated PASS;
 - append-only candidate, verifier, certification, and acceptance ledgers.
 
-- [ ] Write failing durability-order and independent-context tests.
-- [ ] Run RED.
-- [ ] Implement no-clobber captures, parsing seams, ledger prefix authentication, and controller receipts.
-- [ ] Inject faults before/after capture, parse, object write, certification, and acceptance.
-- [ ] Run GREEN with existing execution-kernel regressions.
-- [ ] Commit `feat(re): persist independent L4 verification`.
+- [x] Write failing durability-order and independent-context tests.
+- [x] Run RED.
+- [x] Implement no-clobber captures, parsing seams, ledger prefix authentication, and controller receipts.
+- [x] Inject faults before/after capture, parse, object write, certification, and acceptance.
+- [x] Run GREEN with existing execution-kernel regressions.
+- [x] Commit `feat(re): persist independent L4 verification`.
 
 ### Task 3: Enforce Paired Reservations, Attempts, and Plateau
 
