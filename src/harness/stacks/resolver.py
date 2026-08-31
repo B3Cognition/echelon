@@ -151,18 +151,17 @@ def resolve_stacks(
             existing = provisioners_by_id.get(provisioner.id)
             if existing is None:
                 provisioners_by_id[provisioner.id] = provisioner
-                provisioners.append(
-                    ResolvedStackProvisioner(
-                        owner_stack_id=stack_id,
-                        provisioner=provisioner,
-                    )
-                )
-                continue
-            if existing != provisioner:
+            elif existing != provisioner:
                 raise StackConflictError(
                     f"Stack provisioner conflict for {provisioner.id}: "
                     f"definitions do not match between resolved stacks"
                 )
+            provisioners.append(
+                ResolvedStackProvisioner(
+                    owner_stack_id=stack_id,
+                    provisioner=provisioner,
+                )
+            )
 
     return ResolvedStacks(
         selected_ids=normalized_selected,

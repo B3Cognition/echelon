@@ -169,6 +169,39 @@ def test_conflicting_provisioner_ids_fail() -> None:
 
 
 @pytest.mark.unit
+def test_equal_provisioner_ids_preserve_each_declaring_stack() -> None:
+    shared = StackProvisioner(
+        id="shared",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[
+            StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL")
+        ],
+    )
+    definitions = {
+        "a": _stack(
+            "a",
+            provides={"data.database": "postgres"},
+            provisioners=[shared],
+        ),
+        "b": _stack(
+            "b",
+            provides={"data.migrations": "checked-in"},
+            provisioners=[shared],
+        ),
+    }
+
+    resolved = resolve_stacks(["a", "b"], definitions)
+
+    assert [(item.owner_stack_id, item.provisioner.id) for item in resolved.provisioners] == [
+        ("a", "shared"),
+        ("b", "shared"),
+    ]
+
+
+@pytest.mark.unit
 def test_resolve_implied_stack() -> None:
     definitions = {
         "stark": _stack(
