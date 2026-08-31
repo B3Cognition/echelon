@@ -451,60 +451,39 @@ def certify_and_accept(
     """Mint accepted L4 authority only from a closed candidate and independent PASS."""
     if verification.verdict != "PASS":
         raise Protocol28ExecutionError("L4 acceptance requires a controller-validated PASS")
-    try:
-        raw_candidate = parse_captured_result(
-            object_store, producer.capture, decode_provider_result_object
-        )
-    except Protocol28ExecutionError as exc:
-        raise Protocol28ExecutionError(
-            f"producer capture does not contain a valid candidate: {exc}"
-        ) from exc
-    if raw_candidate != candidate.to_json_dict():
-        raise Protocol28ExecutionError(
-            "producer capture does not contain the candidate presented for acceptance"
-        )
-    try:
-        raw_verification = parse_captured_result(
-            object_store, verifier.capture, decode_provider_result_object
-        )
-    except Protocol28ExecutionError as exc:
-        raise Protocol28ExecutionError(
-            f"verifier capture does not contain a valid verification: {exc}"
-        ) from exc
-    if raw_verification != verification.to_json_dict():
-        raise Protocol28ExecutionError(
-            "verifier capture does not contain the verification presented for acceptance"
-        )
-    validated_candidate = validate_candidate(
-        slice_spec, plan_entry, evidence_catalog, raw_candidate, policy
+    validated_candidate, candidate_receipt = record_candidate_result(
+        object_store,
+        ledger,
+        slice_spec,
+        plan_entry,
+        evidence_catalog,
+        policy,
+        producer,
     )
-    validated_verification = validate_verification(
-        slice_spec, plan_entry, validated_candidate, raw_verification
+    validated_verification, verification_receipt = record_verification_result(
+        object_store,
+        ledger,
+        slice_spec,
+        plan_entry,
+        validated_candidate,
+        verifier,
     )
+    if validated_candidate != candidate or validated_verification != verification:
+        raise Protocol28ExecutionError(
+            "captured result differs from authority presented for acceptance"
+        )
     _validate_independent_executions(
         slice_spec, plan_entry, validated_candidate, producer, verifier
     )
 
     if fault is not None:
         fault("before_candidate_and_verification_objects")
-    candidate_hash = object_store.put_blob(canonical_json_bytes(validated_candidate.to_json_dict()))
-    verification_hash = object_store.put_blob(canonical_json_bytes(validated_verification.to_json_dict()))
+    candidate_hash = validated_candidate.identity
+    verification_hash = validated_verification.identity
     if fault is not None:
         fault("candidate_and_verification_objects_durable")
 
-    candidate_receipt = L4CandidateReceiptV1(
-        1, slice_spec.identity, plan_entry.identity, candidate_hash, producer.capture.identity
-    )
     ledger.record_candidate(candidate_receipt)
-    verification_receipt = L4VerificationReceiptV1(
-        1,
-        slice_spec.identity,
-        plan_entry.identity,
-        candidate_hash,
-        verification_hash,
-        verifier.capture.identity,
-        "PASS",
-    )
     ledger.record_verification(verification_receipt)
     if fault is not None:
         fault("candidate_and_verification_recorded")
@@ -577,6 +556,98 @@ def certify_and_accept(
     if fault is not None:
         fault("accepted_slice_recorded")
     return accepted
+
+
+def record_candidate_result(
+    object_store: ObjectStore,
+    ledger: _L4Ledger,
+    slice_spec: SliceSpecV1,
+    plan_entry: SlicePlanEntryV1,
+    evidence_catalog: SnapshotEvidenceCatalogV1,
+    policy: ExhaustivePolicyV1,
+    producer: PersistedL4ExecutionV1,
+) -> tuple[ExhaustiveEvidenceSliceV1, L4CandidateReceiptV1]:
+    """Validate and persist a captured producer result before verification."""
+    if (
+        producer.envelope.role != "producer"
+        or producer.capture.result_kind != "provider_result"
+        or producer.envelope.slice_spec_id != slice_spec.identity
+        or producer.envelope.plan_entry_id != plan_entry.identity
+        or producer.envelope.agent_contract_hash != plan_entry.producer_contract_hash
+    ):
+        raise Protocol28ExecutionError("producer capture does not match frozen slice authority")
+    try:
+        raw = parse_captured_result(
+            object_store, producer.capture, decode_provider_result_object
+        )
+        candidate = validate_candidate(
+            slice_spec, plan_entry, evidence_catalog, raw, policy
+        )
+    except (Protocol28ExecutionError, Protocol22SchemaError) as exc:
+        raise Protocol28ExecutionError(
+            f"producer capture does not contain a valid candidate: {exc}"
+        ) from exc
+    candidate_hash = object_store.put_blob(
+        canonical_json_bytes(candidate.to_json_dict())
+    )
+    if candidate_hash != candidate.identity:
+        raise Protocol28ExecutionError("candidate object identity mismatch")
+    receipt = L4CandidateReceiptV1(
+        1,
+        slice_spec.identity,
+        plan_entry.identity,
+        candidate.identity,
+        producer.capture.identity,
+    )
+    ledger.record_candidate(receipt)
+    return candidate, receipt
+
+
+def record_verification_result(
+    object_store: ObjectStore,
+    ledger: _L4Ledger,
+    slice_spec: SliceSpecV1,
+    plan_entry: SlicePlanEntryV1,
+    candidate: ExhaustiveEvidenceSliceV1,
+    verifier: PersistedL4ExecutionV1,
+) -> tuple[ExhaustiveVerificationV1, L4VerificationReceiptV1]:
+    """Validate and persist one captured PASS or REPAIR verifier result."""
+    if (
+        verifier.envelope.role != "verifier"
+        or verifier.capture.result_kind != "provider_result"
+        or verifier.envelope.slice_spec_id != slice_spec.identity
+        or verifier.envelope.plan_entry_id != plan_entry.identity
+        or verifier.envelope.agent_contract_hash != plan_entry.verifier_contract_hash
+        or verifier.envelope.candidate_id != candidate.identity
+    ):
+        raise Protocol28ExecutionError("verifier capture does not match frozen candidate authority")
+    try:
+        raw = parse_captured_result(
+            object_store, verifier.capture, decode_provider_result_object
+        )
+        verification = validate_verification(
+            slice_spec, plan_entry, candidate, raw
+        )
+    except (Protocol28ExecutionError, Protocol22SchemaError) as exc:
+        raise Protocol28ExecutionError(
+            f"verifier capture does not contain a valid verification: {exc}"
+        ) from exc
+    verification_hash = object_store.put_blob(
+        canonical_json_bytes(verification.to_json_dict())
+    )
+    if verification_hash != verification.identity:
+        raise Protocol28ExecutionError("verification object identity mismatch")
+    receipt = L4VerificationReceiptV1(
+        1,
+        slice_spec.identity,
+        plan_entry.identity,
+        candidate.identity,
+        verification.identity,
+        verifier.capture.identity,
+        verification.verdict,
+    )
+    ledger.record_verification(receipt)
+    return verification, receipt
 
 
 def _validate_independent_executions(
@@ -660,4 +731,6 @@ __all__ = (
     "decode_provider_result_object",
     "parse_captured_result",
     "persist_provider_result",
+    "record_candidate_result",
+    "record_verification_result",
 )

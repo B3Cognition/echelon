@@ -61,13 +61,13 @@
 - `find_exact_protocol_28_child(workspace_root, request_id)` and `run_protocol_28_exhaustive(run_dir, provider_factory)`.
 - `continue_protocol_28_run(run_dir, token_limit, active_ms_limit, provider_factory)` appends only valid resource authority and resumes unresolved work.
 
-- [ ] Write failing manifest-last, exact-child reuse, dirty-source, minimum paired reservation, adopted/generated execution, partial-budget resume, complete zero-call replay, and post-activation source-unavailable tests.
-- [ ] Run RED on the new lifecycle/live tests.
-- [ ] Implement authority assembly from authenticated protocol-2.5/2.6 parents, Prosaic analyst/verifier loading, shared CLI executor contracts, private staging, V2 checkpoint adoption, and active-pointer update after publication.
-- [ ] Drive the existing scheduler/execution/ledger/controller until accepted roots or a truthful terminal blocker; never reopen accepted siblings.
-- [ ] Recover raw captures, parsed candidates, verification, acceptance, roots, projection, and materialization seams before any provider dispatch.
-- [ ] Run GREEN with all protocol-2.8 unit tests and protocol-2.5 live/recovery regressions.
-- [ ] Commit `feat(re): run exhaustive L4 children`.
+- [x] Write failing manifest-last, exact-child reuse, dirty-source, minimum paired reservation, adopted/generated execution, partial-budget resume, complete zero-call replay, and post-activation source-unavailable tests.
+- [x] Run RED on the new lifecycle/live tests.
+- [x] Implement authority assembly from authenticated protocol-2.5/2.6 parents, Prosaic analyst/verifier loading, shared CLI executor contracts, private staging, V2 checkpoint adoption, and active-pointer update after publication.
+- [x] Drive the existing scheduler/execution/ledger/controller until accepted roots or a truthful terminal blocker; never reopen accepted siblings.
+- [x] Recover raw captures, parsed candidates, verification, acceptance, roots, and projection seams before any provider dispatch; materialization remains Task 5.
+- [x] Run GREEN with all protocol-2.8 unit tests and protocol-2.6 recovery regressions.
+- [x] Commit `feat(re): run exhaustive L4 children`.
 
 ### Task 3: Orchestrate L3 Prerequisites and Zero-Call Closure
 

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_28.policies import (
     DOMAIN_CATEGORIES,
     SOURCE_CATEGORIES,
@@ -37,6 +38,20 @@ def test_initial_policy_rejects_mutated_fixed_attempt_contract() -> None:
 
     with pytest.raises(Protocol28PolicyError, match="producer_attempt_limit"):
         replace(policy, producer_attempt_limit=4)
+
+
+@pytest.mark.unit
+def test_initial_policy_can_bind_installed_role_contracts() -> None:
+    producer = content_digest(b"installed-producer")
+    verifier = content_digest(b"installed-verifier")
+
+    policy = build_initial_exhaustive_policy(
+        producer_contract_hash=producer,
+        verifier_contract_hash=verifier,
+    )
+
+    assert policy.producer_contract_hash == producer
+    assert policy.verifier_contract_hash == verifier
 
 
 @pytest.mark.unit

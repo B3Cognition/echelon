@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fcntl
+import json
+import os
+from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Mapping
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.budget import MAX_ACCOUNTING_VALUE, conservative_charge
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.schema import digest_value, safe_id
@@ -445,6 +449,7 @@ class L4ResourceLedger:
         self._records.append(record)
         return record
 
+
     def observe(
         self,
         dispatch_id: str,
@@ -707,6 +712,205 @@ class L4ResourceLedger:
             raise Protocol28BudgetError("conflicting adoption accounting")
         self._records.append(record)
         return record
+
+
+class L4ResourceStore(L4ResourceLedger):
+    """Append-only durable facade for protocol-2.8 resource authority."""
+
+    def __init__(self, path: Path, policy: ExhaustiveBudgetPolicyV1) -> None:
+        self.path = Path(path)
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
+        records = self._read_records() if self.path.exists() else ()
+        replayed = L4ResourceLedger.from_records(policy, records)
+        super().__init__(policy)
+        self._records.extend(replayed.records)
+
+    def _persist_new(self, before: int) -> None:
+        if len(self._records) == before:
+            return
+        if len(self._records) != before + 1:
+            raise Protocol28BudgetError("resource store appends exactly one record")
+        parent = self.path.parent
+        if parent.is_symlink() or not parent.is_dir() or self.path.is_symlink():
+            raise Protocol28BudgetError("resource store path is unsafe")
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        lock_fd = os.open(self.lock_path, flags, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            disk = self._read_records() if self.path.exists() else ()
+            if disk != tuple(self._records[:before]):
+                self._records[:] = list(disk)
+                raise Protocol28BudgetError("resource store prefix changed concurrently")
+            existed = self.path.exists()
+            fd = os.open(
+                self.path,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_APPEND
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                payload = canonical_json_bytes(self._records[-1].to_json_dict())
+                offset = 0
+                while offset < len(payload):
+                    offset += os.write(fd, payload[offset:])
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            if not existed:
+                directory = os.open(
+                    parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                )
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+    def _mutation(self, operation, *args, **kwargs):  # type: ignore[no-untyped-def]
+        before = len(self._records)
+        result = operation(*args, **kwargs)
+        try:
+            self._persist_new(before)
+        except Exception:
+            if len(self._records) > before:
+                del self._records[before:]
+            raise
+        return result
+
+    def commit_pair(self, preview, *, producer_dispatch_id: str, verifier_dispatch_id: str):  # type: ignore[no-untyped-def]
+        return self._mutation(
+            super().commit_pair,
+            preview,
+            producer_dispatch_id=producer_dispatch_id,
+            verifier_dispatch_id=verifier_dispatch_id,
+        )
+
+    def observe(self, dispatch_id: str, **kwargs):  # type: ignore[no-untyped-def]
+        return self._mutation(super().observe, dispatch_id, **kwargs)
+
+    def abandon(self, dispatch_id: str):  # type: ignore[no-untyped-def]
+        return self._mutation(super().abandon, dispatch_id)
+
+    def commit_verifier_retry(self, preview, *, dispatch_id: str):  # type: ignore[no-untyped-def]
+        return self._mutation(
+            super().commit_verifier_retry, preview, dispatch_id=dispatch_id
+        )
+
+    def release_verifier(self, pair_id: str, *, reason):  # type: ignore[no-untyped-def]
+        return self._mutation(super().release_verifier, pair_id, reason=reason)
+
+    def authorize(self, dimension, new_limit: int):  # type: ignore[no-untyped-def]
+        return self._mutation(super().authorize, dimension, new_limit)
+
+    def record_adoption(self, slice_spec_id: str, **kwargs):  # type: ignore[no-untyped-def]
+        return self._mutation(super().record_adoption, slice_spec_id, **kwargs)
+
+    def _read_records(self) -> tuple[ResourceRecordV1, ...]:
+        if self.path.is_symlink() or not self.path.is_file():
+            raise Protocol28BudgetError("resource store path is unsafe")
+        payload = self.path.read_bytes()
+        if not payload:
+            return ()
+        if b"\r" in payload or not payload.endswith(b"\n"):
+            raise Protocol28BudgetError("resource store has a partial final record")
+        records: list[ResourceRecordV1] = []
+        for index, line in enumerate(payload[:-1].split(b"\n"), start=1):
+            try:
+                raw = json.loads(line)
+                record = _decode_resource_record(raw)
+            except (
+                json.JSONDecodeError,
+                Protocol28BudgetError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                raise Protocol28BudgetError(
+                    f"resource record {index} is invalid: {exc}"
+                ) from exc
+            if canonical_json_bytes(record.to_json_dict()) != line + b"\n":
+                raise Protocol28BudgetError(
+                    f"resource record {index} is not canonical JSON"
+                )
+            records.append(record)
+        return tuple(records)
+
+
+def _decode_reservation(value: object) -> DispatchReservationV1:
+    if not isinstance(value, dict) or set(value) != {
+        "active_ms",
+        "billable_tokens",
+        "initial_input_tokens",
+    }:
+        raise Protocol28BudgetError("resource reservation is invalid")
+    return DispatchReservationV1(
+        value["initial_input_tokens"],
+        value["billable_tokens"],
+        value["active_ms"],
+    )
+
+
+def _decode_resource_record(value: object) -> ResourceRecordV1:
+    if not isinstance(value, dict):
+        raise Protocol28BudgetError("resource record must be an object")
+    kind = value.get("type")
+    if kind is None and "pair_work_id" in value:
+        kind = "paired_reservation"
+    if kind is None and "retry_work_id" in value:
+        kind = "verifier_retry_reservation"
+    if kind == "observation" and set(value) == {
+        "type", "dispatch_id", "token_status", "billable_tokens",
+        "active_status", "active_ms",
+    }:
+        return ResourceObservationV1(
+            value["dispatch_id"], value["token_status"], value["billable_tokens"],
+            value["active_status"], value["active_ms"],
+        )
+    if kind == "abandonment" and set(value) == {"type", "dispatch_id"}:
+        return ResourceAbandonmentV1(value["dispatch_id"])
+    if kind == "verifier_release" and set(value) == {"type", "pair_id", "reason"}:
+        return VerifierReleaseV1(value["pair_id"], value["reason"])
+    if kind == "authorization" and set(value) == {
+        "type", "dimension", "old_value", "new_value",
+    }:
+        return BudgetAuthorizationV1(
+            value["dimension"], value["old_value"], value["new_value"]
+        )
+    if kind == "adoption" and set(value) == {
+        "type", "slice_spec_id", "producer_reservation", "verifier_reservation",
+    }:
+        return AdoptionAccountingV1(
+            value["slice_spec_id"],
+            _decode_reservation(value["producer_reservation"]),
+            _decode_reservation(value["verifier_reservation"]),
+        )
+    if kind == "paired_reservation" and set(value) == {
+        "schema_version", "pair_work_id", "slice_spec_id",
+        "producer_attempt_number", "producer_dispatch_id", "verifier_dispatch_id",
+        "producer_reservation", "verifier_reservation",
+    }:
+        return PairedReservationCommitV1(
+            value["schema_version"], value["pair_work_id"], value["slice_spec_id"],
+            value["producer_attempt_number"], value["producer_dispatch_id"],
+            value["verifier_dispatch_id"],
+            _decode_reservation(value["producer_reservation"]),
+            _decode_reservation(value["verifier_reservation"]),
+        )
+    if kind == "verifier_retry_reservation" and set(value) == {
+        "schema_version", "retry_work_id", "slice_spec_id",
+        "producer_attempt_number", "dispatch_id", "verifier_reservation",
+    }:
+        return VerifierRetryReservationV1(
+            value["schema_version"], value["retry_work_id"], value["slice_spec_id"],
+            value["producer_attempt_number"], value["dispatch_id"],
+            _decode_reservation(value["verifier_reservation"]),
+        )
+    raise Protocol28BudgetError(f"unsupported resource record type: {kind}")
 
 
 def _evaluate(
@@ -1008,6 +1212,7 @@ __all__ = (
     "BudgetAuthorizationV1",
     "L4ResourceDecisionV1",
     "L4ResourceLedger",
+    "L4ResourceStore",
     "PairedReservationCommitV1",
     "PairedReservationPreviewV1",
     "Protocol28BudgetError",

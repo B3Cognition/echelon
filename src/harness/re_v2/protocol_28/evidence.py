@@ -14,7 +14,6 @@ from harness.re_v2.protocol_22.evidence import (
     Protocol22EvidenceError,
 )
 from harness.re_v2.protocol_22.partition import (
-    DomainDescriptorV1,
     FileRecordV1,
     SourceDescriptorV1,
     WorkspacePartitionCatalogV1,

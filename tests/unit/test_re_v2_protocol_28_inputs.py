@@ -16,6 +16,10 @@ from harness.re_v2.protocol_28.inputs import (
     stage_closure_inputs,
     stage_exhaustive_inputs,
 )
+from harness.re_v2.protocol_28.executors import (
+    build_l4_executor_catalog,
+    canonical_exhaustive_response_schema_bytes,
+)
 from harness.re_v2.protocol_28.model import (
     ExhaustiveBudgetPolicyV1,
     ExhaustiveRequestV1,
@@ -43,7 +47,6 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
     opaque_payloads = (
         b"partition-catalog",
         b"artifact-policy",
-        b"executor-catalog",
         b"attempt-policy",
         b"lower",
         b"l3-manifest",
@@ -62,10 +65,20 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
         b"file-record",
         b"subject-one",
         b"subject-two",
+        b"shared-cli",
+        b"re-v2-l4-producer-contract-v1",
+        b"re-v2-l4-verifier-contract-v1",
+        canonical_exhaustive_response_schema_bytes("producer"),
+        canonical_exhaustive_response_schema_bytes("verifier"),
     )
     from harness.re_v2.canonical import content_digest
 
     authority_objects = {content_digest(payload): payload for payload in opaque_payloads}
+    executors = build_l4_executor_catalog(
+        inherited_executor_contract_hash=content_digest(b"shared-cli"),
+        producer_agent_contract_hash=policy.producer_contract_hash,
+        verifier_agent_contract_hash=policy.verifier_contract_hash,
+    )
     request = ExhaustiveRequestV1(
         1,
         selection.identity,
@@ -73,7 +86,7 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
         l3.identity,
         evidence.identity,
         policy.identity,
-        content_digest(b"executor-catalog"),
+        executors.identity,
         parent.source_snapshot_id,
         parent.partition_manifest_id,
     )
@@ -106,7 +119,7 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
         exhaustive_request=request,
         exhaustive_plan_id=plan.identity,
         exhaustive_policy_catalog_id=policy.identity,
-        executor_catalog_id=content_digest(b"executor-catalog"),
+        executor_catalog_id=executors.identity,
         attempt_policy_id=content_digest(b"attempt-policy"),
         budget_policy=ExhaustiveBudgetPolicyV1(1, 400_000, 600_000, 3, 0, 1),
     )
@@ -117,6 +130,7 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
         snapshot_evidence_catalog=evidence,
         exhaustive_subject_catalog=subjects,
         exhaustive_policy=policy,
+        executor_catalog=executors,
         exhaustive_plan=plan,
         authority_objects=authority_objects,
     )

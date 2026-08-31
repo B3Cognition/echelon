@@ -34,6 +34,7 @@ from harness.re_v2.protocol_28.evidence import (
     SnapshotEvidenceCatalogV1,
     read_staged_shard_bytes,
 )
+from harness.re_v2.protocol_28.executors import L4ExecutorCatalogV1
 from harness.re_v2.protocol_28.graph import (
     AcceptedExhaustiveSliceV1,
     ExhaustiveVerificationReceiptV1,
@@ -59,6 +60,7 @@ _INPUT_FILES = {
     "snapshot_evidence_catalog": "snapshot-evidence-catalog.json",
     "exhaustive_subject_catalog": "exhaustive-subject-catalog.json",
     "exhaustive_policy": "exhaustive-policy.json",
+    "executor_catalog": "l4-executor-catalog.json",
     "exhaustive_plan": "exhaustive-plan.json",
     "exhaustive_request": "exhaustive-request.json",
     "closure_parent_bundle": "closure-parent-bundle.json",
@@ -99,6 +101,7 @@ class Protocol28CreationInputs:
     snapshot_evidence_catalog: SnapshotEvidenceCatalogV1
     exhaustive_subject_catalog: ExhaustiveSubjectCatalogV1
     exhaustive_policy: ExhaustivePolicyV1
+    executor_catalog: L4ExecutorCatalogV1
     exhaustive_plan: ExhaustivePlanV1
     authority_objects: Mapping[str, bytes]
 
@@ -110,6 +113,7 @@ class Protocol28CreationInputs:
             (self.snapshot_evidence_catalog, SnapshotEvidenceCatalogV1, "snapshot evidence"),
             (self.exhaustive_subject_catalog, ExhaustiveSubjectCatalogV1, "subject catalog"),
             (self.exhaustive_policy, ExhaustivePolicyV1, "exhaustive policy"),
+            (self.executor_catalog, L4ExecutorCatalogV1, "executor catalog"),
             (self.exhaustive_plan, ExhaustivePlanV1, "exhaustive plan"),
         )
         for value, expected, label in typed:
@@ -138,6 +142,7 @@ class ValidatedProtocol28Inputs:
     snapshot_evidence_catalog: SnapshotEvidenceCatalogV1
     exhaustive_subject_catalog: ExhaustiveSubjectCatalogV1
     exhaustive_policy: ExhaustivePolicyV1
+    executor_catalog: L4ExecutorCatalogV1
     exhaustive_plan: ExhaustivePlanV1
     authority_objects: Mapping[str, bytes]
 
@@ -227,6 +232,7 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
     evidence = inputs.snapshot_evidence_catalog
     subjects = inputs.exhaustive_subject_catalog
     policy = inputs.exhaustive_policy
+    executors = inputs.executor_catalog
     plan = inputs.exhaustive_plan
     expected = (
         (manifest.source_snapshot_id, parent.source_snapshot_id),
@@ -238,12 +244,15 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
         (manifest.l3_target_projection_catalog_id, l3.identity),
         (manifest.snapshot_evidence_catalog_id, evidence.identity),
         (manifest.exhaustive_policy_catalog_id, policy.identity),
+        (manifest.executor_catalog_id, executors.identity),
         (manifest.exhaustive_plan_id, plan.identity),
         (plan.parent_authority_bundle_id, parent.identity),
         (plan.l3_projection_catalog_id, l3.identity),
         (plan.evidence_catalog_id, evidence.identity),
         (plan.subject_catalog_id, subjects.identity),
         (plan.policy_id, policy.identity),
+        (policy.producer_contract_hash, executors.entry("producer").agent_contract_hash),
+        (policy.verifier_contract_hash, executors.entry("verifier").agent_contract_hash),
         (l3.source_snapshot_id, parent.source_snapshot_id),
         (l3.partition_manifest_id, parent.partition_manifest_id),
         (l3.selection_id, parent.selection_id),
@@ -259,6 +268,7 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
         or request.l3_target_projection_catalog_id != l3.identity
         or request.snapshot_evidence_catalog_id != evidence.identity
         or request.exhaustive_policy_catalog_id != policy.identity
+        or request.executor_catalog_id != executors.identity
     ):
         raise Protocol28InputError("exhaustive request does not authenticate staged inputs")
 
@@ -266,12 +276,30 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
 def _required_opaque_ids(
     inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
 ) -> set[str]:
-    manifest = inputs.manifest
-    parent = inputs.parent_authority_bundle
+    return set(
+        protocol_28_required_authority_ids(
+            inputs.manifest,
+            inputs.parent_authority_bundle,
+            inputs.l3_projection_catalog,
+            inputs.snapshot_evidence_catalog,
+            inputs.exhaustive_subject_catalog,
+            inputs.executor_catalog,
+        )
+    )
+
+
+def protocol_28_required_authority_ids(
+    manifest: ExhaustiveRunManifestV7,
+    parent: ParentAuthorityBundleV3,
+    l3: L3TargetProjectionCatalogV1,
+    evidence: SnapshotEvidenceCatalogV1,
+    subjects: ExhaustiveSubjectCatalogV1,
+    executors: L4ExecutorCatalogV1,
+) -> frozenset[str]:
+    """Return the exact opaque object closure before constructing input authority."""
     required = {
         manifest.workspace_partition_catalog_id,
         manifest.inherited_artifact_policy_catalog_id,
-        manifest.executor_catalog_id,
         manifest.attempt_policy_id,
         manifest.partition_manifest_id,
         manifest.lineage.lineage_root_manifest_hash,
@@ -280,7 +308,7 @@ def _required_opaque_ids(
         parent.frozen_epoch_id,
         *parent.lower_l0_l2_authority_ids,
     }
-    for projection in inputs.l3_projection_catalog.projections:
+    for projection in l3.projections:
         required.update(
             {
                 projection.candidate_authority_hash,
@@ -293,26 +321,43 @@ def _required_opaque_ids(
             }
         )
     required.update(
-        item.epoch_target_entry_hash for item in inputs.l3_projection_catalog.memberships
+        item.epoch_target_entry_hash for item in l3.memberships
     )
-    required.add(inputs.snapshot_evidence_catalog.policy_id)
-    for projection in inputs.snapshot_evidence_catalog.projections:
+    required.add(evidence.policy_id)
+    for executor in executors.entries:
+        required.update(
+            {
+                executor.inherited_executor_contract_hash,
+                executor.agent_contract_hash,
+                executor.response_schema_hash,
+            }
+        )
+    for projection in evidence.projections:
         required.add(projection.target_partition_id)
         required.update(projection.membership_proof_ids)
     required.update(
         item.file_record_hash
         for item in (
-            *inputs.snapshot_evidence_catalog.shards,
-            *inputs.snapshot_evidence_catalog.empty_receipts,
-            *inputs.snapshot_evidence_catalog.nontext_dispositions,
+            *evidence.shards,
+            *evidence.empty_receipts,
+            *evidence.nontext_dispositions,
         )
     )
     required.update(
         lower_id
-        for subject in inputs.exhaustive_subject_catalog.subjects
+        for subject in subjects.subjects
         for lower_id in subject.lower_authority_ids
     )
-    return required
+    return frozenset(required)
+
+
+def required_protocol_28_authority_ids(
+    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+) -> frozenset[str]:
+    """Expose the exact opaque closure needed by a self-contained L4 child."""
+    if not isinstance(inputs, (Protocol28CreationInputs, ValidatedProtocol28Inputs)):
+        raise Protocol28InputError("protocol-2.8 authority closure input is invalid")
+    return frozenset(_required_opaque_ids(inputs))
 
 
 def _canonical_authorities(
@@ -324,6 +369,7 @@ def _canonical_authorities(
         (inputs.snapshot_evidence_catalog.identity, inputs.snapshot_evidence_catalog),
         (inputs.exhaustive_subject_catalog.identity, inputs.exhaustive_subject_catalog),
         (inputs.exhaustive_policy.identity, inputs.exhaustive_policy),
+        (inputs.executor_catalog.identity, inputs.executor_catalog),
         (inputs.exhaustive_plan.identity, inputs.exhaustive_plan),
         (inputs.manifest.exhaustive_request.identity, inputs.manifest.exhaustive_request),
         (inputs.manifest.selection.identity, inputs.manifest.selection),
@@ -386,6 +432,7 @@ def stage_exhaustive_inputs(
             "snapshot_evidence_catalog": inputs.snapshot_evidence_catalog,
             "exhaustive_subject_catalog": inputs.exhaustive_subject_catalog,
             "exhaustive_policy": inputs.exhaustive_policy,
+            "executor_catalog": inputs.executor_catalog,
             "exhaustive_plan": inputs.exhaustive_plan,
             "exhaustive_request": inputs.manifest.exhaustive_request,
         }
@@ -558,13 +605,16 @@ def _load_staged(
     evidence = _read_input(paths, "snapshot_evidence_catalog", SnapshotEvidenceCatalogV1.from_json_dict)
     subjects = _read_input(paths, "exhaustive_subject_catalog", ExhaustiveSubjectCatalogV1.from_json_dict)
     policy = _read_input(paths, "exhaustive_policy", ExhaustivePolicyV1.from_json_dict)
+    executors = _read_input(
+        paths, "executor_catalog", L4ExecutorCatalogV1.from_json_dict
+    )
     plan = _read_input(paths, "exhaustive_plan", ExhaustivePlanV1.from_json_dict)
     request = _read_input(paths, "exhaustive_request", type(manifest.exhaustive_request).from_json_dict)
     if request != manifest.exhaustive_request:
         raise Protocol28InputError("staged exhaustive request differs from manifest")
     store = ObjectStore(paths.objects)
     preliminary = ValidatedProtocol28Inputs(
-        manifest, parent, l3, evidence, subjects, policy, plan, {}
+        manifest, parent, l3, evidence, subjects, policy, executors, plan, {}
     )
     for object_hash, _authority in _canonical_authorities(preliminary):
         try:
@@ -585,7 +635,7 @@ def _load_staged(
         except (ReV2LedgerError, Protocol22SchemaError) as exc:
             raise Protocol28InputError(f"invalid snapshot evidence object: {exc}") from exc
     return ValidatedProtocol28Inputs(
-        manifest, parent, l3, evidence, subjects, policy, plan, opaque
+        manifest, parent, l3, evidence, subjects, policy, executors, plan, opaque
     )
 
 

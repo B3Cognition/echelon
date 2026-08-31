@@ -161,7 +161,11 @@ class ExhaustivePolicyV1:
         )
 
 
-def build_initial_exhaustive_policy() -> ExhaustivePolicyV1:
+def build_initial_exhaustive_policy(
+    *,
+    producer_contract_hash: str | None = None,
+    verifier_contract_hash: str | None = None,
+) -> ExhaustivePolicyV1:
     """Return the immutable first-release exhaustive policy."""
     return ExhaustivePolicyV1(
         schema_version=1,
@@ -180,8 +184,16 @@ def build_initial_exhaustive_policy() -> ExhaustivePolicyV1:
         producer_contract_retry_limit=0,
         verifier_contract_retry_limit=1,
         identical_outcome_early_stop=2,
-        producer_contract_hash=content_digest(b"re-v2-l4-producer-contract-v1"),
-        verifier_contract_hash=content_digest(b"re-v2-l4-verifier-contract-v1"),
+        producer_contract_hash=(
+            producer_contract_hash
+            if producer_contract_hash is not None
+            else content_digest(b"re-v2-l4-producer-contract-v1")
+        ),
+        verifier_contract_hash=(
+            verifier_contract_hash
+            if verifier_contract_hash is not None
+            else content_digest(b"re-v2-l4-verifier-contract-v1")
+        ),
         domain_categories=DOMAIN_CATEGORIES,
         source_categories=SOURCE_CATEGORIES,
     )

@@ -109,6 +109,72 @@ def test_event_protocol_is_closed_and_content_free(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_captured_verifier_contract_failure_closes_dispatch(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    entry_id = digest("entry")
+    slice_id = digest("slice")
+    output_id = digest("output")
+    _activate(store, plan_entries=(entry_id,))
+    store.append(
+        "slice_realized",
+        {
+            "output_artifact_key_id": output_id,
+            "plan_entry_id": entry_id,
+            "slice_spec_id": slice_id,
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "dispatch_reserved",
+        {
+            "dispatch_id": "verifier-1",
+            "output_artifact_key_id": output_id,
+            "reservation_id": digest("reservation"),
+            "role": "verifier",
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "dispatch_leased",
+        {
+            "dispatch_id": "verifier-1",
+            "lease_id": digest("lease"),
+            "owner_id": "controller",
+            "role": "verifier",
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "provider_started",
+        {"dispatch_id": "verifier-1", "role": "verifier"},
+        occurred_at=NOW,
+    )
+    store.append(
+        "provider_capture_recorded",
+        {
+            "dispatch_id": "verifier-1",
+            "execution_capture_id": digest("capture"),
+            "raw_result_id": digest("raw"),
+            "role": "verifier",
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "verification_rejected",
+        {
+            "dispatch_id": "verifier-1",
+            "output_artifact_key_id": output_id,
+            "reason_code": "malformed-result-contract",
+        },
+        occurred_at=NOW,
+    )
+
+    projection = project_protocol_28(store.replay())
+
+    assert projection.active_dispatch_ids == ()
+
+
+@pytest.mark.unit
 def test_replay_enforces_exact_root_order_and_terminal_state(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _plan_entry, output_key_id, accepted_id = _accept_one(store)

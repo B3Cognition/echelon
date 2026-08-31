@@ -122,6 +122,30 @@ class Protocol28Controller:
     def record_materialization(self, root_id: str) -> EventRecord:
         return self.append_once("materialization_completed", {"root_id": root_id})
 
+    def block_run(
+        self,
+        blocker_kind: Literal["resource", "execution", "closure_integrity"],
+        reason_code: str,
+    ) -> EventRecord:
+        """Record a repeatable blocker without suppressing a later recurrence."""
+        events = self.event_store.replay()
+        projection = project_protocol_28(events)
+        payload = {"blocker_kind": blocker_kind, "reason_code": reason_code}
+        if projection.lifecycle_state == f"{blocker_kind}_blocked" and events:
+            latest = events[-1]
+            canonical = self.event_store.protocol.canonical_payload(
+                "run_blocked", payload
+            )
+            if latest.type == "run_blocked" and latest.payload == canonical:
+                self.rebuild_projection()
+                return latest
+        event = self.event_store.append(
+            "run_blocked", payload, occurred_at=self.clock()
+        )
+        self._fault("after_event_before_projection")
+        self.rebuild_projection()
+        return event
+
     def link_closure_successor(
         self,
         closure_run_id: str,

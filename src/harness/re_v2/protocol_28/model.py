@@ -11,7 +11,6 @@ from harness.re_v2.protocol_22.schema import (
     digest_value,
     exact_object,
     literal,
-    nonnegative_int,
     positive_or_none,
     safe_id,
     sorted_unique_digests,

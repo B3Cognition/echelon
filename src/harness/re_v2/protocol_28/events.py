@@ -169,6 +169,11 @@ _PAYLOAD_SCHEMAS: dict[str, dict[str, Validator]] = {
         "verdict": _choice("PASS", "REPAIR"),
         "verification_id": _digest,
     },
+    "verification_rejected": {
+        "dispatch_id": _safe_id,
+        "output_artifact_key_id": _digest,
+        "reason_code": _safe_id,
+    },
     "certification_recorded": {
         "certification_receipt_id": _digest,
         "output_artifact_key_id": _digest,
@@ -440,9 +445,11 @@ class Protocol28ReplayState(EventReplayState):
         dispatch.stage = "candidate"
 
     def _on_candidate_rejected(self, payload: Mapping[str, object]) -> None:
-        dispatch = self._dispatch(payload, "captured")
+        dispatch = self.dispatches.get(str(payload["dispatch_id"]))
         if (
-            dispatch.role != "producer"
+            dispatch is None
+            or dispatch.stage != "captured"
+            or dispatch.role != "producer"
             or dispatch.output_artifact_key_id != payload["output_artifact_key_id"]
         ):
             raise ReV2EventError("candidate rejection does not match producer dispatch")
@@ -458,6 +465,19 @@ class Protocol28ReplayState(EventReplayState):
         dispatch.stage = (
             "verified_pass" if payload["verdict"] == "PASS" else "verified_repair"
         )
+
+    def _on_verification_rejected(self, payload: Mapping[str, object]) -> None:
+        dispatch = self.dispatches.get(str(payload["dispatch_id"]))
+        if (
+            dispatch is None
+            or dispatch.stage != "captured"
+            or dispatch.role != "verifier"
+            or dispatch.output_artifact_key_id != payload["output_artifact_key_id"]
+        ):
+            raise ReV2EventError(
+                "verification rejection does not match verifier dispatch"
+            )
+        dispatch.stage = "rejected"
 
     def _on_repair_packet_recorded(self, payload: Mapping[str, object]) -> None:
         self._require_realized_key(
@@ -614,7 +634,7 @@ class Protocol28ReplayState(EventReplayState):
         if (
             dispatch is None
             or dispatch.stage not in stages
-            or dispatch.role != payload["role"]
+            or ("role" in payload and dispatch.role != payload["role"])
         ):
             raise ReV2EventError("dispatch transition is out of order")
         return dispatch
