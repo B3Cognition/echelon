@@ -17,6 +17,7 @@ class SandboxServiceSpec:
     image: str
     environment_names: tuple[str, ...] = ()
     health_command: tuple[str, ...] = ()
+    environment: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,19 @@ def build_verification_plan(
         else:
             bootstrap = ("pnpm exec playwright install --with-deps chromium",)
 
+    selected = set(config.stacks.selected)
+    if "game-persistence-postgres" in selected and not services:
+        services = (SandboxServiceSpec(
+            service_name="postgres",
+            image="postgres:16.4-alpine",
+            environment_names=("TEST_DATABASE_URL", "DATABASE_URL"),
+            health_command=("pg_isready", "-U", "echelon", "-d", "echelon_verify"),
+            environment=(
+                ("POSTGRES_USER", "echelon"),
+                ("POSTGRES_PASSWORD", "echelon"),
+                ("POSTGRES_DB", "echelon_verify"),
+            ),
+        ),)
     return VerificationPlan(
         execution=config.verification.execution,
         image=image,

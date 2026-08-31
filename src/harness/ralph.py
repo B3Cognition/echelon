@@ -1847,8 +1847,19 @@ class RalphController:
             verification_plan = plan.build_verification_plan(
                 Path(worktree_path), self._config,
             )
+            service_env: dict[str, str] = {}
+            if verification_plan.services:
+                start_services = getattr(self._provider, "start_services", None)
+                if start_services is None:
+                    raise RuntimeError("sandbox provider does not support verification services")
+                start_services(handle, verification_plan.services)
+                for service in verification_plan.services:
+                    if service.service_name == "postgres":
+                        uri = "postgresql://echelon:echelon@postgres:5432/echelon_verify"
+                        for name in service.environment_names:
+                            service_env[name] = uri
             for command in verification_plan.bootstrap_commands:
-                bootstrap = self._provider.exec(handle, command, timeout_ms=600_000)
+                bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
                 if bootstrap.exit_code != 0:
                     return VerifyResult(
                         passed=False,
@@ -1862,7 +1873,7 @@ class RalphController:
                     )
 
             command = self._config.verify_command or "echelon verify"
-            result = self._provider.exec(handle, command, timeout_ms=600_000)
+            result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
 
             if self._config.verify_command:
                 return VerifyResult(

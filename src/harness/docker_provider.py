@@ -569,6 +569,7 @@ class DockerWorktreeProvider(SandboxProvider):
                     "--label", "echelon-harness.type=verification-service",
                     "--label", f"echelon-harness.service={service.service_name}",
                     "--name", f"harness-service-{service.service_name}-{handle.session_id}",
+                    *sum((["--env", f"{key}={value}"] for key, value in service.environment), []),
                     service.image,
                 ], cli=self._container_cli)
                 service_id = result.stdout.strip()

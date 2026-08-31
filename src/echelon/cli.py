@@ -2280,10 +2280,11 @@ def _cmd_harness_run(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
-    _block_if_delivery_provisioning_incomplete(
-        project_root=config_root,
-        target_root=Path(config.target_repo),
-    )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2842,10 +2843,11 @@ def _cmd_harness_resume(
             spec_id=spec_id,
         )
 
-    _block_if_delivery_provisioning_incomplete(
-        project_root=config_root,
-        target_root=Path(config.target_repo),
-    )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
