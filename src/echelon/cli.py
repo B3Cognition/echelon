@@ -1115,6 +1115,86 @@ def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "ech
     )
 
 
+def _delivery_provisioning_blockers(
+    project_root: Path,
+    target_root: Path,
+) -> list[str]:
+    """Return target-local verification provisioning blockers without side effects."""
+    from harness.config import get_full_resolved_config
+
+    resolved_config = get_full_resolved_config(project_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    target_archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not all(
+        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
+    ):
+        raise StackSelectionError(
+            "stacks.selected must be a list of non-empty stack IDs"
+        )
+    if not isinstance(target_archetypes, list) or not all(
+        isinstance(archetype, str) and archetype.strip()
+        for archetype in target_archetypes
+    ):
+        raise StackSelectionError(
+            "stacks.target_archetypes must be a list of non-empty archetype IDs"
+        )
+    if not selected:
+        return []
+
+    definitions = _load_stack_definitions_for_project(project_root)
+    resolved = resolve_stacks(
+        selected,
+        definitions,
+        target_archetypes=set(target_archetypes) or None,
+    )
+    target = target_root.resolve()
+    blockers: list[str] = []
+    for status in provisioning_statuses(resolved, target, os.environ):
+        provisioner = next(
+            item.provisioner
+            for item in resolved.provisioners
+            if item.owner_stack_id == status.owner_stack_id
+            and item.provisioner.id == status.provisioner_id
+        )
+        environment = ", ".join(provisioner.required_environment)
+        if status.state == "missing":
+            blockers.append(
+                "STACK_PROVISIONING_MISSING: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "is not configured for this target. Run: "
+                f"echelon stack provision --target {target}"
+            )
+        elif status.state == "prepared":
+            blockers.append(
+                "STACK_PROVISIONING_PREPARED: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "has target-local artifacts, but Echelon did not start the service. "
+                "Start the prepared service manually or configure an external URL via "
+                f"{environment}."
+            )
+    return blockers
+
+
+def _block_if_delivery_provisioning_incomplete(
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    blockers = _delivery_provisioning_blockers(project_root, target_root)
+    if not blockers:
+        return
+    print(
+        "✗ Delivery verification provisioning is not ready for this target.\n"
+        + "".join(f"  - {blocker}\n" for blocker in blockers),
+        file=sys.stderr,
+        end="",
+    )
+    raise SystemExit(1)
+
+
 def _block_if_spec_task_targets_mismatch(
     spec_dir: Path,
     declared_targets: list[str],
@@ -2191,6 +2271,10 @@ def _cmd_harness_run(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
+    _block_if_delivery_provisioning_incomplete(
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2748,6 +2832,11 @@ def _cmd_harness_resume(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
+
+    _block_if_delivery_provisioning_incomplete(
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.

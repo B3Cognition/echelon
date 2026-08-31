@@ -494,6 +494,50 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
     assert all(command[2] != str(harness_root.resolve()) for command in git_commands)
 
 
+def test_delivery_provisioning_gate_is_scoped_to_each_polyrepo_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _delivery_provisioning_blockers
+
+    workspace = tmp_path / "workspace"
+    config_file = workspace / ".echelon" / "config.yml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "stacks:\n"
+        "  selected:\n"
+        "    - game-persistence-postgres\n",
+        encoding="utf-8",
+    )
+    missing_target = workspace / "sources" / "api"
+    prepared_target = workspace / "sources" / "worker"
+    missing_target.mkdir(parents=True)
+    prepared_target.mkdir(parents=True)
+    (prepared_target / "docker-compose.echelon-verify.yml").write_text(
+        "services: {}\n", encoding="utf-8"
+    )
+    (prepared_target / ".env.echelon-verify.example").write_text(
+        "DATABASE_URL=\n", encoding="utf-8"
+    )
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    missing = _delivery_provisioning_blockers(workspace, missing_target)
+    prepared = _delivery_provisioning_blockers(workspace, prepared_target)
+
+    assert len(missing) == 1
+    assert "STACK_PROVISIONING_MISSING" in missing[0]
+    assert f"echelon stack provision --target {missing_target.resolve()}" in missing[0]
+    assert len(prepared) == 1
+    assert "STACK_PROVISIONING_PREPARED" in prepared[0]
+    assert "start the prepared service manually" in prepared[0].lower()
+    assert "DATABASE_URL" in prepared[0]
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://isolated")
+
+    assert _delivery_provisioning_blockers(workspace, missing_target) == []
+    assert _delivery_provisioning_blockers(workspace, prepared_target) == []
+
+
 def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
