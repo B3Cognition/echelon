@@ -5443,6 +5443,7 @@ class RalphController:
                 "spec_id": self._spec_id,
                 "run_id": str(outer_iter),
             },
+            ephemeral_volumes=["node_modules"],
         )
 
     def _append_iteration_log(

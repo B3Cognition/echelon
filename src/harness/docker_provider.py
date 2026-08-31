@@ -306,6 +306,13 @@ class DockerWorktreeProvider(SandboxProvider):
                     "--label", f"echelon-harness.{key}={value}",
                 ])
 
+            ephemeral_volumes = [
+                f"harness-volume-{session_id}-{path.replace('/', '-').strip('-')}"
+                for path in spec.ephemeral_volumes
+            ]
+            for volume_name, path in zip(ephemeral_volumes, spec.ephemeral_volumes):
+                docker_args.extend(["--volume", f"{volume_name}:{spec.container_mount}/{path}"])
+
             # Inject environment variables
             for key, value in spec.env.items():
                 docker_args.extend(["--env", f"{key}={value}"])
@@ -356,6 +363,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 sandbox_id=sandbox_container_id,
                 proxy_id=proxy_container_id,
                 network_name=network_name,
+                volume_names=ephemeral_volumes,
             )
 
             return handle
@@ -545,6 +553,11 @@ class DockerWorktreeProvider(SandboxProvider):
             timeout=10,
             check=False,
         )
+        for volume_name in getattr(info, "volume_names", []):
+            subprocess.run(
+                [self._container_cli, "volume", "rm", "-f", volume_name],
+                capture_output=True, timeout=10, check=False,
+            )
 
     def capabilities(self) -> Set[Capability]:
         """Phase 1: no optional capabilities."""
@@ -622,18 +635,20 @@ class DockerWorktreeProvider(SandboxProvider):
 class _ContainerInfo:
     """Internal tracking of container resources for cleanup."""
 
-    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids")
+    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids", "volume_names")
 
     def __init__(
         self,
         sandbox_id: str,
         proxy_id: Optional[str],
         network_name: str,
+        volume_names: list[str] | None = None,
     ) -> None:
         self.sandbox_id = sandbox_id
         self.proxy_id = proxy_id
         self.network_name = network_name
         self.service_ids: list[str] = []
+        self.volume_names = volume_names or []
 
 
 # --- Registration ---
