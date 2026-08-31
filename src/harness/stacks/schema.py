@@ -44,6 +44,13 @@ VALID_PROVISIONER_SATISFIER_FIELDS = {
     "output",
     "env_example",
 }
+SUPPORTED_PROVISIONER_SATISFIER_KINDS = {"environment", "compose-template"}
+POSTGRES_COMPOSE_PROVISIONER_ID = "postgres-verify"
+POSTGRES_COMPOSE_SERVICE = "postgres"
+POSTGRES_COMPOSE_ENVIRONMENT = "DATABASE_URL"
+POSTGRES_COMPOSE_READINESS_COMMAND = "pg_isready"
+POSTGRES_COMPOSE_OUTPUT = "docker-compose.echelon-verify.yml"
+POSTGRES_COMPOSE_ENV_EXAMPLE = ".env.echelon-verify.example"
 
 
 @dataclass(frozen=True)
@@ -285,8 +292,24 @@ def _parse_provisioners(value: Any, source_path: Path) -> list[StackProvisioner]
             source_path,
             f"{field_path}.readiness",
         )
+        services = _non_empty_string_list(
+            provisioner_raw.get("services"), source_path, f"{field_path}.services"
+        )
+        required_environment = _non_empty_string_list(
+            environment_raw.get("required"),
+            source_path,
+            f"{field_path}.environment.required",
+        )
+        readiness_command = _non_empty_str(
+            readiness_raw.get("command"),
+            source_path,
+            f"{field_path}.readiness.command",
+        )
         satisfiers = _parse_provisioner_satisfiers(
-            provisioner_raw.get("satisfiers"), source_path, f"{field_path}.satisfiers"
+            provisioner_raw.get("satisfiers"),
+            source_path,
+            f"{field_path}.satisfiers",
+            required_environment=required_environment,
         )
         if not satisfiers:
             raise StackValidationError(
@@ -294,23 +317,23 @@ def _parse_provisioners(value: Any, source_path: Path) -> list[StackProvisioner]
                 path=source_path,
                 field_path=f"{field_path}.satisfiers",
             )
+        if any(item.kind == "compose-template" for item in satisfiers):
+            _validate_supported_postgres_compose_contract(
+                provisioner_id=provisioner_id,
+                services=services,
+                required_environment=required_environment,
+                readiness_command=readiness_command,
+                satisfiers=satisfiers,
+                source_path=source_path,
+                field_path=field_path,
+            )
         provisioners.append(
             StackProvisioner(
                 id=provisioner_id,
                 scope=scope,
-                services=_non_empty_string_list(
-                    provisioner_raw.get("services"), source_path, f"{field_path}.services"
-                ),
-                required_environment=_non_empty_string_list(
-                    environment_raw.get("required"),
-                    source_path,
-                    f"{field_path}.environment.required",
-                ),
-                readiness_command=_non_empty_str(
-                    readiness_raw.get("command"),
-                    source_path,
-                    f"{field_path}.readiness.command",
-                ),
+                services=services,
+                required_environment=required_environment,
+                readiness_command=readiness_command,
                 satisfiers=satisfiers,
             )
         )
@@ -318,7 +341,11 @@ def _parse_provisioners(value: Any, source_path: Path) -> list[StackProvisioner]
 
 
 def _parse_provisioner_satisfiers(
-    value: Any, source_path: Path, field_path: str
+    value: Any,
+    source_path: Path,
+    field_path: str,
+    *,
+    required_environment: list[str],
 ) -> list[StackProvisionerSatisfier]:
     if not isinstance(value, list):
         raise StackValidationError(
@@ -334,28 +361,145 @@ def _parse_provisioner_satisfiers(
             source_path,
             satisfier_path,
         )
+        kind = _non_empty_str(
+            satisfier_raw.get("kind"), source_path, f"{satisfier_path}.kind"
+        )
+        if kind not in SUPPORTED_PROVISIONER_SATISFIER_KINDS:
+            raise StackValidationError(
+                f"unsupported satisfier kind: {kind}",
+                path=source_path,
+                field_path=f"{satisfier_path}.kind",
+            )
+        variable = _optional_none_str(
+            satisfier_raw.get("variable"), source_path, f"{satisfier_path}.variable"
+        )
         output = _optional_none_str(
             satisfier_raw.get("output"), source_path, f"{satisfier_path}.output"
         )
+        env_example = _optional_none_str(
+            satisfier_raw.get("env_example"),
+            source_path,
+            f"{satisfier_path}.env_example",
+        )
         if output is not None:
             _validate_target_relative_output(output, source_path, f"{satisfier_path}.output")
+        if env_example is not None:
+            _validate_target_relative_output(
+                env_example, source_path, f"{satisfier_path}.env_example"
+            )
+        if kind == "environment":
+            if variable is None:
+                raise StackValidationError(
+                    "environment satisfier must declare variable",
+                    path=source_path,
+                    field_path=f"{satisfier_path}.variable",
+                )
+            if variable not in required_environment:
+                raise StackValidationError(
+                    "environment satisfier variable must be declared in environment.required",
+                    path=source_path,
+                    field_path=f"{satisfier_path}.variable",
+                )
+            if output is not None:
+                raise StackValidationError(
+                    "environment satisfier does not support output",
+                    path=source_path,
+                    field_path=f"{satisfier_path}.output",
+                )
+            if env_example is not None:
+                raise StackValidationError(
+                    "environment satisfier does not support env_example",
+                    path=source_path,
+                    field_path=f"{satisfier_path}.env_example",
+                )
+        else:
+            if variable is not None:
+                raise StackValidationError(
+                    "compose-template satisfier does not support variable",
+                    path=source_path,
+                    field_path=f"{satisfier_path}.variable",
+                )
+            if (
+                output != POSTGRES_COMPOSE_OUTPUT
+                or env_example != POSTGRES_COMPOSE_ENV_EXAMPLE
+            ):
+                raise StackValidationError(
+                    "compose-template must declare the fixed artifact pair",
+                    path=source_path,
+                    field_path=satisfier_path,
+                )
         satisfiers.append(
             StackProvisionerSatisfier(
-                kind=_non_empty_str(
-                    satisfier_raw.get("kind"), source_path, f"{satisfier_path}.kind"
-                ),
-                variable=_optional_none_str(
-                    satisfier_raw.get("variable"), source_path, f"{satisfier_path}.variable"
-                ),
+                kind=kind,
+                variable=variable,
                 output=output,
-                env_example=_optional_none_str(
-                    satisfier_raw.get("env_example"),
-                    source_path,
-                    f"{satisfier_path}.env_example",
-                ),
+                env_example=env_example,
             )
         )
     return satisfiers
+
+
+def is_supported_postgres_compose_provisioner(
+    provisioner: StackProvisioner,
+) -> bool:
+    """Return whether a provisioner exactly matches the allowlisted renderer."""
+    if (
+        provisioner.id != POSTGRES_COMPOSE_PROVISIONER_ID
+        or provisioner.scope != "verification"
+        or provisioner.services != [POSTGRES_COMPOSE_SERVICE]
+        or provisioner.required_environment != [POSTGRES_COMPOSE_ENVIRONMENT]
+        or provisioner.readiness_command != POSTGRES_COMPOSE_READINESS_COMMAND
+        or len(provisioner.satisfiers) != 2
+    ):
+        return False
+    environment = [
+        item for item in provisioner.satisfiers if item.kind == "environment"
+    ]
+    compose = [
+        item for item in provisioner.satisfiers if item.kind == "compose-template"
+    ]
+    return (
+        environment
+        == [
+            StackProvisionerSatisfier(
+                kind="environment", variable=POSTGRES_COMPOSE_ENVIRONMENT
+            )
+        ]
+        and compose
+        == [
+            StackProvisionerSatisfier(
+                kind="compose-template",
+                output=POSTGRES_COMPOSE_OUTPUT,
+                env_example=POSTGRES_COMPOSE_ENV_EXAMPLE,
+            )
+        ]
+    )
+
+
+def _validate_supported_postgres_compose_contract(
+    *,
+    provisioner_id: str,
+    services: list[str],
+    required_environment: list[str],
+    readiness_command: str,
+    satisfiers: list[StackProvisionerSatisfier],
+    source_path: Path,
+    field_path: str,
+) -> None:
+    provisioner = StackProvisioner(
+        id=provisioner_id,
+        scope="verification",
+        services=services,
+        required_environment=required_environment,
+        readiness_command=readiness_command,
+        satisfiers=satisfiers,
+    )
+    if not is_supported_postgres_compose_provisioner(provisioner):
+        raise StackValidationError(
+            "compose-template provisioner must match the supported PostgreSQL contract",
+            path=source_path,
+            field_path=field_path,
+        )
 
 
 def _parse_detection(value: Any, source_path: Path) -> StackDetection:

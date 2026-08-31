@@ -151,3 +151,71 @@ def test_render_rejects_compose_template_without_env_example(tmp_path: Path) -> 
 
     with pytest.raises(ProvisioningError, match="fixed artifact pair"):
         render_provisioner(missing_example, tmp_path)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("services", ["postgres\n  attacker-service:\n    image: attacker"]),
+        ("readiness_command", "pg_isready\n# attacker content"),
+    ],
+)
+def test_render_rejects_non_allowlisted_compose_values_without_writing(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    provisioner = _resolved_postgres().provisioners[0].provisioner
+    malicious = StackProvisioner(
+        **{
+            **provisioner.__dict__,
+            field: value,
+        }
+    )
+
+    with pytest.raises(ProvisioningError, match="supported PostgreSQL contract"):
+        render_provisioner(malicious, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit
+def test_rendered_compose_is_the_fixed_postgres_template(tmp_path: Path) -> None:
+    compose_path, env_path = render_provisioner(
+        _resolved_postgres().provisioners[0], tmp_path
+    )
+
+    assert compose_path.read_text(encoding="utf-8") == (
+        "# Verification-only Postgres. It deliberately publishes no host port.\n"
+        "# Start: docker compose -f docker-compose.echelon-verify.yml --env-file "
+        ".env.echelon-verify.example up -d\n"
+        "# Check: docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "pg_isready -U echelon -d echelon_verify\n"
+        "# Connect: docker compose -f docker-compose.echelon-verify.yml exec postgres "
+        "psql -U echelon -d echelon_verify\n"
+        "services:\n"
+        "  postgres:\n"
+        "    image: postgres:16.4-alpine\n"
+        "    environment:\n"
+        "      POSTGRES_DB: echelon_verify\n"
+        "      POSTGRES_USER: echelon\n"
+        "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-echelon_verify_only}\n"
+        "    healthcheck:\n"
+        '      test: ["CMD-SHELL", "pg_isready -U echelon -d echelon_verify"]\n'
+        "      interval: 5s\n"
+        "      timeout: 5s\n"
+        "      retries: 12\n"
+        "    volumes:\n"
+        "      - echelon_verify_postgres_data:/var/lib/postgresql/data\n"
+        "\n"
+        "volumes:\n"
+        "  echelon_verify_postgres_data:\n"
+    )
+    assert env_path.read_text(encoding="utf-8") == (
+        "# Set this value when your verification target has its own database.\n"
+        "# The Compose service has no host port. Use `docker compose exec` above or "
+        "a connection path you choose.\n"
+        "DATABASE_URL=# supply an externally reachable verification database URL\n"
+        "POSTGRES_PASSWORD=echelon_verify_only\n"
+    )

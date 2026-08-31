@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -538,43 +539,69 @@ def test_delivery_provisioning_gate_is_scoped_to_each_polyrepo_target(
     assert _delivery_provisioning_blockers(workspace, prepared_target) == []
 
 
-def test_multi_target_delivery_runs_ready_target_after_independent_provisioning_block(
+def test_multi_target_delivery_applies_real_provisioning_gate_per_target(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.orchestrator import run_multi_target
 
     workspace = tmp_path / "workspace"
-    blocked = workspace / "sources" / "a-blocked"
-    ready = workspace / "sources" / "b-ready"
+    blocked = workspace / "sources" / "a-api"
+    ready = workspace / "sources" / "b-worker"
+    dependent = workspace / "sources" / "c-web"
     blocked.mkdir(parents=True)
     ready.mkdir(parents=True)
+    dependent.mkdir(parents=True)
+
+    def write_stack_selection(target: Path, selected: list[str]) -> None:
+        (target / ".echelon").mkdir(parents=True)
+        (target / ".echelon" / "config.yml").write_text(
+            "stacks:\n  selected:\n"
+            + "".join(f"    - {stack_id}\n" for stack_id in selected),
+            encoding="utf-8",
+        )
+
+    write_stack_selection(blocked, ["game-persistence-postgres"])
+    workspace_config = workspace / ".echelon" / "config.yml"
+    workspace_config.parent.mkdir(parents=True)
+    workspace_config.write_text(
+        "stacks:\n  selected: []\n",
+        encoding="utf-8",
+    )
     spec_dir = workspace / "specs" / "001-provisioning-isolation"
     spec_dir.mkdir(parents=True)
     (spec_dir / "tasks.md").write_text(
         "- [ ] T-001 complexity=standard phase=api req=FR-001 "
-        "depends=none target=sources/a-blocked\n"
+        "depends=none target=sources/a-api\n"
         "- [ ] T-002 complexity=standard phase=worker req=FR-002 "
-        "depends=none target=sources/b-ready\n",
+        "depends=none target=sources/b-worker\n"
+        "- [ ] T-003 complexity=standard phase=web req=FR-003 "
+        "depends=T-001 target=sources/c-web\n",
         encoding="utf-8",
     )
     child = tmp_path / "echelon-child"
+    source_root = Path(__file__).resolve().parents[2] / "src"
     child.write_text(
-        "#!/usr/bin/env python3\n"
-        "import os\n"
+        f"#!{sys.executable}\n"
+        "import os\nimport sys\n"
         "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(source_root)!r})\n"
+        "from echelon.cli import _block_if_delivery_provisioning_incomplete\n"
         "target = Path(os.environ['ECHELON_TARGET_REPO_PATH'])\n"
-        "if target.name == 'a-blocked':\n"
-        "    print('STACK_PROVISIONING_MISSING: postgres verification is missing')\n"
-        "    raise SystemExit(1)\n"
+        "_block_if_delivery_provisioning_incomplete(\n"
+        "    project_root=Path(os.environ['ECHELON_POLYREPO_ROOT']),\n"
+        "    target_root=target,\n"
+        ")\n"
         "(target / 'delivery-ran').write_text('ready target executed\\n')\n",
         encoding="utf-8",
     )
     child.chmod(0o755)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
 
     result = run_multi_target(
         "001-provisioning-isolation",
-        [ready, blocked],
+        [dependent, ready, blocked],
         [],
         echelon_bin=str(child),
         workspace_root=workspace,
@@ -585,10 +612,16 @@ def test_multi_target_delivery_runs_ready_target_after_independent_provisioning_
     assert (ready / "delivery-ran").read_text(encoding="utf-8") == (
         "ready target executed\n"
     )
-    out = capsys.readouterr().out
-    assert "[a-blocked] STACK_PROVISIONING_MISSING" in out
-    assert "✗ [a-blocked]: exit 1" in out
-    assert "✓ [b-ready]: exit 0" in out
+    assert not (dependent / "delivery-ran").exists()
+    captured = capsys.readouterr()
+    out = captured.out
+    err = captured.err
+    assert "[a-api] ✗ Delivery verification provisioning" in out
+    assert "[a-api]   - STACK_PROVISIONING_MISSING" in out
+    assert "✗ [a-api]: exit 1" in out
+    assert "✓ [b-worker]: exit 0" in out
+    assert "skipped because dependency target(s) failed: a-api" in err
+    assert "✗ [c-web]: exit 1" in out
 
 
 def test_resume_after_completed_review_checkpoint_skips_review_side_effects(

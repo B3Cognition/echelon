@@ -5,7 +5,42 @@ from pathlib import Path
 from typing import Mapping
 
 from harness.stacks.resolver import ResolvedStackProvisioner, ResolvedStacks
-from harness.stacks.schema import StackProvisioner
+from harness.stacks.schema import (
+    POSTGRES_COMPOSE_ENV_EXAMPLE,
+    POSTGRES_COMPOSE_OUTPUT,
+    StackProvisioner,
+    is_supported_postgres_compose_provisioner,
+)
+
+
+_POSTGRES_COMPOSE_CONTENT = """# Verification-only Postgres. It deliberately publishes no host port.
+# Start: docker compose -f docker-compose.echelon-verify.yml --env-file .env.echelon-verify.example up -d
+# Check: docker compose -f docker-compose.echelon-verify.yml exec postgres pg_isready -U echelon -d echelon_verify
+# Connect: docker compose -f docker-compose.echelon-verify.yml exec postgres psql -U echelon -d echelon_verify
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_DB: echelon_verify
+      POSTGRES_USER: echelon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-echelon_verify_only}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echelon -d echelon_verify"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - echelon_verify_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  echelon_verify_postgres_data:
+"""
+
+_POSTGRES_ENV_EXAMPLE_CONTENT = """# Set this value when your verification target has its own database.
+# The Compose service has no host port. Use `docker compose exec` above or a connection path you choose.
+DATABASE_URL=# supply an externally reachable verification database URL
+POSTGRES_PASSWORD=echelon_verify_only
+"""
 
 
 class ProvisioningError(Exception):
@@ -117,19 +152,23 @@ def _compose_artifacts(
 
     template = templates[0]
     if (
-        template.output != "docker-compose.echelon-verify.yml"
-        or template.env_example != ".env.echelon-verify.example"
+        template.output != POSTGRES_COMPOSE_OUTPUT
+        or template.env_example != POSTGRES_COMPOSE_ENV_EXAMPLE
     ):
         raise ProvisioningError("compose-template must declare the fixed artifact pair")
+    if not is_supported_postgres_compose_provisioner(provisioner):
+        raise ProvisioningError(
+            "compose-template provisioner must match the supported PostgreSQL contract"
+        )
 
     return [
         (
-            _target_path(root, "docker-compose.echelon-verify.yml"),
-            _compose_content(provisioner),
+            _target_path(root, POSTGRES_COMPOSE_OUTPUT),
+            _POSTGRES_COMPOSE_CONTENT,
         ),
         (
-            _target_path(root, ".env.echelon-verify.example"),
-            _env_example_content(provisioner),
+            _target_path(root, POSTGRES_COMPOSE_ENV_EXAMPLE),
+            _POSTGRES_ENV_EXAMPLE_CONTENT,
         ),
     ]
 
@@ -147,41 +186,3 @@ def _target_path(root: Path, output: str) -> Path:
     if not path.is_relative_to(root):
         raise ProvisioningError(f"provisioning output is outside target root: {output}")
     return path
-
-
-def _compose_content(provisioner: StackProvisioner) -> str:
-    service = provisioner.services[0]
-    return f"""# Verification-only Postgres. It deliberately publishes no host port.
-# Start: docker compose -f docker-compose.echelon-verify.yml --env-file .env.echelon-verify.example up -d
-# Check: docker compose -f docker-compose.echelon-verify.yml exec {service} {provisioner.readiness_command} -U echelon -d echelon_verify
-# Connect: docker compose -f docker-compose.echelon-verify.yml exec {service} psql -U echelon -d echelon_verify
-services:
-  {service}:
-    image: postgres:16.4-alpine
-    environment:
-      POSTGRES_DB: echelon_verify
-      POSTGRES_USER: echelon
-      POSTGRES_PASSWORD: ${{POSTGRES_PASSWORD:-echelon_verify_only}}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U echelon -d echelon_verify"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    volumes:
-      - echelon_verify_postgres_data:/var/lib/postgresql/data
-
-volumes:
-  echelon_verify_postgres_data:
-"""
-
-
-def _env_example_content(provisioner: StackProvisioner) -> str:
-    required = "\n".join(
-        f"{name}=# supply an externally reachable verification database URL"
-        for name in provisioner.required_environment
-    )
-    return f"""# Set one of these values when your verification target has its own database.
-# The Compose service has no host port. Use `docker compose exec` above or a connection path you choose.
-{required}
-POSTGRES_PASSWORD=echelon_verify_only
-"""

@@ -99,6 +99,98 @@ def test_stack_schema_rejects_output_outside_target(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_stack_schema_rejects_env_example_outside_target(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["env_example"] = "../.env"
+
+    with pytest.raises(StackValidationError, match="target-relative"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_partial_compose_artifact_pair(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    del raw["provisioning"][0]["satisfiers"][1]["env_example"]
+
+    with pytest.raises(StackValidationError, match="fixed artifact pair"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_unsupported_satisfier_kind(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][0]["kind"] = "shell"
+
+    with pytest.raises(StackValidationError, match="unsupported satisfier kind"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("variable", None, "must declare variable"),
+        ("output", "unexpected.yml", "does not support output"),
+    ],
+)
+def test_stack_schema_rejects_malformed_environment_satisfier(
+    tmp_path: Path,
+    field: str,
+    value: str | None,
+    message: str,
+) -> None:
+    raw = _postgres_stack_raw()
+    satisfier = raw["provisioning"][0]["satisfiers"][0]
+    if value is None:
+        satisfier.pop(field)
+    else:
+        satisfier[field] = value
+
+    with pytest.raises(StackValidationError, match=message):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_environment_variable_not_declared_by_provisioner(
+    tmp_path: Path,
+) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][0]["variable"] = "OTHER_URL"
+
+    with pytest.raises(StackValidationError, match="environment.required"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_compose_satisfier_variable(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["variable"] = "DATABASE_URL"
+
+    with pytest.raises(StackValidationError, match="does not support variable"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("services", ["postgres\n  injected: {}"]),
+        ("readiness", {"command": "pg_isready\n# injected"}),
+    ],
+)
+def test_stack_schema_rejects_non_allowlisted_compose_contract(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0][field] = value
+
+    with pytest.raises(StackValidationError, match="supported PostgreSQL contract"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
 def test_parse_optional_detection_rules() -> None:
     raw = {
         **VALID_STACK,

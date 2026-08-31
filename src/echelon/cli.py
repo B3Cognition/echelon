@@ -1122,7 +1122,16 @@ def _delivery_provisioning_blockers(
     """Return target-local verification provisioning blockers without side effects."""
     from harness.config import get_full_resolved_config
 
-    resolved_config = get_full_resolved_config(project_root)
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    target_config_dir = target_root / ".echelon"
+    # A configured source owns its stack selection. Targets without their own
+    # config keep the historical workspace-root selection for compatibility.
+    target_has_source_config = target_root != project_root and any(
+        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    stack_config_root = target_root if target_has_source_config else project_root
+    resolved_config = get_full_resolved_config(stack_config_root)
     stacks = resolved_config.get("stacks") or {}
     if not isinstance(stacks, Mapping):
         raise StackSelectionError("stacks must be a mapping")
@@ -1150,7 +1159,7 @@ def _delivery_provisioning_blockers(
         definitions,
         target_archetypes=set(target_archetypes) or None,
     )
-    target = target_root.resolve()
+    target = target_root
     blockers: list[str] = []
     for status in provisioning_statuses(resolved, target, os.environ):
         provisioner = next(
