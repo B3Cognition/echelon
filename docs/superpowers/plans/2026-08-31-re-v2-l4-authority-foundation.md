@@ -293,7 +293,7 @@ Reject incomplete L4 roots, mismatched selection/terminal hashes, checkpoint pro
 pytest -q tests/unit/test_re_v2_protocol_28_authority.py tests/unit/test_re_v2_protocol_25_model.py tests/unit/test_re_v2_protocol_25_findings.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/authority.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_authority.py
@@ -311,11 +311,16 @@ git commit -m "feat(re): freeze target-local L3 authority"
 
 **Interfaces:**
 - Produces `ExhaustivePolicyV1` with the design's fixed category and size bounds.
+- Produces `ExhaustiveSubjectV1` and `ExhaustiveSubjectCatalogV1` as the
+  canonical, target-local normalization of authenticated L0-L3 subjects,
+  evidence anchors, and finding assignments; the catalog is an immutable plan
+  input and contains no model-discovered work.
 - Produces `CategoryVacancyReceiptV1`, `SlicePlanEntryV1`, `SliceSpecV1`, `TargetCoverageLedgerV1`, domain/source plans, and `ExhaustivePlanV1`.
-- Produces `build_exhaustive_plan(parent_bundle, l3_projections, evidence_catalog, policy, selection)`.
+- Produces `build_exhaustive_plan(parent_bundle, l3_projections,
+  evidence_catalog, subject_catalog, policy, selection)`.
 - Produces `realize_slice(plan_entry, accepted_dependencies)`.
 
-- [ ] **Step 1: Write failing deterministic coverage tests**
+- [x] **Step 1: Write failing deterministic coverage tests**
 
 ```python
 def test_plan_assigns_every_primary_shard_once() -> None:
@@ -338,11 +343,11 @@ def test_plan_is_independent_of_input_iteration_order() -> None:
     assert forward.identity == reverse.identity
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py`
 
-- [ ] **Step 3: Implement fixed categories and canonical bin packing**
+- [x] **Step 3: Implement fixed categories and canonical bin packing**
 
 ```python
 DOMAIN_CATEGORIES = (
@@ -365,17 +370,17 @@ SOURCE_CATEGORIES = (
 
 Sort target/category/subject/shard/record tuples by UTF-8 identity. Greedily stop before 16 primary subjects, 32 supporting subjects, 64 primary records, 128 supporting records, 128 KiB canonical context, or 131,072 conservative tokens. Reject over 512 entries per target or 16,384 per run.
 
-- [ ] **Step 4: Add blocker, vacancy, and deferred-realization tests**
+- [x] **Step 4: Add blocker, vacancy, and deferred-realization tests**
 
 Test missing/repeated shards, unsupported content, unassigned findings, unsplittable context, caps, literal category vacancy, semantic inapplicability requiring work, and source-composition realization waiting for named domain roots.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py tests/unit/test_re_v2_protocol_24_graph.py tests/unit/test_re_v2_protocol_25_graph.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/policies.py src/harness/re_v2/protocol_28/planning.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py
