@@ -89,22 +89,33 @@ def _detect_node(repo: Path) -> _Candidate | None:
     if not isinstance(scripts, dict):
         return None
 
+    verify_script = scripts.get("verify")
     test_script = scripts.get("test")
-    if not isinstance(test_script, str) or not test_script.strip():
-        return None
-
-    lowered = test_script.lower()
-    if all(snippet in lowered for snippet in _NODE_PLACEHOLDER_TEST_SNIPPETS):
+    script_name, script = (
+        ("verify", verify_script)
+        if _usable_node_script(verify_script)
+        else ("test", test_script)
+    )
+    if not _usable_node_script(script):
         return None
 
     if (repo / "pnpm-lock.yaml").exists():
-        command = "pnpm test"
+        command = f"pnpm {script_name}"
     elif (repo / "yarn.lock").exists():
-        command = "yarn test"
+        command = f"yarn {script_name}"
     else:
-        command = "npm test"
+        command = "npm test" if script_name == "test" else "npm run verify"
 
-    return _Candidate(command=command, evidence="package.json scripts.test")
+    return _Candidate(command=command, evidence=f"package.json scripts.{script_name}")
+
+
+def _usable_node_script(value: object) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    lowered = value.lower()
+    return not all(
+        snippet in lowered for snippet in _NODE_PLACEHOLDER_TEST_SNIPPETS
+    )
 
 
 def _detect_python(repo: Path) -> _Candidate | None:
