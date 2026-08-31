@@ -85,6 +85,10 @@ class _ClosureInputsFactory(Protocol):
     ) -> object: ...
 
 
+class _CheckpointAdoptionFactory(Protocol):
+    def __call__(self, inputs: object) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Protocol28OrchestrationOptions:
     """Runtime dependencies for advancing one durable semantic intent."""
@@ -97,6 +101,7 @@ class Protocol28OrchestrationOptions:
         Callable[[Path, str | Path, SelectionScopeV1], Path] | None
     ) = None
     closure_inputs_factory: _ClosureInputsFactory | None = None
+    checkpoint_adoption_factory: _CheckpointAdoptionFactory | None = None
     token_limit: int | None = None
     active_ms_limit: int | None = None
     clock: Callable[[], str] | None = None
@@ -1113,6 +1118,7 @@ def execute_deepen_orchestration(
         Protocol28CreationInputs,
     )
     from harness.re_v2.protocol_28.lifecycle import (
+        Protocol28CheckpointAdoptionV1,
         create_or_reuse_protocol_28_child,
         run_protocol_28_exhaustive,
     )
@@ -1191,7 +1197,20 @@ def execute_deepen_orchestration(
             raise DeepenOrchestrationError(
                 "prepared L4 child does not bind the resolved L3 authority"
             )
-        l4_dir = create_or_reuse_protocol_28_child(root, created)
+        checkpoint_adoption = None
+        if options.checkpoint_adoption_factory is not None:
+            checkpoint_adoption = options.checkpoint_adoption_factory(created)
+            if checkpoint_adoption is not None and not isinstance(
+                checkpoint_adoption, Protocol28CheckpointAdoptionV1
+            ):
+                raise DeepenOrchestrationError(
+                    "checkpoint adoption factory returned invalid authority"
+                )
+        l4_dir = create_or_reuse_protocol_28_child(
+            root,
+            created,
+            checkpoint_adoption=checkpoint_adoption,
+        )
         l4_manifest = load_run_manifest(l4_dir)
         if projection.l4_run_id is None:
             controller.bind_l4_child(

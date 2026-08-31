@@ -107,12 +107,12 @@
 - `_re_v2_context` and `_run_re_v2_continue` dispatch schema 7 by `run_mode`.
 - Explicit `echelon re continue <run-id>` accepts protocol 2.7 and 2.8; exhaustive mode maps public token/time flags to L4 authority, closure mode rejects them.
 
-- [ ] Write failing parser/help tests for L4, invalid L3-only flags, shadow/resource conflicts, selection conflicts, and absence of any public `hard_` setting.
-- [ ] Write failing CLI integration tests for new/reused intent, missing/paused L3, schema-7 continuation, closure rejection, and complete zero-call replay.
-- [ ] Implement additive routing while preserving V1 lifecycle option translation and all earlier v2 routes.
-- [ ] Render shadow target/entry counts, realized/conditional checkpoint reuse, and minimum/maximum dispatch/resource intervals without mutation.
-- [ ] Run GREEN for CLI help, protocol-2.4-through-2.8 CLI matrices, and V1 continuation tests.
-- [ ] Commit `feat(re): expose exhaustive L4 CLI`.
+- [x] Write failing parser/help tests for L4, invalid L3-only flags, shadow/resource conflicts, selection conflicts, and absence of any public `hard_` setting.
+- [x] Write failing CLI integration tests for new/reused intent, missing/paused L3, schema-7 continuation, closure rejection, and complete zero-call replay.
+- [x] Implement additive routing while preserving V1 lifecycle option translation and all earlier v2 routes.
+- [x] Render shadow target/entry counts, realized/conditional checkpoint reuse, and minimum/maximum dispatch/resource intervals without mutation.
+- [x] Run GREEN for CLI help, protocol-2.4-through-2.8 CLI matrices, and V1 continuation tests.
+- [x] Commit `feat(re): expose exhaustive L4 CLI`.
 
 ### Task 5: Add Manifest-First Status and Run-Local Materialization
 
