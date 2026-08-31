@@ -116,12 +116,12 @@
 - recovery action planner for every producer/verifier/acceptance/root seam;
 - deterministic root construction and zero-call closure successor handoff.
 
-- [ ] Write failing replay and crash-matrix tests.
-- [ ] Run RED.
-- [ ] Implement event validation, replay invariants, idempotent recovery actions, root sequencing, and closure link.
-- [ ] Add live-owner, dead-owner, durable-raw-before-parse, acceptance-before-export, root-before-materialization, projection loss, changed/missing source, and closure-integrity tests.
-- [ ] Run GREEN with protocol-2.2/2.5 recovery regressions.
-- [ ] Commit `feat(re): recover exhaustive L4 execution`.
+- [x] Write failing replay and crash-matrix tests.
+- [x] Run RED.
+- [x] Implement event validation, replay invariants, idempotent recovery actions, root sequencing, and closure link.
+- [x] Add live-owner, dead-owner, durable-raw-before-parse, acceptance-before-export, root-before-materialization, projection loss, changed/missing source, and closure-integrity tests.
+- [x] Run GREEN with protocol-2.2/2.5 recovery regressions.
+- [x] Commit `feat(re): recover exhaustive L4 execution`.
 
 ### Task 6: Add Neutral L4 Roles and Execution Gate
 
