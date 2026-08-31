@@ -78,6 +78,61 @@ def test_provider_budget_arithmetic_counts_only_reported_positive_usage() -> Non
     assert ralph._known_token_count(0) == 0
 
 
+def test_plain_blocker_is_not_verification_deferral() -> None:
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": True,
+                "build_status": "blocked",
+                "blocker_kind": None,
+            }
+        )
+        is False
+    )
+
+
+def test_only_explicit_verification_environment_blocker_is_deferral() -> None:
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": True,
+                "build_status": "blocked",
+                "blocker_kind": "verification_environment",
+            }
+        )
+        is True
+    )
+    assert (
+        ralph._is_verification_environment_deferral(
+            {
+                "completion_marker_explicit": False,
+                "build_status": "blocked",
+                "blocker_kind": "verification_environment",
+            }
+        )
+        is False
+    )
+
+
+def test_verify_state_serialization_preserves_evidence_reference() -> None:
+    evidence = {
+        "path": "/tmp/receipt.json",
+        "receipt_sha256": "a" * 64,
+        "evidence_sha256": "b" * 64,
+        "candidate_commit": "c" * 40,
+        "candidate_fingerprint": "d" * 64,
+        "passed": True,
+    }
+
+    payload = ralph._verify_to_dict(
+        VerifyResult(
+            passed=True, failures=[], verification_evidence=evidence
+        )
+    )
+
+    assert payload["verification_evidence"] == evidence
+
+
 # === Mock SandboxProvider ===
 
 
@@ -290,7 +345,32 @@ def _init_git_repo(path: Path) -> None:
 
 def _commit_all(path: Path, message: str = "base") -> None:
     subprocess.run(["git", "add", "."], cwd=path, check=True)
-    subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_worktree_changes(path: str, message: str) -> str:
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    if subprocess.run(
+        ["git", "diff", "--cached", "--quiet"], cwd=path
+    ).returncode != 0:
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=path,
+            check=True,
+            capture_output=True,
+        )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _write_no_impact_documentation_report(spec_dir: Path) -> None:
@@ -310,6 +390,200 @@ def _write_no_impact_documentation_report(spec_dir: Path) -> None:
 
 @pytest.mark.unit
 class TestOuterLoopConvergence:
+    def test_llm_build_and_feedback_propagate_blocker_kind(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        blocked = BuildResult(
+            exit_code=0,
+            status="blocked",
+            blocker_kind="verification_environment",
+            reason="Chromium unavailable",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=1,
+        )
+        build_runner.exec_build.return_value = blocked
+        build_runner.exec_feedback.return_value = blocked
+        controller, *_ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        handle = SandboxHandle(id="sandbox", session_id="session")
+
+        build = controller._exec_build(
+            handle,
+            "echelon build",
+            "",
+            worktree_path=str(worktree),
+            prompt="build",
+        )
+        feedback = controller._exec_feedback(
+            handle,
+            VerifyResult(passed=False, failures=[]),
+            "echelon build",
+            "",
+            worktree_path=str(worktree),
+            prompt="fix",
+        )
+
+        assert build["blocker_kind"] == "verification_environment"
+        assert feedback["blocker_kind"] == "verification_environment"
+
+    def test_verification_deferral_checkpoints_without_task_progress(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _, gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        (worktree / "candidate.txt").write_text(
+            "implemented\n", encoding="utf-8"
+        )
+        before = state_store.read().get("build", {}).get(
+            "completed_tasks", 0
+        )
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        commit = controller._checkpoint_verification_deferred_candidate(
+            str(worktree), outer_iter=0, inner_iter=0, phase="build"
+        )
+
+        assert commit == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        gitops.commit.assert_called_once()
+        after = state_store.read().get("build", {}).get("completed_tasks", 0)
+        assert after == before
+        checkpoint = state_store.read()["checkpoint_commits"][-1]
+        assert checkpoint["provenance"] == "verification_deferred"
+
+    def test_outer_verification_deferral_runs_host_verify_and_fulfillment(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+
+        def defer_after_implementation(*_args, **_kwargs):
+            (worktree / "candidate.txt").write_text(
+                "implemented\n", encoding="utf-8"
+            )
+            return BuildResult(
+                exit_code=0,
+                status="blocked",
+                blocker_kind="verification_environment",
+                reason="Chromium unavailable",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1,
+            )
+
+        build_runner.exec_build.side_effect = defer_after_implementation
+        fulfillment = MagicMock()
+        fulfillment.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed", exit_code=0, reason="verified"
+        )
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        result = controller.run_loop(
+            max_outer=1, max_inner=0, build_prompt="finish"
+        )
+
+        assert result.status == "verified"
+        assert result.termination_reason == "converged"
+        fulfillment.refresh.assert_called_once()
+        assert result.final_verify is not None
+        assert result.final_verify.verification_evidence["passed"] is True
+
+    def test_feedback_verification_deferral_returns_to_host_verify(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        _commit_all(worktree)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+
+        def defer_fix(*_args, **_kwargs):
+            (worktree / "fixed.txt").write_text("fixed\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="blocked",
+                blocker_kind="verification_environment",
+                reason="Postgres unavailable",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1,
+            )
+
+        build_runner.exec_feedback.side_effect = defer_fix
+        fulfillment = MagicMock()
+        fulfillment.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed", exit_code=0, reason="verified"
+        )
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.commit.side_effect = _commit_worktree_changes
+
+        result = controller._run_inner_loop(
+            handle=SandboxHandle(id="sandbox", session_id="session"),
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        FailureCategory.TEST, "journey", "journey failed"
+                    )
+                ],
+            ),
+            outer_iter=0,
+            max_inner=1,
+            tokens_used=0,
+            token_budget=None,
+            state={},
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="fix",
+        )
+
+        assert result["converged"] is True
+        assert result["blocked"] is False
+        assert result["final_verify"].verification_evidence["passed"] is True
+
     """Test outer loop converges on first iteration."""
 
     def test_sync_phase_a_inputs_overwrites_stale_worktree_constitution(
@@ -2042,6 +2316,54 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "task-progress-mismatch"
         assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in result.failures[0].error
 
+    def test_open_canonical_task_turns_passing_verify_into_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A passing test suite cannot converge before every target task is terminal."""
+        controller, *_rest = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-015 complexity=standard phase=verification req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        result = controller._apply_task_progress_gate(
+            VerifyResult(passed=True, failures=[]), str(worktree)
+        )
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-progress-incomplete"
+        assert "T-015" in result.failures[0].error
+
+    def test_completed_task_missing_declared_file_turns_passing_verify_into_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """A task cannot be complete when a declared source deliverable is absent."""
+        controller, *_rest, state_store = _make_controller(tmp_path)
+        state = state_store.read()
+        state["implementation_target"] = "sources/demo"
+        state_store.write(state)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-015 complexity=standard phase=verification req=INFRA depends=none\n"
+            "\n"
+            "  **Files:**\n"
+            "  - `sources/demo/README.md` - setup guide\n",
+            encoding="utf-8",
+        )
+
+        result = controller._apply_task_progress_gate(
+            VerifyResult(passed=True, failures=[]), str(worktree)
+        )
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-deliverable-missing"
+        assert "T-015: README.md" in result.failures[0].error
+
     def test_build_reported_task_ids_mark_canonical_tasks_done(
         self, tmp_path: Path
     ) -> None:
@@ -2560,10 +2882,10 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
 
-    def test_runs_verify_spec_before_fulfillment_gate_when_runner_available(
+    def test_host_llm_runner_does_not_create_a_sandbox_before_fulfillment_gate(
         self, tmp_path: Path
     ) -> None:
-        """Ralph refreshes fulfillment evidence after sandbox verification passes."""
+        """Host LLM delivery verifies without requiring the configured sandbox."""
         from harness.build_result import BuildResult
         from harness.llm_build_runner import LlmBuildRunner
 
@@ -2587,8 +2909,19 @@ class TestOuterLoopConvergence:
             *,
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
+            verification_evidence: dict[str, object] | None = None,
         ) -> int:
+            assert verification_evidence is not None
+            assert verification_evidence["passed"] is True
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             (spec_dir / "fulfillment-report.md").write_text(
+                f"---\nverified_commit: {head}\n---\n"
                 "| ID | Status | Evidence | Confidence | Notes |\n"
                 "|---|---|---|---|---|\n"
                 "| FR-001 | MISSING | none | high | absent |\n",
@@ -2607,6 +2940,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -2614,15 +2949,15 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            spec_dir=spec_dir,
-            orchestration_root=None,
-        )
+        assert provider.created is False
+        fulfillment_runner.refresh.assert_called_once()
+        assert fulfillment_runner.refresh.call_args.kwargs[
+            "verification_evidence"
+        ]["passed"] is True
         assert result.status == "blocked"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
+        assert result.final_verify.verification_evidence["passed"] is True
 
     def test_refresh_uses_state_workspace_root_for_external_spec_artifacts(
         self, tmp_path: Path
@@ -2649,7 +2984,14 @@ class TestOuterLoopConvergence:
         )
 
         result = controller._refresh_fulfillment_report(
-            VerifyResult(passed=True, failures=[]),
+            VerifyResult(
+                passed=True,
+                failures=[],
+                verification_evidence={
+                    "path": "/tmp/receipt.json",
+                    "passed": True,
+                },
+            ),
             str(worktree),
         )
 
@@ -2659,6 +3001,10 @@ class TestOuterLoopConvergence:
             "spec-001",
             spec_dir=spec_dir,
             orchestration_root=workspace,
+            verification_evidence={
+                "path": "/tmp/receipt.json",
+                "passed": True,
+            },
         )
 
     def test_cached_verify_spec_refresh_is_accepted_before_fulfillment_gate(
@@ -2713,6 +3059,21 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            f"---\nverified_commit: {head}\n---\n"
+            + report.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
         result = controller.run_loop(
             max_outer=1,
@@ -2777,18 +3138,19 @@ class TestOuterLoopConvergence:
         controller._changed_files_since_head = MagicMock(
             return_value=["src/a.py", "tests/test_a.py"]
         )
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(max_outer=1, max_inner=0, build_prompt="implement")
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            spec_dir=spec_dir,
-            orchestration_root=None,
-            scope="scoped",
-            completed_task_ids=["T-002"],
-            changed_files=["src/a.py", "tests/test_a.py"],
-        )
+        fulfillment_runner.refresh.assert_called_once()
+        kwargs = fulfillment_runner.refresh.call_args.kwargs
+        assert kwargs["spec_dir"] == spec_dir
+        assert kwargs["orchestration_root"] is None
+        assert kwargs["scope"] == "scoped"
+        assert kwargs["completed_task_ids"] == ["T-002"]
+        assert kwargs["changed_files"] == ["src/a.py", "tests/test_a.py"]
+        assert kwargs["verification_evidence"]["passed"] is True
 
     def test_scoped_fulfillment_policy_defers_full_refresh_without_feedback(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2856,6 +3218,8 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
         controller._changed_files_since_head = MagicMock(return_value=["src/a.py"])
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
@@ -3000,6 +3364,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
@@ -3080,6 +3446,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(max_outer=1, max_inner=0, build_prompt="build")
 
@@ -3128,8 +3496,18 @@ class TestOuterLoopConvergence:
             *,
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
+            verification_evidence: dict[str, object] | None = None,
         ) -> int:
+            assert verification_evidence is not None
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
             (spec_dir / "fulfillment-report.md").write_text(
+                f"---\nverified_commit: {head}\n---\n"
                 "**Fulfillment status (170 checklist items)**: "
                 "IMPLEMENTED=80, PARTIAL=31, UNVERIFIED=5, MISSING=53, "
                 "DEVIATED=1, OBSOLETE_SPEC=0\n",
@@ -3148,6 +3526,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -3203,6 +3583,8 @@ class TestOuterLoopConvergence:
         controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = orchestration_root
+        _init_git_repo(worktree)
+        _commit_all(worktree)
 
         controller.run_loop(
             max_outer=1,
@@ -3210,12 +3592,13 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            orchestration_root=orchestration_root,
-            spec_dir=spec_dir,
-        )
+        fulfillment_runner.refresh.assert_called_once()
+        args = fulfillment_runner.refresh.call_args.args
+        kwargs = fulfillment_runner.refresh.call_args.kwargs
+        assert args == (str(worktree), "spec-001")
+        assert kwargs["orchestration_root"] == orchestration_root
+        assert kwargs["spec_dir"] == spec_dir
+        assert kwargs["verification_evidence"]["passed"] is True
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
         """Verified work must not be reported converged when commit/push fails."""
@@ -3363,7 +3746,7 @@ class TestOuterLoopConvergence:
         assert ".harness-build-status.json" in captured.err
         assert "echelon delivery continue spec-001" in captured.err
         assert "missing Phase A artifacts" not in captured.err
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3619,8 +4002,7 @@ class TestOuterLoopConvergence:
         assert state["termination_reason"] == "build_incomplete"
         assert state["build_status"] == "host_tool_permission_denied"
         assert "do not enable unsafe host execution" in state["build_reason"]
-        assert state["cleanup_warnings"][0]["operation"] == "sandbox_destroy"
-        assert "podman rm timed out" in state["cleanup_warnings"][0]["error"]
+        assert "cleanup_warnings" not in state
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3661,7 +4043,7 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["build_status"] == "impasse"
         assert state["build_reason"] == "scope exceeds build budget"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3701,7 +4083,7 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["build_status"] == "blocked"
         assert state["build_reason"] == "NFR-008 requires an owner spec decision"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3789,7 +4171,7 @@ class TestOuterLoopConvergence:
         assert "COMMANDER wrote the harness completion marker" not in captured.err
         state = state_store.read()
         assert state["build_status"] == "timeout"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3837,7 +4219,7 @@ class TestOuterLoopConvergence:
         assert state["build_exit_code"] == 1
         assert state["provider_reset_hint"] == "9:10pm"
         assert state["provider_limit_message"] == "You've hit your session limit · resets 9:10pm"
-        assert provider.destroyed is True
+        assert provider.destroyed is False
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -4297,6 +4679,9 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -4364,6 +4749,10 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -4835,6 +5224,10 @@ class TestOuterLoopConvergence:
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
+
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -6543,6 +6936,9 @@ class TestOuterLoopConvergence:
         state["workspace_root"] = str(workspace)
         state["source_root"] = str(target)
         state_store.write(state)
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("fixture\n", encoding="utf-8")
+        _commit_all(worktree)
 
         result = controller.run_loop(
             max_outer=1,
@@ -7602,6 +7998,12 @@ class TestLlmProviderDispatch:
         assert f"tasks_file: {spec_dir / 'tasks.md'}" in sent_prompt
         assert f"spec_file: {spec_dir / 'spec.md'}" in sent_prompt
         assert "Do not discover spec artifacts with `find`, `ls`, globbing" in sent_prompt
+        prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
+        assert prompt_metadata["tool_read_roots"] == [str(spec_dir)]
+        assert prompt_metadata["tool_write_paths"] == [
+            str(spec_dir / "documentation-impact-report.md"),
+            str(spec_dir / "docs-verification-report.md"),
+        ]
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""
@@ -7845,6 +8247,81 @@ class TestSignalDuringBuild:
 
 
 @pytest.mark.unit
+class TestVerifyLocallyNode:
+    """Node verification must never wait for an interactive package-manager prompt."""
+
+    def test_pnpm_verification_runs_noninteractively(self, tmp_path: Path) -> None:
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+        (worktree / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\n",
+            encoding="utf-8",
+        )
+
+        with patch("subprocess.run") as mock_run, patch(
+            "harness.ralph._safe_product_evidence_fingerprint",
+            return_value="b" * 64,
+        ), patch(
+            "harness.ralph._current_git_commit", return_value="a" * 40
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert len(mock_run.call_args_list) == 3
+        for call in mock_run.call_args_list:
+            assert call.kwargs["stdin"] is subprocess.DEVNULL
+            assert call.kwargs["env"]["CI"] == "true"
+
+    def test_pnpm_verify_script_is_authoritative_and_receipted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "test": "exit 9",
+                        "verify": "lint-and-browser-journey",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (worktree / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        command_log = tmp_path / "pnpm-commands.txt"
+        executable_dir = tmp_path / "bin"
+        executable_dir.mkdir()
+        pnpm = executable_dir / "pnpm"
+        pnpm.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {command_log}\n",
+            encoding="utf-8",
+        )
+        pnpm.chmod(0o755)
+        monkeypatch.setenv(
+            "PATH", f"{executable_dir}{os.pathsep}{os.environ['PATH']}"
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        commands = command_log.read_text(encoding="utf-8").splitlines()
+        assert commands == [
+            "install --frozen-lockfile --ignore-scripts",
+            "verify",
+        ]
+
+
+@pytest.mark.unit
 class TestVerifyLocallyUnknownProjectType:
     """Unknown project type must fail verification, not silently pass."""
 
@@ -7913,6 +8390,8 @@ class TestVerifyCommandNeeded:
         marker = tmp_path / "verify-cwd.txt"
         script.write_text(f"pwd > {marker}\n", encoding="utf-8")
         script.chmod(0o755)
+        _init_git_repo(worktree)
+        _commit_all(worktree)
         gitops.base_dir = workspace
         controller._config = HarnessConfig(
             **{
@@ -7925,6 +8404,94 @@ class TestVerifyCommandNeeded:
 
         assert result.passed is True
         assert marker.read_text(encoding="utf-8").strip() == str(worktree)
+
+    def test_configured_verify_writes_candidate_bound_receipt(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "verify.py").write_text(
+            "print('journey passed')\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        controller._config = HarnessConfig(
+            **{
+                **controller._config.__dict__,
+                "verify_command": f"{sys.executable} verify.py",
+            }
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        receipt = Path(str(result.verification_evidence["path"]))
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        assert payload["candidate_commit"] == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert payload["stages"][0]["stdout_tail"] == "journey passed\n"
+
+    def test_verifier_mutation_fails_receipt(self, tmp_path: Path) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "verify.py").write_text(
+            "from pathlib import Path\n"
+            "Path('generated.txt').write_text('changed')\n",
+            encoding="utf-8",
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+        controller._config = HarnessConfig(
+            **{
+                **controller._config.__dict__,
+                "verify_command": f"{sys.executable} verify.py",
+            }
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "candidate-mutated-during-verification"
+        payload = json.loads(
+            Path(str(result.verification_evidence["path"])).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert payload["failure_id"] == "candidate_mutated_during_verification"
+
+    def test_detected_python_verify_writes_receipt(self, tmp_path: Path) -> None:
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "pyproject.toml").write_text(
+            "[project]\nname = 'receipt-fixture'\nversion = '0.0.0'\n",
+            encoding="utf-8",
+        )
+        (worktree / "test_demo.py").write_text(
+            "def test_demo():\n    assert True\n", encoding="utf-8"
+        )
+        _commit_all(worktree)
+        gitops.base_dir = worktree
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert result.verification_evidence["passed"] is True
+        payload = json.loads(
+            Path(str(result.verification_evidence["path"])).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert payload["verifier_source"] == "detected"
+        assert payload["stages"][0]["name"] == "pytest"
 
     def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
         """Unknown project type → escalation banner printed to stderr."""
@@ -8073,6 +8640,19 @@ class TestVerifyCommandNeeded:
 class TestVerifyLocallySwift:
     """Swift project detection and verification."""
 
+    @pytest.fixture(autouse=True)
+    def _bind_candidate_evidence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            ralph, "_current_git_commit", lambda _path: "a" * 40
+        )
+        monkeypatch.setattr(
+            ralph,
+            "_safe_product_evidence_fingerprint",
+            lambda _path: "b" * 64,
+        )
+
     def test_root_package_swift_detected(self, tmp_path: Path) -> None:
         """Package.swift at worktree root → swift build + swift test."""
         controller, _, _, _ = _make_controller(tmp_path)
@@ -8081,11 +8661,14 @@ class TestVerifyLocallySwift:
         (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
 
         with patch("subprocess.run") as mock_run, \
-             patch("shutil.which", return_value="/usr/bin/swift"):
+             patch("shutil.which", return_value="/usr/bin/swift"), \
+             patch("harness.ralph._current_git_commit", return_value="a" * 40), \
+             patch("harness.ralph._safe_product_evidence_fingerprint", return_value="b" * 64):
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             result = controller._exec_verify_locally(str(worktree))
 
         assert result.passed is True
+        assert result.verification_evidence["passed"] is True
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert ["swift", "build"] in calls
         assert ["swift", "test"] in calls

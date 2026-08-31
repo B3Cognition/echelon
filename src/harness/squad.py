@@ -12063,11 +12063,6 @@ class SquadController:
         except QualityCandidateIntegrityError:
             return self._proportional_integrity_failure()
 
-        if (
-            assessment.hard_blockers
-            and assessment.hard_blockers != ("sage_contradiction",)
-        ):
-            return self._proportional_integrity_failure()
         if assessment.ordinary_pass:
             try:
                 captured = self._capture_proportional_quality_candidate(
@@ -12188,20 +12183,23 @@ class SquadController:
             not isinstance(assessment, AuthoritativeQualityAssessment)
             or not assessment.proportional_failure
             or assessment.ordinary_pass
-            or assessment.hard_blockers not in {(), ("sage_contradiction",)}
         ):
             raise QualityCandidateIntegrityError(
                 "proportional failure assessment is invalid"
             )
-        existing_repair = validate_repair_state(
-            snapshot.state.get("phase1_quality_repair")
-        )
         issue_request = self._prepare_banzai_quality_issue_resolution(
             snapshot,
             assessment,
         )
         if issue_request is not None:
             return PHASE_TERMINAL_BLOCKED, {}, issue_request
+        if assessment.hard_blockers not in {(), ("sage_contradiction",)}:
+            raise QualityCandidateIntegrityError(
+                "proportional failure assessment is invalid"
+            )
+        existing_repair = validate_repair_state(
+            snapshot.state.get("phase1_quality_repair")
+        )
         existing_evidence = snapshot.state.get(
             "proportional_quality_candidate_evidence"
         )

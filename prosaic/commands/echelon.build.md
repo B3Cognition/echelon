@@ -38,6 +38,15 @@ in the slice; Ralph marks those rows DONE in `tasks.md` before verify. Ralph
 owns the outer loop: it will verify, commit, and invoke the next build slice
 when more tasks remain.
 
+If implementation is complete but a required verifier cannot run specifically
+because the coding provider lacks a host-bound dependency such as Chromium,
+Postgres, Docker, or an OS service, ALWAYS write
+`{"status":"blocked","blocker_kind":"verification_environment","reason":"..."}`
+to `$HARNESS_BUILD_STATUS_FILE`. NEVER use `verification_environment` for a
+failing assertion, broken implementation, ambiguous requirement, missing
+credential, or any blocker that host verification cannot resolve. Ralph alone
+decides whether to checkpoint the candidate and run its authoritative verifier.
+
 If there are no open canonical task rows because all task IDs are already
 complete, do **not** treat that alone as a completed harness slice. Continue to
 the finalization gates that are not represented as task rows. In particular,

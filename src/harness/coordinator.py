@@ -31,6 +31,11 @@ from harness.delivery_results import (
     VisualResult,
 )
 from harness.verify_result import VerifyResult
+from harness.product_inventory import product_evidence_fingerprint
+from harness.verification_evidence import (
+    VerificationEvidenceRef,
+    validate_verification_receipt,
+)
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
 from harness.ralph import RalphController
@@ -487,6 +492,58 @@ class StrategyCoordinator:
             return "verified_provenance_mismatch"
         return None
 
+    @staticmethod
+    def _git_commit_is_ancestor(
+        worktree_path: Path, ancestor: str, descendant: str
+    ) -> bool:
+        """Return whether a verified candidate is retained by the final commit."""
+        if not ancestor or not descendant:
+            return False
+        try:
+            result = subprocess.run(
+                [
+                    "git", "-C", str(worktree_path), "merge-base", "--is-ancestor",
+                    ancestor, descendant,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+
+    def _verified_evidence_updates(
+        self,
+        *,
+        implementation: ImplementationResult,
+        worktree_path: Path,
+        verified_commit: str,
+    ) -> Dict[str, Any]:
+        """Capture host evidence that proves an equivalent final product."""
+        verify = implementation.final_verify
+        raw_evidence = getattr(verify, "verification_evidence", None)
+        if not isinstance(raw_evidence, dict):
+            return {}
+        try:
+            ref = VerificationEvidenceRef.from_mapping(raw_evidence)
+            fingerprint = product_evidence_fingerprint(worktree_path)
+        except (OSError, RuntimeError, ValueError):
+            return {}
+        validation = validate_verification_receipt(
+            ref,
+            candidate_commit=ref.candidate_commit,
+            candidate_fingerprint=fingerprint,
+        )
+        if not validation.valid or not self._git_commit_is_ancestor(
+            worktree_path, ref.candidate_commit, verified_commit
+        ):
+            return {}
+        return {
+            "verified_evidence": ref.as_mapping(),
+            "verified_product_fingerprint": fingerprint,
+        }
+
     def _verified_checkpoint_updates(
         self,
         *,
@@ -508,12 +565,53 @@ class StrategyCoordinator:
         verified_commit = self._worktree_head(worktree_path)
         if not verified_commit:
             return None
-        return {
+        updates = {
             "last_completed_phase": "implementation",
             "pr_url": implementation.pr_url,
             "registered_worktree": str(worktree_path) if worktree_path else None,
             "verified_commit": verified_commit,
         }
+        updates.update(
+            self._verified_evidence_updates(
+                implementation=implementation,
+                worktree_path=worktree_path,
+                verified_commit=verified_commit,
+            )
+        )
+        return updates
+
+    def _has_equivalent_verified_provenance(
+        self,
+        *,
+        state: Dict[str, Any],
+        worktree_path: Path,
+        recorded_commit: str,
+        report_verified_commit: str,
+    ) -> bool:
+        """Allow only a descendant whose bounded product evidence is unchanged."""
+        raw_evidence = state.get("verified_evidence")
+        expected_fingerprint = str(state.get("verified_product_fingerprint") or "")
+        if not isinstance(raw_evidence, dict) or not expected_fingerprint:
+            return False
+        try:
+            ref = VerificationEvidenceRef.from_mapping(raw_evidence)
+            current_fingerprint = product_evidence_fingerprint(worktree_path)
+        except (OSError, RuntimeError, ValueError):
+            return False
+        if current_fingerprint != expected_fingerprint:
+            return False
+        validation = validate_verification_receipt(
+            ref,
+            candidate_commit=ref.candidate_commit,
+            candidate_fingerprint=current_fingerprint,
+        )
+        return bool(
+            validation.valid
+            and report_verified_commit == ref.candidate_commit
+            and self._git_commit_is_ancestor(
+                worktree_path, ref.candidate_commit, recorded_commit
+            )
+        )
 
     def _checkpoint_verified_result(
         self,
@@ -632,12 +730,19 @@ class StrategyCoordinator:
                 report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
                 metadata = read_fulfillment_metadata(report) if report is not None else {}
                 verified_commit = str(metadata.get("verified_commit") or "")
-                if (
-                    not verified_commit
-                    or verified_commit != recorded_commit
-                    or persisted_verified_commit != recorded_commit
-                    or persisted_verified_commit != verified_commit
-                ):
+                exact_provenance = (
+                    bool(verified_commit)
+                    and verified_commit == recorded_commit
+                    and persisted_verified_commit == recorded_commit
+                    and persisted_verified_commit == verified_commit
+                )
+                equivalent_provenance = self._has_equivalent_verified_provenance(
+                    state=state,
+                    worktree_path=Path(worktree_text),
+                    recorded_commit=recorded_commit,
+                    report_verified_commit=verified_commit,
+                )
+                if not (exact_provenance or equivalent_provenance):
                     return self._persist_phase_block(
                         state_store,
                         phase="finalization",
