@@ -9,7 +9,12 @@ from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
 from harness.stacks.resolver import resolve_stacks
-from harness.stacks.schema import StackDefinition, StackTool
+from harness.stacks.schema import (
+    StackDefinition,
+    StackProvisioner,
+    StackProvisionerSatisfier,
+    StackTool,
+)
 
 
 def _stack(
@@ -22,6 +27,7 @@ def _stack(
     requires_commands: list[str] | None = None,
     requires_registries: list[str] | None = None,
     tools: dict[str, StackTool] | None = None,
+    provisioners: list[StackProvisioner] | None = None,
 ) -> StackDefinition:
     return StackDefinition(
         id=stack_id,
@@ -38,6 +44,7 @@ def _stack(
         requires_registries=requires_registries or [],
         tools=tools or {},
         context_files=context_files or ["context.md"],
+        provisioners=provisioners or [],
     )
 
 
@@ -93,6 +100,72 @@ def test_resolve_no_selected_stacks_is_empty() -> None:
     assert resolved.required_commands == []
     assert resolved.required_registries == []
     assert resolved.context_files == []
+    assert resolved.provisioners == []
+
+
+@pytest.mark.unit
+def test_resolve_provisioners_preserves_resolution_order_and_owner() -> None:
+    provisioner = StackProvisioner(
+        id="postgres-verify",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[
+            StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL")
+        ],
+    )
+    definitions = {
+        "application": _stack(
+            "application",
+            provides={"web_app.framework": "nextjs"},
+            implies=["database"],
+        ),
+        "database": _stack(
+            "database",
+            provides={"data.database": "postgres"},
+            provisioners=[provisioner],
+        ),
+    }
+
+    resolved = resolve_stacks(["application"], definitions)
+
+    assert [(item.owner_stack_id, item.provisioner.id) for item in resolved.provisioners] == [
+        ("database", "postgres-verify")
+    ]
+
+
+@pytest.mark.unit
+def test_conflicting_provisioner_ids_fail() -> None:
+    def provisioner(readiness_command: str) -> StackProvisioner:
+        return StackProvisioner(
+            id="postgres-verify",
+            scope="verification",
+            services=["postgres"],
+            required_environment=["DATABASE_URL"],
+            readiness_command=readiness_command,
+            satisfiers=[
+                StackProvisionerSatisfier(
+                    kind="environment", variable="DATABASE_URL"
+                )
+            ],
+        )
+
+    definitions = {
+        "a": _stack(
+            "a",
+            provides={"data.database": "postgres"},
+            provisioners=[provisioner("pg_isready")],
+        ),
+        "b": _stack(
+            "b",
+            provides={"data.migrations": "checked-in"},
+            provisioners=[provisioner("pg_isready --quiet")],
+        ),
+    }
+
+    with pytest.raises(StackConflictError, match="postgres-verify"):
+        resolve_stacks(["a", "b"], definitions)
 
 
 @pytest.mark.unit

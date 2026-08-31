@@ -43,6 +43,30 @@ VALID_STACK = {
 }
 
 
+def _postgres_stack_raw() -> dict:
+    return {
+        **VALID_STACK,
+        "schema_version": "1.1",
+        "provisioning": [
+            {
+                "id": "postgres-verify",
+                "scope": "verification",
+                "services": ["postgres"],
+                "environment": {"required": ["DATABASE_URL"]},
+                "readiness": {"command": "pg_isready"},
+                "satisfiers": [
+                    {"kind": "environment", "variable": "DATABASE_URL"},
+                    {
+                        "kind": "compose-template",
+                        "output": "docker-compose.echelon-verify.yml",
+                        "env_example": ".env.echelon-verify.example",
+                    },
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.unit
 def test_parse_valid_stack_definition() -> None:
     stack = parse_stack_definition(VALID_STACK, Path("stack.yml"))
@@ -53,6 +77,25 @@ def test_parse_valid_stack_definition() -> None:
     assert stack.provides == {"ui.components": "example"}
     assert stack.tools["example_cli"].command == "npx"
     assert stack.tools["example_cli"].commands["list"].output == "json"
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_postgres_verification_provisioner(tmp_path: Path) -> None:
+    definition = parse_stack_definition(_postgres_stack_raw(), tmp_path / "stack.yml")
+
+    provisioner = definition.provisioners[0]
+    assert provisioner.id == "postgres-verify"
+    assert provisioner.required_environment == ["DATABASE_URL"]
+    assert provisioner.satisfiers[1].output == "docker-compose.echelon-verify.yml"
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_output_outside_target(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["output"] = "../compose.yml"
+
+    with pytest.raises(StackValidationError, match="target-relative"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
 
 
 @pytest.mark.unit

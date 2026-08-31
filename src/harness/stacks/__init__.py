@@ -19,15 +19,23 @@ from harness.stacks.preflight import (
     run_stack_preflight,
 )
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
-from harness.stacks.resolver import ResolvedStacks, resolve_stacks
+from harness.stacks.resolver import (
+    ResolvedStackProvisioner,
+    ResolvedStacks,
+    resolve_stacks,
+)
+from harness.stacks.schema import StackProvisioner, StackProvisionerSatisfier
 
 __all__ = [
     "DetectedStack",
     "ResolvedStacks",
+    "ResolvedStackProvisioner",
     "StackDecision",
     "StackDetectionReport",
     "StackPreflightFinding",
     "StackPreflightResult",
+    "StackProvisioner",
+    "StackProvisionerSatisfier",
     "detect_stacks",
     "detection_report_from_file",
     "detection_report_to_yaml",
