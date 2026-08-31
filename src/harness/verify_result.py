@@ -68,6 +68,7 @@ class VerifyResult:
     failures: List[FailureEntry] = field(default_factory=list)
     duration_s: float = 0.0
     token_usage: int = 0
+    verification_evidence: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> VerifyResult:
@@ -98,4 +99,9 @@ class VerifyResult:
             failures=failures,
             duration_s=float(data.get("duration_s", 0.0)),
             token_usage=int(data.get("token_usage", 0)),
+            verification_evidence=(
+                dict(data.get("verification_evidence", {}))
+                if isinstance(data.get("verification_evidence", {}), dict)
+                else {}
+            ),
         )
