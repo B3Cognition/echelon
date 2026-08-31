@@ -16,6 +16,7 @@ class SandboxServiceSpec:
     service_name: str
     image: str
     environment_names: tuple[str, ...] = ()
+    health_command: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

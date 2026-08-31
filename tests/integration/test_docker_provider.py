@@ -41,6 +41,7 @@ from harness.provider import (
     SandboxHandle,
     SandboxSpec,
 )
+from harness.verification_plan import SandboxServiceSpec
 
 
 def _make_spec(**overrides) -> SandboxSpec:
@@ -185,6 +186,60 @@ class TestDockerProviderInit:
     def test_capabilities_empty(self) -> None:
         provider = DockerWorktreeProvider()
         assert provider.capabilities() == set()
+
+
+@pytest.mark.integration
+class TestVerificationSidecars:
+    def test_service_uses_sandbox_network_without_host_port(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": [],
+        })()
+        service = SandboxServiceSpec(service_name="postgres", image="postgres:16.4-alpine")
+
+        with patch("harness.docker_provider._run_docker") as run:
+            run.return_value = MagicMock(stdout="service-id\n", stderr="", returncode=0)
+            provider.start_services(handle, (service,))
+
+        command = run.call_args.args[0]
+        assert "--network" in command
+        assert "internal-net" in command
+        assert "-p" not in command
+
+    def test_destroy_removes_sidecar_before_network(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": ["service-id"],
+        })()
+
+        with patch("harness.docker_provider.subprocess.run") as run:
+            provider.destroy(handle)
+
+        calls = [call.args[0] for call in run.call_args_list]
+        assert calls[0] == ["docker", "rm", "-f", "service-id"]
+        assert calls[-1] == ["docker", "network", "rm", "internal-net"]
+
+    def test_sidecar_health_command_runs_inside_service(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": [],
+        })()
+        service = SandboxServiceSpec(
+            service_name="postgres", image="postgres:16.4-alpine",
+            health_command=("pg_isready",),
+        )
+
+        with patch("harness.docker_provider._run_docker") as run:
+            run.return_value = MagicMock(stdout="service-id\n", stderr="", returncode=0)
+            provider.start_services(handle, (service,))
+
+        assert run.call_args_list[1].args[0] == ["exec", "service-id", "pg_isready"]
 
 
 @pytest.mark.integration

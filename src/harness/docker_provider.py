@@ -47,6 +47,7 @@ from harness.provider import (
     SandboxSpec,
     register_provider,
 )
+from harness.verification_plan import SandboxServiceSpec
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +512,15 @@ class DockerWorktreeProvider(SandboxProvider):
             )
             return
 
+        # Remove verification sidecars before their internal network.
+        for service_id in info.service_ids:
+            subprocess.run(
+                [self._container_cli, "rm", "-f", service_id],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
         # Remove sandbox container
         subprocess.run(
             [self._container_cli, "rm", "-f", info.sandbox_id],
@@ -539,6 +549,48 @@ class DockerWorktreeProvider(SandboxProvider):
     def capabilities(self) -> Set[Capability]:
         """Phase 1: no optional capabilities."""
         return set()
+
+    def start_services(
+        self,
+        handle: SandboxHandle,
+        services: tuple[SandboxServiceSpec, ...],
+    ) -> tuple[str, ...]:
+        """Start labelled verification sidecars on the sandbox internal network."""
+        info = self._containers.get(handle.session_id)
+        if info is None:
+            raise SandboxCreationError("sandbox handle is not active")
+        started: list[str] = []
+        try:
+            for service in services:
+                result = _run_docker([
+                    "run", "-d",
+                    "--network", info.network_name,
+                    "--label", f"echelon-harness.session_id={handle.session_id}",
+                    "--label", "echelon-harness.type=verification-service",
+                    "--label", f"echelon-harness.service={service.service_name}",
+                    "--name", f"harness-service-{service.service_name}-{handle.session_id}",
+                    service.image,
+                ], cli=self._container_cli)
+                service_id = result.stdout.strip()
+                if not service_id:
+                    raise SandboxCreationError(
+                        f"verification service {service.service_name!r} did not return an id"
+                    )
+                started.append(service_id)
+                if service.health_command:
+                    _run_docker(
+                        ["exec", service_id, *service.health_command],
+                        cli=self._container_cli,
+                    )
+            info.service_ids.extend(started)
+            return tuple(started)
+        except Exception:
+            for service_id in started:
+                subprocess.run(
+                    [self._container_cli, "rm", "-f", service_id],
+                    capture_output=True, timeout=10, check=False,
+                )
+            raise
 
     # --- Internal helpers ---
 
@@ -569,7 +621,7 @@ class DockerWorktreeProvider(SandboxProvider):
 class _ContainerInfo:
     """Internal tracking of container resources for cleanup."""
 
-    __slots__ = ("sandbox_id", "proxy_id", "network_name")
+    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids")
 
     def __init__(
         self,
@@ -580,6 +632,7 @@ class _ContainerInfo:
         self.sandbox_id = sandbox_id
         self.proxy_id = proxy_id
         self.network_name = network_name
+        self.service_ids: list[str] = []
 
 
 # --- Registration ---
