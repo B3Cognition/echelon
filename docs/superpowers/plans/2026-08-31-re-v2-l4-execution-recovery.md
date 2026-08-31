@@ -93,12 +93,12 @@
 - exact target-local compatibility and child-local copying before adoption;
 - manifest-first V1/V2 origin dispatch that silently skips recognized adjacent versions.
 
-- [ ] Freeze V1 bytes with and without adjacent schema-7 origins.
-- [ ] Run RED.
-- [ ] Implement closed V2 selection/ranking/cache and the narrow origin discriminator.
-- [ ] Add selection expansion, changed unrelated domain, changed shard/policy/verifier, missing object, and origin/cache deletion tests.
-- [ ] Run GREEN with every protocol-2.6 checkpoint test.
-- [ ] Commit `feat(re): add L4 checkpoint schema v2`.
+- [x] Freeze V1 bytes with and without adjacent schema-7 origins.
+- [x] Run RED.
+- [x] Implement closed V2 selection/ranking/cache and the narrow origin discriminator.
+- [x] Add selection expansion, changed unrelated domain, changed shard/policy/verifier, missing object, and origin/cache deletion tests.
+- [x] Run GREEN with every protocol-2.6 checkpoint test.
+- [x] Commit `feat(re): add L4 checkpoint schema v2`.
 
 ### Task 5: Add Events, Projection, and Authority-First Recovery
 

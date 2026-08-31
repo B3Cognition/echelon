@@ -27,6 +27,10 @@ from harness.re_v2.protocol_26.model import (
     RunManifestV5,
 )
 from harness.re_v2.protocol_26.selection import RANK_POLICIES
+from harness.re_v2.protocol_28.model import (
+    ExhaustiveRunManifestV7,
+    L4ClosureRunManifestV7,
+)
 from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
 
@@ -104,6 +108,17 @@ def reconstruct_origin_checkpoints(
     try:
         confined = _confined_origin(workspace_root, run_dir)
         paths = ReV2Paths.for_run(confined)
+        active_manifest = load_run_manifest(confined)
+        if isinstance(
+            active_manifest,
+            (ExhaustiveRunManifestV7, L4ClosureRunManifestV7),
+        ):
+            return OriginCheckpointResultV1(
+                origin_run_id=origin_run_id,
+                manifests=(),
+                authority_objects={},
+                rejected=(),
+            )
     except Exception:
         return OriginCheckpointResultV1.invalid(
             origin_run_id, "checkpoint_manifest_invalid"

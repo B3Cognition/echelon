@@ -7,11 +7,28 @@ import pytest
 from harness.re_v2.protocol_26 import reconstruction
 from harness.re_v2.protocol_26.reconstruction import reconstruct_origin_checkpoints
 from tests.re_v2_protocol_26_fixtures import CheckpointWorkspace
+from tests.re_v2_protocol_28_fixtures import exhaustive_manifest_v7
 
 
 @pytest.fixture
 def checkpoint_workspace(tmp_path: Path) -> CheckpointWorkspace:
     return CheckpointWorkspace.create(tmp_path / "workspace")
+
+
+def test_v1_reconstructor_silently_skips_recognized_schema7_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    origin = workspace / "runs" / "re-l4-origin"
+    origin.mkdir(parents=True)
+    monkeypatch.setattr(
+        reconstruction, "load_run_manifest", lambda _path: exhaustive_manifest_v7()
+    )
+
+    result = reconstruct_origin_checkpoints(workspace, origin)
+
+    assert result.manifests == ()
+    assert result.rejected == ()
 
 
 @pytest.mark.parametrize("origin_state", ["active", "paused", "blocked", "complete"])
