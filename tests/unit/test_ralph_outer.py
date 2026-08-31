@@ -7950,6 +7950,12 @@ class TestLlmProviderDispatch:
         assert f"tasks_file: {spec_dir / 'tasks.md'}" in sent_prompt
         assert f"spec_file: {spec_dir / 'spec.md'}" in sent_prompt
         assert "Do not discover spec artifacts with `find`, `ls`, globbing" in sent_prompt
+        prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
+        assert prompt_metadata["tool_read_roots"] == [str(spec_dir)]
+        assert prompt_metadata["tool_write_paths"] == [
+            str(spec_dir / "documentation-impact-report.md"),
+            str(spec_dir / "docs-verification-report.md"),
+        ]
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""

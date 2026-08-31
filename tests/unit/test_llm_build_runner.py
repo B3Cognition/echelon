@@ -54,6 +54,34 @@ class TestLlmBuildRunner:
         extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
         assert "HARNESS_SOURCE_DIR" not in extra_env
 
+    def test_exec_build_forwards_prompt_metadata_to_capable_provider(self, tmp_path):
+        executor = MagicMock()
+
+        def run_prompt_result(_worktree_path, _prompt, *, extra_env, request_metadata):
+            Path(extra_env["HARNESS_BUILD_STATUS_FILE"]).write_text(
+                json.dumps({"status": "done"}),
+                encoding="utf-8",
+            )
+            return MagicMock(exit_code=0)
+
+        executor.run_prompt_result.side_effect = run_prompt_result
+        metadata = {
+            "tool_read_roots": [str(tmp_path / "specs")],
+            "tool_write_paths": [str(tmp_path / "specs" / "report.md")],
+        }
+
+        result = LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            prompt_metadata=metadata,
+        )
+
+        assert result.succeeded is True
+        assert executor.run_prompt_result.call_args.kwargs["request_metadata"] == {
+            "prompt_metadata": metadata,
+        }
+        executor.exec_prompt.assert_not_called()
+
     def test_exec_build_exposes_containment_policy_file_when_provided(self, tmp_path):
         executor = _executor(status={"status": "done"})
         policy_file = tmp_path / "delivery-containment-policy.json"

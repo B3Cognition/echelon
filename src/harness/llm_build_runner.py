@@ -38,6 +38,7 @@ class LlmBuildRunner:
         prompt: str,
         *,
         containment_policy_file: str | None = None,
+        prompt_metadata: Mapping[str, object] | None = None,
     ) -> BuildResult:
         status_file = Path(worktree_path) / BUILD_STATUS_FILENAME
         start = time.monotonic()
@@ -59,11 +60,21 @@ class LlmBuildRunner:
                     duration_ms=int((time.monotonic() - start) * 1000),
                 )
             extra_env.update(policy_env)
-        exit_code = self._prompt_executor.exec_prompt(
-            worktree_path,
-            prompt,
-            extra_env=extra_env,
-        )
+        run_prompt_result = getattr(self._prompt_executor, "run_prompt_result", None)
+        if prompt_metadata and callable(run_prompt_result):
+            provider_result = run_prompt_result(
+                worktree_path,
+                prompt,
+                extra_env=extra_env,
+                request_metadata={"prompt_metadata": dict(prompt_metadata)},
+            )
+            exit_code = int(provider_result.exit_code)
+        else:
+            exit_code = self._prompt_executor.exec_prompt(
+                worktree_path,
+                prompt,
+                extra_env=extra_env,
+            )
         duration_ms = int((time.monotonic() - start) * 1000)
         stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")
         stderr = str(getattr(self._prompt_executor, "last_stderr", "") or "")
@@ -133,11 +144,13 @@ class LlmBuildRunner:
         prompt: str,
         *,
         containment_policy_file: str | None = None,
+        prompt_metadata: Mapping[str, object] | None = None,
     ) -> BuildResult:
         return self.exec_build(
             worktree_path,
             prompt,
             containment_policy_file=containment_policy_file,
+            prompt_metadata=prompt_metadata,
         )
 
 

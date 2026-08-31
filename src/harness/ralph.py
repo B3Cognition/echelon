@@ -1719,6 +1719,7 @@ class RalphController:
                 containment_policy_file=str(
                     self._state_store.state_dir / "delivery-containment-policy.json"
                 ),
+                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
             )
             return {
                 "exit_code": result.exit_code,
@@ -3239,6 +3240,7 @@ class RalphController:
                 containment_policy_file=str(
                     self._state_store.state_dir / "delivery-containment-policy.json"
                 ),
+                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
             )
             return {
                 "exit_code": result.exit_code,
@@ -4483,6 +4485,21 @@ class RalphController:
         if state.get("target_repo") or state.get("target_path"):
             return "external"
         return "worktree"
+
+    def _llm_build_prompt_metadata(self, worktree_path: str) -> dict[str, object]:
+        """Authorize only TECH WRITER/DOCS VERIFIER external spec outputs."""
+        if self._spec_artifacts_mode() != "external":
+            return {}
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return {}
+        return {
+            "tool_read_roots": [str(spec_dir)],
+            "tool_write_paths": [
+                str(spec_dir / "documentation-impact-report.md"),
+                str(spec_dir / "docs-verification-report.md"),
+            ],
+        }
 
     def _target_task_ids(self) -> set[str] | None:
         """Return the orchestrator-owned task scope for this source repo."""
