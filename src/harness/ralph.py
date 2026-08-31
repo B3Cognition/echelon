@@ -2313,6 +2313,10 @@ class RalphController:
                 else None
             )
         }
+        if verify_result.verification_evidence:
+            refresh_kwargs["verification_evidence"] = dict(
+                verify_result.verification_evidence
+            )
         if decision.get("action") == "scoped":
             refresh_kwargs.update(
                 {

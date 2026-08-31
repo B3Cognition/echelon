@@ -2861,7 +2861,10 @@ class TestOuterLoopConvergence:
             *,
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
+            verification_evidence: dict[str, object] | None = None,
         ) -> int:
+            assert verification_evidence is not None
+            assert verification_evidence["passed"] is True
             head = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=worktree_path,
@@ -2898,12 +2901,10 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            spec_dir=spec_dir,
-            orchestration_root=None,
-        )
+        fulfillment_runner.refresh.assert_called_once()
+        assert fulfillment_runner.refresh.call_args.kwargs[
+            "verification_evidence"
+        ]["passed"] is True
         assert result.status == "blocked"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
@@ -2933,7 +2934,14 @@ class TestOuterLoopConvergence:
         )
 
         result = controller._refresh_fulfillment_report(
-            VerifyResult(passed=True, failures=[]),
+            VerifyResult(
+                passed=True,
+                failures=[],
+                verification_evidence={
+                    "path": "/tmp/receipt.json",
+                    "passed": True,
+                },
+            ),
             str(worktree),
         )
 
@@ -2943,6 +2951,10 @@ class TestOuterLoopConvergence:
             "spec-001",
             spec_dir=spec_dir,
             orchestration_root=workspace,
+            verification_evidence={
+                "path": "/tmp/receipt.json",
+                "passed": True,
+            },
         )
 
     def test_cached_verify_spec_refresh_is_accepted_before_fulfillment_gate(
@@ -3081,15 +3093,14 @@ class TestOuterLoopConvergence:
 
         controller.run_loop(max_outer=1, max_inner=0, build_prompt="implement")
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            spec_dir=spec_dir,
-            orchestration_root=None,
-            scope="scoped",
-            completed_task_ids=["T-002"],
-            changed_files=["src/a.py", "tests/test_a.py"],
-        )
+        fulfillment_runner.refresh.assert_called_once()
+        kwargs = fulfillment_runner.refresh.call_args.kwargs
+        assert kwargs["spec_dir"] == spec_dir
+        assert kwargs["orchestration_root"] is None
+        assert kwargs["scope"] == "scoped"
+        assert kwargs["completed_task_ids"] == ["T-002"]
+        assert kwargs["changed_files"] == ["src/a.py", "tests/test_a.py"]
+        assert kwargs["verification_evidence"]["passed"] is True
 
     def test_scoped_fulfillment_policy_defers_full_refresh_without_feedback(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3435,7 +3446,9 @@ class TestOuterLoopConvergence:
             *,
             spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
+            verification_evidence: dict[str, object] | None = None,
         ) -> int:
+            assert verification_evidence is not None
             head = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=worktree_path,
@@ -3529,12 +3542,13 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        fulfillment_runner.refresh.assert_called_once_with(
-            str(worktree),
-            "spec-001",
-            orchestration_root=orchestration_root,
-            spec_dir=spec_dir,
-        )
+        fulfillment_runner.refresh.assert_called_once()
+        args = fulfillment_runner.refresh.call_args.args
+        kwargs = fulfillment_runner.refresh.call_args.kwargs
+        assert args == (str(worktree), "spec-001")
+        assert kwargs["orchestration_root"] == orchestration_root
+        assert kwargs["spec_dir"] == spec_dir
+        assert kwargs["verification_evidence"]["passed"] is True
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
         """Verified work must not be reported converged when commit/push fails."""

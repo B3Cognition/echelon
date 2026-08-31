@@ -16,12 +16,16 @@ from harness.judgment_prepass import (
     assemble_fulfillment_report,
     write_judgment_prepass,
 )
+from harness.product_inventory import product_evidence_fingerprint
 from harness.scoped_verify import (
     build_scoped_verify_plan,
     merge_scoped_fulfillment_report,
 )
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
+from harness.verification_evidence import VerificationEvidenceRef
+from harness.verification_evidence import validate_verification_receipt
+from harness.verify_spec_run import init_verify_spec_run
 from harness.verified_fulfillment_ledger import (
     VerifiedLedgerReusePlan,
     build_verified_ledger,
@@ -165,6 +169,7 @@ class FulfillmentRunner:
         changed_files: list[str] | tuple[str, ...] | None = None,
         reconcile: bool = False,
         dry_run: bool = False,
+        verification_evidence: Mapping[str, object] | None = None,
     ) -> FulfillmentRefreshResult:
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
@@ -181,6 +186,19 @@ class FulfillmentRunner:
             explicit_spec_dir=spec_dir,
         )
         commit = _current_git_commit(worktree)
+        evidence = _validated_verification_evidence(
+            verification_evidence,
+            worktree=worktree,
+            candidate_commit=commit,
+        )
+        if verification_evidence is not None and evidence is None:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope=scope,
+                reason="verification evidence is invalid or stale",
+            )
+        evidence_sha256 = evidence.evidence_sha256 if evidence is not None else None
         spec_input_hash = (
             _spec_input_hash(resolved_spec_dir)
             if resolved_spec_dir is not None
@@ -192,6 +210,7 @@ class FulfillmentRunner:
             commit=commit,
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
+            verification_evidence_sha256=evidence_sha256,
         )
         report = (
             latest_fulfillment_report(resolved_spec_dir)
@@ -212,6 +231,8 @@ class FulfillmentRunner:
                 changed_files=changed_files or [],
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
+                verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
             )
         force_execution = reconcile or dry_run
         if not force_execution and _latest_full_report_matches_cache(
@@ -229,6 +250,7 @@ class FulfillmentRunner:
                 report=report,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
+                verification_evidence_sha256=evidence_sha256,
             )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -246,6 +268,10 @@ class FulfillmentRunner:
             spec_dir=resolved_spec_dir,
             orchestration_root=orchestration_root,
             spec_id=spec_id,
+            cache_key=cache_key,
+            scope=scope,
+            reconcile=reconcile,
+            dry_run=dry_run,
         )
         if not force_execution:
             direct_result = _try_direct_no_fallback_refresh(
@@ -257,6 +283,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
+                verification_evidence_sha256=evidence_sha256,
             )
             if direct_result is not None:
                 return direct_result
@@ -279,6 +306,12 @@ class FulfillmentRunner:
         arguments = spec_id
         if resolved_spec_dir is not None:
             arguments = f"{spec_id} spec_dir={resolved_spec_dir}"
+        arguments += f" verify_run_dir={artifact_policy.verify_run_dir}"
+        if evidence is not None:
+            arguments += (
+                f" verification_receipt={evidence.path}"
+                f" verification_evidence_sha256={evidence.evidence_sha256}"
+            )
         if reconcile:
             arguments += " --reconcile"
         if dry_run:
@@ -290,6 +323,7 @@ class FulfillmentRunner:
             worktree_path=worktree_path,
             prompt=prompt,
             policy=artifact_policy,
+            verification_evidence=evidence,
         )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
@@ -341,6 +375,7 @@ class FulfillmentRunner:
                 commit=commit,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
+                verification_evidence_sha256=evidence_sha256,
                 cache_key=cache_key,
             )
             report = (
@@ -368,6 +403,7 @@ class FulfillmentRunner:
                 report=report,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
+                verification_evidence_sha256=evidence_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -401,6 +437,8 @@ class FulfillmentRunner:
         changed_files: list[str] | tuple[str, ...],
         spec_input_hash: str | None,
         implementation_input_hash: str | None,
+        verification_evidence_sha256: str | None,
+        verification_evidence: VerificationEvidenceRef | None,
     ) -> FulfillmentRefreshResult:
         if spec_dir is None or commit is None:
             return FulfillmentRefreshResult(
@@ -421,6 +459,7 @@ class FulfillmentRunner:
             report=report,
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
+            verification_evidence_sha256=verification_evidence_sha256,
         )
         impacted_requirement_ids = tuple(
             sorted(set(plan.impacted_requirement_ids) | set(ledger_plan.rechecked_requirement_ids))
@@ -455,6 +494,7 @@ class FulfillmentRunner:
                         report=report,
                         spec_input_hash=spec_input_hash,
                         implementation_input_hash=implementation_input_hash,
+                        verification_evidence_sha256=verification_evidence_sha256,
                     )
                     return FulfillmentRefreshResult(
                         status="cached",
@@ -471,6 +511,11 @@ class FulfillmentRunner:
                     spec_dir=spec_dir,
                     orchestration_root=spec_dir.parent.parent,
                     scope="full",
+                    verification_evidence=(
+                        verification_evidence.as_mapping()
+                        if verification_evidence is not None
+                        else None
+                    ),
                 )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -488,6 +533,11 @@ class FulfillmentRunner:
                 spec_dir=spec_dir,
                 orchestration_root=spec_dir.parent.parent,
                 scope="full",
+                verification_evidence=(
+                    verification_evidence.as_mapping()
+                    if verification_evidence is not None
+                    else None
+                ),
             )
 
         skill_path = find_skill(
@@ -511,6 +561,22 @@ class FulfillmentRunner:
         if plan.base_full_verify_commit:
             arguments += f" base_full_verify_commit={plan.base_full_verify_commit}"
 
+        artifact_policy = _verify_spec_artifact_write_policy(
+            worktree=worktree,
+            spec_dir=spec_dir,
+            orchestration_root=spec_dir.parent.parent,
+            spec_id=spec_id,
+            cache_key=verification_evidence_sha256 or commit,
+            scope="scoped",
+            scoped_ids=impacted_requirement_ids,
+            base_full_verify_commit=plan.base_full_verify_commit,
+        )
+        arguments += f" verify_run_dir={artifact_policy.verify_run_dir}"
+        if verification_evidence is not None:
+            arguments += (
+                f" verification_receipt={verification_evidence.path}"
+                f" verification_evidence_sha256={verification_evidence.evidence_sha256}"
+            )
         prompt = _build_verify_spec_prompt(spec_dir.parent.parent, skill_path, arguments)
         with tempfile.TemporaryDirectory() as temp_dir:
             base_snapshot = Path(temp_dir) / "base-full-fulfillment-report.md"
@@ -522,21 +588,12 @@ class FulfillmentRunner:
                 self._prompt_executor,
                 worktree_path=worktree_path,
                 prompt=prompt,
-                policy=_verify_spec_artifact_write_policy(
-                    worktree=worktree,
-                    spec_dir=spec_dir,
-                    orchestration_root=spec_dir.parent.parent,
-                    spec_id=spec_id,
-                ),
+                policy=artifact_policy,
+                verification_evidence=verification_evidence,
             )
             artifact_write_violation = _verify_spec_artifact_write_violation(
                 self._prompt_executor,
-                policy=_verify_spec_artifact_write_policy(
-                    worktree=worktree,
-                    spec_dir=spec_dir,
-                    orchestration_root=spec_dir.parent.parent,
-                    spec_id=spec_id,
-                ),
+                policy=artifact_policy,
             )
             provider_limit_reason = _provider_session_limit_reason(
                 self._prompt_executor,
@@ -591,6 +648,7 @@ class FulfillmentRunner:
                 report=report,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
+                verification_evidence_sha256=verification_evidence_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -654,7 +712,10 @@ This prompt is the complete verify-spec instruction set for this direct
 fulfillment refresh. Treat the embedded phase context below as the current phase
 prompt. Do not search for or read `.claude/skills`, `SKILL.md`, workflow phase
 files, or workflow definition files. Use the provided spec_dir argument and the
-embedded Python-owned commands.
+embedded Python-owned commands. The `verify_run_dir` argument names a
+Python-preinitialized directory; use that exact directory and do not initialize
+or select another verify-spec run. Treat `verification_receipt` as read-only
+host-verifier evidence and never modify its directory.
 """
 
 
@@ -681,6 +742,7 @@ def _stamp_latest_report(
     commit: str | None = None,
     spec_input_hash: str | None = None,
     implementation_input_hash: str | None = None,
+    verification_evidence_sha256: str | None = None,
     cache_key: str | None = None,
 ) -> None:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
@@ -702,6 +764,8 @@ def _stamp_latest_report(
         extra_metadata["spec_input_hash"] = spec_input_hash
     if implementation_input_hash:
         extra_metadata["implementation_input_hash"] = implementation_input_hash
+    if verification_evidence_sha256:
+        extra_metadata["verification_evidence_sha256"] = verification_evidence_sha256
     if cache_key:
         extra_metadata["verify_cache_key"] = cache_key
     stamp_fulfillment_report(
@@ -758,6 +822,7 @@ def _try_direct_no_fallback_refresh(
     spec_input_hash: str | None,
     implementation_input_hash: str,
     cache_key: str | None,
+    verification_evidence_sha256: str | None,
 ) -> FulfillmentRefreshResult | None:
     if spec_dir is None or commit is None:
         return None
@@ -825,6 +890,7 @@ def _try_direct_no_fallback_refresh(
         commit=commit,
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
+        verification_evidence_sha256=verification_evidence_sha256,
         cache_key=cache_key,
     )
     if not fulfillment_report_is_current(report, current_commit=commit):
@@ -842,6 +908,7 @@ def _try_direct_no_fallback_refresh(
         report=report,
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
+        verification_evidence_sha256=verification_evidence_sha256,
     )
     return FulfillmentRefreshResult(
         status="refreshed",
@@ -950,6 +1017,7 @@ def _write_verified_fulfillment_ledger(
     report: Path | None,
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
+    verification_evidence_sha256: str | None = None,
 ) -> dict[str, int] | None:
     if (
         spec_dir is None
@@ -964,7 +1032,7 @@ def _write_verified_fulfillment_ledger(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         artifact_hashes=artifact_hashes,
-        verifier_version=FULFILLMENT_VERIFIER_VERSION,
+        verifier_version=_ledger_verifier_version(verification_evidence_sha256),
     )
     write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
@@ -972,7 +1040,9 @@ def _write_verified_fulfillment_ledger(
         current_spec_input_hash=spec_input_hash,
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
-        current_verifier_version=FULFILLMENT_VERIFIER_VERSION,
+        current_verifier_version=_ledger_verifier_version(
+            verification_evidence_sha256
+        ),
     )
     return {
         "reused": len(plan.reused_requirement_ids),
@@ -989,6 +1059,7 @@ def _verified_ledger_reuse_plan(
     report: Path | None,
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
+    verification_evidence_sha256: str | None = None,
 ) -> VerifiedLedgerReusePlan:
     if report is None or spec_input_hash is None or implementation_input_hash is None:
         return VerifiedLedgerReusePlan(
@@ -1007,14 +1078,18 @@ def _verified_ledger_reuse_plan(
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
             artifact_hashes=artifact_hashes,
-            verifier_version=FULFILLMENT_VERIFIER_VERSION,
+            verifier_version=_ledger_verifier_version(
+                verification_evidence_sha256
+            ),
         )
     return plan_verified_ledger_reuse(
         ledger,
         current_spec_input_hash=spec_input_hash,
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
-        current_verifier_version=FULFILLMENT_VERIFIER_VERSION,
+        current_verifier_version=_ledger_verifier_version(
+            verification_evidence_sha256
+        ),
     )
 
 
@@ -1087,6 +1162,7 @@ def _verify_cache_key(
     commit: str | None,
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
+    verification_evidence_sha256: str | None = None,
 ) -> str | None:
     if commit is None or spec_input_hash is None or implementation_input_hash is None:
         return None
@@ -1099,7 +1175,15 @@ def _verify_cache_key(
     digest.update(spec_input_hash.encode("utf-8"))
     digest.update(b"\0")
     digest.update(implementation_input_hash.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update((verification_evidence_sha256 or "").encode("utf-8"))
     return digest.hexdigest()
+
+
+def _ledger_verifier_version(verification_evidence_sha256: str | None) -> str:
+    if not verification_evidence_sha256:
+        return FULFILLMENT_VERIFIER_VERSION
+    return f"{FULFILLMENT_VERIFIER_VERSION}+host:{verification_evidence_sha256}"
 
 
 def _provider_session_limit_reason(
@@ -1156,6 +1240,27 @@ _VERIFY_SPEC_ABSOLUTE_PATH_RE = re.compile(
 )
 
 
+def _validated_verification_evidence(
+    value: Mapping[str, object] | None,
+    *,
+    worktree: Path,
+    candidate_commit: str | None,
+) -> VerificationEvidenceRef | None:
+    if value is None or candidate_commit is None:
+        return None
+    try:
+        ref = VerificationEvidenceRef.from_mapping(value)
+        fingerprint = product_evidence_fingerprint(worktree)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    validation = validate_verification_receipt(
+        ref,
+        candidate_commit=candidate_commit,
+        candidate_fingerprint=fingerprint,
+    )
+    return ref if validation.valid else None
+
+
 @dataclass(frozen=True)
 class VerifySpecArtifactWritePolicy:
     """Exact paths where a direct verify-spec refresh may write artifacts."""
@@ -1163,6 +1268,7 @@ class VerifySpecArtifactWritePolicy:
     workspace_root: Path
     spec_dir: Path | None
     spec_id: str
+    verify_run_dir: Path
 
     def allows(self, path: Path) -> bool:
         candidate = path.resolve()
@@ -1174,21 +1280,11 @@ class VerifySpecArtifactWritePolicy:
             }:
                 return True
 
-        runs_dir = self.workspace_root.resolve() / "runs"
         try:
-            relative = candidate.relative_to(runs_dir)
+            candidate.relative_to(self.verify_run_dir.resolve())
         except ValueError:
             return False
-        parts = relative.parts
-        if len(parts) >= 2 and parts[0].startswith(
-            f"verify-spec-{self.spec_id}-"
-        ):
-            return True
-        return (
-            len(parts) >= 4
-            and parts[1] == "verify-spec"
-            and parts[2] == self.spec_id
-        )
+        return True
 
 
 def _verify_spec_artifact_write_policy(
@@ -1197,15 +1293,42 @@ def _verify_spec_artifact_write_policy(
     spec_dir: Path | None,
     orchestration_root: Path | str | None,
     spec_id: str,
+    cache_key: str | None = None,
+    scope: str = "full",
+    scoped_ids: tuple[str, ...] = (),
+    base_full_verify_commit: str | None = None,
+    reconcile: bool = False,
+    dry_run: bool = False,
 ) -> VerifySpecArtifactWritePolicy:
-    return VerifySpecArtifactWritePolicy(
-        workspace_root=_run_pointer_root(
-            worktree,
+    workspace_root = _run_pointer_root(
+        worktree,
+        spec_dir=spec_dir,
+        orchestration_root=orchestration_root,
+    ).resolve()
+    seed = (cache_key or hashlib.sha256(spec_id.encode("utf-8")).hexdigest())[:16]
+    timestamp = f"fulfillment-{scope}-{seed}"
+    if spec_dir is not None and (spec_dir / "spec.md").is_file():
+        verify_run_dir = init_verify_spec_run(
+            project_root=worktree,
+            spec_id=spec_id,
             spec_dir=spec_dir,
-            orchestration_root=orchestration_root,
-        ).resolve(),
+            verify_scope=scope,
+            scoped_ids=scoped_ids,
+            base_full_verify_commit=base_full_verify_commit,
+            reconcile=reconcile,
+            dry_run=dry_run,
+            timestamp=timestamp,
+        ).verify_run_dir.resolve()
+    else:
+        verify_run_dir = (
+            workspace_root / "runs" / f"verify-spec-{spec_id}-{timestamp}"
+        ).resolve()
+        verify_run_dir.mkdir(parents=True, exist_ok=True)
+    return VerifySpecArtifactWritePolicy(
+        workspace_root=workspace_root,
         spec_dir=spec_dir.resolve() if spec_dir is not None else None,
         spec_id=spec_id,
+        verify_run_dir=verify_run_dir,
     )
 
 
@@ -1215,6 +1338,7 @@ def _exec_verify_spec_prompt(
     worktree_path: str,
     prompt: str,
     policy: VerifySpecArtifactWritePolicy,
+    verification_evidence: VerificationEvidenceRef | None = None,
 ) -> int:
     """Run fulfillment with narrowly scoped access to external artifacts."""
     from harness.llm_provider import AICodingCliProvider
@@ -1225,6 +1349,9 @@ def _exec_verify_spec_prompt(
     read_roots = [str(Path(worktree_path).resolve())]
     if policy.spec_dir is not None:
         read_roots.append(str(policy.spec_dir.resolve()))
+    if verification_evidence is not None:
+        receipt_root = verification_evidence.path.parent.resolve()
+        read_roots.append(str(receipt_root))
     write_paths: list[str] = []
     if policy.spec_dir is not None:
         write_paths.extend(
@@ -1233,7 +1360,11 @@ def _exec_verify_spec_prompt(
                 str((policy.spec_dir / "fulfillment-gaps.md").resolve()),
             ]
         )
-    write_paths.append(str((policy.workspace_root / "runs").resolve()))
+    write_paths.append(str(policy.verify_run_dir.resolve()))
+    if verification_evidence is not None and any(
+        _paths_overlap(receipt_root, Path(path)) for path in write_paths
+    ):
+        return 2
     result = prompt_executor.run_prompt_result(
         worktree_path,
         prompt,
@@ -1245,6 +1376,21 @@ def _exec_verify_spec_prompt(
         },
     )
     return int(result.exit_code)
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    left = left.resolve()
+    right = right.resolve()
+    try:
+        left.relative_to(right)
+        return True
+    except ValueError:
+        pass
+    try:
+        right.relative_to(left)
+        return True
+    except ValueError:
+        return False
 
 
 def _verify_spec_artifact_write_violation(

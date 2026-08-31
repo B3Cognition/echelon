@@ -11,7 +11,10 @@ import pytest
 
 from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
 from harness.llm_provider import AICodingCliProvider
+from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
+from harness.verification_evidence import VerificationStage
+from harness.verification_evidence import write_verification_receipt
 from kernel.fulfillment import read_fulfillment_metadata
 
 
@@ -60,6 +63,40 @@ def _write_matching_report(report) -> None:
         "|---|---|---|---|---|\n"
         "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
         encoding="utf-8",
+    )
+
+
+def _write_passing_fulfillment_receipt(
+    root,
+    worktree,
+    *,
+    sequence: int = 1,
+    started_at: str = "2026-08-31T00:00:00Z",
+    stdout: bytes = b"passed\n",
+):
+    fingerprint = product_evidence_fingerprint(worktree)
+    return write_verification_receipt(
+        evidence_dir=root / "runs" / "build-1" / "evidence" / "default",
+        spec_id="spec-001",
+        strategy_id="default",
+        build_id="build-1",
+        candidate_commit="abc123",
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="configured",
+        stages=[
+            VerificationStage(
+                name="verify",
+                command=("pnpm", "verify"),
+                exit_code=0,
+                duration_ms=1,
+                stdout=stdout,
+                stderr=b"",
+            )
+        ],
+        attempt_sequence=sequence,
+        sensitive_environment={},
+        started_at=started_at,
     )
 
 
@@ -388,10 +425,13 @@ class TestFulfillmentRunner:
         _write_spec_inputs(spec_dir)
         _write_matching_audit(workspace)
         report = spec_dir / "fulfillment-report.md"
+        active_run = workspace / "runs" / "spec-20260708-123456"
+        active_run.mkdir(parents=True, exist_ok=True)
+        (workspace / "runs" / ".current").write_text(
+            active_run.name, encoding="utf-8"
+        )
         artifact = (
-            workspace
-            / "runs"
-            / "spec-20260708-123456"
+            active_run
             / "verify-spec"
             / "spec-001"
             / "implementation-map.md"
@@ -431,6 +471,9 @@ class TestFulfillmentRunner:
         provider._cli = "codex"
         provider.last_stdout = ""
         provider.last_stderr = ""
+        receipt = _write_passing_fulfillment_receipt(
+            tmp_path / "target-runtime", worktree
+        )
 
         def run_prompt(_worktree_path, _prompt, **_kwargs):
             _write_matching_report(report)
@@ -444,6 +487,7 @@ class TestFulfillmentRunner:
                 "spec-001",
                 spec_dir=spec_dir,
                 orchestration_root=workspace,
+                verification_evidence=receipt.as_mapping(),
             )
 
         assert result.status == "refreshed"
@@ -452,12 +496,104 @@ class TestFulfillmentRunner:
         assert prompt_metadata["tool_read_roots"] == [
             str(worktree),
             str(spec_dir),
+            str(receipt.path.parent),
         ]
-        assert prompt_metadata["tool_write_paths"] == [
+        assert prompt_metadata["tool_write_paths"][:2] == [
             str(spec_dir / "fulfillment-report.md"),
             str(spec_dir / "fulfillment-gaps.md"),
-            str(workspace / "runs"),
         ]
+        assert len(prompt_metadata["tool_write_paths"]) == 3
+        verify_run_dir = prompt_metadata["tool_write_paths"][2]
+        assert verify_run_dir.startswith(str(workspace / "runs"))
+        assert verify_run_dir != str(workspace / "runs")
+        assert str(receipt.path.parent) not in prompt_metadata["tool_write_paths"]
+
+    def test_tampered_verification_evidence_fails_before_provider(self, tmp_path):
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        receipt = _write_passing_fulfillment_receipt(tmp_path, worktree)
+        receipt.path.write_text("{}", encoding="utf-8")
+        provider = object.__new__(AICodingCliProvider)
+        provider._cli = "codex"
+        provider.last_stdout = ""
+        provider.last_stderr = ""
+        provider.run_prompt_result = MagicMock()
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=receipt.as_mapping(),
+            )
+
+        assert result.status == "failed"
+        assert "verification evidence" in result.reason
+        provider.run_prompt_result.assert_not_called()
+
+    def test_stable_verification_evidence_digest_controls_cache(self, tmp_path):
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        _write_verify_skill(worktree)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock(cli="claude")
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+        first_receipt = _write_passing_fulfillment_receipt(tmp_path, worktree)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(
+                str(worktree), "spec-001", spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=first_receipt.as_mapping(),
+            )
+            second_receipt = _write_passing_fulfillment_receipt(
+                tmp_path, worktree, sequence=2,
+                started_at="2026-08-31T00:01:00Z",
+            )
+            second = runner.refresh(
+                str(worktree), "spec-001", spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=second_receipt.as_mapping(),
+            )
+            changed_receipt = _write_passing_fulfillment_receipt(
+                tmp_path, worktree, sequence=3,
+                started_at="2026-08-31T00:02:00Z", stdout=b"different pass\n",
+            )
+            third = runner.refresh(
+                str(worktree), "spec-001", spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=changed_receipt.as_mapping(),
+            )
+
+        assert first.status == "refreshed"
+        assert second.status == "cached"
+        assert third.status == "refreshed"
+        assert provider.exec_prompt.call_count == 2
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["verification_evidence_sha256"] == (
+            changed_receipt.evidence_sha256
+        )
+        ledger = json.loads(
+            (spec_dir / "verified-fulfillment-ledger.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert all(
+            changed_receipt.evidence_sha256 in row["verifier_version"]
+            for row in ledger["rows"]
+        )
 
     def test_refresh_rejects_mapping_artifact_in_sibling_source_root(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -584,7 +720,7 @@ class TestFulfillmentRunner:
             encoding="utf-8",
         )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
+        _write_spec_inputs(spec_dir)
         report = spec_dir / "fulfillment-report.md"
         run_dir = tmp_path / "runs" / "verify-spec-spec-001-20260614"
         run_dir.mkdir(parents=True)
@@ -798,12 +934,13 @@ class TestFulfillmentRunner:
         )
         orchestration_root = tmp_path / "polyrepo"
         spec_dir = orchestration_root / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
+        _write_spec_inputs(spec_dir)
         (orchestration_root / "runs").mkdir(parents=True)
         (orchestration_root / "runs" / ".current").write_text(
             "spec-20260708-123456",
             encoding="utf-8",
         )
+        (orchestration_root / "runs" / "spec-20260708-123456").mkdir()
         (worktree / "runs").mkdir(parents=True)
         (worktree / "runs" / ".current").write_text(
             "target-build-run",
