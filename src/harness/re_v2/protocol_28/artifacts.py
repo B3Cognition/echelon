@@ -289,6 +289,38 @@ class ExhaustiveEvidenceSliceV1:
         )
 
 
+def normalize_candidate_result(value: object) -> ExhaustiveEvidenceSliceV1:
+    """Normalize provider collection order before creating canonical authority."""
+    raw = _schema(
+        exact_object,
+        value,
+        frozenset(ExhaustiveEvidenceSliceV1.FIELDS),
+        ExhaustiveEvidenceSliceV1.__name__,
+    )
+    collections = {
+        "evidence_anchors": EvidenceAnchorV1,
+        "claims": ExhaustiveClaimV1,
+        "observations": ExhaustiveObservationV1,
+    }
+    normalized: dict[str, tuple[object, ...]] = {}
+    for field, model in collections.items():
+        items = raw[field]
+        if not isinstance(items, (list, tuple)):
+            raise Protocol28ArtifactError(
+                f"ExhaustiveEvidenceSliceV1.{field} must be an array"
+            )
+        decoded = tuple(model.from_json_dict(item) for item in items)
+        normalized[field] = tuple(sorted(decoded, key=lambda item: item.identity))
+    return ExhaustiveEvidenceSliceV1(
+        **{
+            field: raw[field]
+            for field in ExhaustiveEvidenceSliceV1.FIELDS
+            if field not in collections
+        },
+        **normalized,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ExhaustiveDiagnosticV1:
     schema_version: int
@@ -383,6 +415,32 @@ class ExhaustiveVerificationV1:
         )
 
 
+def normalize_verification_result(value: object) -> ExhaustiveVerificationV1:
+    """Normalize provider diagnostic order before creating canonical authority."""
+    raw = _schema(
+        exact_object,
+        value,
+        frozenset(ExhaustiveVerificationV1.FIELDS),
+        ExhaustiveVerificationV1.__name__,
+    )
+    diagnostics = raw["diagnostics"]
+    if not isinstance(diagnostics, (list, tuple)):
+        raise Protocol28ArtifactError(
+            "ExhaustiveVerificationV1.diagnostics must be an array"
+        )
+    decoded = tuple(
+        ExhaustiveDiagnosticV1.from_json_dict(item) for item in diagnostics
+    )
+    return ExhaustiveVerificationV1(
+        **{
+            field: raw[field]
+            for field in ExhaustiveVerificationV1.FIELDS
+            if field != "diagnostics"
+        },
+        diagnostics=tuple(sorted(decoded, key=lambda item: item.identity)),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ExhaustiveRepairPacketV1:
     schema_version: int
@@ -441,7 +499,7 @@ def validate_candidate(
         raise Protocol28ArtifactError("slice spec does not realize plan entry")
     if not isinstance(evidence_catalog, SnapshotEvidenceCatalogV1) or not isinstance(policy, ExhaustivePolicyV1):
         raise Protocol28ArtifactError("candidate evidence or policy authority is invalid")
-    candidate = ExhaustiveEvidenceSliceV1.from_json_dict(raw)
+    candidate = normalize_candidate_result(raw)
     if (
         candidate.slice_spec_id != slice_spec.identity
         or candidate.plan_entry_id != plan_entry.identity
@@ -526,7 +584,7 @@ def validate_verification(
 ) -> ExhaustiveVerificationV1:
     if not isinstance(candidate, ExhaustiveEvidenceSliceV1):
         raise Protocol28ArtifactError("verification requires validated candidate")
-    verification = ExhaustiveVerificationV1.from_json_dict(raw)
+    verification = normalize_verification_result(raw)
     if (
         verification.slice_spec_id != slice_spec.identity
         or verification.candidate_id != candidate.identity
@@ -567,6 +625,7 @@ def validate_verification(
 __all__ = (
     "EvidenceAnchorV1", "ExhaustiveClaimV1", "ExhaustiveDiagnosticV1",
     "ExhaustiveEvidenceSliceV1", "ExhaustiveObservationV1", "ExhaustiveRepairPacketV1",
-    "ExhaustiveVerificationV1", "Protocol28ArtifactError", "validate_candidate",
-    "validate_verification",
+    "ExhaustiveVerificationV1", "Protocol28ArtifactError",
+    "normalize_candidate_result", "normalize_verification_result",
+    "validate_candidate", "validate_verification",
 )

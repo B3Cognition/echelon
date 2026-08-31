@@ -300,7 +300,10 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
             "title": title,
             "x-echelon-contract": (
                 "Exact closed object. Copy all scope and coverage identities exactly "
-                "from the frozen context. Arrays must be sorted and unique."
+                "from the frozen context. Copy permitted evidence anchor objects and "
+                "their anchor IDs exactly; an evidence ID is not an anchor ID. Digest "
+                "arrays must be sorted and unique; the controller canonicalizes nested "
+                "object collection order."
             ),
         }
     )

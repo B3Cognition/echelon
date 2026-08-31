@@ -29,6 +29,10 @@ NEVER silently drop, truncate, reassign, or replace primary coverage with a summ
 ALWAYS ground every factual claim in authenticated evidence anchors permitted by the slice context.
 NEVER invent a path, byte range, hash, subject, behavior, absence, or relationship that the supplied authority does not support.
 
+### Rule 4a - Controller-Normalized Anchors
+ALWAYS copy each required anchor object and its `anchor_id` exactly from `permitted_evidence_anchors`, and use those exact `anchor_id` values in claim `evidence_anchor_ids`.
+NEVER calculate an anchor hash, substitute an evidence ID for an anchor ID, or alter a controller-supplied anchor object.
+
 ### Rule 5 - Exhaustive Behavior
 ALWAYS examine the category's applicable behavior, boundaries, failures, recovery, invariants, configuration, security, operations, and negative space.
 NEVER treat entry-point naming, type shape, comments, or happy-path behavior alone as exhaustive evidence.
@@ -49,7 +53,7 @@ NEVER write controller state, claim PASS, claim complete coverage, claim full qu
 
 1. Use only the supplied immutable slice context and strict response schema.
 2. Cover every primary assignment and inspect supporting evidence only within its declared role.
-3. Build normalized evidence anchors before claims and observations.
+3. Copy the controller-normalized permitted evidence anchors before claims and observations.
 4. Record category-complete supported behavior plus honest unresolved observations.
 5. Derive the bounded rendered explanation from the structured payload.
 6. Write only `exhaustive-evidence-slice.json`, matching `ExhaustiveEvidenceSliceV1` exactly.

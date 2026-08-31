@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 
 import pytest
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_28.budget import L4ResourceStore
 from harness.re_v2.protocol_28.context import (
@@ -108,6 +110,32 @@ def test_slice_context_uses_only_staged_authority_after_sources_disappear(
     assert b'"role":"producer"' in payload
     assert entry.identity.encode("ascii") in payload
     assert len(payload) <= context.inputs.exhaustive_policy.max_context_bytes
+
+
+@pytest.mark.unit
+def test_slice_context_supplies_exact_copyable_anchor_ids(tmp_path: Path) -> None:
+    run_dir = _published(tmp_path)
+    context = load_protocol_28_run_context(run_dir)
+    assert isinstance(context, Protocol28RunContext)
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+    spec = realize_slice(entry, {})
+
+    payload = json.loads(
+        build_protocol_28_slice_context(
+            context, target, entry, spec, role="producer"
+        )
+    )
+
+    anchors = payload["permitted_evidence_anchors"]
+    assert anchors
+    assert all(
+        item["anchor_id"] == content_digest(item["anchor"])
+        for item in anchors
+    )
+    assert {
+        item["anchor"]["evidence_id"] for item in anchors
+    } == set(entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids)
 
 
 @pytest.mark.unit

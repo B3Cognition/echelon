@@ -23,6 +23,8 @@ from harness.re_v2.protocol_22.schema import (
 from harness.re_v2.protocol_28.artifacts import (
     ExhaustiveEvidenceSliceV1,
     ExhaustiveVerificationV1,
+    normalize_candidate_result,
+    normalize_verification_result,
 )
 from harness.re_v2.protocol_28.execution import (
     L4AcceptanceReceiptV1,
@@ -147,7 +149,7 @@ class _Protocol28LedgerState:
             raise ReV2LedgerError(
                 f"producer result cannot authenticate candidate: {exc}"
             ) from exc
-        if raw_candidate != candidate.to_json_dict():
+        if normalize_candidate_result(raw_candidate) != candidate:
             raise ReV2LedgerError("producer result does not contain candidate")
         if (
             candidate.identity != receipt.candidate_hash
@@ -185,7 +187,7 @@ class _Protocol28LedgerState:
             raise ReV2LedgerError(
                 f"verifier result cannot authenticate verification: {exc}"
             ) from exc
-        if raw_verification != verification.to_json_dict():
+        if normalize_verification_result(raw_verification) != verification:
             raise ReV2LedgerError("verifier result does not contain verification")
         if (
             receipt.slice_spec_id != candidate_receipt.slice_spec_id

@@ -20,7 +20,10 @@ from harness.re_v2.protocol_28.inputs import (
     load_protocol_28_inputs,
 )
 from harness.re_v2.protocol_28.ledger import Protocol28Ledger
-from harness.re_v2.protocol_28.artifacts import ExhaustiveEvidenceSliceV1
+from harness.re_v2.protocol_28.artifacts import (
+    EvidenceAnchorV1,
+    ExhaustiveEvidenceSliceV1,
+)
 from harness.re_v2.protocol_28.planning import (
     ExhaustiveTargetPlanV1,
     SlicePlanEntryV1,
@@ -155,6 +158,23 @@ def build_protocol_28_slice_context(
     )
     if {item.identity for item in evidence_objects} != evidence_ids:
         raise Protocol28ContextError("slice evidence authority is incomplete")
+    permitted_anchors = tuple(
+        sorted(
+            (
+                EvidenceAnchorV1(
+                    1,
+                    item.identity,
+                    item.source_id,
+                    item.source_relative_path,
+                    getattr(item, "byte_start", 0),
+                    getattr(item, "byte_end", getattr(item, "byte_count", 0)),
+                    getattr(item, "raw_hash", item.file_content_hash),
+                )
+                for item in evidence_objects
+            ),
+            key=lambda item: item.identity,
+        )
+    )
     subjects = tuple(
         item
         for item in inputs.exhaustive_subject_catalog.subjects
@@ -185,6 +205,10 @@ def build_protocol_28_slice_context(
         "target_evidence_projection": evidence_projection.to_json_dict(),
         "subjects": [item.to_json_dict() for item in subjects],
         "snapshot_evidence": [item.to_json_dict() for item in evidence_objects],
+        "permitted_evidence_anchors": [
+            {"anchor_id": item.identity, "anchor": item.to_json_dict()}
+            for item in permitted_anchors
+        ],
         "lower_authority_objects": lower_objects,
         "repair_diagnostic_ids": list(sorted(set(repair_diagnostic_ids))),
         "producer_attempt_number": producer_attempt_number,

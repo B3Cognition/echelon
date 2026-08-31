@@ -129,6 +129,28 @@ def test_valid_candidate_closed_round_trip_and_validation() -> None:
 
 
 @pytest.mark.unit
+def test_candidate_validation_normalizes_provider_nested_object_order() -> None:
+    entry, spec, evidence, candidate = _candidate_fixture()
+    second = ExhaustiveClaimV1(
+        1,
+        "boundary",
+        entry.primary_subject_ids,
+        candidate.claims[0].evidence_anchor_ids,
+        "The selected boundary is explicitly represented.",
+    )
+    canonical = replace(
+        candidate,
+        claims=tuple(sorted((candidate.claims[0], second), key=lambda item: item.identity)),
+    )
+    raw = canonical.to_json_dict()
+    raw["claims"] = list(reversed(raw["claims"]))
+
+    assert validate_candidate(
+        spec, entry, evidence, raw, build_initial_exhaustive_policy()
+    ) == canonical
+
+
+@pytest.mark.unit
 def test_verifier_pass_requires_exact_coverage_and_no_unresolved_observations() -> None:
     entry, spec, evidence, candidate = _candidate_fixture()
     unresolved = replace(
