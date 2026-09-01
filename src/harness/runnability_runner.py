@@ -86,6 +86,34 @@ class RunnabilityRunner:
         stack_hash = resolved_stack_contract_sha256(resolved)
         user_commands = _user_commands(contract)
         required_stages = _required_stage_names(contract, resolved)
+        missing_required = _missing_stack_observation(contract, resolved)
+        if missing_required:
+            summary = (
+                f"Candidate omits stack-required observation {missing_required!r}; "
+                "required observations are owner-controlled and cannot be "
+                "weakened by the candidate contract."
+            )
+            stage = RunnabilityStage(
+                name="primary_journey",
+                status="failed",
+                stderr=summary.encode(),
+            )
+            return self._record(
+                evidence_dir=evidence_dir,
+                attempt_sequence=attempt_sequence,
+                candidate_commit=candidate_commit,
+                candidate_fingerprint=fingerprint_before,
+                contract_hash=contract_hash,
+                stack_hash=stack_hash,
+                status="not_runnable",
+                failed_stage="primary_journey",
+                failure_class="mocked_dependency_detected",
+                summary=summary,
+                stages=(stage,),
+                required_stages=required_stages,
+                sensitive_environment={},
+                user_commands=user_commands,
+            )
         missing_boundary = _missing_service_boundary(contract)
         if missing_boundary:
             summary = (
@@ -132,6 +160,21 @@ class RunnabilityRunner:
             spec = self._sandbox_spec_factory(worktree)
             spec = replace(spec, env={**spec.env, **variables})
             handle = self._provider.create(spec)
+
+            prerequisite_commands = _sandbox_prerequisite_commands(resolved)
+            if prerequisite_commands:
+                prerequisites = self._run_commands(
+                    handle,
+                    "sandbox_prerequisites",
+                    prerequisite_commands,
+                    variables,
+                )
+                stages.append(prerequisites)
+                if prerequisites.status != "passed":
+                    raise _InfrastructureFailure(
+                        "sandbox_prerequisites",
+                        _stage_error(prerequisites),
+                    )
 
             install = self._run_commands(
                 handle, "install", contract.install_commands, variables
@@ -764,6 +807,8 @@ def _required_stage_names(
     resolved: ResolvedStacks,
 ) -> tuple[str, ...]:
     names: list[str] = []
+    if _sandbox_prerequisite_commands(resolved):
+        names.append("sandbox_prerequisites")
     if contract.install_commands:
         names.append("install")
     if resolved.services:
@@ -785,6 +830,14 @@ def _required_stage_names(
     return tuple(names)
 
 
+def _sandbox_prerequisite_commands(resolved: ResolvedStacks) -> tuple[str, ...]:
+    """Prepare stack-declared package managers without touching the host."""
+    commands: list[str] = []
+    if "pnpm" in resolved.required_commands:
+        commands.append("corepack enable")
+    return tuple(commands)
+
+
 def _missing_service_boundary(contract: RunnabilityContract) -> str | None:
     kinds = {item.kind for item in contract.primary_journey.observations}
     for service in contract.primary_journey.real_services_required:
@@ -792,6 +845,21 @@ def _missing_service_boundary(contract: RunnabilityContract) -> str | None:
         if required_kind not in kinds:
             return service
     return None
+
+
+def _missing_stack_observation(
+    contract: RunnabilityContract,
+    resolved: ResolvedStacks,
+) -> str | None:
+    kinds = {item.kind for item in contract.primary_journey.observations}
+    return next(
+        (
+            required
+            for required in resolved.runnability.required_observations
+            if required not in kinds
+        ),
+        None,
+    )
 
 
 def _combine_results(

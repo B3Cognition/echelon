@@ -26,6 +26,7 @@ runnability:
     - provision
     - persistence
   required_observations:
+    - http
     - postgres_query
 provisioning:
   - id: postgres-verify

@@ -215,7 +215,7 @@ def _resolved() -> ResolvedStacks:
         implied_by={},
         capabilities={},
         tools={},
-        required_commands=[],
+        required_commands=["pnpm"],
         required_registries=[],
         context_files=[],
         services=[
@@ -270,6 +270,7 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
 
     assert result.status == "runnable"
     assert [stage.name for stage in result.stages] == [
+        "sandbox_prerequisites",
         "install",
         "provision",
         "bootstrap",
@@ -283,6 +284,9 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
         "stop",
         "teardown",
     ]
+    assert provider.commands.index("corepack enable") < provider.commands.index(
+        "install-dependencies"
+    )
     assert len(provider.created) == 1
     assert provider.destroyed == provider.created
     assert provider.services_started == 1
@@ -375,3 +379,32 @@ def test_runner_rejects_missing_required_service_boundary_observation(
     assert result.status == "not_runnable"
     assert result.failure_class == "mocked_dependency_detected"
     assert result.failed_stage == "primary_journey"
+
+
+@pytest.mark.unit
+def test_runner_rejects_omitting_stack_required_observation(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider()
+    resolved = _resolved()
+    resolved = replace(
+        resolved,
+        runnability=replace(
+            resolved.runnability,
+            required_observations=("browser_dom", "http", "postgres_query"),
+        ),
+    )
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=_contract(),
+        resolved=resolved,
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+
+    assert result.status == "not_runnable"
+    assert result.failure_class == "mocked_dependency_detected"
+    assert "stack-required observation 'http'" in result.summary
+    assert provider.created == []

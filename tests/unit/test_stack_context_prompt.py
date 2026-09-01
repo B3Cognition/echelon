@@ -83,6 +83,8 @@ def test_browser_stack_context_explains_candidate_owned_runnability_contract() -
     assert "schema_version: 1" in stack_context
     assert "install_commands:" in stack_context
     assert "real_services_required: [web, api, postgres]" in stack_context
+    assert "kind: http" in stack_context
+    assert "expectation: status_200" in stack_context
     assert "persistence_probe:" in stack_context
     assert "invent aliases such as `runtime`, `provision`" in stack_context
 

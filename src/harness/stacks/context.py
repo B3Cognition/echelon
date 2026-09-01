@@ -105,6 +105,15 @@ def _render_runnability_contract_schema(runnability: object) -> str:
     if "postgres_query" in observations:
         observation_rows.extend(
             (
+                "    - id: api-boundary-ready",
+                "      kind: http",
+                "      url: '${ECHELON_BASE_URL}/<real API route>'",
+                "      method: GET",
+                "      expectation: status_200",
+            )
+        )
+        observation_rows.extend(
+            (
                 "    - id: durable-marker-present",
                 "      kind: postgres_query",
                 "      statement: SELECT marker FROM <table> WHERE marker = $1",

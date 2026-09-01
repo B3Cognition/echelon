@@ -21,13 +21,14 @@ def _resolve_bundled(*stack_ids: str):
 
 
 @pytest.mark.unit
-def test_runnability_browser_3d_with_persistence_requires_browser_and_postgres_observations() -> None:
+def test_runnability_browser_3d_with_persistence_requires_all_service_observations() -> None:
     resolved = _resolve_bundled("browser-3d-game", "game-persistence-postgres")
 
     assert resolved.runnability.policy == "required"
     assert resolved.runnability.runner == "linux_container"
     assert resolved.runnability.required_observations == (
         "browser_dom",
+        "http",
         "postgres_query",
     )
     assert "DATABASE_URL" in resolved.services[0].environment_names
