@@ -6134,6 +6134,11 @@ def _delivery_status_next_step(
             return f'echelon delivery resume {effective_spec} "<answer>"'
         if termination_reason == "verify_command_needed":
             return "set delivery.verify_command, then echelon delivery continue " + effective_spec
+        if termination_reason == "build_blocked":
+            return (
+                "resolve the reported blocker, then "
+                f"echelon delivery run {effective_spec}"
+            )
         return f"echelon delivery continue {effective_spec}"
     if status in {"initialized", "running", "interrupted"}:
         return f"echelon delivery continue {effective_spec}"

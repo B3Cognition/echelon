@@ -119,6 +119,23 @@ def _write_escalation(project_root: Path) -> Path:
 
 
 @pytest.mark.unit
+def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "build_reason": "candidate contract path was denied",
+        },
+        "001",
+    )
+
+    assert next_step == "resolve the reported blocker, then echelon delivery run 001"
+    assert "continue" not in next_step
+
+
+@pytest.mark.unit
 def test_delivery_status_shows_failed_runnability_action(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
