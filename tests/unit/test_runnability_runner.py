@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -134,8 +135,10 @@ class RecordingProvider:
         self.service_commands.append((service_name, argv))
         if self.fail_at == "persistence":
             return _ok("")
-        marker_argument = next(item for item in argv if item.startswith("echelon_p1="))
-        return _ok(marker_argument.split("=", 1)[1] + "\n")
+        statement = argv[argv.index("-c") + 1]
+        marker = re.search(r"'((?:''|[^'])*)'", statement)
+        assert marker is not None
+        return _ok(marker.group(1).replace("''", "'") + "\n")
 
     def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
         self.files[path] = content
@@ -294,10 +297,13 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
     assert provider.services_started == 1
     assert [name for name, _ in provider.service_commands] == ["postgres", "postgres"]
     for _name, argv in provider.service_commands:
+        assert "--set" not in argv
         assert "--username" in argv
         assert argv[argv.index("--username") + 1] == "echelon_session1"
         assert "--dbname" in argv
         assert argv[argv.index("--dbname") + 1] == "echelon_verify"
+        statement = argv[argv.index("-c") + 1]
+        assert re.search(r"'[0-9a-f-]{36}'", statement)
     assert validate_runnability_report(
         result.evidence,
         candidate_commit="b" * 40,

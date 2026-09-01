@@ -653,13 +653,13 @@ class RunnabilityRunner:
             database = unquote(parsed.path.lstrip("/"))
             if username and database:
                 argv.extend(("--username", username, "--dbname", database))
-        expected_values: list[str] = []
-        for index, parameter in enumerate(observation.parameters, start=1):
-            value = _expand(parameter, variables)
-            expected_values.append(value)
-            name = f"echelon_p{index}"
-            statement = statement.replace(f"${index}", f":'{name}'")
-            argv.extend(("--set", f"{name}={value}"))
+        expected_values = [
+            _expand(parameter, variables) for parameter in observation.parameters
+        ]
+        for index in range(len(expected_values), 0, -1):
+            value = expected_values[index - 1]
+            literal = "'" + value.replace("'", "''") + "'"
+            statement = statement.replace(f"${index}", literal)
         argv.extend(("-c", statement))
         result = self._provider.exec_service(
             handle,
