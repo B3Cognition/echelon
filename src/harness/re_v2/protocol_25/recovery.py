@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Callable, Mapping
 
@@ -47,6 +47,11 @@ from .runtime import (
     Protocol25RuntimeError,
     SemanticCertificationResultV1,
     SemanticContextV1,
+)
+from .preflight import (
+    AuditContextPreflightEntryV1,
+    AuditContextPreflightFailureV1,
+    AuditContextPreflightResultV1,
 )
 
 
@@ -517,6 +522,7 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
         work_item_failed=bool(
             replay.shared.shared.failed_work_items
             or replay.shared.shared.failed_executors
+            or replay.audit_context_preflight_failure_id is not None
         ),
     )
     return Protocol25RecoveryResult(state, events, ledger)
@@ -547,11 +553,11 @@ def _accepted_prerequisites(
     return result
 
 
-def build_audit_dispatch_authority(
+def _audit_dispatch_components(
     context: Protocol25RunContext,
     audit_target_id: str,
-) -> tuple[WorkItemV2, SemanticContextV1]:
-    """Materialize one audit work item and its exact bounded provider context."""
+) -> tuple[WorkItemV2, object, tuple[str, ...]]:
+    """Resolve one ready target, work item, and immutable object IDs."""
     if not isinstance(context, Protocol25RunContext):
         raise Protocol25RecoveryError(
             "audit dispatch authority requires Protocol25RunContext"
@@ -594,7 +600,19 @@ def build_audit_dispatch_authority(
             }
         )
     )
+    return item, target, lower_hashes
+
+
+def _project_audit_dispatch_authority(
+    context: Protocol25RunContext,
+    audit_target_id: str,
+) -> tuple[WorkItemV2, SemanticContextV1, bytes]:
+    """Construct one audit context without publishing or dispatching it."""
     try:
+        item, target, lower_hashes = _audit_dispatch_components(
+            context,
+            audit_target_id,
+        )
         payloads = {
             object_hash: context.object_store.read_blob(object_hash)
             for object_hash in lower_hashes
@@ -609,8 +627,249 @@ def build_audit_dispatch_authority(
             "audit provider context cannot be reconstructed from accepted L2 authority"
         ) from exc
     context_bytes = canonical_json_bytes(semantic_context.to_json_dict())
+    return item, semantic_context, context_bytes
+
+
+def build_audit_dispatch_authority(
+    context: Protocol25RunContext,
+    audit_target_id: str,
+) -> tuple[WorkItemV2, SemanticContextV1]:
+    """Materialize one audit work item and its exact bounded provider context."""
+    item, semantic_context, context_bytes = _project_audit_dispatch_authority(
+        context,
+        audit_target_id,
+    )
     context.object_store.put_blob(context_bytes)
     return item, semantic_context
+
+
+def _audit_context_ceiling(context: Protocol25RunContext) -> int:
+    policy = context.semantic_inputs.artifact_policy.entry_for(
+        "L3",
+        "semantic-audit-findings",
+    )
+    return int(policy.max_context_bundle_bytes)
+
+
+def _measure_oversized_audit_context(
+    context: Protocol25RunContext,
+    target: object,
+    payloads: Mapping[str, bytes],
+    original_ceiling: int,
+) -> int:
+    """Measure rejected canonical bytes without changing digest-bound runtime code."""
+    policy = context.semantic_runtime.artifact_policy
+    measurement_ceiling = 1_000_000_000
+    measurement_entries = tuple(
+        replace(item, max_context_bundle_bytes=measurement_ceiling)
+        if item.artifact_kind == "semantic-audit-findings"
+        else item
+        for item in policy.l3_entries
+    )
+    measurement_runtime = replace(
+        context.semantic_runtime,
+        artifact_policy=replace(policy, l3_entries=measurement_entries),
+    )
+    measured_context = measurement_runtime.build_audit_context(
+        audit_target=target,
+        workspace_partition=context.semantic_inputs.workspace_partition,
+        authority_payloads=payloads,
+    )
+    raw = measured_context.to_json_dict()
+    raw["max_canonical_json_bytes"] = original_ceiling
+    return len(canonical_json_bytes(raw))
+
+
+def _preflight_reason(exc: Exception) -> str:
+    detail = str(exc).lower()
+    if "byte ceiling" in detail:
+        return "semantic_context_byte_ceiling_exceeded"
+    if isinstance(exc, ReV2LedgerError):
+        if "missing" in detail or "unavailable" in detail or "does not exist" in detail:
+            return "immutable_object_missing"
+        if "hash" in detail or "content" in detail:
+            return "immutable_object_hash_mismatch"
+    if "response schema" in detail:
+        return "response_schema_authority_invalid"
+    if "snapshot" in detail or "evidence" in detail:
+        return "snapshot_evidence_invalid"
+    if isinstance(exc, Protocol25GraphError):
+        return "audit_target_authority_invalid"
+    return "semantic_context_projection_invalid"
+
+
+def _preflight_failure_event_payload(
+    failure: AuditContextPreflightFailureV1,
+) -> dict[str, object]:
+    return {
+        "audit_target_id": failure.audit_target_id,
+        "work_item_id": failure.work_item_id,
+        "failure_receipt_id": failure.identity,
+        "reason_code": failure.reason_code,
+        "measured_canonical_json_bytes": failure.measured_canonical_json_bytes,
+        "max_canonical_json_bytes": failure.max_canonical_json_bytes,
+        "provider_dispatch_count": 0,
+    }
+
+
+def _finish_preflight_failure(
+    context: Protocol25RunContext,
+    failure: AuditContextPreflightFailureV1,
+    *,
+    fault_hook: Callable[[str], None] | None,
+) -> AuditContextPreflightResultV1:
+    ledger = context.ledger.replay()
+    existing = ledger.audit_context_preflight_failures.get(failure.identity)
+    if existing is None:
+        context.ledger.record_audit_context_preflight_failure(failure)
+        if fault_hook is not None:
+            fault_hook(f"audit_context_preflight_failure_receipt:{failure.identity}")
+    elif existing != failure:
+        raise Protocol25RecoveryError("durable preflight failure conflicts with projection")
+    replay = _replay_protocol_25_events(context)
+    if replay.audit_context_preflight_failure_id is None:
+        context.event_store.append(
+            "audit_context_preflight_failed",
+            _preflight_failure_event_payload(failure),
+            occurred_at=context.clock(),
+        )
+        if fault_hook is not None:
+            fault_hook(f"audit_context_preflight_failed:{failure.identity}")
+    elif replay.audit_context_preflight_failure_id != failure.identity:
+        raise Protocol25RecoveryError("durable preflight event conflicts with projection")
+    replay = _replay_protocol_25_events(context)
+    if not replay.shared.shared.terminal:
+        context.event_store.append(
+            "run_failed",
+            {"reason": "semantic audit context preflight failed"},
+            occurred_at=context.clock(),
+        )
+        if fault_hook is not None:
+            fault_hook(f"audit_context_preflight_terminal:{failure.identity}")
+    return AuditContextPreflightResultV1(
+        schema_version=1,
+        entries=(),
+        failure=failure,
+        max_canonical_json_bytes=failure.max_canonical_json_bytes,
+    )
+
+
+def ensure_audit_context_preflight(
+    context: Protocol25RunContext,
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> AuditContextPreflightResultV1:
+    """Publish exactly one all-target preflight result before provider work."""
+    if fault_hook is not None and not callable(fault_hook):
+        raise Protocol25RecoveryError("preflight fault hook must be callable or null")
+    replay = _replay_protocol_25_events(context)
+    ceiling = _audit_context_ceiling(context)
+    if replay.audit_context_preflight_entries:
+        return AuditContextPreflightResultV1(
+            schema_version=1,
+            entries=replay.audit_context_preflight_entries,
+            failure=None,
+            max_canonical_json_bytes=ceiling,
+        )
+    ledger = context.ledger.replay()
+    if replay.audit_context_preflight_failure_id is not None:
+        failure = ledger.audit_context_preflight_failures.get(
+            replay.audit_context_preflight_failure_id
+        )
+        if failure is None:
+            raise Protocol25RecoveryError("preflight event has no failure receipt")
+        return _finish_preflight_failure(context, failure, fault_hook=fault_hook)
+    if ledger.audit_context_preflight_failures:
+        if len(ledger.audit_context_preflight_failures) != 1:
+            raise Protocol25RecoveryError("run has multiple preflight failure receipts")
+        failure = next(iter(ledger.audit_context_preflight_failures.values()))
+        return _finish_preflight_failure(context, failure, fault_hook=fault_hook)
+
+    accepted = _accepted_prerequisites(context, ledger)
+    targets = context.semantic_graph.ready_audit_targets(accepted)
+    if len(targets) != len(context.semantic_graph.audit_target_plans):
+        raise Protocol25RecoveryError("preflight requires complete L2 prerequisites")
+    projections: list[tuple[AuditContextPreflightEntryV1, bytes]] = []
+    for target in targets:
+        item = None
+        payloads: Mapping[str, bytes] | None = None
+        try:
+            item, materialized_target, lower_hashes = _audit_dispatch_components(
+                context,
+                target.audit_target_id,
+            )
+            payloads = {
+                object_hash: context.object_store.read_blob(object_hash)
+                for object_hash in lower_hashes
+            }
+            semantic_context = context.semantic_runtime.build_audit_context(
+                audit_target=materialized_target,
+                workspace_partition=context.semantic_inputs.workspace_partition,
+                authority_payloads=payloads,
+            )
+            context_bytes = canonical_json_bytes(semantic_context.to_json_dict())
+        except (ReV2LedgerError, Protocol25GraphError, Protocol25RuntimeError) as exc:
+            if item is None:
+                raise Protocol25RecoveryError(
+                    "preflight could not establish work-item authority"
+                ) from exc
+            reason = _preflight_reason(exc)
+            measured = None
+            if reason == "semantic_context_byte_ceiling_exceeded" and payloads is not None:
+                measured = _measure_oversized_audit_context(
+                    context,
+                    target,
+                    payloads,
+                    ceiling,
+                )
+            failure = AuditContextPreflightFailureV1(
+                schema_version=1,
+                audit_target_id=target.audit_target_id,
+                work_item_id=item.work_item_id,
+                scope_kind=("domain" if target.scope.domain_key is not None else "source"),
+                source_id=target.scope.source_id,
+                domain_key=target.scope.domain_key,
+                reason_code=reason,  # type: ignore[arg-type]
+                projection_class="semantic-audit-context",
+                measured_canonical_json_bytes=measured,
+                max_canonical_json_bytes=ceiling,
+                provider_dispatch_count=0,
+            )
+            return _finish_preflight_failure(context, failure, fault_hook=fault_hook)
+        projections.append(
+            (
+                AuditContextPreflightEntryV1(
+                    schema_version=1,
+                    audit_target_id=target.audit_target_id,
+                    work_item_id=item.work_item_id,
+                    context_hash=content_digest(context_bytes),
+                    canonical_json_bytes=len(context_bytes),
+                ),
+                context_bytes,
+            )
+        )
+    entries = tuple(item for item, _payload in projections)
+    for entry, payload in projections:
+        if context.object_store.put_blob(payload) != entry.context_hash:
+            raise Protocol25RecoveryError("preflight context changed content identity")
+    if fault_hook is not None:
+        fault_hook("audit_context_preflight_objects_published")
+    context.event_store.append(
+        "audit_context_preflight_completed",
+        {
+            "entries": [item.to_json_dict() for item in entries],
+            "checked_target_count": len(entries),
+            "max_measured_canonical_json_bytes": max(
+                item.canonical_json_bytes for item in entries
+            ),
+            "max_canonical_json_bytes": ceiling,
+            "provider_dispatch_count": 0,
+        },
+        occurred_at=context.clock(),
+    )
+    if fault_hook is not None:
+        fault_hook("audit_context_preflight_completed")
+    return AuditContextPreflightResultV1(1, entries, None, ceiling)
 
 
 def build_resolution_dispatch_authority(
@@ -1314,7 +1573,11 @@ def _target_states(
                 )
             frozen = tuple(item.finding_key_id for item in candidate.findings)
             audit_state = "accepted"
-        elif failure is not None:
+        elif (
+            failure is not None
+            or replay.audit_context_preflight_failed_target_id
+            == target.audit_target_id
+        ):
             frozen = ()
             audit_state = "failed"
         else:
@@ -1536,6 +1799,9 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "audit action is outside the pre-freeze ready state"
             )
+        preflight = ensure_audit_context_preflight(context)
+        if not preflight.passed:
+            return
         item, semantic_context = build_audit_dispatch_authority(
             context,
             action.audit_target_id,

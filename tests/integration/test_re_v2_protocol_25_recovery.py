@@ -58,7 +58,10 @@ from harness.re_v2.protocol_25.controller import (
 )
 from harness.re_v2.protocol_22.model import WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
-from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
+from harness.re_v2.protocol_25.runtime import (
+    Protocol25DeterministicRuntime,
+    Protocol25RuntimeError,
+)
 from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_25_fixtures import lower_parent_authority_bundle_v1
 from tests.re_v2_protocol_25_fixtures import audit_target_v1
@@ -207,6 +210,184 @@ def test_protocol_25_context_accepts_registered_additive_event_protocol(
     context = _context(tmp_path)
 
     assert context.event_store.protocol is PROTOCOL_25_EVENTS
+
+
+@pytest.mark.integration
+def test_oversized_preflight_blocks_without_dispatch_and_recovers_suffix(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    target = context.semantic_graph.ready_audit_targets(accepted)[0]
+    template = context.semantic_graph.audit_templates[0]
+    item = context.semantic_graph.instantiate_audit_item(
+        template,
+        target,
+        {
+            template_id: accepted[template_id]
+            for template_id in template.required_template_ids
+        },
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, _target_id: (item, target, ()),
+    )
+
+    def build_context(runtime, **_kwargs):  # type: ignore[no-untyped-def]
+        ceiling = runtime.artifact_policy.entry_for(
+            "L3", "semantic-audit-findings"
+        ).max_context_bundle_bytes
+        if ceiling == 196_608:
+            raise Protocol25RuntimeError("semantic context exceeds its byte ceiling")
+        return SimpleNamespace(
+            to_json_dict=lambda: {
+                "schema_version": 1,
+                "max_canonical_json_bytes": ceiling,
+                "payload": "x" * 300_000,
+            }
+        )
+
+    monkeypatch.setattr(Protocol25DeterministicRuntime, "build_audit_context", build_context)
+
+    def crash_after_receipt(boundary: str) -> None:
+        if boundary.startswith("audit_context_preflight_failure_receipt:"):
+            raise RuntimeError("injected preflight crash")
+
+    with pytest.raises(RuntimeError, match="injected preflight crash"):
+        recovery_module.ensure_audit_context_preflight(
+            context,
+            fault_hook=crash_after_receipt,
+        )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+    events = context.event_store.replay()
+    failure = result.failure
+
+    assert failure is not None
+    assert failure.reason_code == "semantic_context_byte_ceiling_exceeded"
+    assert failure.measured_canonical_json_bytes is not None
+    assert failure.measured_canonical_json_bytes > 196_608
+    assert not [event for event in events if event.type == "dispatch_leased"]
+    assert [event.type for event in events].count("audit_context_preflight_failed") == 1
+    assert events[-1].type == "run_failed"
+    recovered = recover_protocol_25_run(context)
+    assert recovered.controller_state.terminal_state == "blocked_incomplete"
+    assert recovered.controller_state.work_item_failed is True
+    assert any(item.audit_state == "failed" for item in recovered.controller_state.targets)
+
+
+@pytest.mark.integration
+def test_successful_preflight_publishes_all_contexts_before_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    targets = context.semantic_graph.ready_audit_targets(accepted)
+    items = {}
+    for target, template in zip(
+        targets,
+        context.semantic_graph.audit_templates,
+        strict=True,
+    ):
+        items[target.audit_target_id] = context.semantic_graph.instantiate_audit_item(
+            template,
+            target,
+            {
+                template_id: accepted[template_id]
+                for template_id in template.required_template_ids
+            },
+        )
+
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, target_id: (
+            items[target_id],
+            next(target for target in targets if target.audit_target_id == target_id),
+            (),
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25DeterministicRuntime,
+        "build_audit_context",
+        lambda _runtime, *, audit_target, **_kwargs: SimpleNamespace(
+            to_json_dict=lambda: {
+                "schema_version": 1,
+                "audit_target_id": audit_target.audit_target_id,
+                "max_canonical_json_bytes": 196_608,
+            }
+        ),
+    )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+
+    assert result.passed is True
+    assert tuple(item.audit_target_id for item in result.entries) == tuple(
+        item.audit_target_id for item in targets
+    )
+    assert all(context.object_store.read_blob(item.context_hash) for item in result.entries)
+    events = context.event_store.replay()
+    assert events[-1].type == "audit_context_preflight_completed"
+    assert not [event for event in events if event.type == "dispatch_leased"]
+
+
+@pytest.mark.integration
+def test_missing_preflight_object_uses_distinct_durable_reason(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    target = context.semantic_graph.ready_audit_targets(accepted)[0]
+    template = context.semantic_graph.audit_templates[0]
+    item = context.semantic_graph.instantiate_audit_item(
+        template,
+        target,
+        {
+            template_id: accepted[template_id]
+            for template_id in template.required_template_ids
+        },
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, _target_id: (item, target, (digest("missing-object"),)),
+    )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+
+    assert result.failure is not None
+    assert result.failure.reason_code == "immutable_object_missing"
+    assert result.failure.measured_canonical_json_bytes is None
+    assert not [
+        event
+        for event in context.event_store.replay()
+        if event.type == "dispatch_leased"
+    ]
 
 
 @pytest.mark.integration
@@ -950,6 +1131,11 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
         recovery_module,
         "build_audit_dispatch_authority",
         lambda _context, _target_id: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "ensure_audit_context_preflight",
+        lambda _context: SimpleNamespace(passed=True),
     )
     monkeypatch.setattr(
         recovery_module,

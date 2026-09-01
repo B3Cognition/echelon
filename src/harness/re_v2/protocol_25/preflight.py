@@ -203,9 +203,9 @@ class AuditContextPreflightResultV1:
         if any(not isinstance(item, AuditContextPreflightEntryV1) for item in entries):
             raise Protocol25PreflightError("preflight result entries are invalid")
         target_ids = tuple(item.audit_target_id for item in entries)
-        if target_ids != tuple(sorted(set(target_ids))):
+        if len(target_ids) != len(set(target_ids)):
             raise Protocol25PreflightError(
-                "preflight result entries must be ordered and unique"
+                "preflight result entries must have unique targets"
             )
         if (bool(entries)) == (self.failure is not None):
             raise Protocol25PreflightError(

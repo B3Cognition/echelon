@@ -87,8 +87,5 @@ def test_preflight_result_is_exactly_success_or_failure() -> None:
         AuditContextPreflightResultV1(1, (entry,), failure, 196_608)
     with pytest.raises(Protocol25PreflightError, match="success or failure"):
         AuditContextPreflightResultV1(1, (), None, 196_608)
-    reverse_order = tuple(
-        sorted((_entry("a"), _entry("b")), key=lambda item: item.audit_target_id, reverse=True)
-    )
-    with pytest.raises(Protocol25PreflightError, match="ordered"):
-        AuditContextPreflightResultV1(1, reverse_order, None, 196_608)
+    with pytest.raises(Protocol25PreflightError, match="unique"):
+        AuditContextPreflightResultV1(1, (entry, entry), None, 196_608)

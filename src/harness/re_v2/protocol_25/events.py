@@ -113,8 +113,8 @@ def _preflight_entry_array(value: object, field_name: str) -> None:
     except (TypeError, ValueError) as exc:
         raise ReV2EventError(f"{field_name} is invalid: {exc}") from exc
     target_ids = tuple(item.audit_target_id for item in entries)
-    if target_ids != tuple(sorted(set(target_ids))):
-        raise ReV2EventError(f"{field_name} must be ordered and unique")
+    if len(target_ids) != len(set(target_ids)):
+        raise ReV2EventError(f"{field_name} must have unique targets")
 
 
 def _choice(*choices: str):  # type: ignore[no-untyped-def]
@@ -382,6 +382,20 @@ class Protocol25ReplayState(EventReplayState):
             for target, unresolved in self.unresolved_by_target.items()
             if unresolved and self.rounds_by_target.get(target, 0) >= 3
         }
+        if (
+            event.type == "run_failed"
+            and self.audit_context_preflight_failure_id is not None
+        ):
+            if event.payload["reason"] != "semantic audit context preflight failed":
+                raise ReV2EventError(
+                    "preflight run failure has an inconsistent reason"
+                )
+            shared = self.shared.shared
+            if shared.active is not None or shared.lease_dispatch_id is not None:
+                raise ReV2EventError("run_failed is invalid with active work")
+            shared.terminal = True
+            shared._finish(event.type)
+            return
         if event.type == "run_failed" and (self.plateau_targets or ceiling_targets):
             unresolved_targets = {
                 target
