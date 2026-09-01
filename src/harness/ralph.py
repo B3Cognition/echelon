@@ -61,6 +61,7 @@ from harness.task_progress import (
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from harness.verification_evidence import (
     VerificationStage,
+    redact_verification_text,
     write_verification_receipt,
 )
 from harness.verification_plan import build_verification_plan, materialize_services
@@ -877,6 +878,13 @@ class RalphController:
                         verify_result, worktree_path, require_completion=True
                     )
                     tokens_used += verify_result.token_usage
+                    self._record_provider_attempt_summary(
+                        phase="build",
+                        attempt=outer_iter + 1,
+                        result=build_result,
+                        verify_result=verify_result,
+                        changed_files=scoped_changed_files,
+                    )
 
                     if _is_provider_session_limit_verify_result(verify_result):
                         preserve_worktree = True
@@ -1660,6 +1668,13 @@ class RalphController:
                     normalize(f.category.value, f.id, f.error)
                     for f in current_verify.failures
                 ],
+            )
+            self._record_provider_attempt_summary(
+                phase="fix",
+                attempt=inner_iter,
+                result=fix_result,
+                verify_result=current_verify,
+                changed_files=inner_changed_files,
             )
 
             if current_verify.passed:
@@ -3543,6 +3558,8 @@ class RalphController:
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
         # Fallback: original sandbox path
         failures_json = json.dumps([
@@ -5664,6 +5681,64 @@ class RalphController:
                 state=fresh_state,
             )
 
+    def _record_provider_attempt_summary(
+        self,
+        *,
+        phase: str,
+        attempt: int,
+        result: Mapping[str, object],
+        verify_result: VerifyResult,
+        changed_files: Iterable[str],
+    ) -> dict[str, object] | None:
+        """Persist and render one fact-backed summary for an LLM attempt."""
+        raw_invocation = result.get("provider_invocation")
+        invocation = raw_invocation if isinstance(raw_invocation, Mapping) else None
+        provider = str(invocation.get("provider") or "").strip() if invocation else ""
+        if not provider:
+            return None
+        note = _compact_provider_note(str(result.get("stdout") or ""))
+        failures = verify_result.failures or []
+        primary_failure = _compact_provider_note(failures[0].error) if failures else ""
+        summary: dict[str, object] = {
+            "provider": provider,
+            "phase": phase,
+            "attempt": attempt,
+            "outcome": "verification passed" if verify_result.passed else "verification failed",
+            "changed_files": sorted(
+                {
+                    str(path).strip()
+                    for path in changed_files
+                    if str(path).strip() and not _is_verify_owned_artifact(str(path))
+                }
+            )[:8],
+            "provider_note": note or "Provider did not return a completion note.",
+            "primary_failure": primary_failure,
+        }
+        state = self._state_store.read()
+        attempts = state.get("provider_attempts")
+        if not isinstance(attempts, list):
+            attempts = []
+        attempts.append(summary)
+        state["provider_attempts"] = attempts
+        self._state_store.write(state)
+
+        from echelon.ui import banner
+
+        fields = [
+            ("changed", ", ".join(summary["changed_files"]) or "no product files detected"),
+            ("provider", str(summary["provider_note"])),
+            ("verify", str(summary["outcome"])),
+        ]
+        if primary_failure:
+            fields.append(("blocker", primary_failure))
+        banner(
+            f"{provider.upper()} {'BUILD' if phase == 'build' else 'REPAIR'} {attempt}",
+            fields,
+            subtitle=str(summary["outcome"]).capitalize(),
+            file=sys.stderr,
+        )
+        return summary
+
     def _append_delivery_provider_telemetry(
         self,
         invocation: dict[str, object],
@@ -6537,6 +6612,16 @@ def _clean_task_ids(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
     return [str(task_id).strip() for task_id in value if str(task_id).strip()]
+
+
+def _compact_provider_note(value: object, *, limit: int = 360) -> str:
+    """Keep provider text useful in normal output without exposing raw logs."""
+    text = " ".join(
+        redact_verification_text(str(value or ""), os.environ).split()
+    )
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def _is_verify_owned_artifact(path: str) -> bool:

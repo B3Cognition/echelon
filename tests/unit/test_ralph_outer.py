@@ -8128,6 +8128,41 @@ class TestLlmProviderDispatch:
 
 @pytest.mark.unit
 class TestPromptHelpers:
+
+    def test_provider_attempt_summary_is_compact_and_persisted(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="fix",
+            attempt=2,
+            result={
+                "provider_invocation": {"provider": "codex"},
+                "stdout": "Adjusted the HUD stacking order and reran the focused test.",
+            },
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(FailureCategory.TEST, "e2e", "canvas intercepts click")],
+            ),
+            changed_files=["apps/web/src/styles.css", "test-results/trace.zip"],
+        )
+
+        assert summary == {
+            "provider": "codex",
+            "phase": "fix",
+            "attempt": 2,
+            "outcome": "verification failed",
+            "changed_files": ["apps/web/src/styles.css"],
+            "provider_note": "Adjusted the HUD stacking order and reran the focused test.",
+            "primary_failure": "canvas intercepts click",
+        }
+        output = capsys.readouterr().err
+        assert "CODEX REPAIR 2" in output
+        assert "test-results/trace.zip" not in output
+        assert controller._state_store.read()["provider_attempts"] == [summary]
+
     def test_make_iter_prompt_iter0_returns_base(self, tmp_path: Path) -> None:
         controller, *_ = _make_controller(tmp_path)
         result = controller._make_iter_prompt("spec 001", outer_iter=0, last_failures="")
