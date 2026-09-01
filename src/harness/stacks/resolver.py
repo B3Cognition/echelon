@@ -192,7 +192,12 @@ def resolve_stacks(
                     SandboxServiceSpec(
                         service_name="postgres",
                         image="postgres:16.4-alpine",
-                        environment_names=("TEST_DATABASE_URL",),
+                        environment_names=tuple(
+                            _append_unique(
+                                list(provisioner.required_environment),
+                                "TEST_DATABASE_URL",
+                            )
+                        ),
                         health_command=("pg_isready", "-U", "echelon", "-d", "echelon_verify"),
                     )
                 )

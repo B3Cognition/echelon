@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Set
 
 from harness.errors import (
     CredentialLeakError,
+    NotSupportedError,
     SandboxCreationError,
     SandboxExecError,
 )
@@ -613,8 +614,13 @@ class DockerWorktreeProvider(SandboxProvider):
         if info is None:
             raise SandboxCreationError("sandbox handle is not active")
         started: list[str] = []
+        started_by_name: dict[str, str] = {}
         try:
             for service in services:
+                if service.service_name in started_by_name:
+                    raise SandboxCreationError(
+                        f"duplicate verification service name: {service.service_name}"
+                    )
                 result = _run_docker([
                     "run", "-d",
                     "--network", info.network_name,
@@ -632,6 +638,7 @@ class DockerWorktreeProvider(SandboxProvider):
                         f"verification service {service.service_name!r} did not return an id"
                     )
                 started.append(service_id)
+                started_by_name[service.service_name] = service_id
                 if service.health_command:
                     deadline = time.monotonic() + 30
                     while True:
@@ -649,6 +656,7 @@ class DockerWorktreeProvider(SandboxProvider):
                             )
                         time.sleep(0.5)
             info.service_ids.extend(started)
+            info.service_ids_by_name.update(started_by_name)
             return tuple(started)
         except Exception:
             for service_id in started:
@@ -657,6 +665,55 @@ class DockerWorktreeProvider(SandboxProvider):
                     capture_output=True, timeout=10, check=False,
                 )
             raise
+
+    def exec_service(
+        self,
+        handle: SandboxHandle,
+        service_name: str,
+        argv: tuple[str, ...],
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        """Execute an argv vector inside an active attempt-owned sidecar."""
+        info = self._containers.get(handle.session_id)
+        service_ids_by_name = getattr(info, "service_ids_by_name", {})
+        service_id = service_ids_by_name.get(service_name)
+        if not service_id:
+            raise NotSupportedError(
+                f"verification service {service_name!r} is not active"
+            )
+        if not argv or any(
+            not isinstance(item, str) or not item or "\x00" in item for item in argv
+        ):
+            raise ValueError("service argv must contain non-empty safe strings")
+        timeout_seconds = max(1, timeout_ms // 1000)
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                [self._container_cli, "exec", service_id, *argv],
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return ExecResult(
+                exit_code=EXIT_TIMEOUT,
+                stdout="",
+                stderr=f"Service command timed out after {timeout_ms}ms",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                resource_stats=None,
+            )
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        stdout, stdout_truncated = _truncate_output(stdout, self._buffer_limit_bytes)
+        stderr, stderr_truncated = _truncate_output(stderr, self._buffer_limit_bytes)
+        return ExecResult(
+            exit_code=int(result.returncode),
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            resource_stats=None,
+            truncated=stdout_truncated or stderr_truncated,
+        )
 
     # --- Internal helpers ---
 
@@ -687,7 +744,15 @@ class DockerWorktreeProvider(SandboxProvider):
 class _ContainerInfo:
     """Internal tracking of container resources for cleanup."""
 
-    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids", "volume_names", "generated_squid_conf")
+    __slots__ = (
+        "sandbox_id",
+        "proxy_id",
+        "network_name",
+        "service_ids",
+        "service_ids_by_name",
+        "volume_names",
+        "generated_squid_conf",
+    )
 
     def __init__(
         self,
@@ -701,6 +766,7 @@ class _ContainerInfo:
         self.proxy_id = proxy_id
         self.network_name = network_name
         self.service_ids: list[str] = []
+        self.service_ids_by_name: dict[str, str] = {}
         self.volume_names = volume_names or []
         self.generated_squid_conf = generated_squid_conf
 

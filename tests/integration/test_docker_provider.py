@@ -215,6 +215,7 @@ class TestVerificationSidecars:
         provider._containers[handle.session_id] = type("Info", (), {
             "sandbox_id": "sandbox-id", "proxy_id": None,
             "network_name": "internal-net", "service_ids": [],
+            "service_ids_by_name": {},
         })()
         service = SandboxServiceSpec(service_name="postgres", image="postgres:16.4-alpine")
 
@@ -250,6 +251,7 @@ class TestVerificationSidecars:
         provider._containers[handle.session_id] = type("Info", (), {
             "sandbox_id": "sandbox-id", "proxy_id": None,
             "network_name": "internal-net", "service_ids": [],
+            "service_ids_by_name": {},
         })()
         service = SandboxServiceSpec(
             service_name="postgres", image="postgres:16.4-alpine",
@@ -291,6 +293,22 @@ def test_real_verification_sidecar_and_dependency_volume_are_isolated(
     volume_name = provider._containers[handle.session_id].volume_names[0]
     try:
         provider.start_services(handle, (service,))
+        database_probe = provider.exec_service(
+            handle,
+            "postgres",
+            (
+                "psql",
+                "-U",
+                "echelon",
+                "-d",
+                "echelon_verify",
+                "-Atqc",
+                "SELECT 1",
+            ),
+            timeout_ms=30_000,
+        )
+        assert database_probe.exit_code == 0, database_probe.stderr
+        assert database_probe.stdout.strip() == "1"
         result = provider.exec(
             handle,
             "test ! -e /workspace/node_modules/host-marker "
