@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shlex
 from typing import Callable, Mapping, Sequence
+from urllib.parse import unquote, urlsplit
 import uuid
 
 from harness.errors import NotSupportedError
@@ -643,6 +644,15 @@ class RunnabilityRunner:
         assert observation.statement is not None
         statement = observation.statement
         argv = ["psql", "-AtX", "-v", "ON_ERROR_STOP=1"]
+        database_url = variables.get("TEST_DATABASE_URL") or variables.get(
+            "DATABASE_URL"
+        )
+        if database_url:
+            parsed = urlsplit(database_url)
+            username = unquote(parsed.username or "")
+            database = unquote(parsed.path.lstrip("/"))
+            if username and database:
+                argv.extend(("--username", username, "--dbname", database))
         expected_values: list[str] = []
         for index, parameter in enumerate(observation.parameters, start=1):
             value = _expand(parameter, variables)

@@ -293,6 +293,11 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
     assert provider.destroyed == provider.created
     assert provider.services_started == 1
     assert [name for name, _ in provider.service_commands] == ["postgres", "postgres"]
+    for _name, argv in provider.service_commands:
+        assert "--username" in argv
+        assert argv[argv.index("--username") + 1] == "echelon_session1"
+        assert "--dbname" in argv
+        assert argv[argv.index("--dbname") + 1] == "echelon_verify"
     assert validate_runnability_report(
         result.evidence,
         candidate_commit="b" * 40,
