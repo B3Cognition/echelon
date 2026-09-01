@@ -21,7 +21,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import HarnessConfig
@@ -969,6 +969,7 @@ class GitOpsManager:
         worktree_path: str,
         message: str,
         skip_ci: bool = True,
+        exclude_paths: Sequence[str] = (),
     ) -> str:
         """Stage all changes and commit in the worktree.
 
@@ -981,8 +982,17 @@ class GitOpsManager:
         """
         self._guard_default_branch_delivery_commit(worktree_path, message)
 
-        # Stage all changes
-        _run_git(["add", "-A"], cwd=worktree_path)
+        # Stage all changes except caller-owned generated output. Verification
+        # traces must remain available locally without entering product commits.
+        exclusions = [str(path).strip() for path in exclude_paths if str(path).strip()]
+        if exclusions:
+            _run_git(["reset", "--", *exclusions], cwd=worktree_path, check=False)
+            _run_git(
+                ["add", "-A", "--", ".", *[f":(exclude){path}" for path in exclusions]],
+                cwd=worktree_path,
+            )
+        else:
+            _run_git(["add", "-A"], cwd=worktree_path)
         secret_scan = scan_git_staged(worktree_path)
         if not secret_scan.ok:
             raise GitOpsError(

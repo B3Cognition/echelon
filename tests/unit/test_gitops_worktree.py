@@ -1157,6 +1157,36 @@ def test_fresh_legacy_worktree_retains_explicit_checkpoint_baseline(tmp_path):
     assert not (worktree / "main-only.txt").exists()
 
 
+def test_commit_excludes_verification_artifacts_when_requested(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(args, cwd=target, check=True)
+    (target / "app.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.txt"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+    (target / "app.txt").write_text("product\n", encoding="utf-8")
+    artifact = target / "test-results" / "trace.zip"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"trace")
+
+    gitops = GitOpsManager(
+        config=HarnessConfig(target_repo=str(target), target_default_branch="main", provider="docker"),
+        base_dir=str(tmp_path / "harness"),
+    )
+    gitops.commit(str(target), "checkpoint", exclude_paths=("test-results/**",))
+
+    committed = subprocess.run(
+        ["git", "show", "--format=", "--name-only", "HEAD"],
+        cwd=target, check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert committed == ["app.txt"]
+
+
 def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base(
     tmp_path,
 ):

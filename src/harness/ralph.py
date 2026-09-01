@@ -91,6 +91,12 @@ _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
 _TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
 _BACKTICK_PATH_RE = re.compile(r"`(?P<path>[^`]+)`")
+_VERIFICATION_ARTIFACT_PATHS = (
+    "test-results/**",
+    "playwright-report/**",
+    "blob-report/**",
+    "coverage/**",
+)
 
 
 def _missing_completed_task_deliverables(
@@ -4853,8 +4859,18 @@ class RalphController:
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
             "If a failure mentions stale/scoped fulfillment evidence, treat it as "
             "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
-            f"Inner fix {inner_iter}. Fix these verification failures "
-            f"without re-running the full build pipeline:\n{failures_text}"
+            f"Inner fix {inner_iter}. "
+            + (
+                "The prior repair did not clear this failure: diagnose before editing. "
+                "Reproduce the focused failing check and identify the actual failing "
+                "component or browser hit target. For pointer/interactivity failures, "
+                "inspect DOM hit-testing and stacking contexts; do not make speculative "
+                "CSS or selector changes. Do not commit generated test traces or results.\n\n"
+                if inner_iter >= 2
+                else ""
+            )
+            + "Fix these verification failures without re-running the full build pipeline:\n"
+            + failures_text
         )
 
     # === Git operations ===
@@ -4910,7 +4926,9 @@ class RalphController:
                     strategy=self._strategy_id,
                 ),
             )
-            reported_commit = self._gitops.commit(worktree_path, message)
+            reported_commit = self._gitops.commit(
+                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+            )
             commit = _current_git_commit(Path(worktree_path))
             if not commit or (
                 reported_commit and str(reported_commit) != commit
@@ -5027,7 +5045,9 @@ class RalphController:
                 strategy=self._strategy_id,
             ),
         )
-        commit = self._gitops.commit(worktree_path, message)
+        commit = self._gitops.commit(
+            worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+        )
         checkpoint = {
             "commit": commit,
             "outer_iter": outer_iter,
@@ -5287,7 +5307,9 @@ class RalphController:
                 worktree_path=worktree_path,
             )
         try:
-            self._gitops.commit(worktree_path, message)
+            self._gitops.commit(
+                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+            )
         except Exception as e:
             logger.warning("Commit failed for %s: %s", worktree_path, e)
             raise CommitPushError(
@@ -6519,6 +6541,8 @@ def _clean_task_ids(value: object) -> List[str]:
 
 def _is_verify_owned_artifact(path: str) -> bool:
     posix = path.replace("\\", "/")
+    if posix.startswith(("test-results/", "playwright-report/", "blob-report/", "coverage/")):
+        return True
     if posix.startswith("runs/verify-spec-"):
         return True
     if "/runs/verify-spec-" in posix:

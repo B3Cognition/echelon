@@ -366,7 +366,7 @@ def _commit_all(path: Path, message: str = "base") -> None:
     )
 
 
-def _commit_worktree_changes(path: str, message: str) -> str:
+def _commit_worktree_changes(path: str, message: str, **_kwargs: object) -> str:
     subprocess.run(["git", "add", "."], cwd=path, check=True)
     if subprocess.run(
         ["git", "diff", "--cached", "--quiet"], cwd=path
@@ -2760,7 +2760,9 @@ class TestOuterLoopConvergence:
         )
         gitops.create_worktree.return_value = str(worktree)
 
-        def assert_phase_evidence_committed(path: str, message: str) -> str:
+        def assert_phase_evidence_committed(
+            path: str, message: str, **_kwargs: object
+        ) -> str:
             del message
             from harness.spec_frontmatter import read_frontmatter
 
@@ -7396,7 +7398,7 @@ class TestOuterLoopConvergence:
         gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
-        def commit_worktree(_path: str, message: str) -> str:
+        def commit_worktree(_path: str, message: str, **_kwargs: object) -> str:
             subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
             subprocess.run(
                 [
@@ -7498,7 +7500,7 @@ class TestOuterLoopConvergence:
         gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
-        def commit_worktree(_path: str, message: str) -> str:
+        def commit_worktree(_path: str, message: str, **_kwargs: object) -> str:
             subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
             subprocess.run(
                 [
@@ -7592,7 +7594,7 @@ class TestOuterLoopConvergence:
         gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
-        def commit_worktree(_path: str, message: str) -> str:
+        def commit_worktree(_path: str, message: str, **_kwargs: object) -> str:
             subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
             subprocess.run(
                 [
@@ -7692,7 +7694,7 @@ class TestOuterLoopConvergence:
         gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
-        def commit_worktree(_path: str, message: str) -> str:
+        def commit_worktree(_path: str, message: str, **_kwargs: object) -> str:
             subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
             subprocess.run(
                 [
@@ -8156,6 +8158,37 @@ class TestPromptHelpers:
         assert "AssertionError" in result
         assert "spec 001" in result
         assert "re-running" in result
+
+    def test_second_feedback_prompt_requires_diagnostic_before_another_edit(
+        self, tmp_path: Path
+    ) -> None:
+        """Repeated UI failures must not invite another speculative repair."""
+        from harness.verify_result import FailureEntry, FailureCategory, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command",
+                    error="canvas subtree intercepts pointer events",
+                )
+            ],
+        )
+
+        result = controller._make_feedback_prompt("spec 001", verify, inner_iter=2)
+
+        assert "diagnose before editing" in result
+        assert "focused failing check" in result
+        assert "hit target" in result
+
+    def test_verify_owned_artifact_includes_playwright_results(self) -> None:
+        from harness.ralph import _is_verify_owned_artifact
+
+        assert _is_verify_owned_artifact(
+            "test-results/failure-reconciliation/trace.zip"
+        )
 
     def test_make_feedback_prompt_carries_exact_documentation_schema_repair(
         self, tmp_path: Path
