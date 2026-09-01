@@ -33,7 +33,8 @@ def _write_fake_playwright_test(root: Path) -> None:
 const calls = [];
 const locator = {
   count: async () => 1,
-  isVisible: async () => true,
+  isVisible: async () => { throw new Error('one-shot visibility check is forbidden'); },
+  waitFor: async options => calls.push(`waitFor:${options.state}`),
   textContent: async () => 'saved',
   click: async () => calls.push('click'),
   fill: async value => calls.push(`fill:${value}`),

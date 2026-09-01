@@ -45,15 +45,15 @@ async function executeStep(page, baseUrl, step) {
     return;
   }
   const state = requireString(step.state, "step.state");
-  if (state === "visible" && !(await locator.isVisible())) {
-    throw new Error(`expected visible selector: ${step.selector}`);
+  if (state === "visible") {
+    await locator.waitFor({ state: "visible" });
+    return;
   }
-  if (state === "hidden" && (await locator.isVisible())) {
-    throw new Error(`expected hidden selector: ${step.selector}`);
+  if (state === "hidden") {
+    await locator.waitFor({ state: "hidden" });
+    return;
   }
-  if (!new Set(["visible", "hidden"]).has(state)) {
-    throw new Error(`unsupported expect state: ${state}`);
-  }
+  throw new Error(`unsupported expect state: ${state}`);
 }
 
 async function observeDom(page, observation) {
