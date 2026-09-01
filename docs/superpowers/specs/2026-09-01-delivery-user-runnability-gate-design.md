@@ -188,12 +188,15 @@ means `current_spec` unless the spec directory contains a controller-owned
 
 ```text
 echelon spec defer-runnability <spec-id> --reason <owner-approved reason>
+echelon spec plan-runnability <spec-id>
 ```
 
 That pure-Python command records the reason, approval timestamp, target, and
 generated follow-up proposal path. Build agents cannot write or modify the
 disposition. Without this ledger, a missing or failing required contract remains
-current-spec work and blocks convergence and landing.
+current-spec work and blocks convergence and landing. `plan-runnability` marks
+the disposition planned again without deleting its history, restoring the
+required current-spec gate.
 
 High-confidence detection may suggest or initialize parts of this contract, but
 must not fabricate a passing primary journey. If a required contract remains
@@ -272,7 +275,7 @@ runs/targets/<target>/runs/<build>/evidence/user-runnability/
 
 ```yaml
 schema_version: 1
-status: runnable | not_runnable | blocked | not_applicable
+status: runnable | not_runnable | blocked | deferred | not_applicable
 candidate_commit: <sha>
 candidate_fingerprint: <sha256>
 contract_hash: <sha256>
