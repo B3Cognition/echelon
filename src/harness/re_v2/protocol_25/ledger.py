@@ -38,6 +38,7 @@ from .artifacts import (
     TargetClosureAssessmentV1,
 )
 from .model import Protocol25SchemaError
+from .preflight import AuditContextPreflightFailureV1, Protocol25PreflightError
 
 
 _SHARED_RECORD_TYPES = frozenset(
@@ -50,6 +51,7 @@ _SHARED_RECORD_TYPES = frozenset(
     }
 )
 _SEMANTIC_DECODERS = {
+    "audit_context_preflight_failure": AuditContextPreflightFailureV1.from_json_dict,
     "semantic_certification": SemanticCertificationReceiptV1.from_json_dict,
     "audit_epoch": AuditEpochV1.from_json_dict,
     "target_closure_assessment": TargetClosureAssessmentV1.from_json_dict,
@@ -62,6 +64,9 @@ _SEMANTIC_DECODERS = {
 
 @dataclass(frozen=True, slots=True)
 class Protocol25LedgerView(Protocol22LedgerView):
+    audit_context_preflight_failures: Mapping[
+        str, AuditContextPreflightFailureV1
+    ]
     semantic_certifications: Mapping[str, SemanticCertificationReceiptV1]
     audit_epochs: Mapping[str, AuditEpochV1]
     target_closure_assessments: Mapping[str, TargetClosureAssessmentV1]
@@ -95,6 +100,7 @@ class _Protocol25LedgerState:
     semantic_candidate_assessments: dict[str, CandidateAssessmentReceiptV1]
     semantic_candidates_by_candidate: dict[str, CandidateAssessmentReceiptV1]
     semantic_accepted_artifacts: dict[str, ArtifactAcceptanceReceiptV2]
+    preflight_failures: dict[str, AuditContextPreflightFailureV1]
     audit_epochs: dict[str, AuditEpochV1]
     target_assessments: dict[str, TargetClosureAssessmentV1]
     source_assessments: dict[str, SourceCompositionAssessmentV1]
@@ -112,6 +118,7 @@ class _Protocol25LedgerState:
     def empty(cls) -> "_Protocol25LedgerState":
         return cls(
             PROTOCOL_22_LEDGER_PROTOCOL.new_state(),
+            {},
             {},
             {},
             {},
@@ -151,6 +158,7 @@ class _Protocol25LedgerState:
                 self.shared.consume(record, object_store)  # type: ignore[attr-defined]
                 return
             handlers = {
+                "audit_context_preflight_failure": self._consume_preflight_failure,
                 "semantic_certification": self._consume_semantic_certification,
                 "audit_epoch": self._consume_audit_epoch,
                 "target_closure_assessment": self._consume_target_assessment,
@@ -167,8 +175,27 @@ class _Protocol25LedgerState:
             handler(record, object_store)
         except ReV2LedgerError:
             raise
-        except (Protocol22SchemaError, Protocol25SchemaError, TypeError, ValueError) as exc:
+        except (
+            Protocol22SchemaError,
+            Protocol25SchemaError,
+            Protocol25PreflightError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise ReV2LedgerError(f"invalid {record.type} receipt: {exc}") from exc
+
+    def _consume_preflight_failure(
+        self, record: LedgerRecord, _object_store: ObjectStore
+    ) -> None:
+        failure = AuditContextPreflightFailureV1.from_json_dict(record.payload)
+        if self.preflight_failures and failure.identity not in self.preflight_failures:
+            raise ReV2LedgerError("protocol-2.5 run has multiple preflight failures")
+        self._remember(
+            record,
+            failure.identity,
+            ("audit_context_preflight_failure", failure.work_item_id),
+        )
+        self.preflight_failures[failure.identity] = failure
 
     def _consume_semantic_certification(
         self, record: LedgerRecord, object_store: ObjectStore
@@ -729,6 +756,9 @@ class _Protocol25LedgerState:
             artifact_acceptance_records=MappingProxyType(artifact_records),
             work_item_failure_records=shared.work_item_failure_records,
             executor_failure_records=shared.executor_failure_records,
+            audit_context_preflight_failures=MappingProxyType(
+                dict(self.preflight_failures)
+            ),
             semantic_certifications=MappingProxyType(dict(self.semantic_certifications)),
             audit_epochs=MappingProxyType(dict(self.audit_epochs)),
             target_closure_assessments=MappingProxyType(dict(self.target_assessments)),
@@ -763,7 +793,13 @@ class Protocol25LedgerProtocol(LedgerProtocol[Protocol25LedgerView]):
             return decoder(value).to_json_dict()
         except ReV2LedgerError:
             raise
-        except (Protocol22SchemaError, Protocol25SchemaError, TypeError, ValueError) as exc:
+        except (
+            Protocol22SchemaError,
+            Protocol25SchemaError,
+            Protocol25PreflightError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise ReV2LedgerError(
                 f"invalid {record_type} ledger payload: {exc}"
             ) from exc
@@ -791,6 +827,18 @@ class Protocol25Ledger(Protocol22Ledger):
                 "receipt must be a SemanticCertificationReceiptV1"
             )
         return self._append("semantic_certification", receipt.to_json_dict())
+
+    def record_audit_context_preflight_failure(
+        self, failure: AuditContextPreflightFailureV1
+    ) -> LedgerRecord:
+        if not isinstance(failure, AuditContextPreflightFailureV1):
+            raise ReV2LedgerError(
+                "failure must be an AuditContextPreflightFailureV1"
+            )
+        return self._append(
+            "audit_context_preflight_failure",
+            failure.to_json_dict(),
+        )
 
     def record_audit_epoch(self, epoch: AuditEpochV1) -> LedgerRecord:
         if not isinstance(epoch, AuditEpochV1):

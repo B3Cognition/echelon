@@ -29,6 +29,66 @@ def _run(store: EventStore) -> None:
     _append(store, "run_created", {"run_manifest_id": digest("run")})
 
 
+def _preflight_entry(seed: str = "a") -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "audit_target_id": digest(f"target:{seed}"),
+        "work_item_id": digest(f"work:{seed}"),
+        "context_hash": digest(f"context:{seed}"),
+        "canonical_json_bytes": 58_051,
+    }
+
+
+def test_audit_context_preflight_completion_replays_once(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    payload = {
+        "entries": [_preflight_entry()],
+        "checked_target_count": 1,
+        "max_measured_canonical_json_bytes": 58_051,
+        "max_canonical_json_bytes": 196_608,
+        "provider_dispatch_count": 0,
+    }
+
+    _append(store, "audit_context_preflight_completed", payload)
+    replay = store.protocol.new_state()
+    for event in store.replay():
+        replay.consume(event)
+
+    assert isinstance(replay, Protocol25ReplayState)
+    assert len(replay.audit_context_preflight_entries) == 1
+    with pytest.raises(ReV2EventError, match="once"):
+        _append(store, "audit_context_preflight_completed", payload)
+
+
+def test_audit_context_preflight_failure_replays_zero_dispatch_authority(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _append(
+        store,
+        "audit_context_preflight_failed",
+        {
+            "audit_target_id": digest("target:source"),
+            "work_item_id": digest("work:source"),
+            "failure_receipt_id": digest("failure:source"),
+            "reason_code": "semantic_context_byte_ceiling_exceeded",
+            "measured_canonical_json_bytes": 2_701_823,
+            "max_canonical_json_bytes": 196_608,
+            "provider_dispatch_count": 0,
+        },
+    )
+
+    replay = store.protocol.new_state()
+    for event in store.replay():
+        replay.consume(event)
+
+    assert isinstance(replay, Protocol25ReplayState)
+    assert replay.audit_context_preflight_failure_id == digest("failure:source")
+    assert replay.audit_context_preflight_failed_target_id == digest("target:source")
+
+
 def _freeze(store: EventStore, targets: tuple[str, ...] = (TARGET_A, TARGET_B)) -> None:
     for target in targets:
         _append(

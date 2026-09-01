@@ -55,6 +55,9 @@ __all__ = (
     "PROTOCOL_VERSION",
     "RUN_MANIFEST_SCHEMA_VERSION",
     "AuditCandidateV1",
+    "AuditContextPreflightEntryV1",
+    "AuditContextPreflightFailureV1",
+    "AuditContextPreflightResultV1",
     "AuditClosureRootV1",
     "AuditEpochV1",
     "AuditTargetV1",
@@ -99,6 +102,7 @@ __all__ = (
     "Protocol25GraphInputsV1",
     "Protocol25AdoptionError",
     "Protocol25ParentCandidateV1",
+    "Protocol25PreflightError",
     "PreparedProtocol25Creation",
     "RunManifestV4",
     "RunModeV1",
@@ -222,6 +226,14 @@ _LAZY_RUNTIME_EXPORTS = frozenset(
         "semantic_response_schema",
     }
 )
+_LAZY_PREFLIGHT_EXPORTS = frozenset(
+    {
+        "AuditContextPreflightEntryV1",
+        "AuditContextPreflightFailureV1",
+        "AuditContextPreflightResultV1",
+        "Protocol25PreflightError",
+    }
+)
 _LAZY_CONTROLLER_EXPORTS = frozenset(
     {
         "Protocol25Controller",
@@ -279,6 +291,8 @@ def __getattr__(name: str):  # type: ignore[no-untyped-def]
         from . import budget as module
     elif name in _LAZY_RUNTIME_EXPORTS:
         from . import runtime as module
+    elif name in _LAZY_PREFLIGHT_EXPORTS:
+        from . import preflight as module
     elif name in _LAZY_CONTROLLER_EXPORTS:
         from . import controller as module
     elif name in _LAZY_RECOVERY_EXPORTS:

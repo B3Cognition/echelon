@@ -25,6 +25,7 @@ from harness.re_v2.protocol_25.artifacts import (
     build_finding_closure_receipt,
 )
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
+from harness.re_v2.protocol_25.preflight import AuditContextPreflightFailureV1
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import (
     audit_candidate_v1,
@@ -407,3 +408,28 @@ def test_protocol_package_exports_semantic_ledger_contract() -> None:
     protocol = importlib.import_module("harness.re_v2.protocol_25")
 
     assert protocol.Protocol25Ledger is Protocol25Ledger
+
+
+def test_preflight_failure_round_trips_as_protocol_25_owned_authority(
+    tmp_path: Path,
+) -> None:
+    ledger, _objects = _ledger(tmp_path)
+    failure = AuditContextPreflightFailureV1(
+        schema_version=1,
+        audit_target_id=digest("target:source"),
+        work_item_id=digest("work:source"),
+        scope_kind="source",
+        source_id="api",
+        domain_key=None,
+        reason_code="semantic_context_byte_ceiling_exceeded",
+        projection_class="semantic-audit-context",
+        measured_canonical_json_bytes=300_000,
+        max_canonical_json_bytes=196_608,
+        provider_dispatch_count=0,
+    )
+
+    ledger.record_audit_context_preflight_failure(failure)
+
+    assert ledger.replay().audit_context_preflight_failures == {
+        failure.identity: failure
+    }

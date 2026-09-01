@@ -14,6 +14,7 @@ from harness.re_v2.events import (
     _thaw_json,
 )
 from harness.re_v2.protocol_24.events import PROTOCOL_24_EVENTS, Protocol24ReplayState
+from .preflight import AuditContextPreflightEntryV1
 
 
 SemanticStateV1 = Literal[
@@ -40,6 +41,8 @@ _SEMANTIC_START_EVENTS = frozenset(
 )
 _SEMANTIC_EVENTS = frozenset(
     {
+        "audit_context_preflight_completed",
+        "audit_context_preflight_failed",
         "audit_candidate_accepted",
         "audit_epoch_frozen",
         *_SEMANTIC_START_EVENTS,
@@ -97,6 +100,23 @@ def _boolean(value: object, field_name: str) -> None:
         raise ReV2EventError(f"{field_name} must be a boolean")
 
 
+def _zero(value: object, field_name: str) -> None:
+    if value != 0 or isinstance(value, bool):
+        raise ReV2EventError(f"{field_name} must be zero")
+
+
+def _preflight_entry_array(value: object, field_name: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ReV2EventError(f"{field_name} must be a nonempty array")
+    try:
+        entries = tuple(AuditContextPreflightEntryV1.from_json_dict(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise ReV2EventError(f"{field_name} is invalid: {exc}") from exc
+    target_ids = tuple(item.audit_target_id for item in entries)
+    if target_ids != tuple(sorted(set(target_ids))):
+        raise ReV2EventError(f"{field_name} must be ordered and unique")
+
+
 def _choice(*choices: str):  # type: ignore[no-untyped-def]
     allowed = frozenset(choices)
 
@@ -125,6 +145,30 @@ _TARGET_OPERATION_FIELDS = {
     "work_item_id": _digest,
 }
 _PAYLOAD_SCHEMAS = {
+    "audit_context_preflight_completed": {
+        "entries": _preflight_entry_array,
+        "checked_target_count": _positive,
+        "max_measured_canonical_json_bytes": _positive,
+        "max_canonical_json_bytes": _positive,
+        "provider_dispatch_count": _zero,
+    },
+    "audit_context_preflight_failed": {
+        "audit_target_id": _digest,
+        "work_item_id": _digest,
+        "failure_receipt_id": _digest,
+        "reason_code": _choice(
+            "semantic_context_byte_ceiling_exceeded",
+            "audit_target_authority_invalid",
+            "immutable_object_missing",
+            "immutable_object_hash_mismatch",
+            "snapshot_evidence_invalid",
+            "response_schema_authority_invalid",
+            "semantic_context_projection_invalid",
+        ),
+        "measured_canonical_json_bytes": _nullable_nonnegative,
+        "max_canonical_json_bytes": _positive,
+        "provider_dispatch_count": _zero,
+    },
     "audit_candidate_accepted": {
         "audit_candidate_authority_id": _digest,
         "audit_target_id": _digest,
@@ -268,6 +312,9 @@ class Protocol25ReplayState(EventReplayState):
     """Replay only L3 ordering while delegating shared/adoption behavior."""
 
     shared: Protocol24ReplayState = field(default_factory=Protocol24ReplayState)
+    audit_context_preflight_entries: tuple[AuditContextPreflightEntryV1, ...] = ()
+    audit_context_preflight_failure_id: str | None = None
+    audit_context_preflight_failed_target_id: str | None = None
     audit_candidates: dict[str, str] = field(default_factory=dict)
     audit_epoch_id: str | None = None
     audit_target_ids: tuple[str, ...] = ()
@@ -413,7 +460,11 @@ class Protocol25ReplayState(EventReplayState):
         payload = event.payload
         if self.shared.shared.seen == 0:
             raise ReV2EventError("run_created must be the first event")
-        if event_type == "audit_candidate_accepted":
+        if event_type == "audit_context_preflight_completed":
+            self._complete_audit_context_preflight(payload)
+        elif event_type == "audit_context_preflight_failed":
+            self._fail_audit_context_preflight(payload)
+        elif event_type == "audit_candidate_accepted":
             self._accept_audit_candidate(payload)
         elif event_type == "audit_epoch_frozen":
             self._freeze_epoch(payload)
@@ -440,6 +491,42 @@ class Protocol25ReplayState(EventReplayState):
                 raise ReV2EventError("semantic_budget_authorized requires a paused run")
             # Preserve the shared resume gate without changing the run-wide ceiling.
             self.shared.shared.last_type = "budget_authorized"
+
+    def _require_preflight_open(self) -> None:
+        if self.audit_context_preflight_entries or self.audit_context_preflight_failure_id:
+            raise ReV2EventError("audit context preflight may complete only once")
+        shared = self.shared.shared
+        if shared.active is not None or shared.lease_dispatch_id is not None:
+            raise ReV2EventError("audit context preflight conflicts with active dispatch")
+        if self.audit_epoch_id is not None:
+            raise ReV2EventError("audit context preflight cannot follow epoch freeze")
+
+    def _complete_audit_context_preflight(
+        self, payload: Mapping[str, object]
+    ) -> None:
+        self._require_preflight_open()
+        entries = tuple(
+            AuditContextPreflightEntryV1.from_json_dict(item)
+            for item in payload["entries"]
+        )
+        measured = tuple(item.canonical_json_bytes for item in entries)
+        if (
+            payload["checked_target_count"] != len(entries)
+            or payload["max_measured_canonical_json_bytes"] != max(measured)
+            or max(measured) > int(payload["max_canonical_json_bytes"])
+        ):
+            raise ReV2EventError("audit context preflight completion is inconsistent")
+        self.audit_context_preflight_entries = entries
+
+    def _fail_audit_context_preflight(self, payload: Mapping[str, object]) -> None:
+        self._require_preflight_open()
+        measured = payload["measured_canonical_json_bytes"]
+        if payload["reason_code"] == "semantic_context_byte_ceiling_exceeded" and (
+            measured is None or int(measured) <= int(payload["max_canonical_json_bytes"])
+        ):
+            raise ReV2EventError("preflight ceiling failure does not exceed its ceiling")
+        self.audit_context_preflight_failure_id = str(payload["failure_receipt_id"])
+        self.audit_context_preflight_failed_target_id = str(payload["audit_target_id"])
 
     def _accept_audit_candidate(self, payload: Mapping[str, object]) -> None:
         if self.audit_epoch_id is not None:
