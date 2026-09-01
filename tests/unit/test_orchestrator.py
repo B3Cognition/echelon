@@ -109,6 +109,28 @@ class TestRunMultiTarget:
             rc = run_multi_target("024", targets, [], echelon_bin="echelon")
         assert rc == 1
 
+    def test_aggregate_summary_calls_incomplete_delivery_a_dispatch_result(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A blocked child is authoritative; its parent must not call it a worker failure."""
+        target = tmp_path / "app"
+        target.mkdir()
+        with patch(
+            "subprocess.Popen",
+            side_effect=self._make_popen_factory(
+                {"app": "child delivery summary\n"}, {"app": 1}
+            ),
+        ):
+            assert run_multi_target(
+                "024", [target], [], echelon_bin="echelon", workspace_root=tmp_path
+            ) == 1
+
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+        assert "DELIVERY DISPATCH" in output
+        assert "A target delivery is incomplete." in output
+        assert "A target worker failed." not in output
+
     def test_workspace_delivery_uses_one_aggregate_summary(self, tmp_path: Path) -> None:
         targets = [tmp_path / "a", tmp_path / "b"]
         for target in targets:

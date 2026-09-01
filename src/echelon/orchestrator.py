@@ -389,7 +389,7 @@ def _print_multi_target_summary(
             (
                 f"Target {label} completed successfully."
                 if results.get(result_id, 1) == 0
-                else f"Target {label} returned exit {results.get(result_id, 1)}."
+                else f"Target {label} reported an incomplete delivery (exit {results.get(result_id, 1)})."
             ),
             order,
         )
@@ -409,13 +409,17 @@ def _print_multi_target_summary(
         )
     )
     banner(
-        "DELIVERY SUMMARY",
+        "DELIVERY DISPATCH",
         [
             ("targets", f"{len(target_runs)} total"),
             ("worked on", worked_on),
             ("next", next_step),
         ],
-        subtitle=("Target workers returned." if all_ok else "A target worker failed."),
+        subtitle=(
+            "Target deliveries returned."
+            if all_ok
+            else "A target delivery is incomplete."
+        ),
     )
 
 

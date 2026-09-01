@@ -787,8 +787,11 @@ def _execute_delivery_run(
 ) -> DeliveryRunOutcome:
     """Execute one already-identified delivery command inside its summary scope."""
 
+    # The CLI reserves a new build directory before this adapter runs and passes
+    # that ID here.  A build ID therefore does not itself mean "resume"; intent
+    # is the authority for whether a prior checkpoint must be retained.
     fresh_branch_bases = (
-        {} if resume_build_id is not None else _fresh_delivery_baselines(harness_root, intent)
+        {} if getattr(intent, "resume", False) else _fresh_delivery_baselines(harness_root, intent)
     )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)

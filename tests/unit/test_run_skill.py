@@ -512,7 +512,15 @@ class TestRunSkillAutoLand:
         }
         mock_coordinator_cls.return_value = coordinator_instance
 
-        run("spec 012", provider=MagicMock(), gitops=MagicMock(), base_dir=str(tmp_path))
+        run(
+            "spec 012",
+            provider=MagicMock(),
+            gitops=MagicMock(),
+            base_dir=str(tmp_path),
+            # The CLI reserves a new build directory before entering run().
+            # That is still a fresh budget, not a blocked-state resume.
+            resume_build_id="build-prepared",
+        )
 
         assert mock_coordinator_cls.call_args.kwargs["fresh_branch_bases"] == {"default": candidate}
 
