@@ -1,6 +1,6 @@
 # Delivery User-Runnability Gate Design
 
-**Status:** Approved in principle; awaiting written-spec review
+**Status:** Approved
 **Date:** 2026-09-01
 **Scope:** Phase B delivery, stack contracts, delivery status, and landing
 
@@ -48,17 +48,21 @@ scope.
 
 1. **Execution is authoritative.** An LLM may diagnose failures, but only a
    deterministic sandbox execution may return `runnable`.
-2. **The final candidate is tested.** Evidence is tied to the exact candidate
-   fingerprint and is invalidated by relevant source or contract changes.
+2. **The final candidate content is tested.** Evidence is tied to the product
+   content fingerprint, candidate-owned contract hash, and resolved stack
+   contract hash. Commit identity is recorded for traceability but is not a
+   content-equivalence test.
 3. **Real composition is required.** A journey using HTTP mocks, intercepted
-   routes, test-only authentication, or an in-memory substitute cannot prove a
-   real multi-service product.
+   routes, hidden test-only authentication unavailable through the documented
+   development path, or an in-memory substitute cannot prove a real
+   multi-service product.
 4. **The stack declares obligations.** A stack identifies whether the target is
    runnable, which infrastructure it needs, and which operational capabilities
    the project must expose. Product repositories provide the concrete commands.
-5. **Scope decisions are explicit.** Missing runnability normally reopens the
-   current delivery. Deferral is allowed only when the spec or stack selection
-   explicitly records that operability belongs to a follow-up.
+5. **Scope decisions are owner-controlled.** Missing runnability normally
+   reopens the current delivery. Product source cannot exempt itself from a
+   required gate; deferral requires a controller-owned spec disposition written
+   by an explicit owner command.
 6. **No host pollution.** Setup, dependencies, browsers, services, probes, and
    teardown run inside the existing delivery sandbox boundary.
 
@@ -72,6 +76,7 @@ User-facing archetype stacks declare a runnability obligation:
 runnability:
   classification: user_facing
   policy: required
+  runner: linux_container
   capabilities:
     - install
     - provision
@@ -86,6 +91,17 @@ Libraries, schema-only packages, and non-executable artifacts use
 `classification: non_runnable`. A project may not downgrade a stack's required
 policy implicitly.
 
+The stack schema accepts a runner requirement so platform-specific archetypes
+do not silently run under an incompatible verifier. Browser stacks use
+`linux_container`. The iOS AR stack requires a future `macos_simulator` runner
+and is not enabled as a required gate in the first release.
+
+Resolution unions required capabilities and selects the strongest policy
+(`required` over `advisory` over `not_applicable`). Different non-empty runner
+requirements are a stack conflict rather than an implicit fallback. Capability
+stacks may add required observations: `game-persistence-postgres`, for example,
+adds the pre/post-restart Postgres marker observation.
+
 Provisioning remains composable. Capability stacks such as
 `game-persistence-postgres` declare required services, environment, readiness,
 and satisfiers. The runnability planner consumes that existing information
@@ -93,52 +109,91 @@ instead of introducing a second database provisioning model.
 
 ### Project declaration
 
-The target repository supplies concrete commands under
-`harness.user_runnability` in `.echelon/config.yml`:
+The target repository supplies concrete commands in the dedicated candidate
+artifact `.echelon/runnability.yml`. Ralph loads and validates this file directly
+from the candidate worktree after every build or fix, so a repair made during the
+current delivery takes effect immediately. It is deliberately separate from
+`.echelon/config.yml`: creating a target-owned runnability contract must not
+change which orchestration root owns stack selection or other delivery policy.
 
 ```yaml
-harness:
-  user_runnability:
-    enabled: true
-    scope: current_spec
-    install_commands:
-      - pnpm install --frozen-lockfile
-    bootstrap_commands:
-      - pnpm migrate
-      - pnpm seed:dev
-    start_commands:
-      - pnpm start:local
-    readiness:
-      url: http://127.0.0.1:${ECHELON_PORT}/health
-      timeout_ms: 120000
-    primary_journey:
-      command: pnpm test:runnability
-      requirements: [FR-001]
-      real_services_required: [web, api, postgres]
-    persistence_probe:
-      command: pnpm test:persistence-runnability
-      restart_commands:
-        - pnpm restart:local
-    stop_commands:
-      - pnpm stop:local
+schema_version: 1
+enabled: true
+install_commands:
+  - pnpm install --frozen-lockfile
+bootstrap_commands:
+  - pnpm migrate
+  - pnpm seed:dev
+start_commands:
+  - pnpm start:local
+readiness:
+  url: http://127.0.0.1:${ECHELON_PORT}/health
+  timeout_ms: 120000
+identity:
+  command: pnpm dev:issue-session -- --player ${ECHELON_MARKER}
+  stdout_json:
+    token: ECHELON_SESSION_TOKEN
+primary_journey:
+  kind: browser
+  url: ${ECHELON_BASE_URL}
+  requirements: [FR-001]
+  real_services_required: [web, api, postgres]
+  session_storage:
+    session-token: ${ECHELON_SESSION_TOKEN}
+  steps:
+    - action: goto
+      path: /
+    - action: expect
+      selector: canvas
+      state: visible
+    - action: press
+      key: ArrowUp
+      repeat: 20
+  observations:
+    - id: checkpoint-visible
+      kind: browser_dom
+      selector: '[data-checkpoint-state="owned"]'
+      expectation: present
+    - id: checkpoint-persisted
+      kind: postgres_query
+      statement: SELECT player_id FROM checkpoints WHERE player_id = $1
+      parameters: ['${ECHELON_MARKER}']
+      expectation: one_row_exact
+persistence_probe:
+  restart_commands:
+    - pnpm restart:local
+  observations:
+    - checkpoint-visible
+    - checkpoint-persisted
+stop_commands:
+  - pnpm stop:local
 ```
 
-The command vocabulary is ecosystem-neutral. Echelon does not require pnpm,
-Docker Compose, HTTP, or Playwright; those are concrete choices made by a
-project and its selected stacks. `${ECHELON_PORT}` is allocated by the harness.
+The command and journey vocabulary is ecosystem-neutral. Echelon does not
+require pnpm, Docker Compose, HTTP, or Playwright; those are concrete choices
+made by a project and its selected stacks. Browser stacks select the built-in
+browser journey adapter, while service and CLI stacks may select HTTP and exec
+adapters. `${ECHELON_PORT}` is allocated by the harness.
 Infrastructure services are not started by these commands. The harness
 materializes resolved stack services as attempt-scoped sandbox sidecars, injects
 their generated connection environment, and owns their teardown. Project
 `bootstrap_commands` perform application-level initialization such as migrations
-and seed data against those sidecars.
+and seed data against those sidecars. The runnability plan uses the environment
+names declared by the resolved provisioner (`DATABASE_URL` in the Postgres game
+stack), not verification-only aliases such as `TEST_DATABASE_URL`.
 
-`scope` has two values:
+The candidate contract has no scope or policy override. A required stack always
+means `current_spec` unless the spec directory contains a controller-owned
+`runnability-disposition.json` written by:
 
-- `current_spec`: runnability is part of this delivery and failure blocks and
-  repairs it. This is the default for a required user-facing stack.
-- `follow_up`: the current spec explicitly excludes runnability. The gate emits
-  a follow-up proposal instead of entering the repair loop. Selecting this value
-  must cite an authored scope exclusion; configuration alone cannot invent one.
+```text
+echelon spec defer-runnability <spec-id> --reason <owner-approved reason>
+```
+
+That pure-Python command records the reason, approval timestamp, target, and
+generated follow-up proposal path. Build agents cannot write or modify the
+disposition. Without this ledger, a missing or failing required contract remains
+current-spec work and blocks convergence and landing.
 
 High-confidence detection may suggest or initialize parts of this contract, but
 must not fabricate a passing primary journey. If a required contract remains
@@ -146,22 +201,25 @@ incomplete, delivery fails closed with a precise configuration/product gap.
 
 ## Execution Model
 
-The new gate runs after normal build verification and documentation convergence,
-and before final fulfillment convergence and landing:
+The new gate runs after normal build verification and fulfillment refresh, then
+supplies authoritative evidence to the final documentation gate before
+convergence and landing:
 
 ```text
-build/fix -> sandbox verify -> documentation -> USER RUNNABILITY
-                                             | pass
-                                             v
-                                  fulfillment -> convergence -> land
-                                             | fail/current_spec
-                                             v
-                                      bounded repair loop
+build/fix -> sandbox verify -> fulfillment -> USER RUNNABILITY -> docs gate
+                                                   | pass             | pass
+                                                   v                  v
+                                                evidence -> convergence -> land
+                                                   |
+                                                   | fail/current_spec
+                                                   v
+                                             bounded repair loop
 ```
 
 For the final candidate, the harness:
 
-1. creates or reuses a clean delivery sandbox for that candidate;
+1. creates a fresh delivery sandbox for that candidate; runnability never reuses
+   a verifier or visual-test sandbox with pre-existing processes or state;
 2. installs dependencies inside the sandbox;
 3. materializes every service required by resolved stack capabilities as an
    attempt-scoped sidecar and injects generated connection environment;
@@ -174,13 +232,29 @@ For the final candidate, the harness:
 8. runs teardown on success, failure, timeout, or interruption;
 9. records the result and exact candidate fingerprint.
 
-The primary journey may use a browser automation framework, an HTTP client, a
-CLI invocation, or another deterministic probe. It must target the processes
-started by the contract. The planner rejects known mock/fixture configuration
-and requires service-boundary observations where a selected capability defines
-them. For example, the persistence capability verifies the journey's unique
-marker directly through its sandbox Postgres sidecar after application restart;
-a browser route mock cannot satisfy that observation.
+The harness, rather than a project test command, drives the primary journey
+through the selected adapter. Every required stack contributes observation kinds
+and the candidate contract binds those observations to specific requirement
+outcomes. Browser steps and DOM observations run through a harness-controlled
+browser context in which route interception APIs are disabled. HTTP observations
+are issued by the harness. Postgres observations are executed directly against
+the attempt-scoped sidecar rather than through a project helper. Exec journeys
+must declare observable output or filesystem assertions in addition to exit
+status.
+
+The harness generates `${ECHELON_MARKER}` after bootstrap and makes it available
+to an optional documented development-identity command. Structured output from
+that command is parsed into explicitly declared variables and injected only into
+the harness-controlled journey. This lets an authenticated application expose a
+real local-development login path without allowing a hidden test fixture to
+stand in for one.
+
+For persistence, the same marker must be present both before and after the
+declared application restart while the database sidecar remains running. A
+browser route mock, in-memory repository, hidden fixture server, or command that
+merely exits zero cannot satisfy both independent observations. A documented
+local-development identity bootstrap is permitted; a test-only issuer that is
+not available through the documented first-run path is not.
 
 ## Evidence
 
@@ -200,6 +274,7 @@ runs/targets/<target>/runs/<build>/evidence/user-runnability/
 schema_version: 1
 status: runnable | not_runnable | blocked | not_applicable
 candidate_commit: <sha>
+candidate_fingerprint: <sha256>
 contract_hash: <sha256>
 stack_contract_hash: <sha256>
 classification: user_facing
@@ -218,9 +293,17 @@ evidence:
   - commands.log#primary-journey
 ```
 
-Evidence may be carried forward only when the candidate commit, normalized
-contract hash, and resolved stack contract hash are unchanged. Landing performs
-the same provenance check used by convergence.
+`candidate_commit` is informational provenance. Evidence may be carried forward
+across merge-only or publication commits when the product evidence fingerprint,
+normalized candidate-contract hash, and resolved stack-contract hash are all
+unchanged. Any content change invalidates the evidence. Landing performs the
+same digest validation used by convergence and does not require exact commit
+equality when all three authoritative hashes still match.
+
+Command output is bounded and secret-redacted using the existing verification
+evidence rules. Reports store command/output digests and redacted tails; they do
+not persist generated database credentials, identity keys, session tokens, or
+unbounded raw logs.
 
 ## Failure Classification And Routing
 
@@ -244,7 +327,7 @@ Only `sandbox_prerequisite_missing` represents an Echelon/environment blocker.
 Missing application commands, local identity bootstrap, service wiring, schema
 migration, or persistence behavior are product gaps and remain repairable work.
 
-For an explicitly supported `follow_up` scope, Echelon writes
+For an owner-deferred runnability disposition, Echelon writes
 `runnability-follow-up.md` containing:
 
 - the failed or absent capabilities;
@@ -254,8 +337,10 @@ For an explicitly supported `follow_up` scope, Echelon writes
 - affected target and selected stacks;
 - the exact command to start a new spec from the proposal.
 
-The CLI presents the proposal but does not create the specification without
-owner approval.
+The diagnostic agent may draft this proposal from deterministic evidence, but a
+schema validator checks the artifact and the proposal remains advisory. It does
+not change the failed gate, create a specification, or permit landing without
+the controller-owned deferral ledger.
 
 ## CLI Presentation
 
@@ -269,31 +354,49 @@ owner approval.
  next           delivery will repair this current-spec product gap
 ```
 
-For follow-up scope, `next` identifies the proposal file and an executable
+For owner-deferred scope, `next` identifies the proposal file and an executable
 spec-authoring command. For a missing contract, status names the exact required
-configuration fields rather than suggesting a generic resume.
+candidate artifact and fields rather than suggesting a generic resume.
+
+A passing result also shows the first-run commands the user should execute:
+
+```text
+ user runnable  passed
+ prerequisites  Docker and pnpm 10
+ provision      echelon stack provision --target <target>; docker compose up -d
+ start          pnpm start:local
+ open           http://127.0.0.1:5173
+ stop           pnpm stop:local; docker compose down
+ evidence       .../evidence/user-runnability/report.md
+```
+
+These values come from resolved stack provisioning plus the candidate contract,
+not from generated prose.
 
 Delivery summaries show one authoritative runnability result. Provider output
 must not print a second conflicting delivery summary.
 
 ## Documentation Relationship
 
-The documentation verifier consumes successful runnability evidence. It may
-then assert that README startup commands were actually executed and that the
-documented URL and expected first result match observed behavior.
+The documentation verifier consumes successful runnability evidence. It
+deterministically checks that README prerequisites and install, provision,
+bootstrap, start, open, and stop instructions match resolved stack provisioning
+and the exact candidate commands that were executed. It also checks that the
+documented expected first result matches the observed primary journey.
 
 Ordering therefore becomes:
 
-1. TECH WRITER produces or repairs the first-run manual;
-2. deterministic runnability executes the product contract and records facts;
-3. DOCS VERIFIER compares README claims with those facts;
-4. any documentation-only mismatch returns to TECH WRITER;
-5. any runtime mismatch returns to implementation repair.
+1. TECH WRITER may produce a provisional first-run manual during the build;
+2. sandbox verification and fulfillment gates pass;
+3. deterministic runnability executes the product contract and records facts;
+4. the final deterministic documentation gate and DOCS VERIFIER compare README
+   claims with those facts;
+5. any documentation-only mismatch returns to TECH WRITER;
+6. any runtime mismatch returns to implementation repair.
 
-If current workflow constraints require documentation to run before the first
-runnability attempt, DOCS VERIFIER may return a provisional result, but final
-convergence requires a post-runnability documentation check backed by current
-evidence.
+No provisional documentation verdict can satisfy final convergence. The final
+documentation report must cite current runnability evidence whose three
+authoritative hashes still match the candidate.
 
 ## Integration With Existing Components
 
@@ -313,10 +416,12 @@ evidence.
 
 ## Rollout
 
-The first release supports explicit contracts plus stack-required enforcement.
-It updates the three persistent-game archetypes to `policy: required` and adds a
-complete contract to the browser-game smoke fixture. Existing projects without
-a user-facing stack are unaffected.
+The first release supports explicit contracts plus stack-required enforcement
+for `browser-3d-game` and `browser-wasm-game`, both using the Linux-container
+runner. It adds a complete contract to the browser-game smoke fixture. The
+`ios-ar-game` stack records `macos_simulator` as its required future runner but
+does not enable the gate until that runner exists. Existing projects without a
+required user-facing stack are unaffected.
 
 A later release may add ecosystem-specific contract generation, richer journey
 DSLs, or remote deployment probes. Those conveniences must not weaken the
@@ -338,8 +443,11 @@ Harness tests use real local fixture processes inside the configured sandbox:
 - changed source or contract invalidates prior evidence;
 - teardown runs after success, command failure, and timeout;
 - a current-spec failure re-enters the repair loop;
-- a supported follow-up scope emits a proposal and does not auto-create a spec;
-- landing rejects missing, failed, or stale required evidence.
+- a product contract cannot select follow-up scope or bypass the gate;
+- an owner-controlled deferral emits a proposal and does not auto-create a spec;
+- landing rejects missing, failed, or stale required evidence;
+- a merge-only commit with an unchanged product, candidate-contract, and stack
+  fingerprint retains valid evidence.
 
 The browser 3D game is the acceptance fixture: from a clean candidate Echelon
 must provision Postgres, start the API and web client, establish a supported
