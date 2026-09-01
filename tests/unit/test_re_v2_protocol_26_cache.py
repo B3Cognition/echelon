@@ -8,7 +8,10 @@ import shutil
 import pytest
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
-from harness.re_v2.protocol_26.cache import rebuild_checkpoint_cache
+from harness.re_v2.protocol_26.cache import (
+    load_checkpoint_candidates,
+    rebuild_checkpoint_cache,
+)
 from harness.re_v2.protocol_26.model import CheckpointManifestV1
 from tests.re_v2_protocol_26_fixtures import CheckpointWorkspace
 from tests.re_v2_protocol_28_fixtures import exhaustive_manifest_v7
@@ -95,6 +98,23 @@ def test_published_manifest_projection_is_canonical_and_revalidated(
     decoded = CheckpointManifestV1.from_json_dict(json.loads(payload))
     assert decoded.identity == manifest_id == content_digest(payload)
     assert generation.manifests[manifest_id] == decoded
+
+
+def test_candidate_loader_prefilters_index_before_loading_manifests(
+    checkpoint_workspace: CheckpointWorkspace,
+) -> None:
+    checkpoint_workspace.origin_with_one_accepted_domain("active")
+    generation = rebuild_checkpoint_cache(checkpoint_workspace.root)
+    expected = next(iter(generation.manifests.values()))
+
+    assert load_checkpoint_candidates(
+        checkpoint_workspace.root,
+        expected_work_item_ids=(expected.work_item.work_item_id,),
+    ) == (expected,)
+    assert load_checkpoint_candidates(
+        checkpoint_workspace.root,
+        expected_work_item_ids=(content_digest(b"unrelated-work-item"),),
+    ) == ()
 
 
 def test_concurrent_rebuilds_publish_one_complete_generation(

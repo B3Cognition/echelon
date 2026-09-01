@@ -13,7 +13,7 @@ import shutil
 import stat
 import tempfile
 from types import MappingProxyType
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Iterable, Iterator, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_26.model import CheckpointManifestV1
@@ -311,6 +311,48 @@ def rebuild_checkpoint_cache(
         )
 
 
+def load_checkpoint_candidates(
+    workspace_root: Path,
+    *,
+    expected_work_item_ids: Iterable[str],
+) -> tuple[CheckpointManifestV1, ...]:
+    """Load only cache projections that can match the current frozen graph.
+
+    The disposable cache is a discovery hint, never adoption authority. Callers
+    must reconstruct the selected origins before using any returned manifest.
+    """
+    expected = frozenset(expected_work_item_ids)
+    if any(not _is_digest(value) for value in expected):
+        raise CheckpointCacheError("expected checkpoint work_item_id is invalid")
+    if not expected:
+        return ()
+    paths = CheckpointCachePaths.for_workspace(workspace_root)
+    if not os.path.lexists(paths.index):
+        return ()
+    with _checkpoint_cache_lock(paths.lock):
+        if not os.path.lexists(paths.index):
+            return ()
+        index = CheckpointCacheIndexV1.from_json_dict(_load_canonical(paths.index))
+        matching = tuple(
+            entry for entry in index.entries if entry.work_item_id in expected
+        )
+        manifests: list[CheckpointManifestV1] = []
+        for entry in matching:
+            projection = paths.manifests / f"{entry.checkpoint_manifest_id}.json"
+            manifest = CheckpointManifestV1.from_json_dict(
+                _load_canonical(projection)
+            )
+            if (
+                manifest.identity != entry.checkpoint_manifest_id
+                or CheckpointCacheEntryV1.from_checkpoint(manifest) != entry
+            ):
+                raise CheckpointCacheError(
+                    "checkpoint manifest projection differs from its index entry"
+                )
+            manifests.append(manifest)
+    return tuple(sorted(manifests, key=lambda item: item.identity))
+
+
 def _enumerate_origins(workspace_root: Path) -> tuple[Path, ...]:
     runs = workspace_root / "runs"
     if not os.path.lexists(runs):
@@ -550,5 +592,6 @@ __all__ = (
     "CheckpointCacheGenerationV1",
     "CheckpointCacheIndexV1",
     "CheckpointCachePaths",
+    "load_checkpoint_candidates",
     "rebuild_checkpoint_cache",
 )

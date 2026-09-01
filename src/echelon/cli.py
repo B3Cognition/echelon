@@ -12437,8 +12437,15 @@ def _prepare_re_v26_creation(
 
     from harness.re_v2.canonical import content_digest
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
-    from harness.re_v2.protocol_26.cache import rebuild_checkpoint_cache
+    from harness.re_v2.protocol_26.cache import (
+        CheckpointCacheError,
+        load_checkpoint_candidates,
+        rebuild_checkpoint_cache,
+    )
     from harness.re_v2.protocol_26.model import LayerExecutionContractV1
+    from harness.re_v2.protocol_26.reconstruction import (
+        reconstruct_origin_checkpoints,
+    )
     from harness.re_v2.protocol_26.selection import select_checkpoints
 
     if target_layer == "L1":
@@ -12462,10 +12469,6 @@ def _prepare_re_v26_creation(
         from dataclasses import replace
 
         from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
-        from harness.re_v2.protocol_26.reconstruction import (
-            reconstruct_origin_checkpoints,
-        )
-
         if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
             raise ValueError("protocol-2.6 L2 creation requires deepening authority")
         direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
@@ -12497,10 +12500,6 @@ def _prepare_re_v26_creation(
         from dataclasses import replace
 
         from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
-        from harness.re_v2.protocol_26.reconstruction import (
-            reconstruct_origin_checkpoints,
-        )
-
         if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
             raise ValueError("protocol-2.6 L3 creation requires deepening authority")
         direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
@@ -12527,18 +12526,6 @@ def _prepare_re_v26_creation(
         }
     else:
         raise ValueError(f"unsupported protocol-2.6 target layer: {target_layer!r}")
-    cache = rebuild_checkpoint_cache(
-        workspace_root,
-        progress=checkpoint_progress,
-    )
-    layer = _LayerCreationAuthorityV1(
-        snapshot,
-        layer_manifest,
-        layer_inputs,
-        graph,
-        direct_candidates,
-        {**dict(cache.authority_objects), **direct_objects},
-    )
     contract = LayerExecutionContractV1.from_layer_manifest(layer_manifest)
     target_selection_id = (
         layer_manifest.selection.identity
@@ -12563,6 +12550,64 @@ def _prepare_re_v26_creation(
         )
         if target_layer == "L3"
         else None
+    )
+    if target_layer == "L3":
+        expected_ids = tuple(
+            item.work_item_id for item in (expected_work_items or ())
+        )
+        try:
+            candidate_hints = load_checkpoint_candidates(
+                workspace_root,
+                expected_work_item_ids=expected_ids,
+            )
+        except CheckpointCacheError:
+            candidate_hints = ()
+        hints_by_origin: dict[str, list[object]] = {}
+        for candidate in candidate_hints:
+            hints_by_origin.setdefault(candidate.origin_run_id, []).append(candidate)
+        cache_candidates: list[object] = []
+        cache_objects: dict[str, Mapping[str, bytes]] = {}
+        origins = tuple(sorted(hints_by_origin))
+        if checkpoint_progress is not None:
+            checkpoint_progress("candidate-authentication", 0, len(origins))
+        for completed, origin_run_id in enumerate(origins, start=1):
+            reconstructed = reconstruct_origin_checkpoints(
+                workspace_root,
+                workspace_root / "runs" / origin_run_id,
+            )
+            authenticated = {
+                item.identity: item for item in reconstructed.manifests
+            }
+            for hint in hints_by_origin[origin_run_id]:
+                observed = authenticated.get(hint.identity)
+                if observed != hint:
+                    continue
+                cache_candidates.append(observed)
+                cache_objects[observed.identity] = reconstructed.authority_objects[
+                    observed.identity
+                ]
+            if checkpoint_progress is not None:
+                checkpoint_progress(
+                    "candidate-authentication", completed, len(origins)
+                )
+        workspace_candidates = tuple(
+            sorted(cache_candidates, key=lambda item: item.identity)
+        )
+        workspace_objects = cache_objects
+    else:
+        cache = rebuild_checkpoint_cache(
+            workspace_root,
+            progress=checkpoint_progress,
+        )
+        workspace_candidates = tuple(cache.manifests.values())
+        workspace_objects = dict(cache.authority_objects)
+    layer = _LayerCreationAuthorityV1(
+        snapshot,
+        layer_manifest,
+        layer_inputs,
+        graph,
+        direct_candidates,
+        {**workspace_objects, **direct_objects},
     )
     selection_graph = SimpleNamespace(
         templates=selection_templates,
@@ -12589,7 +12634,7 @@ def _prepare_re_v26_creation(
     )
     bundle = select_checkpoints(
         selection_graph,
-        cache.manifests.values(),
+        workspace_candidates,
         direct_parent=direct_candidates,
     )
     return _build_protocol_26_creation(layer, contract, bundle, direct_parent)
