@@ -44,6 +44,32 @@ VALID_PROVISIONER_SATISFIER_FIELDS = {
     "output",
     "env_example",
 }
+VALID_RUNNABILITY_FIELDS = {
+    "classification",
+    "policy",
+    "runner",
+    "capabilities",
+    "required_observations",
+}
+VALID_RUNNABILITY_CLASSIFICATIONS = {"user_facing", "non_runnable"}
+VALID_RUNNABILITY_POLICIES = {"required", "advisory", "not_applicable"}
+VALID_RUNNABILITY_RUNNERS = {"linux_container", "macos_simulator"}
+VALID_RUNNABILITY_CAPABILITIES = {
+    "install",
+    "provision",
+    "bootstrap",
+    "start",
+    "readiness",
+    "primary_journey",
+    "persistence",
+    "stop",
+}
+VALID_RUNNABILITY_OBSERVATIONS = {
+    "browser_dom",
+    "http",
+    "exec",
+    "postgres_query",
+}
 SUPPORTED_PROVISIONER_SATISFIER_KINDS = {"environment", "compose-template"}
 POSTGRES_COMPOSE_PROVISIONER_ID = "postgres-verify"
 POSTGRES_COMPOSE_SERVICE = "postgres"
@@ -118,6 +144,15 @@ class StackDetection:
 
 
 @dataclass(frozen=True)
+class StackRunnability:
+    classification: str = "non_runnable"
+    policy: str = "not_applicable"
+    runner: str | None = None
+    capabilities: tuple[str, ...] = ()
+    required_observations: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class StackDefinition:
     id: str
     name: str
@@ -135,6 +170,7 @@ class StackDefinition:
     context_files: list[str]
     detection: StackDetection = field(default_factory=StackDetection)
     provisioners: list[StackProvisioner] = field(default_factory=list)
+    runnability: StackRunnability = field(default_factory=StackRunnability)
 
 
 def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefinition:
@@ -210,6 +246,13 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
             path=source_path,
             field_path="provisioning",
         )
+    if "runnability" in raw and schema_version != "1.2":
+        raise StackValidationError(
+            "runnability requires stack schema_version 1.2",
+            path=source_path,
+            field_path="runnability",
+        )
+    runnability = _parse_runnability(raw.get("runnability"), source_path)
 
     return StackDefinition(
         id=stack_id,
@@ -234,7 +277,99 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         tools=_parse_tools(raw.get("tools", {}), source_path),
         context_files=context_files,
         provisioners=provisioners,
+        runnability=runnability,
     )
+
+
+def _parse_runnability(value: Any, source_path: Path) -> StackRunnability:
+    if value is None:
+        return StackRunnability()
+    raw = _mapping(value, source_path, "runnability")
+    _reject_unknown_keys(raw, VALID_RUNNABILITY_FIELDS, source_path, "runnability")
+
+    classification = _optional_str(
+        raw.get("classification"),
+        source_path,
+        "runnability.classification",
+        default="non_runnable",
+    )
+    if classification not in VALID_RUNNABILITY_CLASSIFICATIONS:
+        raise StackValidationError(
+            f"invalid runnability classification: {classification}",
+            path=source_path,
+            field_path="runnability.classification",
+        )
+
+    policy = _optional_str(
+        raw.get("policy"),
+        source_path,
+        "runnability.policy",
+        default="not_applicable",
+    )
+    if policy not in VALID_RUNNABILITY_POLICIES:
+        raise StackValidationError(
+            f"invalid runnability policy: {policy}",
+            path=source_path,
+            field_path="runnability.policy",
+        )
+
+    runner = _optional_none_str(
+        raw.get("runner"), source_path, "runnability.runner"
+    )
+    if runner is not None and runner not in VALID_RUNNABILITY_RUNNERS:
+        raise StackValidationError(
+            f"invalid runnability runner: {runner}",
+            path=source_path,
+            field_path="runnability.runner",
+        )
+
+    capabilities = _validated_unique_values(
+        raw.get("capabilities", []),
+        VALID_RUNNABILITY_CAPABILITIES,
+        source_path,
+        "runnability.capabilities",
+        "capability",
+    )
+    observations = _validated_unique_values(
+        raw.get("required_observations", []),
+        VALID_RUNNABILITY_OBSERVATIONS,
+        source_path,
+        "runnability.required_observations",
+        "observation",
+    )
+    return StackRunnability(
+        classification=classification,
+        policy=policy,
+        runner=runner,
+        capabilities=tuple(capabilities),
+        required_observations=tuple(observations),
+    )
+
+
+def _validated_unique_values(
+    value: Any,
+    allowed: set[str],
+    source_path: Path,
+    field_path: str,
+    noun: str,
+) -> list[str]:
+    values = _string_list(value, source_path, field_path)
+    seen: set[str] = set()
+    for item in values:
+        if item in seen:
+            raise StackValidationError(
+                f"duplicate runnability {noun}: {item}",
+                path=source_path,
+                field_path=field_path,
+            )
+        if item not in allowed:
+            raise StackValidationError(
+                f"invalid runnability {noun}: {item}",
+                path=source_path,
+                field_path=field_path,
+            )
+        seen.add(item)
+    return values
 
 
 def _parse_provisioners(value: Any, source_path: Path) -> list[StackProvisioner]:
@@ -681,7 +816,7 @@ def _schema_version(value: Any, source_path: Path) -> str:
             field_path=field_path,
         )
     result = value.strip()
-    if result not in {"1.0", "1.1"}:
+    if result not in {"1.0", "1.1", "1.2"}:
         raise StackValidationError(
             "unsupported stack schema_version",
             path=source_path,

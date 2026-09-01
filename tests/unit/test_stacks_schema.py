@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from harness.stacks.errors import StackValidationError
-from harness.stacks.schema import parse_stack_definition
+from harness.stacks.schema import StackRunnability, parse_stack_definition
 
 
 VALID_STACK = {
@@ -77,6 +77,80 @@ def test_parse_valid_stack_definition() -> None:
     assert stack.provides == {"ui.components": "example"}
     assert stack.tools["example_cli"].command == "npx"
     assert stack.tools["example_cli"].commands["list"].output == "json"
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_required_linux_runnability() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.2",
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+            "capabilities": ["install", "start", "primary_journey", "stop"],
+            "required_observations": ["browser_dom"],
+        },
+    }
+
+    parsed = parse_stack_definition(raw, Path("stack.yml"))
+
+    assert parsed.runnability == StackRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        capabilities=("install", "start", "primary_journey", "stop"),
+        required_observations=("browser_dom",),
+    )
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_runnability_before_schema_1_2() -> None:
+    raw = {
+        **VALID_STACK,
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+        },
+    }
+
+    with pytest.raises(
+        StackValidationError,
+        match="runnability requires stack schema_version 1.2",
+    ):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("classification", "application", "classification"),
+        ("policy", "optional", "policy"),
+        ("runner", "host", "runner"),
+        ("capabilities", ["start", "start"], "duplicate"),
+        ("required_observations", ["browser_dom", "shell_text"], "observation"),
+        ("unknown", True, "unknown runnability key"),
+    ],
+)
+def test_stack_schema_rejects_invalid_runnability_contract(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    runnability = {
+        "classification": "user_facing",
+        "policy": "required",
+        "runner": "linux_container",
+        "capabilities": ["start"],
+        "required_observations": ["browser_dom"],
+    }
+    runnability[field] = value
+    raw = {**VALID_STACK, "schema_version": "1.2", "runnability": runnability}
+
+    with pytest.raises(StackValidationError, match=message):
+        parse_stack_definition(raw, Path("stack.yml"))
 
 
 @pytest.mark.unit
