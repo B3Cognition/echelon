@@ -88,6 +88,19 @@ def test_re_status_card_surfaces_preflight_failure_without_provider_call() -> No
 
 
 @pytest.mark.unit
+def test_l3_progress_total_includes_domain_and_source_audit_targets() -> None:
+    from echelon.re_ui import _accepted_total
+
+    assert _accepted_total(
+        {
+            "selection": {"selected_domains": 74},
+            "artifact_counts": {"generated_l3": 7, "adopted": 581},
+            "preflight": {"selected_target_count": 81},
+        }
+    ) == (7, 81)
+
+
+@pytest.mark.unit
 def test_re_progress_tracker_reports_dispatch_acceptance_and_pause() -> None:
     from echelon.re_ui import ReProgressTracker
 

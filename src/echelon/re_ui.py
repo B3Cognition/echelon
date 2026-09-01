@@ -139,7 +139,19 @@ def _accepted_total(document: Mapping[str, object]) -> tuple[int, int]:
         if isinstance(accepted, int) and isinstance(planned, int):
             return accepted, planned
     selection = document.get("selection")
-    total = selection.get("selected_domains") if isinstance(selection, Mapping) else 0
+    preflight = document.get("preflight")
+    preflight_total = (
+        preflight.get("selected_target_count")
+        if isinstance(preflight, Mapping)
+        else None
+    )
+    total = (
+        preflight_total
+        if isinstance(preflight_total, int)
+        else selection.get("selected_domains")
+        if isinstance(selection, Mapping)
+        else 0
+    )
     accepted = 0
     if isinstance(counts, Mapping):
         for key in ("generated", "generated_l3", "generated_l2"):
