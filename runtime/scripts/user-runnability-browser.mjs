@@ -84,6 +84,13 @@ async function observeDom(page, observation) {
 
 let browser;
 let context;
+let page;
+const diagnostics = [];
+function recordDiagnostic(value) {
+  const text = String(value).replace(/\s+/g, " ").trim().slice(0, 700);
+  if (text) diagnostics.push(text);
+  if (diagnostics.length > 40) diagnostics.shift();
+}
 try {
   const plan = JSON.parse(await fs.readFile(planPath, "utf8"));
   if (plan.kind !== "browser") throw new Error("browser helper requires kind=browser");
@@ -103,7 +110,19 @@ try {
       for (const [key, value] of Object.entries(values)) sessionStorage.setItem(key, value);
     }, storage);
   }
-  const page = await context.newPage();
+  page = await context.newPage();
+  page.on("console", message => recordDiagnostic(`console.${message.type()}: ${message.text()}`));
+  page.on("pageerror", error => recordDiagnostic(`page error: ${error.message}`));
+  page.on("requestfailed", request => recordDiagnostic(
+    `request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}`,
+  ));
+  page.on("response", response => {
+    if (response.status() >= 400) {
+      recordDiagnostic(
+        `HTTP ${response.status()} ${response.request().method()} ${response.url()}`,
+      );
+    }
+  });
   for (const step of plan.steps ?? []) await executeStep(page, baseUrl, step);
 
   const observations = {};
@@ -117,7 +136,18 @@ try {
   process.stdout.write(`${JSON.stringify({ status: passed ? "passed" : "failed", observations })}\n`);
   if (!passed) process.exitCode = 1;
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  if (page) {
+    try {
+      recordDiagnostic(`visible page text: ${await page.locator("body").innerText()}`);
+    } catch {
+      // The browser or page may already have closed; retain earlier diagnostics.
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const detail = diagnostics.length > 0
+    ? `\nBrowser diagnostics:\n${diagnostics.map(item => `- ${item}`).join("\n")}`
+    : "";
+  console.error(`${message}${detail}`);
   process.exitCode = 1;
 } finally {
   if (context) await context.close();

@@ -31,18 +31,31 @@ def _write_fake_playwright_test(root: Path) -> None:
     (package / "index.js").write_text(
         """\
 const calls = [];
-const locator = {
+const handlers = {};
+const locator = selector => ({
   count: async () => 1,
   isVisible: async () => { throw new Error('one-shot visibility check is forbidden'); },
-  waitFor: async options => calls.push(`waitFor:${options.state}`),
+  waitFor: async options => {
+    calls.push(`waitFor:${options.state}`);
+    if (selector === '[data-fail]') {
+      await handlers.response?.({
+        status: () => 403,
+        url: () => 'http://127.0.0.1:4173/api/v1/collections',
+        request: () => ({ method: () => 'POST' }),
+      });
+      throw new Error('timed out waiting for confirmed state');
+    }
+  },
   textContent: async () => 'saved',
+  innerText: async () => 'Collection rejected. Inventory unconfirmed.',
   click: async () => calls.push('click'),
   fill: async value => calls.push(`fill:${value}`),
   press: async key => calls.push(`press:${key}`),
-};
+});
 const page = {
   goto: async url => calls.push(`goto:${url}`),
-  locator: () => locator,
+  locator,
+  on: (event, handler) => { handlers[event] = handler; },
 };
 const context = {
   addInitScript: async (fn, values) => calls.push(`session:${Object.keys(values).join(',')}`),
@@ -141,3 +154,40 @@ def test_browser_helper_rejects_untyped_candidate_script_action(tmp_path: Path) 
 
     assert result.returncode != 0
     assert "unsupported browser action" in result.stderr
+
+
+@pytest.mark.integration
+def test_browser_helper_reports_failed_http_and_visible_page_state(tmp_path: Path) -> None:
+    _write_fake_playwright_test(tmp_path)
+    helper = tmp_path / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [],
+                "steps": [
+                    {"action": "goto", "path": "/"},
+                    {"action": "expect", "selector": "[data-fail]", "state": "visible"},
+                ],
+                "observations": [],
+                "observation_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "HTTP 403 POST http://127.0.0.1:4173/api/v1/collections" in result.stderr
+    assert "Collection rejected. Inventory unconfirmed." in result.stderr
