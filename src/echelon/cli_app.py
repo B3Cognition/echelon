@@ -83,6 +83,10 @@ spec_app = typer.Typer(
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
         "  drop-target <spec_id> <target> --confirm\n"
         "                    Remove an unused target from an unfinished run.\n"
+        "  defer-runnability <spec_id> --reason <owner-approved reason>\n"
+        "                    Defer a failed user-runnability gate to advisory follow-up.\n"
+        "  plan-runnability <spec_id>\n"
+        "                    Restore a deferred user-runnability gate to current work.\n"
         "  Example: targets <spec_id>"
     ),
     rich_markup_mode=None,
@@ -3266,6 +3270,94 @@ def spec_defer(
 ) -> None:
     """Defer explicit spec scope without invoking an LLM."""
     _run_scope_change(spec_id, ids, action="defer", reason=reason, dry_run=dry_run)
+
+
+@spec_app.command("defer-runnability")
+def spec_defer_runnability(
+    spec_id: str = typer.Argument(..., help="Spec id whose runnability gate is being deferred."),
+    reason: str = typer.Option(..., "--reason", help="Owner-approved reason for the deferral."),
+) -> None:
+    """Defer a failed runnability gate to an advisory follow-up proposal."""
+    from harness.runnability_disposition import (
+        RunnabilityDispositionError,
+        defer_runnability,
+        find_latest_runnability_report,
+        follow_up_path,
+    )
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is None:
+        raise typer.BadParameter(f"spec not found: {spec_id}")
+    workspace_root = spec_dir.parent.parent
+    evidence_report = find_latest_runnability_report(workspace_root, spec_dir.name)
+    if evidence_report is None:
+        raise typer.BadParameter(
+            f"no user-runnability report found for {spec_dir.name}; run delivery first"
+        )
+    try:
+        report = _read_runnability_report_summary(evidence_report)
+        disposition = defer_runnability(
+            spec_dir=spec_dir,
+            target=str(report.get("target_id") or ""),
+            reason=reason,
+            evidence_report=evidence_report,
+        )
+    except RunnabilityDispositionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo("RUNNABILITY DEFERRED")
+    typer.echo(f"spec: {spec_dir.name}")
+    typer.echo(f"target: {disposition.target}")
+    typer.echo(f"reason: {disposition.reason}")
+    typer.echo(f"evidence: {disposition.evidence_report}")
+    typer.echo(f"proposal: {follow_up_path(spec_dir)}")
+    typer.echo("status: applied")
+    typer.echo("next: review the advisory proposal before creating its follow-up spec")
+
+
+@spec_app.command("plan-runnability")
+def spec_plan_runnability(
+    spec_id: str = typer.Argument(..., help="Spec id whose runnability gate is returning to current work."),
+) -> None:
+    """Restore a deferred required runnability gate to current-spec work."""
+    from harness.runnability_disposition import (
+        RunnabilityDispositionError,
+        disposition_path,
+        plan_runnability,
+    )
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is None:
+        raise typer.BadParameter(f"spec not found: {spec_id}")
+    try:
+        disposition = plan_runnability(spec_dir)
+    except RunnabilityDispositionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo("RUNNABILITY PLANNED")
+    typer.echo(f"spec: {spec_dir.name}")
+    typer.echo(f"target: {disposition.target}")
+    typer.echo(f"ledger: {disposition_path(spec_dir)}")
+    typer.echo("gate: current-spec blocking restored")
+    typer.echo("status: applied")
+
+
+def _read_runnability_report_summary(path: Path) -> dict[str, object]:
+    import json
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        from harness.runnability_disposition import RunnabilityDispositionError
+
+        raise RunnabilityDispositionError(f"invalid runnability report: {exc}") from exc
+    if not isinstance(payload, dict):
+        from harness.runnability_disposition import RunnabilityDispositionError
+
+        raise RunnabilityDispositionError("invalid runnability report: expected an object")
+    return payload
 
 
 @spec_app.command("plan")
