@@ -254,13 +254,15 @@ class RunnabilityRunner:
                 ),
                 stage_name="primary_journey",
             )
-            stages.append(primary)
             if primary.status != "passed":
+                primary = self._attach_application_logs(handle, primary)
+                stages.append(primary)
                 raise _StageFailure(
                     "primary_journey",
                     "primary_journey_failed",
                     _stage_error(primary),
                 )
+            stages.append(primary)
 
             if contract.persistence_probe is not None:
                 before = self._run_observations(
@@ -270,24 +272,28 @@ class RunnabilityRunner:
                     observation_ids=contract.persistence_probe.observation_ids,
                     stage_name="persistence_before_restart",
                 )
-                stages.append(before)
                 if before.status != "passed":
+                    before = self._attach_application_logs(handle, before)
+                    stages.append(before)
                     raise _StageFailure(
                         "persistence_before_restart",
                         "persistence_failed",
                         _stage_error(before),
                     )
+                stages.append(before)
                 restart = self._run_commands(
                     handle,
                     "restart",
                     contract.persistence_probe.restart_commands,
                     variables,
                 )
-                stages.append(restart)
                 if restart.status != "passed":
+                    restart = self._attach_application_logs(handle, restart)
+                    stages.append(restart)
                     raise _StageFailure(
                         "restart", "persistence_failed", _stage_error(restart)
                     )
+                stages.append(restart)
                 readiness_after = self._wait_for_readiness(
                     handle, contract, variables, stage_name="readiness_after_restart"
                 )
@@ -308,13 +314,15 @@ class RunnabilityRunner:
                     observation_ids=contract.persistence_probe.observation_ids,
                     stage_name="persistence_after_restart",
                 )
-                stages.append(after)
                 if after.status != "passed":
+                    after = self._attach_application_logs(handle, after)
+                    stages.append(after)
                     raise _StageFailure(
                         "persistence_after_restart",
                         "persistence_failed",
                         _stage_error(after),
                     )
+                stages.append(after)
         except _InfrastructureFailure as exc:
             status = "blocked"
             failed_stage = exc.stage

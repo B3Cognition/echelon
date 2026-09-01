@@ -442,3 +442,25 @@ def test_readiness_failure_includes_background_application_logs(
     assert result.failure_class == "readiness_failed"
     assert "application process log: API failed to bind" in result.summary
     assert any("echelon-runnability-app-logs" in command for command in provider.commands)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failure", ["primary_journey", "persistence"])
+def test_journey_failure_includes_background_application_logs(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    provider = RecordingProvider(fail_at=failure)
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=_contract(),
+        resolved=_resolved(),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+
+    assert result.status == "not_runnable"
+    assert "application process log: API failed to bind" in result.summary
+    assert any("echelon-runnability-app-logs" in command for command in provider.commands)
