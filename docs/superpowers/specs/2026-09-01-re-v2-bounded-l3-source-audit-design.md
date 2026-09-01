@@ -116,6 +116,11 @@ the embedded layer manifest bytes. New L3 preparation emits `2.5.1`. Recovery
 branches only on the pinned embedded layer protocol; it never guesses from run
 age, installed version, status, or available files.
 
+The `2.5.1` semantic request identity explicitly binds the embedded layer
+protocol version. Changing only the manifest version is insufficient because
+the protocol-2.5 semantic request hash otherwise contains no version field and
+could resolve to an older `2.5` child.
+
 This patch version is a correction to the L3 layer contract, not a new layer.
 It avoids consuming the next top-level protocol number and keeps the current
 L3-to-L4 orchestration model intact.
@@ -217,10 +222,13 @@ Preflight uses two additive protocol-2.5 event types:
 
 Successful context blobs are written before the completion event. A crash
 between object write and event append leaves only harmless unreferenced content
-and causes exact preflight replay. On failure, the preflight-failed event and
-existing typed work-item failure receipt are recorded before the controller's
-existing `terminal_blocked_incomplete` transition. Recovery completes any
-missing suffix without calling a provider.
+and causes exact preflight replay. On failure, the preflight-failed event and a
+protocol-2.5-owned typed preflight failure receipt are recorded before the
+controller's existing `terminal_blocked_incomplete` transition. The shared
+`WorkItemFailureReceiptV1` is deliberately not reused: its contract requires a
+real dispatch plus execution-capture or abandonment authority, while preflight
+must happen before dispatch. Recovery completes any missing suffix without
+calling a provider.
 
 ### 7. Existing runs are preserved; correction uses a successor request
 
