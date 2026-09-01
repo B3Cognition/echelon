@@ -98,11 +98,19 @@ from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 _RE_V2_MAX_CLI_DISPATCH_ACTIVE_MS = 30 * 60_000
 
 
-def _bound_re_v2_executor_active_ms(catalog: object) -> object:
+def _bound_re_v2_executor_active_ms(
+    catalog: object,
+    *,
+    preserve_contract_hashes: object = (),
+) -> object:
     """Bound one RE provider call independently of the cumulative run budget."""
     from dataclasses import replace
 
+    preserved = frozenset(preserve_contract_hashes)
+
     def bounded_entry(entry: object) -> object:
+        if getattr(entry, "executor_contract_hash", None) in preserved:
+            return entry
         if getattr(entry, "execution_mode", None) != "cli":
             return entry
         limits = getattr(entry, "limits", None)
@@ -122,7 +130,10 @@ def _bound_re_v2_executor_active_ms(catalog: object) -> object:
     if inherited is not None and isinstance(semantic, tuple):
         return replace(
             catalog,
-            inherited_catalog=_bound_re_v2_executor_active_ms(inherited),
+            inherited_catalog=_bound_re_v2_executor_active_ms(
+                inherited,
+                preserve_contract_hashes=preserved,
+            ),
             semantic_entries=tuple(bounded_entry(item) for item in semantic),
         )
     entries = getattr(catalog, "entries", None)
@@ -15324,7 +15335,11 @@ def _prepare_re_v24_creation(
                 implementation_digest,
             ),
             source_root_v2_digest,
-        )
+        ),
+        preserve_contract_hashes={
+            entry.executor_contract_hash
+            for entry in parent.inputs.executor_contract.entries
+        },
     )
     compact = parent.inputs.executor_contract.entry_for("compact-baseline")
     (
@@ -16557,7 +16572,11 @@ def _prepare_re_v25_creation(
                 l2_implementation,
             ),
             l2_source_root_v2_implementation,
-        )
+        ),
+        preserve_contract_hashes={
+            entry.executor_contract_hash
+            for entry in parent.inputs.executor_contract.entries
+        },
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
@@ -16599,7 +16618,10 @@ def _prepare_re_v25_creation(
             l2_executors,
             authorities,
             l3_implementation,
-        )
+        ),
+        preserve_contract_hashes={
+            entry.executor_contract_hash for entry in l2_executors.entries
+        },
     )
     (
         inherited_executors,

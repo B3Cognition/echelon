@@ -138,6 +138,55 @@ def test_re_v2_cli_dispatch_deadline_is_bounded_independently_of_run_budget() ->
 
 
 @pytest.mark.unit
+def test_re_v2_cli_dispatch_bound_preserves_inherited_contract_identity() -> None:
+    from echelon.cli import _bound_re_v2_executor_active_ms
+    from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+
+    catalog, _objects = _executor_fixture()
+    inherited = catalog.inherited_catalog.entry_for("compact-baseline")
+    oversized = replace(
+        catalog,
+        inherited_catalog=replace(
+            catalog.inherited_catalog,
+            entries=tuple(
+                replace(
+                    entry,
+                    limits=replace(
+                        entry.limits,
+                        max_active_ms_per_dispatch=43_200_000,
+                    ),
+                )
+                if entry == inherited
+                else entry
+                for entry in catalog.inherited_catalog.entries
+            ),
+        ),
+        semantic_entries=tuple(
+            replace(
+                entry,
+                limits=replace(
+                    entry.limits,
+                    max_active_ms_per_dispatch=43_200_000,
+                ),
+            )
+            for entry in catalog.semantic_entries
+        ),
+    )
+    frozen = oversized.inherited_catalog.entry_for("compact-baseline")
+
+    bounded = _bound_re_v2_executor_active_ms(
+        oversized,
+        preserve_contract_hashes={frozen.executor_contract_hash},
+    )
+
+    assert bounded.inherited_catalog.entry_for("compact-baseline") == frozen
+    assert {
+        entry.limits.max_active_ms_per_dispatch
+        for entry in bounded.semantic_entries
+    } == {1_800_000}
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "args",
     (
