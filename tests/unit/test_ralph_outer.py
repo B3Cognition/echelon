@@ -2410,7 +2410,14 @@ class TestOuterLoopConvergence:
         verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
         seen: dict[str, object] = {}
 
-        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+        def fake_gate(
+            worktree_path: Path,
+            resolved_spec_dir: Path,
+            *,
+            changed_files=None,
+            runnability_report=None,
+            runnability_required=False,
+        ):
             seen["worktree_path"] = worktree_path
             seen["spec_dir"] = resolved_spec_dir
             seen["changed_files"] = changed_files
@@ -2449,7 +2456,14 @@ class TestOuterLoopConvergence:
         spec_dir.mkdir(parents=True)
         seen: dict[str, object] = {}
 
-        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+        def fake_gate(
+            worktree_path: Path,
+            resolved_spec_dir: Path,
+            *,
+            changed_files=None,
+            runnability_report=None,
+            runnability_required=False,
+        ):
             seen["changed_files"] = changed_files
             return DocumentationGateResult(passed=True)
 

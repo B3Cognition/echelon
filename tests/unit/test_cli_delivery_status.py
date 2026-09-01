@@ -8,13 +8,16 @@ from pathlib import Path
 import pytest
 
 
-def _write_delivery_state(project_root: Path, *, strategy: str = "default") -> Path:
+def _write_delivery_state(
+    project_root: Path,
+    *,
+    strategy: str = "default",
+    user_runnability: dict | None = None,
+) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / f"{strategy}.json"
-    state_file.write_text(
-        json.dumps(
-            {
+    payload = {
                 "spec_id": "001",
                 "strategy_id": strategy,
                 "status": "blocked",
@@ -30,9 +33,11 @@ def _write_delivery_state(project_root: Path, *, strategy: str = "default") -> P
                 "salvage_branch": "harness/001-salvage",
                 "checkpoint_commits": [{"commit": "1234567890abcdef", "phase": "build"}],
                 "escalation_file": "runs/build-20260710-101500-000000/escalation.md",
-            },
-            indent=2,
-        ),
+            }
+    if user_runnability is not None:
+        payload["user_runnability"] = user_runnability
+    state_file.write_text(
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
     return state_file
@@ -111,6 +116,78 @@ def _write_escalation(project_root: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+@pytest.mark.unit
+def test_delivery_status_shows_failed_runnability_action(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "not_runnable",
+            "failed_stage": "primary_journey",
+            "failure_class": "missing_local_auth_bootstrap",
+            "summary": "No local player session could be created.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": {},
+        },
+    )
+
+    _cmd_delivery_status([], project_root=tmp_path)
+
+    output = capsys.readouterr().out
+    assert "user runnable" in output
+    assert "primary journey" in output
+    assert "missing_local_auth_bootstrap" in output
+    assert "/runs/report.md" in output
+    assert "delivery will repair this current-spec product gap" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_runnability_shows_passing_local_run_commands(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    commands = {
+        "prerequisites": ["Docker 27", "pnpm 10"],
+        "provision": ["echelon stack provision --target browser-game"],
+        "start": ["pnpm start:local"],
+        "open": ["http://127.0.0.1:5173"],
+        "stop": ["pnpm stop:local", "docker compose down"],
+    }
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "failed_stage": None,
+            "failure_class": "",
+            "summary": "The composed journey passed.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": commands,
+        },
+    )
+
+    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    json_payload = json.loads(capsys.readouterr().out)
+    assert json_payload["latest"]["user_runnability"]["user_commands"] == commands
+
+    _cmd_delivery_status([], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "pnpm start:local" in output
+    assert "echelon stack provision --target browser-game" in output
+    assert "http://127.0.0.1:5173" in output
 
 
 @pytest.mark.unit

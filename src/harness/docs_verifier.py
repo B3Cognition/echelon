@@ -7,8 +7,14 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from typing import Mapping
 
 import yaml
+
+from harness.runnability_evidence import (
+    RunnabilityEvidenceRef,
+    validate_runnability_report,
+)
 
 
 REPORT_NAME = "documentation-impact-report.md"
@@ -50,11 +56,15 @@ class DocsVerificationResult:
     reviewed_change_ids: tuple[str, ...]
     uncovered_change_ids: tuple[str, ...]
     unsupported_claims: tuple[str, ...]
+    runnability_evidence_sha256: str = ""
+    runnability_commands_current: bool = False
 
 
 def write_docs_verification_report(
     worktree_path: Path | str,
     spec_dir: Path | str,
+    *,
+    runnability_report: RunnabilityEvidenceRef | None = None,
 ) -> DocsVerificationResult:
     """Evaluate docs and write the machine-readable docs verification report."""
     worktree = Path(worktree_path)
@@ -62,13 +72,18 @@ def write_docs_verification_report(
     if not spec.is_absolute():
         spec = worktree / spec
 
-    result = verify_docs(worktree, spec)
+    result = verify_docs(worktree, spec, runnability_report=runnability_report)
     result.report_path.parent.mkdir(parents=True, exist_ok=True)
     result.report_path.write_text(_report_markdown(result), encoding="utf-8")
     return result
 
 
-def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerificationResult:
+def verify_docs(
+    worktree_path: Path | str,
+    spec_dir: Path | str,
+    *,
+    runnability_report: RunnabilityEvidenceRef | None = None,
+) -> DocsVerificationResult:
     """Evaluate TECH WRITER documentation artifacts deterministically."""
     worktree = Path(worktree_path)
     spec = Path(spec_dir)
@@ -78,6 +93,24 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
     report_path = spec / DOCS_VERIFICATION_REPORT_NAME
     evidence = _evidence_items(worktree, spec)
     findings: list[DocsFinding] = []
+    runnability_payload, runnability_failure = _current_runnability_payload(
+        runnability_report
+    )
+    runnability_commands_current = runnability_payload is not None
+    runnability_evidence_sha256 = (
+        runnability_report.evidence_sha256 if runnability_commands_current else ""
+    )
+    if runnability_failure:
+        findings.append(
+            _finding(
+                _next_id(findings),
+                "docs-verification-report.md",
+                "User Runnability Evidence",
+                runnability_failure,
+                str(runnability_report.path) if runnability_report else "missing report",
+                "Rerun the user-runnability gate and regenerate documentation evidence.",
+            )
+        )
 
     impact_report = spec / REPORT_NAME
     metadata: dict = {}
@@ -155,7 +188,11 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
                     )
     if not docs_required:
         reason = str(metadata.get("not_applicable_reason") or "").strip()
-        if metadata.get("docs_required") is False and reason:
+        if (
+            metadata.get("docs_required") is False
+            and reason
+            and runnability_payload is None
+        ):
             return _result(
                 report_path=report_path,
                 readme_first_run_manual=True,
@@ -166,6 +203,8 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
                 reviewed_change_ids=reviewed_change_ids,
                 uncovered_change_ids=uncovered_change_ids,
                 unsupported_claims=unsupported_claims,
+                runnability_evidence_sha256=runnability_evidence_sha256,
+                runnability_commands_current=runnability_commands_current,
             )
 
     if len(evidence) < 4:
@@ -224,6 +263,23 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
                     "Remove unsupported npm commands or add the scripts to package.json.",
                 )
             )
+        if runnability_payload is not None:
+            missing_claims = _missing_runnability_readme_claims(
+                readme.read_text(encoding="utf-8"),
+                runnability_payload.get("user_commands"),
+            )
+            for section, command in missing_claims:
+                readme_first_run_manual = False
+                findings.append(
+                    _finding(
+                        _next_id(findings),
+                        "README.md",
+                        "Observed First Run",
+                        f"README.md omits the observed {section} instruction",
+                        command,
+                        f"Document the exact observed {section} instruction: {command}",
+                    )
+                )
 
     if not changelog.exists():
         changelog_valid = False
@@ -274,6 +330,8 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
         reviewed_change_ids=reviewed_change_ids,
         uncovered_change_ids=uncovered_change_ids,
         unsupported_claims=unsupported_claims,
+        runnability_evidence_sha256=runnability_evidence_sha256,
+        runnability_commands_current=runnability_commands_current,
     )
 
 
@@ -474,6 +532,8 @@ def _result(
     reviewed_change_ids: list[str],
     uncovered_change_ids: list[str],
     unsupported_claims: list[str],
+    runnability_evidence_sha256: str = "",
+    runnability_commands_current: bool = False,
 ) -> DocsVerificationResult:
     blocking = sum(1 for finding in findings if finding.severity == "blocking")
     verdict = "PASS" if blocking == 0 else "FAIL"
@@ -491,6 +551,8 @@ def _result(
         reviewed_change_ids=tuple(reviewed_change_ids),
         uncovered_change_ids=tuple(uncovered_change_ids),
         unsupported_claims=tuple(unsupported_claims),
+        runnability_evidence_sha256=runnability_evidence_sha256,
+        runnability_commands_current=runnability_commands_current,
     )
 
 
@@ -530,6 +592,8 @@ def _report_markdown(result: DocsVerificationResult) -> str:
         "project_evidence_checked": result.project_evidence_checked,
         "evidence_items_checked": result.evidence_items_checked,
         "blocking_findings": result.blocking_findings,
+        "runnability_evidence_sha256": result.runnability_evidence_sha256,
+        "runnability_commands_current": result.runnability_commands_current,
     }
     rows = [
         "| ID | Severity | Document | Section | Issue | Evidence | Required Repair |",
@@ -579,3 +643,57 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _current_runnability_payload(
+    report: RunnabilityEvidenceRef | None,
+) -> tuple[dict[str, object] | None, str]:
+    if report is None:
+        return None, ""
+    validation = validate_runnability_report(
+        report,
+        candidate_commit=report.candidate_commit,
+        candidate_fingerprint=report.candidate_fingerprint,
+        contract_hash=report.contract_hash,
+        stack_hash=report.stack_hash,
+    )
+    if not validation.valid:
+        return None, f"user-runnability evidence is not current: {validation.reason}"
+    try:
+        payload = json.loads(report.path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, "user-runnability evidence is unavailable or malformed"
+    if not isinstance(payload, dict):
+        return None, "user-runnability evidence is not an object"
+    return payload, ""
+
+
+def _missing_runnability_readme_claims(
+    readme_text: str,
+    raw_commands: object,
+) -> list[tuple[str, str]]:
+    if not isinstance(raw_commands, Mapping):
+        return []
+    normalized_readme = _normalize_command_claim(readme_text)
+    missing: list[tuple[str, str]] = []
+    for section in (
+        "prerequisites",
+        "install",
+        "provision",
+        "bootstrap",
+        "start",
+        "open",
+        "stop",
+    ):
+        values = raw_commands.get(section)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            command = str(value).strip()
+            if command and _normalize_command_claim(command) not in normalized_readme:
+                missing.append((section, command))
+    return missing
+
+
+def _normalize_command_claim(value: str) -> str:
+    return " ".join(value.split())

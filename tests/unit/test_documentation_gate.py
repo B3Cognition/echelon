@@ -5,6 +5,8 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     validate_documentation_coverage,
 )
+from harness.docs_verifier import verify_docs, write_docs_verification_report
+from harness.runnability_evidence import RunnabilityStage, write_runnability_report
 
 
 FIRST_RUN_README = """# Demo
@@ -106,6 +108,145 @@ blocking_findings: 0
 
 PASS
 """
+
+
+COMPLETE_USER_COMMANDS = {
+    "prerequisites": ("Docker 27", "pnpm 10"),
+    "install": ("pnpm install --frozen-lockfile",),
+    "provision": ("echelon stack provision --target browser-game",),
+    "bootstrap": ("pnpm db:migrate",),
+    "start": ("pnpm start:local",),
+    "open": ("http://127.0.0.1:5173",),
+    "stop": ("pnpm stop:local", "docker compose down"),
+}
+
+
+def _passing_runnability_report(tmp_path: Path, *, user_commands=COMPLETE_USER_COMMANDS):
+    return write_runnability_report(
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+        spec_id="001-demo",
+        target_id="browser-game",
+        strategy_id="default",
+        build_id="build-test",
+        candidate_commit="abc123",
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        status="runnable",
+        failure_class="",
+        summary="The local first-run journey passed.",
+        stages=(RunnabilityStage(name="primary_journey", status="passed"),),
+        required_stages=("primary_journey",),
+        attempt_sequence=1,
+        sensitive_environment={},
+        user_commands=user_commands,
+    )
+
+
+def _write_runnability_docs_project(tmp_path: Path, commands: dict[str, tuple[str, ...]]) -> Path:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    command_lines = "\n".join(
+        command
+        for values in commands.values()
+        for command in values
+    )
+    (tmp_path / "README.md").write_text(
+        FIRST_RUN_README + "\n## Local game\n\n```bash\n" + command_lines + "\n```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n### Added\n- Runnable local game.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"name":"demo","scripts":{"build":"true","test":"true","lint":"true"}}\n',
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        "---\n# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+    return spec_dir
+
+
+def test_docs_runnability_gate_rejects_readme_that_omits_observed_start_command(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        user_commands={"start": ("pnpm start:local",)},
+    )
+    spec_dir = _write_runnability_docs_project(tmp_path, {})
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "FAIL"
+    assert any(
+        "pnpm start:local" in finding.required_repair
+        for finding in result.findings
+    )
+
+
+def test_docs_runnability_gate_accepts_exact_observed_first_run(tmp_path: Path) -> None:
+    report = _passing_runnability_report(tmp_path)
+    spec_dir = _write_runnability_docs_project(tmp_path, COMPLETE_USER_COMMANDS)
+
+    result = write_docs_verification_report(
+        tmp_path,
+        spec_dir,
+        runnability_report=report,
+    )
+
+    assert result.verdict == "PASS"
+    metadata = (spec_dir / "docs-verification-report.md").read_text(encoding="utf-8")
+    assert f"runnability_evidence_sha256: {report.evidence_sha256}" in metadata
+    assert "runnability_commands_current: true" in metadata
+
+
+def test_docs_runnability_gate_rejects_provisional_verdict_without_current_evidence(
+    tmp_path: Path,
+) -> None:
+    spec_dir = _write_runnability_docs_project(tmp_path, COMPLETE_USER_COMMANDS)
+    _write_docs_verification_pass(spec_dir)
+
+    result = evaluate_documentation_gate(
+        tmp_path,
+        spec_dir,
+        changed_files=["README.md", "CHANGELOG.md"],
+        runnability_required=True,
+    )
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "docs-runnability-evidence-missing"
+
+
+def test_docs_runnability_gate_accepts_current_final_verdict(tmp_path: Path) -> None:
+    report = _passing_runnability_report(tmp_path)
+    spec_dir = _write_runnability_docs_project(tmp_path, COMPLETE_USER_COMMANDS)
+    write_docs_verification_report(
+        tmp_path,
+        spec_dir,
+        runnability_report=report,
+    )
+
+    result = evaluate_documentation_gate(
+        tmp_path,
+        spec_dir,
+        changed_files=["README.md", "CHANGELOG.md"],
+        runnability_report=report,
+        runnability_required=True,
+    )
+
+    assert result.passed
 
 
 def _git_repo(path: Path) -> None:

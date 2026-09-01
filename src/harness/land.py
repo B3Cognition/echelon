@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tarfile
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -29,6 +30,24 @@ from kernel.fulfillment import (
 )
 from kernel.spec_identity import spec_identity_aliases
 from harness.deferred_scope import active_entries, ledger_path
+from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_contract import (
+    RunnabilityContractError,
+    load_runnability_contract,
+    runnability_contract_sha256,
+)
+from harness.runnability_disposition import (
+    RunnabilityDispositionError,
+    read_runnability_disposition,
+)
+from harness.runnability_evidence import (
+    RunnabilityEvidenceRef,
+    load_runnability_evidence_ref,
+    validate_runnability_report,
+)
+from harness.stacks.loader import load_stack_definitions
+from harness.stacks.paths import find_stack_extension_root
+from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -874,6 +893,14 @@ def land(
             return False
 
     if feature_branch is None:
+        if not _check_runnability_before_land(
+            spec_id,
+            wrapper_project_dir=wrapper_project_dir,
+            project_dir=project_dir,
+            candidate_ref=None,
+            harness_root=runtime_root,
+        ):
+            return False
         return _finish_branchless_landing(
             spec_id,
             wrapper_project_dir=wrapper_project_dir,
@@ -897,6 +924,14 @@ def land(
     readiness_ref = feature_branch if project_dir == wrapper_project_dir else None
     fulfillment_project_dir = None if project_dir == wrapper_project_dir else project_dir
     fulfillment_ref = feature_branch if project_dir != wrapper_project_dir else None
+    if not _check_runnability_before_land(
+        spec_id,
+        wrapper_project_dir=wrapper_project_dir,
+        project_dir=project_dir,
+        candidate_ref=feature_branch,
+        harness_root=runtime_root,
+    ):
+        return False
     if not options.prepare_only and not _check_ready_before_land(
         spec_id,
         wrapper_project_dir,
@@ -1027,6 +1062,64 @@ def land(
         spec_project_dir=wrapper_project_dir,
         harness_root=runtime_root,
     )
+
+
+def _check_runnability_before_land(
+    spec_id: str,
+    *,
+    wrapper_project_dir: Path,
+    project_dir: Path,
+    candidate_ref: str | None,
+    harness_root: Path,
+) -> bool:
+    spec_dir = find_spec_dir(spec_id, wrapper_project_dir)
+    if spec_dir is not None:
+        try:
+            disposition = read_runnability_disposition(spec_dir)
+        except RunnabilityDispositionError as exc:
+            _banner(
+                "LAND — RUNNABILITY DISPOSITION INVALID",
+                [
+                    ("spec", spec_id),
+                    ("problem", str(exc)),
+                    ("next step", "repair the owner disposition ledger, then re-run land"),
+                ],
+                subtitle="Echelon stopped before changing the target repository.",
+            )
+            return False
+        if disposition is not None and disposition.status == "deferred":
+            proposal = spec_dir / disposition.follow_up_proposal
+            _banner(
+                "LAND — USER RUNNABILITY DEFERRED",
+                [
+                    ("spec", spec_id),
+                    ("reason", disposition.reason),
+                    ("evidence", disposition.evidence_report),
+                    ("proposal", str(proposal)),
+                ],
+                subtitle="Landing is permitted by an explicit owner-controlled disposition.",
+            )
+            return True
+
+    warning = _runnability_warning(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+        ref=candidate_ref,
+        stack_project_dir=wrapper_project_dir,
+    )
+    if warning is None:
+        return True
+    _banner(
+        "LAND — USER RUNNABILITY BLOCKED",
+        [
+            ("spec", spec_id),
+            ("problem", warning),
+            ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
+        ],
+        subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+    )
+    return False
 
 
 def _clean_generated_drift_before_direct_merge(spec_id: str, project_dir: Path) -> bool:
@@ -1185,6 +1278,163 @@ def _check_ready_before_land(
         commit_project_dir=fulfillment_project_dir,
         commit_ref=fulfillment_ref,
     )
+
+
+def _runnability_warning(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path,
+    ref: str | None = None,
+    stack_project_dir: Path | None = None,
+    required: bool | None = None,
+    stack_hash: str | None = None,
+) -> str | None:
+    """Return a blocking warning when required runnable evidence is absent or stale."""
+    resolved_required = bool(required)
+    resolved_hash = stack_hash
+    if required is None or resolved_hash is None:
+        try:
+            policy_required, current_stack_hash = _resolved_runnability_requirement(
+                stack_project_dir or project_dir
+            )
+        except Exception as exc:
+            return f"could not resolve the current stack runnability contract: {exc}"
+        if required is None:
+            resolved_required = policy_required
+        if resolved_hash is None:
+            resolved_hash = current_stack_hash
+
+    if (
+        not resolved_required
+        and not (project_dir / ".echelon" / "runnability.yml").exists()
+        and not (project_dir / ".git").exists()
+    ):
+        return None
+
+    try:
+        candidate_context = _land_candidate_tree(project_dir, ref)
+        with candidate_context as candidate:
+            try:
+                contract = load_runnability_contract(candidate)
+            except (OSError, RunnabilityContractError) as exc:
+                return f"candidate runnability contract is invalid: {exc}"
+
+            if contract is not None and contract.enabled:
+                resolved_required = True
+            if not resolved_required:
+                return None
+            if contract is None:
+                return (
+                    "required user-runnability contract is missing: "
+                    ".echelon/runnability.yml"
+                )
+            if not contract.enabled:
+                return "stack-required user-runnability contract is disabled"
+
+            state = _latest_runnability_state(Path(harness_root), spec_id)
+            raw_summary = state.get("user_runnability") if state is not None else None
+            if not isinstance(raw_summary, dict) or raw_summary.get("status") != "runnable":
+                return "no passing user-runnability evidence was recorded for this delivery"
+            ref_value, error = _runnability_ref_from_state(raw_summary)
+            if ref_value is None:
+                return f"passing user-runnability evidence is unavailable: {error}"
+
+            try:
+                candidate_fingerprint = product_evidence_fingerprint(candidate)
+                contract_hash = runnability_contract_sha256(contract)
+            except (OSError, ValueError) as exc:
+                return f"could not fingerprint the runnable candidate: {exc}"
+            validation = validate_runnability_report(
+                ref_value,
+                candidate_commit=_ref_git_commit(project_dir, ref) if ref else _current_git_commit(project_dir) or "",
+                candidate_fingerprint=candidate_fingerprint,
+                contract_hash=contract_hash,
+                stack_hash=str(resolved_hash or ""),
+            )
+            if validation.valid:
+                return None
+            return f"user-runnability evidence is stale: {validation.reason}"
+    except (OSError, RuntimeError, tarfile.TarError) as exc:
+        if not resolved_required and not (project_dir / ".echelon" / "runnability.yml").exists():
+            return None
+        return f"could not inspect the landing candidate for runnability: {exc}"
+
+
+def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
+    from harness.config import get_full_resolved_config
+
+    root = Path(project_dir).resolve()
+    raw = get_full_resolved_config(root)
+    stacks = raw.get("stacks") or {}
+    if not isinstance(stacks, dict):
+        raise ValueError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not isinstance(archetypes, list):
+        raise ValueError("stack selection must use list values")
+    resolved = resolve_stacks(
+        [str(item) for item in selected],
+        load_stack_definitions(
+            extension_root=find_stack_extension_root(root),
+            project_root=root,
+        ),
+        target_archetypes={str(item) for item in archetypes} or None,
+    )
+    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
+
+
+def _latest_runnability_state(harness_root: Path, spec_id: str) -> dict[str, object] | None:
+    states: list[tuple[str, Path, dict[str, object]]] = []
+    for state_path in Path(harness_root).glob("runs/**/state/*.json"):
+        if state_path.is_symlink() or not state_path.is_file():
+            continue
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        observed = str(payload.get("spec_id") or "")
+        if observed != spec_id and not observed.startswith(f"{spec_id}-") and not spec_id.startswith(f"{observed}-"):
+            continue
+        build_id = str(payload.get("build_id") or state_path.parents[1].name)
+        states.append((build_id, state_path, payload))
+    return max(states, default=("", Path(), None), key=lambda item: (item[0], str(item[1])))[2]
+
+
+def _runnability_ref_from_state(
+    summary: dict[str, object],
+) -> tuple[RunnabilityEvidenceRef | None, str]:
+    report = Path(str(summary.get("report") or ""))
+    if not report.is_absolute():
+        return None, "state report path is not absolute"
+    try:
+        return load_runnability_evidence_ref(report), ""
+    except ValueError as exc:
+        return None, str(exc)
+
+
+@contextmanager
+def _land_candidate_tree(project_dir: Path, ref: str | None) -> Iterator[Path]:
+    if ref is None:
+        yield Path(project_dir)
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        archive = root / "candidate.tar"
+        snapshot = root / "candidate"
+        snapshot.mkdir()
+        result = _run_git(
+            ["archive", "--format=tar", "--output", str(archive), ref],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"could not read landing candidate ref {ref}")
+        with tarfile.open(archive, mode="r:") as handle:
+            handle.extractall(snapshot, filter="data")
+        yield snapshot
 
 
 def _land_status_warning(

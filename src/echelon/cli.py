@@ -6183,6 +6183,9 @@ def _delivery_status_summary(
     }
     if escalation is not None:
         summary["escalation"] = escalation
+    runnability = _normalized_delivery_runnability(state.get("user_runnability"))
+    if runnability is not None:
+        summary["user_runnability"] = runnability
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -6192,6 +6195,18 @@ def _delivery_status_summary(
             frontmatter = read_frontmatter(spec_dir)
             if frontmatter.get("status"):
                 summary["spec_status"] = str(frontmatter.get("status"))
+            runnability = summary.get("user_runnability")
+            if isinstance(runnability, dict) and runnability.get("status") == "deferred":
+                try:
+                    from harness.runnability_disposition import read_runnability_disposition
+
+                    disposition = read_runnability_disposition(spec_dir)
+                    if disposition is not None and disposition.status == "deferred":
+                        runnability["proposal"] = str(
+                            spec_dir / disposition.follow_up_proposal
+                        )
+                except Exception:
+                    pass
             try:
                 from harness.harness_run_history import summarize_history
 
@@ -6280,6 +6295,61 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         path = str(escalation.get("path") or "").strip()
         if path:
             fields.append(("escalation", path))
+    runnability = summary.get("user_runnability")
+    if isinstance(runnability, dict):
+        status = str(runnability.get("status") or "unknown")
+        label = {
+            "runnable": "passed",
+            "not_runnable": "failed",
+            "blocked": "blocked",
+            "deferred": "deferred",
+            "not_applicable": "not applicable",
+        }.get(status, status)
+        fields.append(("user runnable", label))
+        failed_stage = str(runnability.get("failed_stage") or "").strip()
+        if failed_stage:
+            fields.append(("stage", failed_stage.replace("_", " ")))
+        failure_class = str(runnability.get("failure_class") or "").strip()
+        if failure_class:
+            fields.append(("runnability reason", failure_class))
+        diagnostic = str(runnability.get("summary") or "").strip()
+        if diagnostic:
+            fields.append(("runnability summary", diagnostic))
+        commands = runnability.get("user_commands")
+        if isinstance(commands, dict):
+            for command_kind in (
+                "prerequisites",
+                "install",
+                "provision",
+                "bootstrap",
+                "start",
+                "open",
+                "stop",
+            ):
+                values = commands.get(command_kind)
+                if isinstance(values, list) and values:
+                    fields.append((command_kind, "; ".join(str(value) for value in values)))
+        report = str(runnability.get("report") or "").strip()
+        if report:
+            fields.append(("evidence", report))
+        if status == "not_runnable":
+            fields.append(
+                ("runnability next", "delivery will repair this current-spec product gap")
+            )
+        elif status == "blocked":
+            fields.append(
+                ("runnability next", "repair the Echelon sandbox prerequisite, then retry")
+            )
+        elif status == "deferred":
+            proposal = str(runnability.get("proposal") or "").strip()
+            fields.append(
+                (
+                    "runnability next",
+                    f"review the advisory follow-up proposal: {proposal}"
+                    if proposal
+                    else "review the owner-approved runnability deferral",
+                )
+            )
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
@@ -6290,6 +6360,42 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         fields.append(("state", str(summary["state_file"])))
     fields.append(("next", str(summary.get("next") or "")))
     return fields
+
+
+def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    status = str(value.get("status") or "").strip()
+    if not status:
+        return None
+    raw_commands = value.get("user_commands")
+    commands: dict[str, list[str]] = {}
+    if isinstance(raw_commands, dict):
+        for key, raw_values in raw_commands.items():
+            if not isinstance(raw_values, list):
+                continue
+            normalized = [str(item).strip() for item in raw_values if str(item).strip()]
+            if normalized:
+                commands[str(key)] = normalized
+    diagnostic = str(value.get("summary") or "").strip()
+    if len(diagnostic) > 240:
+        diagnostic = diagnostic[:237].rstrip() + "..."
+    return {
+        "status": status,
+        "failed_stage": str(value.get("failed_stage") or "").strip() or None,
+        "failure_class": str(value.get("failure_class") or "").strip(),
+        "summary": diagnostic,
+        "report": str(value.get("report") or "").strip(),
+        "candidate_fingerprint": str(value.get("candidate_fingerprint") or "").strip(),
+        "contract_hash": str(value.get("contract_hash") or "").strip(),
+        "stack_hash": str(value.get("stack_hash") or "").strip(),
+        "user_commands": commands,
+        **(
+            {"proposal": str(value.get("proposal") or "").strip()}
+            if value.get("proposal")
+            else {}
+        ),
+    }
 
 
 def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:

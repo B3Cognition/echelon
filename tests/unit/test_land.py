@@ -14,18 +14,26 @@ import pytest
 from harness.land import (
     LandOptions,
     LandPrepareResult,
+    _check_runnability_before_land,
     _check_ready_before_land,
     _delete_harness_branches,
     _fulfillment_warning,
     _finish_landing,
     _land_status_warning,
     _run_land_verify,
+    _runnability_warning,
     find_pr_url,
     land,
     resolve_land_repo,
 )
 from harness.deferred_scope import apply_defer
 from harness.errors import GitOpsError
+from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_contract import (
+    load_runnability_contract,
+    runnability_contract_sha256,
+)
+from harness.runnability_evidence import RunnabilityStage, write_runnability_report
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -47,6 +55,223 @@ def _make_gitops(
     m.delete_remote_branch.return_value = delete_result
     m.push_landed_default_branch.return_value = True
     return m
+
+
+RUNNABILITY_CONTRACT = """schema_version: 1
+enabled: true
+install_commands: []
+bootstrap_commands: []
+start_commands:
+  - pnpm start:local
+readiness:
+  url: http://127.0.0.1:5173/health
+  timeout_ms: 30000
+primary_journey:
+  kind: http
+  url: http://127.0.0.1:5173/checkpoint
+  requirements: [FR-001]
+  real_services_required: [web]
+  steps:
+    - action: exec
+      command: curl -fsS http://127.0.0.1:5173/checkpoint
+  observations:
+    - id: checkpoint-visible
+      kind: http
+      url: http://127.0.0.1:5173/checkpoint
+      method: GET
+      expectation: marker-present
+stop_commands:
+  - pnpm stop:local
+"""
+
+
+def _ready_project_with_passing_runnability(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
+    project = tmp_path / "project"
+    harness_root = tmp_path / "harness"
+    project.mkdir()
+    _init_repo(project)
+    (project / ".echelon").mkdir()
+    (project / ".echelon" / "runnability.yml").write_text(
+        RUNNABILITY_CONTRACT,
+        encoding="utf-8",
+    )
+    (project / "README.md").write_text("# Demo\n", encoding="utf-8")
+    commit = _commit(project, "src/app.py", "print('ok')\n", "runnable product")
+    contract = load_runnability_contract(project)
+    assert contract is not None
+    evidence = write_runnability_report(
+        evidence_dir=(
+            harness_root
+            / "runs/targets/demo/runs/build-test/evidence/user-runnability"
+        ),
+        spec_id="042-demo",
+        target_id="demo",
+        strategy_id="default",
+        build_id="build-test",
+        candidate_commit=commit,
+        candidate_fingerprint=product_evidence_fingerprint(project),
+        contract_hash=runnability_contract_sha256(contract),
+        stack_hash="stack-1",
+        status="runnable",
+        failure_class="",
+        summary="passed",
+        stages=(RunnabilityStage(name="primary_journey", status="passed"),),
+        required_stages=("primary_journey",),
+        attempt_sequence=1,
+        sensitive_environment={},
+        user_commands={"start": ("pnpm start:local",)},
+    )
+    state_dir = harness_root / "runs/targets/demo/runs/build-test/state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "042-demo",
+                "target_id": "demo",
+                "user_runnability": {
+                    "status": "runnable",
+                    "report": str(evidence.markdown_path),
+                    "candidate_fingerprint": evidence.candidate_fingerprint,
+                    "contract_hash": evidence.contract_hash,
+                    "stack_hash": evidence.stack_hash,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project, harness_root, evidence.path
+
+
+def test_land_blocks_missing_required_runnability_evidence(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _init_repo(project)
+    (project / ".echelon").mkdir()
+    (project / ".echelon" / "runnability.yml").write_text(
+        RUNNABILITY_CONTRACT,
+        encoding="utf-8",
+    )
+    _commit(project, "src/app.py", "print('ok')\n", "product")
+
+    warning = _runnability_warning(
+        "042-demo",
+        project,
+        harness_root=tmp_path / "harness",
+        required=True,
+        stack_hash="stack-1",
+    )
+
+    assert warning is not None
+    assert "no passing user-runnability evidence" in warning
+
+
+def test_land_accepts_merge_only_commit_when_three_hashes_match(tmp_path: Path) -> None:
+    project, harness_root, _report = _ready_project_with_passing_runnability(tmp_path)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "merge-only publication commit"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+
+    warning = _runnability_warning(
+        "042-demo",
+        project,
+        harness_root=harness_root,
+        required=True,
+        stack_hash="stack-1",
+    )
+
+    assert warning is None
+
+
+def test_land_blocks_changed_candidate_contract(tmp_path: Path) -> None:
+    project, harness_root, _report = _ready_project_with_passing_runnability(tmp_path)
+    contract_path = project / ".echelon" / "runnability.yml"
+    contract_path.write_text(
+        RUNNABILITY_CONTRACT.replace("pnpm start:local", "pnpm start:changed", 1),
+        encoding="utf-8",
+    )
+
+    warning = _runnability_warning(
+        "042-demo",
+        project,
+        harness_root=harness_root,
+        required=True,
+        stack_hash="stack-1",
+    )
+
+    assert warning is not None
+    assert "stale" in warning
+    assert "contract_hash mismatch" in warning
+
+
+def test_land_fulfillment_override_does_not_bypass_required_runnability(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _init_repo(project)
+    spec_dir = project / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    (project / ".echelon").mkdir()
+    (project / ".echelon" / "runnability.yml").write_text(
+        RUNNABILITY_CONTRACT,
+        encoding="utf-8",
+    )
+    _commit(project, "src/app.py", "print('ok')\n", "product")
+    gitops = _make_gitops(feature_branch=None)
+
+    with patch("harness.land._banner") as banner:
+        result = land(
+            "042-demo",
+            project_dir=project,
+            gitops=gitops,
+            options=LandOptions(allow_fulfillment_gaps=True),
+            harness_root=tmp_path / "harness",
+        )
+
+    assert result is False
+    assert banner.call_args.args[0] == "LAND — USER RUNNABILITY BLOCKED"
+    gitops.merge_pr.assert_not_called()
+
+
+def test_land_owner_deferral_is_visible_and_permits_runnability_gate(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    disposition = SimpleNamespace(
+        status="deferred",
+        reason="Owner approved a follow-up spec.",
+        evidence_report="/runs/failed-report.json",
+        follow_up_proposal="runnability-follow-up.md",
+    )
+
+    with (
+        patch("harness.land.read_runnability_disposition", return_value=disposition),
+        patch("harness.land._runnability_warning") as warning,
+        patch("harness.land._banner") as banner,
+    ):
+        result = _check_runnability_before_land(
+            "042-demo",
+            wrapper_project_dir=tmp_path,
+            project_dir=tmp_path,
+            candidate_ref=None,
+            harness_root=tmp_path,
+        )
+
+    assert result is True
+    warning.assert_not_called()
+    assert banner.call_args.args[0] == "LAND — USER RUNNABILITY DEFERRED"
+    fields = dict(banner.call_args.args[1])
+    assert fields["proposal"].endswith("runnability-follow-up.md")
 
 
 @pytest.mark.unit

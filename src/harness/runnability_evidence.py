@@ -81,6 +81,32 @@ class RunnabilityEvidenceValidation:
     reason: str = ""
 
 
+def load_runnability_evidence_ref(report_path: Path | str) -> RunnabilityEvidenceRef:
+    """Reconstruct an immutable evidence reference from its JSON/Markdown path."""
+    report = Path(report_path)
+    if not report.is_absolute():
+        raise ValueError("runnability report path must be absolute")
+    json_path = report if report.suffix == ".json" else report.with_suffix(".json")
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"runnability report is unavailable or malformed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("runnability report is not an object")
+    markdown_path = report if report.suffix == ".md" else report.with_suffix(".md")
+    return RunnabilityEvidenceRef(
+        path=json_path,
+        markdown_path=markdown_path,
+        receipt_sha256=str(payload.get("receipt_sha256") or ""),
+        evidence_sha256=str(payload.get("evidence_sha256") or ""),
+        candidate_commit=str(payload.get("candidate_commit") or ""),
+        candidate_fingerprint=str(payload.get("candidate_fingerprint") or ""),
+        contract_hash=str(payload.get("contract_hash") or ""),
+        stack_hash=str(payload.get("stack_hash") or ""),
+        status=str(payload.get("status") or ""),
+    )
+
+
 def write_runnability_report(
     *,
     evidence_dir: Path,

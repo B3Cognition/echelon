@@ -38,6 +38,7 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     write_not_applicable_documentation_impact_report,
 )
+from harness.docs_verifier import write_docs_verification_report
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.errors import NotSupportedError, SandboxError
@@ -57,6 +58,10 @@ from harness.runnability_contract import (
 from harness.runnability_disposition import (
     RunnabilityDispositionError,
     read_runnability_disposition,
+)
+from harness.runnability_evidence import (
+    RunnabilityEvidenceRef,
+    load_runnability_evidence_ref,
 )
 from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
 from harness.phase_a_readiness import validate_phase_a_readiness
@@ -2493,10 +2498,34 @@ class RalphController:
             documentation_changes,
         )
 
+        state = self._state_store.read()
+        raw_runnability = state.get("user_runnability")
+        runnability_ref: RunnabilityEvidenceRef | None = None
+        if isinstance(raw_runnability, dict) and raw_runnability.get("status") == "runnable":
+            try:
+                runnability_ref = load_runnability_evidence_ref(
+                    str(raw_runnability.get("report") or "")
+                )
+            except ValueError:
+                runnability_ref = None
+        resolved_policy = getattr(self._config, "resolved_runnability", None)
+        runnability_required = (
+            str(getattr(resolved_policy, "policy", "not_applicable")) == "required"
+            or runnability_ref is not None
+        )
+        if runnability_ref is not None:
+            write_docs_verification_report(
+                Path(worktree_path),
+                spec_dir,
+                runnability_report=runnability_ref,
+            )
+
         gate = evaluate_documentation_gate(
             Path(worktree_path),
             spec_dir,
             changed_files=documentation_changes,
+            runnability_report=runnability_ref,
+            runnability_required=runnability_required,
         )
         if self._can_write_noop_documentation_report(
             gate,
@@ -2516,6 +2545,8 @@ class RalphController:
                 Path(worktree_path),
                 spec_dir,
                 changed_files=documentation_changes,
+                runnability_report=runnability_ref,
+                runnability_required=runnability_required,
             )
         if gate.passed:
             return verify_result
