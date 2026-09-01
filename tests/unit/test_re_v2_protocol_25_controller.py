@@ -5,7 +5,24 @@ from types import SimpleNamespace
 import pytest
 
 from harness.re_v2.protocol_25 import controller as semantic_controller
-from harness.re_v2.protocol_25.controller import Protocol25Controller
+from harness.re_v2.protocol_25.controller import (
+    Protocol25Controller,
+    _semantic_authorial_rejection_diagnostics,
+)
+
+
+@pytest.mark.unit
+def test_semantic_authorial_rejection_preserves_actionable_retry_diagnostic() -> None:
+    diagnostics = _semantic_authorial_rejection_diagnostics(
+        RuntimeError(
+            "finding subject_kind does not match the controller-issued subject_ref"
+        )
+    )
+
+    assert diagnostics == (
+        "authorial_schema_invalid",
+        "finding_subject_kind_must_match_controller_issued_subject_ref",
+    )
 
 
 @pytest.mark.unit

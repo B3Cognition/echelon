@@ -60,6 +60,35 @@ TerminalStateV1 = Literal[
     "blocked_incomplete",
     "blocked_plateau",
 ]
+
+
+_SEMANTIC_AUTHORIAL_DIAGNOSTICS = (
+    (
+        "subject_kind does not match",
+        "finding_subject_kind_must_match_controller_issued_subject_ref",
+    ),
+    (
+        "outside authorized evidence ranges",
+        "finding_evidence_must_be_within_authorized_ranges",
+    ),
+    ("requires authorized evidence", "finding_requires_authorized_evidence"),
+    ("not controller-issued", "finding_must_use_controller_issued_authority"),
+    ("does not match bounded context", "audit_target_must_match_bounded_context"),
+    ("closed response schema", "semantic_response_must_match_closed_schema"),
+    ("candidate inventory", "semantic_candidate_inventory_invalid"),
+    ("byte ceiling", "semantic_candidate_byte_ceiling_exceeded"),
+    ("bounded normalized prose", "finding_prose_must_be_bounded_and_normalized"),
+)
+
+
+def _semantic_authorial_rejection_diagnostics(exc: Exception) -> tuple[str, ...]:
+    """Return safe, stable retry feedback for a rejected semantic candidate."""
+    detail = str(exc).lower()
+    specific = next(
+        (code for fragment, code in _SEMANTIC_AUTHORIAL_DIAGNOSTICS if fragment in detail),
+        "semantic_authorial_contract_invalid",
+    )
+    return ("authorial_schema_invalid", specific)
 ActionKindV1 = Literal[
     "run_prerequisite",
     "audit_target",
@@ -781,12 +810,13 @@ class Protocol25Controller(Protocol24Controller):
                     target_assessments=target_assessments,
                     composed_view=composed,
                 )
-        except (Protocol22SchemaError, Protocol25RuntimeError):
+        except (Protocol22SchemaError, Protocol25RuntimeError) as exc:
             self._reject_candidate_before_artifact(
                 item,
                 committed,
                 candidate_id,
                 "authorial_schema_invalid",
+                diagnostics=_semantic_authorial_rejection_diagnostics(exc),
             )
             return
         self._record_semantic_result(item, candidate_id, result)
