@@ -65,6 +65,37 @@ def test_build_prompt_includes_dedicated_stack_context_section() -> None:
 
 
 @pytest.mark.unit
+def test_browser_stack_context_explains_candidate_owned_runnability_contract() -> None:
+    coord = _coordinator_with_stacks(
+        ["browser-3d-game", "game-persistence-postgres"],
+        ROOT,
+        target_archetypes=["browser_3d_game"],
+    )
+
+    stack_context = coord._build_stack_context()
+
+    assert ".echelon/runnability.yml" in stack_context
+    assert "browser_dom" in stack_context
+    assert "postgres_query" in stack_context
+    assert "echelon delivery status" in stack_context
+    assert "echelon spec defer-runnability" in stack_context
+
+
+@pytest.mark.unit
+def test_ios_runnability_stack_context_names_future_runner_without_claiming_pass() -> None:
+    coord = _coordinator_with_stacks(
+        ["ios-ar-game"],
+        ROOT,
+        target_archetypes=["ios_ar_game"],
+    )
+
+    stack_context = coord._build_stack_context()
+
+    assert "macOS simulator runner" in stack_context
+    assert "cannot be represented as a pass" in stack_context
+
+
+@pytest.mark.unit
 def test_no_selected_stacks_preserves_original_strategy_context() -> None:
     coord = _coordinator_with_stacks([], ROOT)
 

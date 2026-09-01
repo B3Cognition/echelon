@@ -16,6 +16,40 @@ def _definitions():
     return load_stack_definitions(extension_root=EXTENSION_ROOT)
 
 
+def _resolve_bundled(*stack_ids: str):
+    return resolve_stacks(list(stack_ids), _definitions())
+
+
+@pytest.mark.unit
+def test_runnability_browser_3d_with_persistence_requires_browser_and_postgres_observations() -> None:
+    resolved = _resolve_bundled("browser-3d-game", "game-persistence-postgres")
+
+    assert resolved.runnability.policy == "required"
+    assert resolved.runnability.runner == "linux_container"
+    assert resolved.runnability.required_observations == (
+        "browser_dom",
+        "postgres_query",
+    )
+    assert "DATABASE_URL" in resolved.services[0].environment_names
+
+
+@pytest.mark.unit
+def test_runnability_browser_wasm_requires_linux_container_user_journey() -> None:
+    resolved = _resolve_bundled("browser-wasm-game")
+
+    assert resolved.runnability.policy == "required"
+    assert resolved.runnability.runner == "linux_container"
+    assert "browser_dom" in resolved.runnability.required_observations
+
+
+@pytest.mark.unit
+def test_runnability_ios_records_future_macos_runner_without_required_policy() -> None:
+    resolved = _resolve_bundled("ios-ar-game")
+
+    assert resolved.runnability.runner == "macos_simulator"
+    assert resolved.runnability.policy == "advisory"
+
+
 @pytest.mark.unit
 def test_loads_bundled_stack_catalog() -> None:
     definitions = _definitions()

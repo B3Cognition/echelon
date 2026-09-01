@@ -165,3 +165,35 @@ def test_build_finalize_consumes_documentation_gate() -> None:
     assert "docs-verification-report.md" in text
     assert "TECH WRITER" in text
     assert "Documentation Convergence Gate" in text
+
+
+def test_tech_writer_uses_current_runnability_evidence_without_inventing_commands() -> None:
+    text = (ROOT / "prosaic/subagents/echelon.tech-writer.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert ".echelon/runnability.yml" in text
+    assert "user-runnability" in text
+    assert "exact" in text.lower()
+    assert "NEVER invent" in text
+
+
+def test_docs_verifier_requires_current_runnability_digest_for_final_pass() -> None:
+    text = (ROOT / "prosaic/subagents/echelon.docs-verifier.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "runnability_evidence_sha256" in text
+    assert "runnability_commands_current" in text
+    assert "NEVER pass" in text
+    assert "provisional" in text.lower()
+
+
+def test_build_finalize_blocks_missing_failed_stale_or_provisional_runnability() -> None:
+    text = (ROOT / "runtime/workflow/phases/build-8-finalize.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "user-runnability" in text
+    for state in ("missing", "failed", "stale", "provisional"):
+        assert state in text.lower()

@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "1.2"
 stack:
   id: ios-ar-game
   name: iPhone AR Game
@@ -20,6 +20,17 @@ requires:
   commands:
     - swift
     - xcodebuild
+runnability:
+  classification: user_facing
+  policy: advisory
+  runner: macos_simulator
+  capabilities:
+    - install
+    - start
+    - readiness
+    - primary_journey
+    - stop
+  required_observations: []
 detection:
   positive:
     technologies:

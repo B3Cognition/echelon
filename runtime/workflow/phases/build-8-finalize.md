@@ -50,6 +50,11 @@ echelon.engineering-manager (ENGINEERING MANAGER) must confirm:
 3. The build is ready for full echelon.verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
 5. **Documentation Convergence Gate passed**: `documentation-impact-report.md` and `docs-verification-report.md` exist; when docs are required, `README.md` and `CHANGELOG.md` were updated, README.md works as a first-run manual for runnable projects, CHANGELOG.md follows Keep a Changelog-style `[Unreleased]` entries, and DOCS VERIFIER returned PASS.
+6. **User-runnability evidence is current**: for a required stack, the
+   harness-owned `user-runnability` report exists and is passing, its product,
+   candidate-contract, and resolved-stack hashes still match, and the final docs
+   report is not provisional. A missing, failed, stale, or provisional result
+   always routes to rework or the explicit owner-controlled deferral path.
 
 If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 
@@ -144,6 +149,7 @@ Verify all report files are populated:
 - `progress-report.md` — One section per task + summary
 - `documentation-impact-report.md` — README/CHANGELOG impact decision and update evidence
 - `docs-verification-report.md` — README/CHANGELOG quality verification and repair-loop evidence
+- `evidence/user-runnability/report.json` — harness-owned composed first-run evidence when required
 - `gap-report.md` — Verification coverage and gaps
 - `verification-summary.md` — Final PASS / FAIL completion verdict
 

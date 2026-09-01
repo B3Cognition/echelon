@@ -17,3 +17,17 @@ Browser storage may cache data or support offline play but is not the durable
 source of truth. Do not add a second durable database, unauthenticated direct
 database access, or client-only source-of-truth storage without an explicit
 architecture amendment.
+
+## Composed persistence observation
+
+When combined with a required browser game stack, the candidate
+`.echelon/runnability.yml` must declare a persistence probe. Echelon keeps the
+attempt-scoped Postgres sidecar running, writes a unique marker through the real
+application journey, restarts the declared application boundary, and verifies
+the same marker with a harness-owned direct `postgres_query` observation.
+`DATABASE_URL` is injected into the sandbox for this composition; do not require
+the user to install project dependencies or a database on the host.
+
+The report under `evidence/user-runnability/` is authoritative. README commands
+must match its observed provision/bootstrap/start/open/stop facts, which are
+shown by `echelon delivery status <spec_id>` after a passing run.

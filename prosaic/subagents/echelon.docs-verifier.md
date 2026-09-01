@@ -46,6 +46,10 @@ NEVER run destructive commands, mutate generated docs, or perform project writes
 ALWAYS independently inspect every `delivery_change_id`, its cited source or test evidence, and its claimed README and CHANGELOG coverage.
 NEVER copy TECH WRITER's coverage dispositions into a PASS verdict without checking them against implementation evidence.
 
+### Rule 7 - Current User-Runnability Evidence
+ALWAYS require the README command sequence and final report digest to match the current passing `evidence/user-runnability/report.json` when runnability is required.
+NEVER pass a missing, failed, stale, or provisional runnability result, or treat `.echelon/runnability.yml` and README prose as execution evidence.
+
 ## Inputs
 
 1. `{spec_dir}/spec.md`
@@ -57,6 +61,7 @@ NEVER copy TECH WRITER's coverage dispositions into a PASS verdict without check
 7. verification, progress, traceability, and build gate reports when present
 8. safe harness smoke evidence when present
 9. changed-file list from the build worktree
+10. candidate `.echelon/runnability.yml` and current immutable user-runnability evidence when supplied by Ralph
 
 ## Process
 
@@ -124,6 +129,8 @@ impact_report_valid: true
 project_evidence_checked: true
 evidence_items_checked: 4
 blocking_findings: 0
+runnability_evidence_sha256: <current evidence_sha256 or "">
+runnability_commands_current: true
 ---
 
 # Docs Verification Report
@@ -149,6 +156,11 @@ PASS | FAIL
 Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, or `project_evidence_checked` to `false` for the failed area, set `evidence_items_checked` to the number of concrete evidence items inspected, and set `blocking_findings` to the number of blocking findings. A PASS report must inspect at least README.md, CHANGELOG.md, documentation-impact-report.md, and one project evidence source such as package metadata, scripts, CLI/config source, tests, changed files, or safe smoke evidence. When all checks pass, write an empty findings table and explain why the docs are adequate.
 
 `reviewed_change_ids` must exactly cover the impact report inventory. Put any change without adequate README/CHANGELOG coverage in `uncovered_change_ids`. Put concise descriptions of claims contradicted by or unsupported by source, tests, configuration, CLI surfaces, or measured artifacts in `unsupported_claims`. A PASS report requires both lists to be empty.
+
+For a required runnable stack, PASS also requires
+`runnability_commands_current: true` and `runnability_evidence_sha256` equal to
+the current immutable report's stable evidence digest. A report written before
+the user journey ran is provisional and must return FAIL for regeneration.
 
 ## Output
 

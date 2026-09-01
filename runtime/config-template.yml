@@ -1198,6 +1198,22 @@ deploy:
 #
 # Infrastructure capabilities such as Postgres, Kafka, and Flink should be
 # selected through their own stacks when those stacks exist.
+#
+# User-facing browser stacks can require a deterministic runnability gate. The
+# stack selection below owns only policy and runner choice. Put project-specific
+# commands in the candidate worktree at `.echelon/runnability.yml`; never add
+# install/start/login/gameplay commands to this config file. Contract schema 1
+# supports browser, HTTP, and exec journeys plus browser_dom, http, exec, and
+# postgres_query observations. Echelon runs them in a fresh sandbox and stores
+# immutable evidence under:
+#   runs/targets/<target>/runs/<build>/evidence/user-runnability/
+#
+# After delivery, print the exact successful local commands with:
+#   echelon delivery status <spec_id>
+# A required failure remains current-spec work unless the owner explicitly runs:
+#   echelon spec defer-runnability <spec_id> --reason "<reason>"
+# Restore it to current work with:
+#   echelon spec plan-runnability <spec_id>
 stacks:
   selected: []
   # Optional guard. When set, selected stacks must apply to at least one listed
