@@ -5545,6 +5545,11 @@ class RalphController:
             ),
             env={
                 "ECHELON_HARNESS_RUN": "1",
+                # Corepack uses Node's fetch implementation. Conventional
+                # HTTP(S)_PROXY alone is not honoured unless this opt-in is
+                # present, which would otherwise make clean Node sandboxes try
+                # external DNS from the internal-only network.
+                "NODE_OPTIONS": "--use-env-proxy",
             },
             secrets_env={},
             post_create_command=None,
