@@ -89,6 +89,55 @@ def test_legacy_deepen_parser_keeps_runwide_and_semantic_limits_distinct() -> No
 
 
 @pytest.mark.unit
+def test_re_v2_cli_dispatch_deadline_is_bounded_independently_of_run_budget() -> None:
+    from echelon.cli import _bound_re_v2_executor_active_ms
+    from tests.unit.test_re_v2_protocol_25_inputs import _executor_fixture
+
+    catalog, _objects = _executor_fixture()
+    catalog = replace(
+        catalog,
+        inherited_catalog=replace(
+            catalog.inherited_catalog,
+            entries=tuple(
+                replace(
+                    entry,
+                    limits=replace(
+                        entry.limits,
+                        max_active_ms_per_dispatch=43_200_000,
+                    ),
+                )
+                for entry in catalog.inherited_catalog.entries
+            ),
+        ),
+        semantic_entries=tuple(
+            replace(
+                entry,
+                limits=replace(
+                    entry.limits,
+                    max_active_ms_per_dispatch=43_200_000,
+                ),
+            )
+            for entry in catalog.semantic_entries
+        ),
+    )
+    baseline_before = catalog.inherited_catalog.entry_for("compact-baseline")
+    assert baseline_before.limits.max_active_ms_per_dispatch == 43_200_000
+
+    bounded = _bound_re_v2_executor_active_ms(catalog)
+
+    assert (
+        bounded.inherited_catalog.entry_for(
+            "compact-baseline"
+        ).limits.max_active_ms_per_dispatch
+        == 1_800_000
+    )
+    assert {
+        entry.limits.max_active_ms_per_dispatch
+        for entry in bounded.semantic_entries
+    } == {1_800_000}
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "args",
     (
@@ -153,6 +202,72 @@ def test_exact_protocol_25_child_lookup_reuses_manifest_in_every_state(
         manifest.semantic_request_id,
     ) == child
     assert find_exact_protocol_25_child(tmp_path, f"sha256:{'0' * 64}") is None
+
+
+@pytest.mark.unit
+def test_corrected_l3_checkpoint_authority_reuses_domains_but_not_legacy_sources() -> None:
+    from types import SimpleNamespace
+
+    from echelon.cli import _re_v25_expected_checkpoint_work_items
+    from tests.unit.test_re_v2_protocol_25_graph import (
+        _audit_items,
+        _complete_l2,
+        _fixture,
+    )
+
+    legacy, _inputs, legacy_authority, parent, legacy_accepted = _fixture(
+        all_sources=True,
+        engine_protocol_version="2.5",
+    )
+    corrected, corrected_inputs, corrected_authority, corrected_parent, corrected_accepted = _fixture(
+        all_sources=True,
+        engine_protocol_version="2.5.1",
+    )
+    _complete_l2(legacy, legacy_authority, legacy_accepted)
+    _complete_l2(corrected, corrected_authority, corrected_accepted)
+    legacy_items = _audit_items(legacy, legacy_accepted)
+    corrected_items = _re_v25_expected_checkpoint_work_items(
+        corrected,
+        SimpleNamespace(
+            accepted_parent={
+                template_id: (
+                    corrected.template_by_id[template_id],
+                    artifact,
+                )
+                for template_id, artifact in corrected_accepted.items()
+            }
+        ),
+        (),
+    )
+    expected_ids = {item.output_key.identity: item.work_item_id for item in corrected_items}
+
+    legacy_domains = tuple(
+        item for item in legacy_items if item.output_key.scope.domain_key is not None
+    )
+    legacy_sources = tuple(
+        item for item in legacy_items if item.output_key.scope.domain_key is None
+    )
+    assert legacy_domains
+    assert legacy_sources
+    assert all(
+        expected_ids[item.output_key.identity] == item.work_item_id
+        for item in legacy_domains
+    )
+    changed_sources = tuple(
+        item
+        for item in legacy_sources
+        if expected_ids.get(item.output_key.identity) != item.work_item_id
+    )
+    unchanged_sources = tuple(set(legacy_sources) - set(changed_sources))
+    domain_count_by_source = {
+        source.source_id: len(source.domains)
+        for source in corrected_inputs.workspace_partition.sources
+    }
+    assert changed_sources
+    assert all(
+        domain_count_by_source[item.output_key.scope.source_id] == 0
+        for item in unchanged_sources
+    )
 
 
 @pytest.mark.unit
@@ -332,6 +447,68 @@ def test_continue_routes_distinct_runwide_and_semantic_authorization(
 
 
 @pytest.mark.unit
+def test_re_continue_validation_error_uses_shared_branded_card(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_re_continue(["re-one", "re-two"])
+
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert "✈ echelon · RE ERROR" in error
+    assert "echelon re continue" in error
+    assert "usage: echelon re continue [<run-id>]" in error
+
+
+@pytest.mark.unit
+def test_continue_accepts_explicit_schema5_l3_run_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import cli
+    from tests.re_v2_protocol_26_fixtures import manifest_v5
+
+    run_id = "re-schema5-l3"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    calls: list[tuple[Path, dict[str, object]]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest_v5("L3", run_id=run_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v2_continue",
+        lambda received, **options: calls.append((received, options)),
+    )
+
+    cli._cmd_re_continue(
+        [
+            run_id,
+            "--re-time-limit-minutes",
+            "720",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ]
+    )
+
+    assert calls == [
+        (
+            run_dir,
+            {
+                "token_limit": None,
+                "time_limit_minutes": 720,
+                "semantic_time_limit_minutes": 720,
+            },
+        )
+    ]
+
+
+@pytest.mark.unit
 def test_typer_continue_forwards_semantic_authorization_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -359,6 +536,39 @@ def test_typer_continue_forwards_semantic_authorization_flags(
         "--re-semantic-time-limit-minutes",
         "30",
     ]]
+
+
+@pytest.mark.unit
+def test_typer_continue_help_says_resource_limits_are_absolute_totals() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "continue", "--help"],
+        env={"COLUMNS": "200"},
+    )
+
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "RE v2 run ID below runs/" in normalized
+    assert "absolute total token ceiling" in normalized
+    assert "absolute total active-time ceiling" in normalized
+
+
+@pytest.mark.unit
+def test_typer_deepen_help_explains_automatic_l3_prerequisite_flow() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "deepen", "--help"],
+        env={"COLUMNS": "200"},
+    )
+
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "L4 automatically creates or reuses its required L3 prerequisite" in normalized
+    assert "rerun the same deepen command after L3 completes" in normalized
 
 
 @pytest.mark.unit
