@@ -87,6 +87,8 @@ def test_browser_stack_context_explains_candidate_owned_runnability_contract() -
     assert "expectation: status_200" in stack_context
     assert "persistence_probe:" in stack_context
     assert "invent aliases such as `runtime`, `provision`" in stack_context
+    assert "`expect` requires `selector` plus `state`" in stack_context
+    assert "`text:<exact text>`" in stack_context
 
 
 @pytest.mark.unit

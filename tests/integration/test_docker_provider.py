@@ -23,6 +23,7 @@ import pytest
 
 from harness.docker_provider import (
     DockerWorktreeProvider,
+    _loopback_proxy_bypass,
     _generate_squid_conf,
     _check_credential_leak,
     _run_docker,
@@ -113,6 +114,21 @@ def test_generated_proxy_policy_allows_registry_without_host_network() -> None:
 def test_podman_proxy_uses_podman_egress_network() -> None:
     provider = DockerWorktreeProvider(container_cli="podman")
     assert provider._container_cli == "podman"
+
+
+def test_loopback_proxy_bypass_preserves_owner_hosts() -> None:
+    upper, lower = _loopback_proxy_bypass(
+        {"NO_PROXY": "owner.internal,127.0.0.1", "no_proxy": "legacy.internal"}
+    )
+
+    assert upper == lower
+    assert upper.split(",") == [
+        "owner.internal",
+        "127.0.0.1",
+        "legacy.internal",
+        "localhost",
+        "::1",
+    ]
 
 
 @pytest.mark.integration

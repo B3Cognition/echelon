@@ -96,6 +96,8 @@ class RecordingProvider:
             stage = "start"
         elif "echelon-runnability-readiness" in cmd:
             stage = "readiness"
+        elif "echelon-runnability-app-logs" in cmd:
+            return _ok("application process log: API failed to bind")
         elif "user-runnability-browser.mjs" in cmd:
             stage = "primary_journey"
         elif cmd == "restart-application":
@@ -408,3 +410,24 @@ def test_runner_rejects_omitting_stack_required_observation(
     assert result.failure_class == "mocked_dependency_detected"
     assert "stack-required observation 'http'" in result.summary
     assert provider.created == []
+
+
+@pytest.mark.unit
+def test_readiness_failure_includes_background_application_logs(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider(fail_at="readiness")
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=_contract(),
+        resolved=_resolved(),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+
+    assert result.status == "not_runnable"
+    assert result.failure_class == "readiness_failed"
+    assert "application process log: API failed to bind" in result.summary
+    assert any("echelon-runnability-app-logs" in command for command in provider.commands)

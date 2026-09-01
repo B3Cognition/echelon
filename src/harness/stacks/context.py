@@ -187,6 +187,15 @@ primary_journey:
 stop_commands:
   - <application stop command>
 ```
+
+Journey step rules are exact: `goto` requires `path`; `click` and `fill` require
+`selector` (`fill` also requires `value`); `press` requires `key`;
+`expect` requires `selector` plus `state`; and `exec` requires `command`. A browser DOM
+observation supports `present`, `absent`, `visible`, `hidden`, or
+`text:<exact text>`. HTTP observations support `status_<code>` or
+`contains:<text>`. Postgres observations support `one_row_exact`, `one_row`, or
+`zero_rows`. An application restart must stop the old application boundary
+before starting it again; Echelon keeps provisioned sidecars alive.
 """.rstrip()
 
 

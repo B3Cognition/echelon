@@ -232,11 +232,13 @@ class RunnabilityRunner:
             started = True
 
             readiness = self._wait_for_readiness(handle, contract, variables)
-            stages.append(readiness)
             if readiness.status != "passed":
+                readiness = self._attach_application_logs(handle, readiness)
+                stages.append(readiness)
                 raise _StageFailure(
                     "readiness", "readiness_failed", _stage_error(readiness)
                 )
+            stages.append(readiness)
 
             primary = self._run_observations(
                 handle,
@@ -289,6 +291,9 @@ class RunnabilityRunner:
                     handle, contract, variables, stage_name="readiness_after_restart"
                 )
                 if readiness_after.status != "passed":
+                    readiness_after = self._attach_application_logs(
+                        handle, readiness_after
+                    )
                     stages.append(readiness_after)
                     raise _StageFailure(
                         "readiness_after_restart",
@@ -565,6 +570,32 @@ class RunnabilityRunner:
                 stderr=b"No harness-owned observation executed.",
             )
         return _combine_results(stage_name, command_labels, results)
+
+    def _attach_application_logs(
+        self,
+        handle: SandboxHandle,
+        stage: RunnabilityStage,
+    ) -> RunnabilityStage:
+        """Attach bounded background-process output to a readiness failure."""
+        command = (
+            "sh -lc 'for file in /tmp/echelon-runnability-app-*.log; do "
+            "test ! -f \"$file\" || { echo \"== $file ==\"; tail -n 120 \"$file\"; }; "
+            "done' # echelon-runnability-app-logs"
+        )
+        result = self._provider.exec(
+            handle,
+            command,
+            cwd="/workspace",
+            timeout_ms=10_000,
+        )
+        diagnostics = "\n".join(
+            item.strip() for item in (result.stdout, result.stderr) if item.strip()
+        )
+        if not diagnostics:
+            return stage
+        existing = stage.stderr.decode(errors="replace").rstrip()
+        message = f"{existing}\nApplication process logs:\n{diagnostics}".lstrip()
+        return replace(stage, stderr=message.encode())
 
     def _run_browser(
         self,

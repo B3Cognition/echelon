@@ -82,6 +82,22 @@ TRUNCATION_TAIL_RATIO = 0.80
 # Timeout for docker commands themselves
 DOCKER_CMD_TIMEOUT = 30
 _SAFE_PROXY_HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
+_LOOPBACK_PROXY_BYPASS = ("localhost", "127.0.0.1", "::1")
+
+
+def _loopback_proxy_bypass(env: Dict[str, str]) -> tuple[str, str]:
+    """Preserve owner bypasses while keeping sandbox-local traffic off Squid."""
+    hosts: list[str] = []
+    for value in (env.get("NO_PROXY", ""), env.get("no_proxy", "")):
+        for item in value.split(","):
+            host = item.strip()
+            if host and host not in hosts:
+                hosts.append(host)
+    for host in _LOOPBACK_PROXY_BYPASS:
+        if host not in hosts:
+            hosts.append(host)
+    bypass = ",".join(hosts)
+    return bypass, bypass
 
 
 def _generate_squid_conf(allowlist: List[str]) -> str:
@@ -359,11 +375,14 @@ class DockerWorktreeProvider(SandboxProvider):
             # Set proxy env vars so sandbox routes through Squid
             if proxy_container_id:
                 proxy_name = f"harness-proxy-{session_id}"
+                no_proxy, lower_no_proxy = _loopback_proxy_bypass(spec.env)
                 docker_args.extend([
                     "--env", f"http_proxy=http://{proxy_name}:3128",
                     "--env", f"https_proxy=http://{proxy_name}:3128",
                     "--env", f"HTTP_PROXY=http://{proxy_name}:3128",
                     "--env", f"HTTPS_PROXY=http://{proxy_name}:3128",
+                    "--env", f"NO_PROXY={no_proxy}",
+                    "--env", f"no_proxy={lower_no_proxy}",
                 ])
 
             # Image + keep-alive command
