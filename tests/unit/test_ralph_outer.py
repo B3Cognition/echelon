@@ -149,9 +149,11 @@ class MockProvider(SandboxProvider):
         self._verify_idx = 0
         self.created = False
         self.destroyed = False
+        self.spec: Optional[SandboxSpec] = None
 
     def create(self, spec: SandboxSpec) -> SandboxHandle:
         self.created = True
+        self.spec = spec
         return SandboxHandle(id="mock-sandbox-1", session_id="sess-1")
 
     def exec(
@@ -8439,6 +8441,8 @@ class TestVerifyCommandNeeded:
         assert result.passed is True
         assert provider.created is True
         assert provider.destroyed is True
+        assert provider.spec is not None
+        assert provider.spec.env["NODE_OPTIONS"] == "--use-env-proxy"
 
     def test_configured_verify_writes_candidate_bound_receipt(
         self, tmp_path: Path
