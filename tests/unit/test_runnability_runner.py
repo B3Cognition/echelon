@@ -307,7 +307,7 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
     persistence_browser_plan = json.loads(
         provider.files["/tmp/echelon-user-runnability-plan.json"]
     )
-    assert persistence_browser_plan["steps"] == []
+    assert [step["action"] for step in persistence_browser_plan["steps"]] == ["goto"]
     assert validate_runnability_report(
         result.evidence,
         candidate_commit="b" * 40,

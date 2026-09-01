@@ -626,7 +626,11 @@ class RunnabilityRunner:
     ) -> ExecResult:
         plan = _expand_value(asdict(contract.primary_journey), variables)
         if not execute_steps:
-            plan["steps"] = []
+            plan["steps"] = [
+                step
+                for step in plan.get("steps", [])
+                if isinstance(step, dict) and step.get("action") == "goto"
+            ]
         plan["observation_ids"] = list(observation_ids)
         self._provider.write_file(
             handle,
