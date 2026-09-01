@@ -13,9 +13,37 @@ from harness.re_v2.protocol_28.lifecycle import (
 from tests.unit.test_re_v2_protocol_28_inputs import _fixture
 from tests.unit.test_re_v2_protocol_28_lifecycle import _PassingBackend
 from tests.unit.test_re_v2_protocol_28_lifecycle import (
+    _AlwaysMalformedProducerBackend,
     _MalformedFirstProducerBackend,
     _RepairThenPassBackend,
 )
+
+
+@pytest.mark.unit
+def test_terminal_failed_slice_status_does_not_recommend_continue(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_28.status import protocol_28_status_document
+
+    manifest, inputs = _fixture("re-l4-status-terminal-failure")
+    inputs = replace(
+        inputs,
+        manifest=replace(
+            manifest,
+            budget_policy=replace(
+                manifest.budget_policy, active_ms_limit=1_200_000
+            ),
+        ),
+    )
+    run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
+    run_protocol_28_exhaustive(
+        run_dir, lambda: _AlwaysMalformedProducerBackend()
+    )
+
+    document = protocol_28_status_document(run_dir)
+
+    assert "cannot continue" in document["next_action"]
+    assert "new L4 child" in document["next_action"]
 
 
 class _ContextPassingBackend:

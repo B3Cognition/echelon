@@ -84,6 +84,32 @@ def _bounded_text(value: object, field: str, maximum: int) -> str:
     return text
 
 
+def _ordered_provider_digest_set(value: object) -> object:
+    """Canonicalize order for a provider-emitted set without hiding bad values."""
+    if isinstance(value, (list, tuple)) and all(
+        isinstance(item, str) for item in value
+    ):
+        return tuple(sorted(value))
+    return value
+
+
+def _ordered_provider_fields(
+    value: object,
+    fields: tuple[str, ...],
+    digest_fields: frozenset[str],
+    owner: str,
+) -> dict[str, object]:
+    raw = _schema(exact_object, value, frozenset(fields), owner)
+    return {
+        field: (
+            _ordered_provider_digest_set(raw[field])
+            if field in digest_fields
+            else raw[field]
+        )
+        for field in fields
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceAnchorV1:
     schema_version: int
@@ -298,22 +324,54 @@ def normalize_candidate_result(value: object) -> ExhaustiveEvidenceSliceV1:
         ExhaustiveEvidenceSliceV1.__name__,
     )
     collections = {
-        "evidence_anchors": EvidenceAnchorV1,
-        "claims": ExhaustiveClaimV1,
-        "observations": ExhaustiveObservationV1,
+        "evidence_anchors": (
+            EvidenceAnchorV1,
+            frozenset(),
+        ),
+        "claims": (
+            ExhaustiveClaimV1,
+            frozenset({"subject_ids", "evidence_anchor_ids"}),
+        ),
+        "observations": (
+            ExhaustiveObservationV1,
+            frozenset({"subject_ids", "evidence_ids", "finding_ids"}),
+        ),
     }
     normalized: dict[str, tuple[object, ...]] = {}
-    for field, model in collections.items():
+    for field, (model, digest_fields) in collections.items():
         items = raw[field]
         if not isinstance(items, (list, tuple)):
             raise Protocol28ArtifactError(
                 f"ExhaustiveEvidenceSliceV1.{field} must be an array"
             )
-        decoded = tuple(model.from_json_dict(item) for item in items)
+        decoded = tuple(
+            model.from_json_dict(
+                _ordered_provider_fields(
+                    item,
+                    model.FIELDS,
+                    digest_fields,
+                    model.__name__,
+                )
+            )
+            for item in items
+        )
         normalized[field] = tuple(sorted(decoded, key=lambda item: item.identity))
+    repeated = frozenset(
+        {
+            "covered_primary_subject_ids",
+            "covered_primary_source_record_ids",
+            "covered_primary_evidence_ids",
+            "addressed_finding_ids",
+            "unresolved_finding_ids",
+        }
+    )
     return ExhaustiveEvidenceSliceV1(
         **{
-            field: raw[field]
+            field: (
+                _ordered_provider_digest_set(raw[field])
+                if field in repeated
+                else raw[field]
+            )
             for field in ExhaustiveEvidenceSliceV1.FIELDS
             if field not in collections
         },
@@ -348,8 +406,15 @@ class ExhaustiveDiagnosticV1:
 
     @property
     def identity(self) -> str:
-        # Detail is explanatory evidence; normalized diagnostic identity is stable.
-        return _identity({field: value for field, value in self.to_json_dict().items() if field != "detail"})
+        # Candidate binding and prose are checked separately; the normalized
+        # semantic defect identity must remain stable across repair attempts.
+        return _identity(
+            {
+                field: value
+                for field, value in self.to_json_dict().items()
+                if field not in {"candidate_id", "detail"}
+            }
+        )
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -429,11 +494,24 @@ def normalize_verification_result(value: object) -> ExhaustiveVerificationV1:
             "ExhaustiveVerificationV1.diagnostics must be an array"
         )
     decoded = tuple(
-        ExhaustiveDiagnosticV1.from_json_dict(item) for item in diagnostics
+        ExhaustiveDiagnosticV1.from_json_dict(
+            _ordered_provider_fields(
+                item,
+                ExhaustiveDiagnosticV1.FIELDS,
+                frozenset({"subject_ids", "evidence_ids", "finding_ids"}),
+                ExhaustiveDiagnosticV1.__name__,
+            )
+        )
+        for item in diagnostics
     )
+    repeated = frozenset({"verified_primary_evidence_ids", "assessed_finding_ids"})
     return ExhaustiveVerificationV1(
         **{
-            field: raw[field]
+            field: (
+                _ordered_provider_digest_set(raw[field])
+                if field in repeated
+                else raw[field]
+            )
             for field in ExhaustiveVerificationV1.FIELDS
             if field != "diagnostics"
         },

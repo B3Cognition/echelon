@@ -25,7 +25,6 @@ from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.re_v2.protocol_24.controller import Protocol24Controller
-from harness.re_v2.run_store import load_run_manifest
 
 from .artifacts import (
     AuditCandidateV1,
@@ -33,7 +32,7 @@ from .artifacts import (
     SourceCompositionAssessmentV1,
     TargetClosureAssessmentV1,
 )
-from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .events import Protocol25ReplayState
 from .runtime import (
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
@@ -887,9 +886,14 @@ class Protocol25Controller(Protocol24Controller):
                 "audit_target_id": artifact.audit_target_id,
             }
         else:
-            replay = Protocol25ReplayState()
+            replay_state = self.context.event_store.protocol.new_state()
             for event in self.context.event_store.replay():
-                replay.consume(event)
+                replay_state.consume(event)
+            replay = getattr(replay_state, "delegate", replay_state)
+            if not isinstance(replay, Protocol25ReplayState):
+                raise Protocol25ControllerError(
+                    "semantic event protocol has no protocol-2.5 delegate"
+                )
             operation = replay.semantic_operation
             if operation is None or operation.work_item_id != item.work_item_id:
                 raise Protocol25ControllerError(
@@ -973,13 +977,13 @@ class Protocol25Controller(Protocol24Controller):
     ) -> None:
         """Account a semantic retry against the protocol-2.5 event vocabulary."""
         events = self.context.event_store.replay()
-        manifest = load_run_manifest(self.context.paths.root.parent)
+        manifest = self.context.semantic_graph.manifest
         budget = evaluate_budget_v22(
             manifest.initial_budget_policy,
             events,
             (),
             self.context.clock(),
-            event_protocol=PROTOCOL_25_EVENTS,
+            event_protocol=self.context.event_store.protocol,
         )
         if budget.item_attempt_available(item):
             return

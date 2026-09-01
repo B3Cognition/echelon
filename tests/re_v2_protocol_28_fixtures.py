@@ -49,6 +49,7 @@ def exhaustive_request_v1() -> ExhaustiveRequestV1:
         parent_authority_bundle_id=digest("parent-authority-bundle"),
         l3_target_projection_catalog_id=digest("l3-target-projections"),
         snapshot_evidence_catalog_id=digest("snapshot-evidence"),
+        exhaustive_plan_id=digest("exhaustive-plan"),
         exhaustive_policy_catalog_id=digest("exhaustive-policy"),
         executor_catalog_id=digest("executor-catalog"),
         source_snapshot_id=digest("source-snapshot"),

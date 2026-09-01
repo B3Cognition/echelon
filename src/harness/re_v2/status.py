@@ -144,27 +144,39 @@ def _attach_pending_l4(run_path: Path, rendered: str, *, as_json: bool) -> str:
         recover_orchestration,
     )
 
-    matches = find_open_orchestrations_for_child(
-        workspace, run_path.name, require_unique=True
-    )
+    matches = find_open_orchestrations_for_child(workspace, run_path.name)
     if not matches:
         return rendered
-    intent = load_orchestration(matches[0])
-    projection = recover_orchestration(matches[0])
-    link = {
-        "request_id": intent.request.request_id,
-        "state": projection.state,
-        "l4_run_id": projection.l4_run_id,
-    }
+    links = []
+    for match in matches:
+        intent = load_orchestration(match)
+        projection = recover_orchestration(match)
+        links.append(
+            {
+                "request_id": intent.request.request_id,
+                "state": projection.state,
+                "l4_run_id": projection.l4_run_id,
+            }
+        )
     if as_json:
         document = json.loads(rendered)
-        document["pending_l4_orchestration"] = link
+        if len(links) == 1:
+            document["pending_l4_orchestration"] = links[0]
+        else:
+            document["pending_l4_orchestrations"] = links
         return json.dumps(document, indent=2, sort_keys=True) + "\n"
     lines = rendered.rstrip("\n").splitlines()
     insertion = max(0, len(lines) - 2)
-    lines[insertion:insertion] = [
-        f"pending L4 orchestration: {link['request_id']} ({link['state']})"
-    ]
+    if len(links) == 1:
+        attachment = [
+            f"pending L4 orchestration: {links[0]['request_id']} ({links[0]['state']})"
+        ]
+    else:
+        attachment = [f"pending L4 orchestrations: {len(links)} open"]
+        attachment.extend(
+            f"  {link['request_id']} ({link['state']})" for link in links
+        )
+    lines[insertion:insertion] = attachment
     return "\n".join(lines) + "\n"
 
 

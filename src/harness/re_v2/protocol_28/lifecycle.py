@@ -482,6 +482,17 @@ def _execute_slice(
     entry: SlicePlanEntryV1,
     slice_spec: SliceSpecV1,
 ):  # type: ignore[no-untyped-def]
+    events = context.events.replay()
+    replayed = replay_protocol_28(events)
+    if slice_spec.output_artifact_key_id in replayed.failed_output_ids:
+        terminal = next(
+            event
+            for event in events
+            if event.type == "slice_failed"
+            and event.payload["output_artifact_key_id"]
+            == slice_spec.output_artifact_key_id
+        )
+        return str(terminal.payload["reason_code"])
     diagnostics: tuple[ExhaustiveDiagnosticV1, ...] = ()
     previous_diagnostic_ids: tuple[str, ...] = ()
     policy = context.inputs.exhaustive_policy

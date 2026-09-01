@@ -23,7 +23,12 @@ from harness.re_v2.protocol_28.checkpoints import (
     L4CheckpointExpectationV1,
     Protocol28CheckpointError,
 )
+from harness.re_v2.protocol_28.artifacts import (
+    normalize_candidate_result,
+    normalize_verification_result,
+)
 from harness.re_v2.protocol_28.execution import (
+    decode_provider_result_object,
     L4ExecutionCaptureV1,
     L4ExecutionEnvelopeV1,
 )
@@ -241,13 +246,23 @@ def _execution_authority_failure(
             capture.identity != capture_id
             or capture.role != role
             or capture.result_kind != "provider_result"
-            or capture.raw_result_hash != result_id
         ):
             return "checkpoint_execution_authority_invalid"
         raw_result = objects.get(capture.raw_result_hash)
         if raw_result is None:
             return "checkpoint_execution_authority_incomplete"
         if len(raw_result) != capture.raw_byte_count:
+            return "checkpoint_execution_authority_invalid"
+        try:
+            decoded = decode_provider_result_object(raw_result)
+            normalized = (
+                normalize_candidate_result(decoded)
+                if role == "producer"
+                else normalize_verification_result(decoded)
+            )
+        except Exception:
+            return "checkpoint_execution_authority_invalid"
+        if normalized.identity != result_id:
             return "checkpoint_execution_authority_invalid"
         envelope_payload = objects.get(capture.execution_envelope_id)
         if envelope_payload is None:

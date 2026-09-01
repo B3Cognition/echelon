@@ -107,6 +107,7 @@ class ExhaustiveRequestV1:
     executor_catalog_id: str
     source_snapshot_id: str
     partition_manifest_id: str
+    exhaustive_plan_id: str | None = None
 
     FIELDS: ClassVar[tuple[str, ...]] = (
         "schema_version",
@@ -118,13 +119,20 @@ class ExhaustiveRequestV1:
         "executor_catalog_id",
         "source_snapshot_id",
         "partition_manifest_id",
+        "exhaustive_plan_id",
     )
 
     def __post_init__(self) -> None:
         label = type(self).__name__
         _schema(literal, self.schema_version, 1, f"{label}.schema_version")
-        for field in self.FIELDS[1:]:
+        for field in self.FIELDS[1:-1]:
             _schema(digest_value, getattr(self, field), f"{label}.{field}")
+        if self.exhaustive_plan_id is not None:
+            _schema(
+                digest_value,
+                self.exhaustive_plan_id,
+                f"{label}.exhaustive_plan_id",
+            )
 
     @property
     def request_id(self) -> str:
@@ -135,12 +143,28 @@ class ExhaustiveRequestV1:
         return self.request_id
 
     def to_json_dict(self) -> dict[str, object]:
-        return {field: getattr(self, field) for field in self.FIELDS}
+        return {
+            field: getattr(self, field)
+            for field in self.FIELDS
+            if field != "exhaustive_plan_id" or self.exhaustive_plan_id is not None
+        }
 
     @classmethod
     def from_json_dict(cls, value: object) -> "ExhaustiveRequestV1":
-        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
-        return cls(**{field: raw[field] for field in cls.FIELDS})
+        if not isinstance(value, dict):
+            raise Protocol28SchemaError("ExhaustiveRequestV1 must be an object")
+        fields = frozenset(cls.FIELDS)
+        legacy_fields = fields - {"exhaustive_plan_id"}
+        selected = fields if set(value) == fields else legacy_fields
+        raw = _schema(exact_object, value, selected, cls.__name__)
+        return cls(
+            **{field: raw[field] for field in selected},
+            **(
+                {}
+                if "exhaustive_plan_id" in selected
+                else {"exhaustive_plan_id": None}
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

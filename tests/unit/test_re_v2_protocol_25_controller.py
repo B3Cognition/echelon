@@ -6,7 +6,6 @@ import pytest
 
 from harness.re_v2.protocol_25 import controller as semantic_controller
 from harness.re_v2.protocol_25.controller import Protocol25Controller
-from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
 
 
 @pytest.mark.unit
@@ -27,15 +26,16 @@ def test_semantic_retry_accounting_uses_protocol_25_event_schema(
         return SimpleNamespace(item_attempt_available=lambda _item: True)
 
     monkeypatch.setattr(semantic_controller, "evaluate_budget_v22", evaluate)
-    monkeypatch.setattr(
-        semantic_controller,
-        "load_run_manifest",
-        lambda _root: SimpleNamespace(initial_budget_policy="budget-policy"),
-    )
     controller = object.__new__(Protocol25Controller)
+    outer_event_protocol = object()
     controller.context = SimpleNamespace(  # type: ignore[assignment]
-        event_store=SimpleNamespace(replay=lambda: events),
-        paths=SimpleNamespace(root=SimpleNamespace(parent="run-root")),
+        event_store=SimpleNamespace(
+            replay=lambda: events,
+            protocol=outer_event_protocol,
+        ),
+        semantic_graph=SimpleNamespace(
+            manifest=SimpleNamespace(initial_budget_policy="budget-policy")
+        ),
         clock=lambda: "2026-08-26T20:00:00Z",
     )
     controller.fault_hook = None
@@ -55,5 +55,5 @@ def test_semantic_retry_accounting_uses_protocol_25_event_schema(
         "history": events,
         "open_dispatches": (),
         "now": "2026-08-26T20:00:00Z",
-        "event_protocol": PROTOCOL_25_EVENTS,
+        "event_protocol": outer_event_protocol,
     }

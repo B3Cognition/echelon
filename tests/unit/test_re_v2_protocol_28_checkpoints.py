@@ -27,10 +27,16 @@ from tests.re_v2_protocol_28_fixtures import digest
 from tests.unit.test_re_v2_protocol_28_ledger import _captures, _pass_verification
 
 
-def _checkpoint(tmp_path: Path, *, origin: str = "re-origin"):  # type: ignore[no-untyped-def]
+def _checkpoint(
+    tmp_path: Path,
+    *,
+    origin: str = "re-origin",
+    noncanonical_provider_json: bool = False,
+):  # type: ignore[no-untyped-def]
     tmp_path.mkdir(parents=True, exist_ok=True)
     entry, spec, evidence, candidate, store, ledger, producer, verifier = _captures(
-        tmp_path
+        tmp_path,
+        noncanonical_provider_json=noncanonical_provider_json,
     )
     policy = build_initial_exhaustive_policy()
     artifact_policy_catalog_id = store.put_blob(b"artifact-policy-catalog")
@@ -118,6 +124,25 @@ def test_checkpoint_v2_round_trips_exact_slice_local_authority(tmp_path: Path) -
         decoded.accepted_slice.output_artifact_key_id
         == expectation.output_artifact_key_id
     )
+
+
+@pytest.mark.unit
+def test_checkpoint_authenticates_noncanonical_raw_provider_json(
+    tmp_path: Path,
+) -> None:
+    manifest, expectation, objects, _store = _checkpoint(
+        tmp_path,
+        noncanonical_provider_json=True,
+    )
+
+    selected = select_checkpoints_v2(
+        (expectation,),
+        (manifest,),
+        {manifest.identity: objects},
+    )
+
+    assert len(selected.selected) == 1
+    assert selected.rejected == ()
 
 
 @pytest.mark.unit

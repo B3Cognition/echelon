@@ -13,6 +13,8 @@ from harness.re_v2.protocol_28.artifacts import (
     ExhaustiveRepairPacketV1,
     ExhaustiveVerificationV1,
     Protocol28ArtifactError,
+    normalize_candidate_result,
+    normalize_verification_result,
     validate_candidate,
     validate_verification,
 )
@@ -151,6 +153,54 @@ def test_candidate_validation_normalizes_provider_nested_object_order() -> None:
 
 
 @pytest.mark.unit
+def test_provider_result_normalization_canonicalizes_unordered_digest_sets() -> None:
+    entry, spec, _evidence, candidate = _candidate_fixture()
+    low, high = sorted((digest("provider-set-a"), digest("provider-set-b")))
+    raw = candidate.to_json_dict()
+    raw["claims"][0]["subject_ids"] = [high, low]
+    raw["claims"][0]["evidence_anchor_ids"] = [high, low]
+    raw["observations"][0]["subject_ids"] = [high, low]
+    raw["observations"][0]["evidence_ids"] = [high, low]
+
+    normalized = normalize_candidate_result(raw)
+
+    assert normalized.claims[0].subject_ids == (low, high)
+    assert normalized.claims[0].evidence_anchor_ids == (low, high)
+    assert normalized.observations[0].subject_ids == (low, high)
+    assert normalized.observations[0].evidence_ids == (low, high)
+
+    diagnostic = ExhaustiveDiagnosticV1(
+        1,
+        candidate.identity,
+        entry.verifier_contract_hash,
+        "missing-planned-coverage",
+        (low,),
+        (low,),
+        (),
+        "Canonicalize provider set order.",
+    )
+    verification = ExhaustiveVerificationV1(
+        1,
+        spec.identity,
+        candidate.identity,
+        entry.verifier_contract_hash,
+        "REPAIR",
+        (diagnostic,),
+        (low,),
+        (),
+    ).to_json_dict()
+    verification["diagnostics"][0]["subject_ids"] = [high, low]
+    verification["diagnostics"][0]["evidence_ids"] = [high, low]
+    verification["verified_primary_evidence_ids"] = [high, low]
+
+    normalized_verification = normalize_verification_result(verification)
+
+    assert normalized_verification.diagnostics[0].subject_ids == (low, high)
+    assert normalized_verification.diagnostics[0].evidence_ids == (low, high)
+    assert normalized_verification.verified_primary_evidence_ids == (low, high)
+
+
+@pytest.mark.unit
 def test_verifier_pass_requires_exact_coverage_and_no_unresolved_observations() -> None:
     entry, spec, evidence, candidate = _candidate_fixture()
     unresolved = replace(
@@ -253,6 +303,7 @@ def test_diagnostic_identity_ignores_explanatory_wording_and_repair_is_closed() 
         "Evidence is insufficient.",
     )
     reworded = replace(diagnostic, detail="The cited evidence remains insufficient.")
+    rebound = replace(diagnostic, candidate_id=digest("next-candidate"))
     packet = ExhaustiveRepairPacketV1(
         1,
         spec.identity,
@@ -263,6 +314,7 @@ def test_diagnostic_identity_ignores_explanatory_wording_and_repair_is_closed() 
     )
 
     assert diagnostic.identity == reworded.identity
+    assert diagnostic.identity == rebound.identity
     assert ExhaustiveRepairPacketV1.from_json_dict(packet.to_json_dict()) == packet
 
 

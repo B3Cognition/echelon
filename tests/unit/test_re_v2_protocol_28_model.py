@@ -58,6 +58,26 @@ def test_resource_increase_does_not_change_exhaustive_request_identity() -> None
 
 
 @pytest.mark.unit
+def test_exhaustive_request_authenticates_the_exact_plan() -> None:
+    manifest = exhaustive_manifest_v7()
+
+    assert manifest.exhaustive_request.exhaustive_plan_id == manifest.exhaustive_plan_id
+
+
+@pytest.mark.unit
+def test_legacy_exhaustive_request_remains_decodable() -> None:
+    raw = exhaustive_manifest_v7().to_json_dict()
+    request = raw["exhaustive_request"]
+    assert isinstance(request, dict)
+    del request["exhaustive_plan_id"]
+
+    decoded = decode_run_manifest_v7(raw)
+
+    assert isinstance(decoded, ExhaustiveRunManifestV7)
+    assert decoded.exhaustive_request.exhaustive_plan_id is None
+
+
+@pytest.mark.unit
 def test_closure_manifest_has_no_provider_or_resource_fields() -> None:
     """A zero-call closure cannot expose dormant execution authority."""
     raw = closure_manifest_v7().to_json_dict()

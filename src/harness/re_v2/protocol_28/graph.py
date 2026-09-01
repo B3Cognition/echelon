@@ -430,8 +430,17 @@ def build_target_root(
 ) -> L4TargetRootV1:
     if not isinstance(plan, ExhaustiveTargetPlanV1):
         raise Protocol28GraphError("target root requires ExhaustiveTargetPlanV1")
+    if not isinstance(accepted_slices, (list, tuple)) or any(
+        not isinstance(item, AcceptedExhaustiveSliceV1)
+        for item in accepted_slices
+    ):
+        raise Protocol28GraphError(
+            "accepted_slices must contain AcceptedExhaustiveSliceV1 values"
+        )
     accepted = _typed(
-        accepted_slices, AcceptedExhaustiveSliceV1, "accepted_slices",
+        tuple(sorted(accepted_slices, key=lambda item: item.plan_entry_id)),
+        AcceptedExhaustiveSliceV1,
+        "accepted_slices",
         key=lambda item: item.plan_entry_id,
     )
     entries = {item.identity: item for item in plan.entries}

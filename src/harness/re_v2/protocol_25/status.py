@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping
 
-from harness.re_v2.events import EventStore
+from harness.re_v2.events import EventProtocol, EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.budget import evaluate_budget_v22
 from harness.re_v2.protocol_22.graph import plan_next_v2
@@ -35,6 +35,7 @@ from .recovery import (
     _accepted_prerequisites,
     _source_cycle_states,
     _target_states,
+    _replay_protocol_25_events,
     recover_protocol_25_run,
 )
 from harness.re_v2.protocol_22.schema import load_canonical_object
@@ -63,6 +64,8 @@ class _StatusAuthority:
     ledger: Protocol25LedgerView
     objects: ObjectStore
     state: Protocol25ControllerStateV1
+    replay: Protocol25ReplayState
+    event_protocol: EventProtocol
 
 
 def render_protocol_25_status(
@@ -112,6 +115,8 @@ def _authority(
             recovered.ledger,
             context.object_store,
             recovered.controller_state,
+            _replay_protocol_25_events(context, recovered.events),
+            context.event_store.protocol,
         )
 
     active_manifest = load_run_manifest(run_path)
@@ -203,7 +208,17 @@ def _authority(
         ),
         terminal_state=terminal,  # type: ignore[arg-type]
     )
-    return _StatusAuthority(manifest, inputs, graph, events, ledger, objects, state)
+    return _StatusAuthority(
+        manifest,
+        inputs,
+        graph,
+        events,
+        ledger,
+        objects,
+        state,
+        replay,
+        event_protocol,
+    )
 
 
 class _AvailableBudget:
@@ -217,9 +232,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
     state = authority.state
     events = authority.events
     ledger = authority.ledger
-    replay = Protocol25ReplayState()
-    for event in events:
-        replay.consume(event)  # type: ignore[arg-type]
+    replay = authority.replay
     if state.paused_resource:
         status = "paused"
     elif state.terminal_state is not None:
@@ -231,11 +244,12 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         events,  # type: ignore[arg-type]
         _open_dispatch_ids(events),  # type: ignore[arg-type]
         _utc_now(),
-        event_protocol=PROTOCOL_25_EVENTS,
+        event_protocol=authority.event_protocol,
     )
     semantic_budget = evaluate_semantic_budget(
         manifest.semantic_closure_policy,
         events,  # type: ignore[arg-type]
+        event_protocol=authority.event_protocol,
     )
     candidate_by_target = dict(replay.audit_candidates)
     targets = []
@@ -271,7 +285,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
     adopted_work_ids = {
         str(event.payload["work_item_id"])
         for event in events  # type: ignore[union-attr]
-        if event.type == "artifact_adopted"
+        if event.type in {"artifact_adopted", "checkpoint_artifact_adopted"}
     }
     accepted_lower = tuple(
         item

@@ -833,7 +833,11 @@ def stage_snapshot_evidence(
             membership_proof_id=proof_id,
         )
         if disposition.disposition == "unsupported_behavioral_content":
-            raise Protocol28EvidenceError("unsupported_behavioral_content")
+            raise Protocol28EvidenceError(
+                "unsupported_behavioral_content: "
+                f"{source_id}/{path} ({record.object_kind}, "
+                f"{record.text_status}, {record.byte_count} bytes)"
+            )
         _put_authority(object_store, disposition.identity, disposition.to_json_dict())
         dispositions.append(disposition)
         by_path[(source_id, path)] = (

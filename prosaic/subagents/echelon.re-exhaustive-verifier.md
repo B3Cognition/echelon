@@ -45,6 +45,10 @@ NEVER issue PASS while required category behavior is missing, shallow, contradic
 ALWAYS return REPAIR when `unresolved_finding_ids` is nonempty or any candidate observation has disposition `unknown` or `unresolved`, using an exact closed diagnostic class.
 NEVER return PASS for such a candidate; deterministic certification rejects that verdict even when all cited evidence is valid.
 
+### Rule 6b - Split-Local Verification
+ALWAYS assess negative space and completeness only within the assigned subjects, category, and exact primary evidence bytes.
+NEVER demand sibling slices, unassigned ranges, or global absence claims, and never issue `incomplete-negative-space` solely because that out-of-slice authority is unavailable.
+
 ### Rule 7 - Findings and Diagnostics
 ALWAYS issue REPAIR with normalized closed-class diagnostics when an assigned finding lacks support or any acceptance condition fails.
 NEVER invent diagnostic classes; use `malformed-result-contract` only for a result-contract defect and not as a semantic catch-all.

@@ -19,6 +19,7 @@ from harness.re_v2.protocol_28.inputs import (
     publish_protocol_28_run,
     stage_exhaustive_inputs,
 )
+from harness.re_v2.protocol_28.context import load_protocol_28_run_context
 from tests.unit.test_re_v2_protocol_28_inputs import _fixture
 from tests.unit.test_re_v2_protocol_28_artifacts import _candidate_fixture
 from harness.re_v2.protocol_28.artifacts import (
@@ -136,6 +137,23 @@ class _MalformedFirstProducerBackend(_PassingBackend):
                     active_ms=1000,
                 )
         return super().execute(role, agent, context, schema, reservation)
+
+
+class _AlwaysMalformedProducerBackend(_PassingBackend):
+    def execute(self, role, _agent, _context, _schema, _reservation):  # type: ignore[no-untyped-def]
+        self.roles.append(role)
+        return L4DispatchResultV1(
+            b"{}\n",
+            "test-provider",
+            "test-model",
+            "2026-08-31T12:00:00Z",
+            "2026-08-31T12:00:01Z",
+            1000,
+            token_status="trusted_exact",
+            billable_tokens=5,
+            active_status="trusted_exact",
+            active_ms=1000,
+        )
 
 
 class _RepairThenPassBackend(_PassingBackend):
@@ -618,6 +636,35 @@ def test_malformed_producer_consumes_attempt_and_releases_paired_verifier(
 
     assert completed.state == "evidence_complete"
     assert backend.roles == ["producer", "producer", "verifier"]
+
+
+@pytest.mark.unit
+def test_terminal_slice_failure_keeps_one_original_reason_on_replay(
+    tmp_path: Path,
+) -> None:
+    manifest, inputs = _fixture("re-l4-terminal-failure")
+    inputs = replace(
+        inputs,
+        manifest=replace(
+            manifest,
+            budget_policy=replace(
+                manifest.budget_policy, active_ms_limit=1_200_000
+            ),
+        ),
+    )
+    run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
+    backend = _AlwaysMalformedProducerBackend()
+
+    first = run_protocol_28_exhaustive(run_dir, lambda: backend)
+    second = run_protocol_28_exhaustive(run_dir, lambda: backend)
+    events = load_protocol_28_run_context(run_dir).events.replay()
+    failures = [event for event in events if event.type == "slice_failed"]
+
+    assert first.reason_code == second.reason_code == (
+        "semantic_repair_attempts_exhausted"
+    )
+    assert len(failures) == 1
+    assert failures[0].payload["reason_code"] == first.reason_code
 
 
 @pytest.mark.unit

@@ -85,6 +85,7 @@ def build_protocol_28_slice_context(
     repair_diagnostics: tuple[ExhaustiveDiagnosticV1, ...] = (),
     producer_attempt_number: int = 1,
     verifier_attempt_number: int | None = None,
+    _enforce_bound: bool = True,
 ) -> bytes:
     """Build one role-local context solely from the published child store."""
     if not isinstance(context, Protocol28RunContext):
@@ -241,8 +242,13 @@ def build_protocol_28_slice_context(
     maximum = inputs.exhaustive_policy.max_context_bytes
     if role == "verifier":
         maximum += inputs.exhaustive_policy.max_candidate_output_bytes
-    if len(encoded) > maximum:
-        raise Protocol28ContextError(f"{role} slice context exceeds frozen byte bound")
+    if _enforce_bound and len(encoded) > maximum:
+        raise Protocol28ContextError(
+            f"{role} slice context exceeds frozen byte bound: "
+            f"source={plan_entry.source_id} target={plan_entry.target_id} "
+            f"category={plan_entry.category_id} ordinal={plan_entry.ordinal} "
+            f"actual={len(encoded)} maximum={maximum}"
+        )
     return encoded
 
 

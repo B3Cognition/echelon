@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_24.model import SelectionScopeV1
 from harness.re_v2.protocol_28.authority import (
     ValidatedL3ParentV1,
@@ -20,7 +20,12 @@ from harness.re_v2.protocol_28.lifecycle import (
 from harness.re_v2.protocol_28.orchestration import DeepenOrchestrationRequestV1
 from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
 from harness.re_v2.protocol_28.preparation import Protocol28PreparationError
-from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+from harness.re_v2.protocol_28.context import (
+    build_protocol_28_slice_context,
+    load_protocol_28_run_context,
+)
+from harness.re_v2.protocol_28.planning import realize_slice
+from harness.re_v2.snapshot import load_snapshot_manifest
 from tests.unit.test_re_v2_protocol_28_evidence import _fixture
 
 
@@ -31,12 +36,21 @@ def _authority(values: dict[str, bytes], seed: str) -> str:
     return object_id
 
 
-def _preparation_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
+def _preparation_fixture(
+    tmp_path: Path,
+    *,
+    large_source: bool = False,
+):  # type: ignore[no-untyped-def]
+    handler = (
+        "x = '" + ("a" * 100_000) + "'\n"
+        if large_source
+        else "def handle():\n    return 'ok'\n"
+    )
     snapshot, partition = _fixture(
         tmp_path,
         {
             "README.md": "API service\n",
-            "src/orders/handler.py": "def handle():\n    return 'ok'\n",
+            "src/orders/handler.py": handler,
         },
     )
     workspace = tmp_path / "workspace"
@@ -47,7 +61,24 @@ def _preparation_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
     manifest_hash = _authority(objects, "l3-manifest")
     terminal_hash = _authority(objects, "l3-terminal")
     artifact_policy = _authority(objects, "artifact-policy")
-    partition_manifest = _authority(objects, "partition-manifest")
+    snapshot_manifest = load_snapshot_manifest(snapshot)
+    assert snapshot_manifest.components is not None
+    partition_manifest_bytes = canonical_json_bytes(
+        {
+            "partition_protocol": "re-v2-partition-v2",
+            "source_snapshot_id": snapshot.snapshot_id,
+            "sources": [
+                {
+                    "git_role": item.git_role,
+                    "id": item.source_id,
+                    "path": item.workspace_path,
+                }
+                for item in snapshot_manifest.components
+            ],
+        }
+    )
+    partition_manifest = content_digest(partition_manifest_bytes)
+    objects[partition_manifest] = partition_manifest_bytes
     lower = _authority(objects, "lower-authority")
     audit = _authority(objects, "audit-policy")
     executor = _authority(objects, "executor-policy")
@@ -156,6 +187,44 @@ def test_preparation_builds_publishable_self_contained_exact_child(
     assert (run_dir / "v2" / "run.json").is_file()
     assert inputs.executor_catalog.identity == intent.executor_catalog_id
     assert inputs.exhaustive_policy.identity == intent.exhaustive_policy_catalog_id
+    loaded = load_protocol_28_run_context(run_dir)
+    for target_plan in inputs.exhaustive_plan.target_plans:
+        for entry in target_plan.entries:
+            spec = realize_slice(
+                entry,
+                {
+                    dependency_id: dependency_id
+                    for dependency_id in entry.planned_dependency_root_ids
+                },
+            )
+            encoded = build_protocol_28_slice_context(
+                loaded,
+                target_plan,
+                entry,
+                spec,
+                role="producer",
+            )
+            assert entry.canonical_context_bytes == len(encoded)
+
+
+@pytest.mark.unit
+def test_preparation_reconstructs_partition_manifest_authority(
+    tmp_path: Path,
+) -> None:
+    """A derived partition identity must still have self-contained canonical bytes."""
+    workspace, intent, parent, options = _preparation_fixture(tmp_path)
+    reduced = replace(
+        options,
+        authority_objects={
+            key: value
+            for key, value in options.authority_objects.items()
+            if key != parent.partition_manifest_id
+        },
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, reduced)
+
+    assert parent.partition_manifest_id in inputs.authority_objects
 
 
 @pytest.mark.unit
@@ -193,3 +262,68 @@ def test_preparation_rejects_authorization_below_one_paired_dispatch(
 
     with pytest.raises(Protocol28PreparationError, match="minimum=600000"):
         prepare_protocol_28_request(workspace, intent, parent, constrained)
+
+
+@pytest.mark.unit
+def test_preparation_rejects_unsplittable_exact_provider_context(
+    tmp_path: Path,
+) -> None:
+    """Authority bytes count after base64 encoding, not merely by object ID."""
+    workspace, intent, parent, options = _preparation_fixture(tmp_path)
+    oversized_payload = b"x" * 150_000
+    oversized_id = content_digest(oversized_payload)
+    first, *remaining = parent.targets
+    oversized_target = replace(first, relevant_l2_root_ids=(oversized_id,))
+    oversized_parent = replace(
+        parent,
+        targets=tuple(sorted((oversized_target, *remaining), key=lambda item: item.sort_key)),
+        lower_l0_l2_authority_ids=tuple(
+            sorted({*parent.lower_l0_l2_authority_ids, oversized_id})
+        ),
+    )
+    oversized_options = replace(
+        options,
+        authority_objects={**options.authority_objects, oversized_id: oversized_payload},
+    )
+
+    with pytest.raises(
+        Protocol28PreparationError,
+        match="unsplittable.*context|context.*byte bound",
+    ):
+        prepare_protocol_28_request(
+            workspace,
+            intent,
+            oversized_parent,
+            oversized_options,
+        )
+
+
+@pytest.mark.unit
+def test_preparation_splits_on_exact_serialized_context_size(tmp_path: Path) -> None:
+    workspace, intent, parent, options = _preparation_fixture(
+        tmp_path,
+        large_source=True,
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+
+    assert any(
+        len(target.entries) > 1
+        for target in inputs.exhaustive_plan.target_plans
+    )
+    assert all(
+        entry.canonical_context_bytes <= inputs.exhaustive_policy.max_context_bytes
+        for target in inputs.exhaustive_plan.target_plans
+        for entry in target.entries
+    )
+    split_target = next(
+        target
+        for target in inputs.exhaustive_plan.target_plans
+        if len(target.entries) > 1
+    )
+    assert split_target.entries[0].primary_subject_ids
+    assert all(
+        entry.supporting_subject_ids
+        for entry in split_target.entries[1:]
+        if entry.primary_snapshot_evidence_ids
+    )

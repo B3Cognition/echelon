@@ -16,6 +16,7 @@ from harness.re_v2.protocol_22.graph import (
 from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.budget import evaluate_budget_v22
 from harness.re_v2.protocol_22.execution import ProviderExecutionDependenciesV1
+from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.recovery import (
     Protocol22RecoveryResult,
     Protocol22RunContext,
@@ -28,6 +29,7 @@ from harness.re_v2.protocol_26.authority import (
 from harness.re_v2.protocol_26.events import Protocol26ReplayState
 
 from .artifacts import AuditCandidateV1, AuditEpochV1
+from .budget import evaluate_semantic_budget
 from .controller import (
     Protocol25Controller,
     Protocol25ControllerActionV1,
@@ -202,6 +204,23 @@ class Protocol25RecoveryResult:
     ledger: Protocol25LedgerView
 
 
+def _replay_protocol_25_events(
+    context: Protocol25RunContext,
+    events: tuple[EventRecord, ...] | None = None,
+) -> Protocol25ReplayState:
+    """Replay through the active outer protocol, then unwrap the L3 delegate."""
+    history = context.event_store.replay() if events is None else events
+    state = context.event_store.protocol.new_state()
+    for event in history:
+        state.consume(event)
+    replay = state.delegate if isinstance(state, Protocol26ReplayState) else state
+    if not isinstance(replay, Protocol25ReplayState):
+        raise Protocol25RecoveryError(
+            "semantic recovery requires protocol-2.5 replay authority"
+        )
+    return replay
+
+
 def reconstruct_accepted_audit_results(
     context: Protocol25RunContext,
 ) -> tuple[SemanticCertificationResultV1, ...]:
@@ -213,9 +232,7 @@ def reconstruct_accepted_audit_results(
     ledger = context.ledger.replay()
     if not isinstance(ledger, Protocol25LedgerView):
         raise Protocol25RecoveryError("accepted audit has no protocol-2.5 ledger")
-    replay = Protocol25ReplayState()
-    for event in context.event_store.replay():
-        replay.consume(event)
+    replay = _replay_protocol_25_events(context)
     results = []
     for audit_target_id, candidate_hash in sorted(replay.audit_candidates.items()):
         artifact_bytes = context.object_store.read_blob(candidate_hash)
@@ -362,9 +379,7 @@ def publish_audit_epoch(
             )
 
     events = context.event_store.replay()
-    replay = Protocol25ReplayState()
-    for event in events:
-        replay.consume(event)
+    replay = _replay_protocol_25_events(context, events)
     expected_candidates = {
         item.artifact.audit_target_id: item.artifact.identity for item in ordered
     }
@@ -454,18 +469,7 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
     ledger = context.ledger.replay()
     if not isinstance(ledger, Protocol25LedgerView):
         raise Protocol25RecoveryError("schema-4 run has no protocol-2.5 ledger")
-    replay_state = context.event_store.protocol.new_state()
-    for event in events:
-        replay_state.consume(event)
-    replay = (
-        replay_state.delegate
-        if isinstance(replay_state, Protocol26ReplayState)
-        else replay_state
-    )
-    if not isinstance(replay, Protocol25ReplayState):
-        raise Protocol25RecoveryError(
-            "semantic recovery requires protocol-2.5 replay authority"
-        )
+    replay = _replay_protocol_25_events(context, events)
 
     accepted = _accepted_prerequisites(context, ledger)
     decision = plan_next_v2(
@@ -835,7 +839,6 @@ def build_source_guard_dispatch_authority(
     from .artifacts import (
         FindingClosureReceiptV1,
         SemanticResolutionOverlayV1,
-        TargetClosureAssessmentV1,
     )
 
     if (
@@ -1182,6 +1185,82 @@ def _shared_action_recovery(
         budget=budget,
         dispatch_actions={},
         operational_state="ready",
+    )
+
+
+def _execute_semantic_action(
+    context: Protocol25RunContext,
+    item: WorkItemV2,
+    recovered: Protocol25RecoveryResult,
+    initial_dependencies: ProviderExecutionDependenciesV1,
+) -> None:
+    """Admit one L3 semantic reservation before the shared dispatch boundary."""
+    shared = _shared_action_recovery(context, recovered)
+    if shared.budget is None:  # pragma: no cover - shared recovery always accounts
+        raise Protocol25RecoveryError("semantic action has no shared budget authority")
+    if shared.budget.generation_attempts.get(item.work_item_id, 0) == 0:
+        attempt_kind = "initial_generation"
+        dependencies = initial_dependencies
+    else:
+        attempt_kind = shared.budget.retry_eligibility.get(item.work_item_id)
+        if attempt_kind not in {
+            "result_contract_retry",
+            "artifact_contract_retry",
+        }:
+            raise Protocol25RecoveryError(
+                "semantic retry has no exact shared retry authority"
+            )
+        dependencies = context.dependencies_for(item, attempt_kind)
+        if not isinstance(dependencies, ProviderExecutionDependenciesV1):
+            raise Protocol25RecoveryError(
+                "semantic retry dependencies are not provider authority"
+            )
+    prepared = context.execution_store.prepare_execution(
+        item,
+        attempt_kind,
+        dependencies,
+    )
+    reservation = prepared.reservation
+    if not isinstance(reservation, DispatchReservationV1):
+        raise Protocol25RecoveryError(
+            "semantic provider action has no bounded dispatch reservation"
+        )
+    decision = evaluate_semantic_budget(
+        context.semantic_graph.manifest.semantic_closure_policy,
+        context.event_store.replay(),
+        event_protocol=context.event_store.protocol,
+    )
+    if decision.can_reserve(reservation):
+        Protocol25Controller(context)._execute_one(item, shared)
+        return
+
+    token_blocked = decision.token_limit is not None and (
+        decision.charged_tokens + reservation.billable_tokens
+        > decision.token_limit
+    )
+    active_blocked = decision.active_ms_limit is not None and (
+        decision.charged_active_ms + reservation.active_ms
+        > decision.active_ms_limit
+    )
+    reason_code = (
+        "semantic_tokens_and_active_ms_exhausted"
+        if token_blocked and active_blocked
+        else "semantic_tokens_exhausted"
+        if token_blocked
+        else "semantic_active_ms_exhausted"
+        if active_blocked
+        else "semantic_budget_authorization_required"
+    )
+    context.event_store.append(
+        "run_paused",
+        {
+            "reason": (
+                "next semantic dispatch exceeds remaining token or active-time "
+                "authorization"
+            ),
+            "reason_code": reason_code,
+        },
+        occurred_at=context.clock(),
     )
 
 
@@ -1560,10 +1639,7 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "semantic dependency resolver differs from resolution authority"
             )
-        Protocol25Controller(context)._execute_one(
-            item,
-            _shared_action_recovery(context, recovered),
-        )
+        _execute_semantic_action(context, item, recovered, dependencies)
         return
     if action.kind == "recheck_target":
         recovered = recover_protocol_25_run(context)
@@ -1585,10 +1661,7 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "semantic dependency resolver differs from closure recheck authority"
             )
-        Protocol25Controller(context)._execute_one(
-            item,
-            _shared_action_recovery(context, recovered),
-        )
+        _execute_semantic_action(context, item, recovered, dependencies)
         return
     if action.kind == "guard_source":
         recovered = recover_protocol_25_run(context)
@@ -1613,10 +1686,7 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "semantic dependency resolver differs from source guard authority"
             )
-        Protocol25Controller(context)._execute_one(
-            item,
-            _shared_action_recovery(context, recovered),
-        )
+        _execute_semantic_action(context, item, recovered, dependencies)
         return
     terminal = {
         "terminal_complete": (
@@ -1670,9 +1740,7 @@ def _source_assessment_for_action(
 ) -> object:
     from .artifacts import SourceCompositionAssessmentV1
 
-    replay = Protocol25ReplayState()
-    for event in context.event_store.replay():
-        replay.consume(event)
+    replay = _replay_protocol_25_events(context)
     cycle = replay.source_cycles.get(action.source_cycle_id or "")
     if cycle is None or cycle.source_assessment_id is None:
         raise Protocol25RecoveryError("semantic cycle has no source assessment")
@@ -1804,9 +1872,6 @@ def _accept_semantic_roots(
     if len(ledger.audit_epochs) != 1:
         raise Protocol25RecoveryError("semantic roots require one frozen epoch")
     epoch = next(iter(ledger.audit_epochs.values()))
-    replay = Protocol25ReplayState()
-    for event in recovered.events:
-        replay.consume(event)
     deferred = {
         item.observation_id: item
         for assessment in (

@@ -269,6 +269,11 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
         or request.snapshot_evidence_catalog_id != evidence.identity
         or request.exhaustive_policy_catalog_id != policy.identity
         or request.executor_catalog_id != executors.identity
+        or request.exhaustive_plan_id not in {None, plan.identity}
+        or (
+            isinstance(inputs, Protocol28CreationInputs)
+            and request.exhaustive_plan_id is None
+        )
     ):
         raise Protocol28InputError("exhaustive request does not authenticate staged inputs")
 

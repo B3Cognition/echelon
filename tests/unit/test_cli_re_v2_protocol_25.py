@@ -183,6 +183,29 @@ def test_reused_protocol_25_child_is_reported_without_execution(
 
 
 @pytest.mark.unit
+def test_reused_protocol_25_child_can_be_silent_for_l4_prerequisite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run: pytest.fail("internal prerequisite rendered operator status"),
+    )
+
+    cli._run_or_report_re_v25_child(
+        tmp_path,
+        tmp_path / "runs" / "re-existing",
+        execute=False,
+        report_existing=False,
+    )
+
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.unit
 def test_shared_cli_executor_routes_semantic_contract_and_requests_audit_file(
     tmp_path: Path,
 ) -> None:

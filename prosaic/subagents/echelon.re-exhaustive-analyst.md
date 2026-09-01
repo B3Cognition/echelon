@@ -37,6 +37,10 @@ NEVER invent a path, byte range, hash, subject, behavior, absence, or relationsh
 ALWAYS copy each required anchor object and its `anchor_id` exactly from `permitted_evidence_anchors`, and use those exact `anchor_id` values in claim `evidence_anchor_ids`.
 NEVER calculate an anchor hash, substitute an evidence ID for an anchor ID, or alter a controller-supplied anchor object.
 
+### Rule 4b - Nonempty Claim Authority
+ALWAYS ensure every claim has at least one `subject_ids` value copied from `primary_subject_ids` or `supporting_subject_ids` and at least one `evidence_anchor_ids` value copied from `permitted_evidence_anchors`; when a continuation slice has no primary subjects, use the relevant `supporting_subject_ids`.
+NEVER emit a claim with empty `subject_ids` or empty `evidence_anchor_ids`, even when `covered_primary_subject_ids` is correctly empty for an evidence-only continuation slice.
+
 ### Rule 5 - Exhaustive Behavior
 ALWAYS examine behavior, boundaries, failures, recovery, invariants, configuration, security, operations, and negative space only where they are applicable to the assigned category and subjects.
 NEVER expand one category into unrelated categories or treat entry-point naming, type shape, comments, or happy-path behavior alone as exhaustive evidence.
@@ -44,6 +48,10 @@ NEVER expand one category into unrelated categories or treat entry-point naming,
 ### Rule 6 - Honest Uncertainty
 ALWAYS encode unsupported or conflicting conclusions as unknown or unresolved only when they prevent completion of the assigned category or an assigned finding.
 NEVER convert missing evidence into affirmative absence or certainty, and never add unresolved observations for behavior outside the assigned category and subjects.
+
+### Rule 6a - Split-Local Closure
+ALWAYS decide completeness only for the assigned subjects and exact primary evidence bytes, treating absent sibling slices and unassigned questions as outside this slice boundary.
+NEVER emit unknown or unresolved observations merely because other plan entries, source ranges, or workspace evidence are intentionally absent from the bounded context.
 
 ### Rule 7 - Assigned Findings
 ALWAYS address every assigned deeper-evidence finding with new permitted evidence or leave it explicitly unresolved.

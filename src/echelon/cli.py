@@ -13467,6 +13467,13 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         snapshot_reader=snapshot_reader,
         artifact_policy=semantic_inputs.artifact_policy,
     )
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(
+        semantic_inputs.executor_contract.inherited_catalog
+    )
 
     baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
     baseline_renderer = baseline_entry.request_renderer
@@ -13529,8 +13536,17 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
             SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
@@ -15518,10 +15534,13 @@ def _run_or_report_re_v25_child(
     run_dir: Path,
     *,
     execute: bool,
+    report_existing: bool = True,
 ) -> None:
     """Execute a new child or report an exact immutable child without execution."""
     if execute:
         _run_re_v2_live(_re_v2_context(workspace, run_dir))
+        return
+    if not report_existing:
         return
     from harness.re_v2.status import render_v2_status
 
@@ -15531,6 +15550,8 @@ def _run_or_report_re_v25_child(
 def _run_re_v25_deepen(
     workspace_root: Path,
     options: _ReDeepenOptions,
+    *,
+    report_existing: bool = True,
 ) -> Path:
     """Create or reuse an authenticated protocol-2.5 semantic child."""
     from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
@@ -15597,7 +15618,12 @@ def _run_re_v25_deepen(
             if isinstance(existing_manifest, RunManifestV5):
                 initialize_protocol_26_run_store(run_dir)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
+    _run_or_report_re_v25_child(
+        workspace,
+        run_dir,
+        execute=created,
+        report_existing=report_existing,
+    )
     return run_dir
 
 
@@ -15995,6 +16021,7 @@ def _run_re_v28_deepen(
         return _run_re_v25_deepen(
             root,
             _re_v28_l3_options(options, Path(parent_run)),
+            report_existing=False,
         )
 
     def create_closure(parent, l4_run):  # type: ignore[no-untyped-def]
@@ -16316,6 +16343,13 @@ def _prepare_re_v25_creation(
         authorities,
         l3_implementation,
     )
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(
+        parent.inputs.executor_contract
+    )
     baseline = parent.inputs.executor_contract.entry_for("compact-baseline")
     renderer = baseline.request_renderer
     if renderer is None:
@@ -16331,8 +16365,17 @@ def _prepare_re_v25_creation(
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
             SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),

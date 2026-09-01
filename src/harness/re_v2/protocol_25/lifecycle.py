@@ -541,10 +541,13 @@ def export_protocol_25_parent(
         Protocol25ParentCandidateV1,
         validate_protocol_25_parent,
     )
-    from .events import Protocol25ReplayState
     from .inputs import _semantic_executor_roles
     from .model import RunManifestV4
-    from .recovery import Protocol25RunContext, recover_protocol_25_run
+    from .recovery import (
+        Protocol25RunContext,
+        _replay_protocol_25_events,
+        recover_protocol_25_run,
+    )
 
     if not isinstance(context, Protocol25RunContext):
         raise ValueError("schema-4 parent export requires Protocol25RunContext")
@@ -580,9 +583,7 @@ def export_protocol_25_parent(
     if ledger != recovered.ledger:
         raise ValueError("schema-4 parent ledger changed during export")
 
-    replay = Protocol25ReplayState()
-    for event in recovered.events:
-        replay.consume(event)
+    replay = _replay_protocol_25_events(context, recovered.events)
     accepted_target_ids = tuple(sorted(replay.audit_candidates))
     accepted_candidate_hashes = tuple(sorted(replay.audit_candidates.values()))
     unresolved_target_ids = (
@@ -1228,10 +1229,11 @@ def initialize_protocol_25_successor(
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
-    from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+    from .events import PROTOCOL_25_EVENTS
     from .inputs import load_protocol_25_inputs
     from .ledger import Protocol25Ledger
     from .model import RunManifestV4
+    from .recovery import _replay_protocol_25_events
 
     if not isinstance(exported, ExportedProtocol25Parent):
         raise ValueError("schema-4 successor initialization requires exported parent")
@@ -1336,9 +1338,10 @@ def initialize_protocol_25_successor(
     for object_id in semantic.l3_source_root_hashes if import_semantic else ():
         ledger.record_l3_source_root(roots_by_identity[object_id])
 
-    source_replay = Protocol25ReplayState()
-    for event in exported.recovered.events:
-        source_replay.consume(event)
+    source_replay = _replay_protocol_25_events(
+        exported.source_context,
+        exported.recovered.events,
+    )
     expected_events: list[tuple[str, dict[str, object]]] = [
         ("run_created", {"run_manifest_id": manifest.run_manifest_id})
     ]

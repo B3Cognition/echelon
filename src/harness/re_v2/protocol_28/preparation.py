@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Mapping
@@ -35,6 +35,11 @@ from harness.re_v2.protocol_28.inputs import (
     Protocol28CreationInputs,
     protocol_28_required_authority_ids,
 )
+from harness.re_v2.protocol_28.context import (
+    Protocol28ContextError,
+    Protocol28RunContext,
+    build_protocol_28_slice_context,
+)
 from harness.re_v2.protocol_28.model import (
     ExhaustiveBudgetPolicyV1,
     ExhaustiveRequestV1,
@@ -45,6 +50,7 @@ from harness.re_v2.protocol_28.planning import (
     ExhaustiveSubjectV1,
     build_exhaustive_plan,
     build_exhaustive_subject_catalog,
+    realize_slice,
 )
 from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
 from harness.re_v2.snapshot import (
@@ -184,6 +190,14 @@ def prepare_protocol_28_request(
         )
     subjects = _build_evidence_subjects(parent, l3, evidence)
     plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
+    plan = _bind_exact_context_sizes(
+        plan,
+        l3,
+        evidence,
+        subjects,
+        policy,
+        options.authority_objects,
+    )
     _validate_initial_reservation(plan, producer_agent, verifier_agent, options)
 
     request = ExhaustiveRequestV1(
@@ -196,6 +210,7 @@ def prepare_protocol_28_request(
         executors.identity,
         parent.source_snapshot_id,
         parent.partition_manifest_id,
+        plan.identity,
     )
     manifest = ExhaustiveRunManifestV7(
         7,
@@ -240,6 +255,12 @@ def prepare_protocol_28_request(
     candidates = dict(options.authority_objects)
     _add_authority(candidates, canonical_json_bytes(partition.to_json_dict()))
     _add_authority(candidates, canonical_json_bytes(evidence_policy.to_json_dict()))
+    partition_manifest_bytes = _partition_manifest_authority_bytes(options.snapshot)
+    if content_digest(partition_manifest_bytes) != parent.partition_manifest_id:
+        raise Protocol28PreparationError(
+            "snapshot partition authority differs from the L3 parent"
+        )
+    _add_authority(candidates, partition_manifest_bytes)
     for payload in (
         options.inherited_executor_contract_bytes,
         producer_agent,
@@ -258,7 +279,7 @@ def prepare_protocol_28_request(
         raise Protocol28PreparationError(
             "L4 parent authority closure is incomplete: " + ",".join(sorted(missing))
         )
-    return Protocol28CreationInputs(
+    created = Protocol28CreationInputs(
         manifest,
         parent,
         l3,
@@ -268,6 +289,339 @@ def prepare_protocol_28_request(
         executors,
         plan,
         {object_id: candidates[object_id] for object_id in sorted(required)},
+    )
+    _validate_provider_context_bounds(created)
+    return created
+
+
+def _validate_provider_context_bounds(inputs: Protocol28CreationInputs) -> None:
+    """Prove the exact published producer payloads fit before child creation."""
+    sizing_context = Protocol28RunContext(  # type: ignore[arg-type]
+        None,
+        inputs,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    try:
+        for target_plan in inputs.exhaustive_plan.target_plans:
+            for entry in target_plan.entries:
+                spec = realize_slice(
+                    entry,
+                    {
+                        dependency_id: dependency_id
+                        for dependency_id in entry.planned_dependency_root_ids
+                    },
+                )
+                build_protocol_28_slice_context(
+                    sizing_context,
+                    target_plan,
+                    entry,
+                    spec,
+                    role="producer",
+                )
+    except Protocol28ContextError as exc:
+        raise Protocol28PreparationError(
+            f"unsplittable exact provider context: {exc}"
+        ) from exc
+
+
+def _bind_exact_context_sizes(
+    plan,  # type: ignore[no-untyped-def]
+    l3,  # type: ignore[no-untyped-def]
+    evidence,  # type: ignore[no-untyped-def]
+    subjects,  # type: ignore[no-untyped-def]
+    policy,  # type: ignore[no-untyped-def]
+    authority_objects: Mapping[str, bytes],
+):  # type: ignore[no-untyped-def]
+    """Bind plan accounting to the byte-identical producer payload."""
+    sizing_inputs = SimpleNamespace(
+        l3_projection_catalog=l3,
+        snapshot_evidence_catalog=evidence,
+        exhaustive_subject_catalog=subjects,
+        exhaustive_policy=policy,
+        authority_objects=authority_objects,
+    )
+    sizing_context = Protocol28RunContext(  # type: ignore[arg-type]
+        None,
+        sizing_inputs,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    current = _split_oversized_context_entries(
+        plan,
+        evidence,
+        policy.max_context_bytes,
+        sizing_context,
+    )
+    for _iteration in range(8):
+        target_plans = []
+        for target_plan in current.target_plans:
+            entries = []
+            for entry in target_plan.entries:
+                measured, size = _measure_context_entry(
+                    sizing_context,
+                    target_plan,
+                    entry,
+                )
+                if size > policy.max_context_bytes:
+                    raise Protocol28PreparationError(
+                        "unsplittable exact provider context: "
+                        f"source={entry.source_id} target={entry.target_id} "
+                        f"category={entry.category_id} ordinal={entry.ordinal} "
+                        f"actual={size} maximum={policy.max_context_bytes}"
+                    )
+                entries.append(measured)
+            target_plans.append(replace(target_plan, entries=tuple(entries)))
+        updated = replace(
+            current,
+            target_plans=_rebind_composition_dependencies(tuple(target_plans)),
+        )
+        if updated == current:
+            return updated
+        current = updated
+    raise Protocol28PreparationError("exact provider context sizing did not converge")
+
+
+def _measure_context_entry(
+    sizing_context: Protocol28RunContext,
+    target_plan,  # type: ignore[no-untyped-def]
+    entry,  # type: ignore[no-untyped-def]
+):  # type: ignore[no-untyped-def]
+    """Return the fixed-point entry and exact serialized producer byte count."""
+    current = entry
+    for _iteration in range(8):
+        isolated_target = replace(target_plan, entries=(current,))
+        spec = realize_slice(
+            current,
+            {
+                dependency_id: dependency_id
+                for dependency_id in current.planned_dependency_root_ids
+            },
+        )
+        encoded = build_protocol_28_slice_context(
+            sizing_context,
+            isolated_target,
+            current,
+            spec,
+            role="producer",
+            _enforce_bound=False,
+        )
+        updated = replace(
+            current,
+            canonical_context_bytes=len(encoded),
+            conservative_tokens=len(encoded),
+        )
+        if updated == current:
+            return updated, len(encoded)
+        current = updated
+    raise Protocol28PreparationError("exact provider context sizing did not converge")
+
+
+def _split_oversized_context_entries(
+    plan,  # type: ignore[no-untyped-def]
+    evidence,  # type: ignore[no-untyped-def]
+    maximum: int,
+    sizing_context: Protocol28RunContext,
+):  # type: ignore[no-untyped-def]
+    """Split evidence bins until each byte-identical producer payload fits."""
+    record_for = {
+        **{item.shard_id: item.file_record_hash for item in evidence.shards},
+        **{item.receipt_id: item.file_record_hash for item in evidence.empty_receipts},
+        **{
+            item.disposition_id: item.file_record_hash
+            for item in evidence.nontext_dispositions
+        },
+    }
+    target_plans = []
+    for target_plan in plan.target_plans:
+        expanded = []
+        for entry in target_plan.entries:
+            measured, size = _measure_context_entry(
+                sizing_context,
+                target_plan,
+                entry,
+            )
+            if size <= maximum:
+                expanded.append(measured)
+                continue
+            evidence_ids = entry.primary_snapshot_evidence_ids
+            if len(evidence_ids) < 2:
+                raise Protocol28PreparationError(
+                    "unsplittable exact provider context: "
+                    f"source={entry.source_id} target={entry.target_id} "
+                    f"category={entry.category_id} ordinal={entry.ordinal} "
+                    f"actual={size} maximum={maximum}"
+                )
+            first_for_record: dict[str, str] = {}
+            for evidence_id in evidence_ids:
+                record_id = record_for[evidence_id]
+                if record_id in entry.primary_source_record_ids:
+                    first_for_record.setdefault(record_id, evidence_id)
+
+            chunks: list[tuple[str, ...]] = []
+            current_ids: tuple[str, ...] = ()
+            for evidence_id in evidence_ids:
+                tentative = (*current_ids, evidence_id)
+                candidate = _entry_for_evidence_chunk(
+                    entry,
+                    tentative,
+                    first_for_record,
+                    first_chunk=not chunks,
+                    ordinal=entry.ordinal + len(chunks),
+                )
+                _candidate, candidate_size = _measure_context_entry(
+                    sizing_context,
+                    target_plan,
+                    candidate,
+                )
+                if candidate_size <= maximum:
+                    current_ids = tentative
+                    continue
+                if not current_ids:
+                    raise Protocol28PreparationError(
+                        "unsplittable exact provider context: one evidence shard "
+                        f"requires {candidate_size} bytes; maximum={maximum}"
+                    )
+                chunks.append(current_ids)
+                current_ids = (evidence_id,)
+                candidate = _entry_for_evidence_chunk(
+                    entry,
+                    current_ids,
+                    first_for_record,
+                    first_chunk=False,
+                    ordinal=entry.ordinal + len(chunks),
+                )
+                _candidate, candidate_size = _measure_context_entry(
+                    sizing_context,
+                    target_plan,
+                    candidate,
+                )
+                if candidate_size > maximum:
+                    raise Protocol28PreparationError(
+                        "unsplittable exact provider context: one evidence shard "
+                        f"requires {candidate_size} bytes; maximum={maximum}"
+                    )
+            chunks.append(current_ids)
+            for index, chunk in enumerate(chunks):
+                candidate = _entry_for_evidence_chunk(
+                    entry,
+                    chunk,
+                    first_for_record,
+                    first_chunk=index == 0,
+                    ordinal=entry.ordinal + index,
+                )
+                measured, _size = _measure_context_entry(
+                    sizing_context,
+                    target_plan,
+                    candidate,
+                )
+                expanded.append(measured)
+
+        counters: dict[str, int] = {}
+        renumbered = []
+        for entry in expanded:
+            ordinal = counters.get(entry.category_id, 0)
+            counters[entry.category_id] = ordinal + 1
+            renumbered.append(replace(entry, ordinal=ordinal))
+        target_plans.append(replace(target_plan, entries=tuple(renumbered)))
+    return replace(
+        plan,
+        target_plans=_rebind_composition_dependencies(tuple(target_plans)),
+    )
+
+
+def _rebind_composition_dependencies(target_plans):  # type: ignore[no-untyped-def]
+    domain_roots: dict[str, tuple[str, ...]] = {}
+    for target_plan in target_plans:
+        if target_plan.target_kind == "domain":
+            domain_roots.setdefault(target_plan.source_id, ())
+            domain_roots[target_plan.source_id] = tuple(
+                sorted((*domain_roots[target_plan.source_id], target_plan.identity))
+            )
+    rebound = []
+    for target_plan in target_plans:
+        if target_plan.target_kind != "source":
+            rebound.append(target_plan)
+            continue
+        dependencies = domain_roots.get(target_plan.source_id, ())
+        entries = tuple(
+            replace(
+                entry,
+                planned_dependency_root_ids=(
+                    dependencies
+                    if entry.category_id == "source-composition"
+                    else entry.planned_dependency_root_ids
+                ),
+            )
+            for entry in target_plan.entries
+        )
+        rebound.append(replace(target_plan, entries=entries))
+    return tuple(rebound)
+
+
+def _entry_for_evidence_chunk(
+    entry,  # type: ignore[no-untyped-def]
+    evidence_ids: tuple[str, ...],
+    first_for_record: Mapping[str, str],
+    *,
+    first_chunk: bool,
+    ordinal: int,
+):  # type: ignore[no-untyped-def]
+    evidence_set = set(evidence_ids)
+    records = tuple(
+        record_id
+        for record_id in entry.primary_source_record_ids
+        if first_for_record.get(record_id) in evidence_set
+    )
+    return replace(
+        entry,
+        ordinal=ordinal,
+        primary_subject_ids=entry.primary_subject_ids if first_chunk else (),
+        supporting_subject_ids=(
+            entry.supporting_subject_ids
+            if first_chunk
+            else tuple(
+                sorted(
+                    {
+                        *entry.supporting_subject_ids,
+                        *entry.primary_subject_ids,
+                    }
+                )
+            )
+        ),
+        primary_source_record_ids=records,
+        primary_snapshot_evidence_ids=evidence_ids,
+        assigned_finding_ids=entry.assigned_finding_ids if first_chunk else (),
+        canonical_context_bytes=0,
+        conservative_tokens=0,
+    )
+
+
+def _partition_manifest_authority_bytes(snapshot: CapturedSnapshot) -> bytes:
+    manifest = load_snapshot_manifest(snapshot)
+    if manifest.components is None:
+        raise Protocol28PreparationError(
+            "L4 snapshot has no composite partition authority"
+        )
+    return canonical_json_bytes(
+        {
+            "partition_protocol": "re-v2-partition-v2",
+            "source_snapshot_id": manifest.snapshot_id,
+            "sources": [
+                {
+                    "git_role": item.git_role,
+                    "id": item.source_id,
+                    "path": item.workspace_path,
+                }
+                for item in manifest.components
+            ],
+        }
     )
 
 

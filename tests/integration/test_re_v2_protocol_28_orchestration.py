@@ -71,6 +71,16 @@ def test_direct_terminal_l3_resolves_to_exact_selected_authority(
     assert resolved.selected_l3.manifest_hash in resolved.authority_objects
     assert resolved.selected_l3.terminal_event_hash in resolved.authority_objects
     assert resolved.selected_l3.frozen_epoch_id in resolved.authority_objects
+    recovered = recover_protocol_25_run(context)
+    epoch = recovered.ledger.audit_epochs[resolved.selected_l3.frozen_epoch_id]
+    for target in resolved.selected_l3.targets:
+        assert target.audit_policy_id in resolved.authority_objects
+        assert target.executor_policy_id in resolved.authority_objects
+        assert target.relevant_l2_root_ids == epoch.audited_l2_root_hashes
+        assert all(
+            root_id in resolved.authority_objects
+            for root_id in target.relevant_l2_root_ids
+        )
 
 
 @pytest.mark.integration
@@ -90,6 +100,35 @@ def test_unfinished_l3_is_not_silently_bypassed_to_l2(
     monkeypatch.setattr(cli, "_re_v2_context", lambda *_args: context)
 
     with pytest.raises(Exception, match="terminal-ineligible"):
+        resolve_l4_parent(
+            workspace,
+            context.semantic_graph.manifest.run_id,
+            context.semantic_graph.manifest.selection,
+        )
+
+
+@pytest.mark.integration
+def test_resource_paused_l3_reports_distinct_prerequisite_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    context = _context(workspace / "runs")
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    context.event_store.append(
+        "run_paused",
+        {"reason": "resource ceiling reached", "reason_code": "tokens_exhausted"},
+        occurred_at="2026-08-31T12:00:01Z",
+    )
+    import echelon.cli as cli
+
+    monkeypatch.setattr(cli, "_re_v2_context", lambda *_args: context)
+
+    with pytest.raises(Exception, match="terminal-ineligible: paused_resource"):
         resolve_l4_parent(
             workspace,
             context.semantic_graph.manifest.run_id,
@@ -291,3 +330,63 @@ def test_l3_status_retains_true_header_and_links_pending_l4_intent(
     assert output.startswith("RE V2 — PROTOCOL 2.5\n")
     assert f"pending L4 orchestration: {request.request_id}" in output
     assert output.rstrip().endswith("L3 SELECTED SCOPE IN PROGRESS")
+
+
+@pytest.mark.integration
+def test_l3_status_lists_every_open_l4_intent_without_ambiguity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from harness.re_v2.status import render_v2_status
+    from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
+    from tests.unit.test_re_v2_protocol_25_inputs import _fixture as _l3_fixture
+    import harness.re_v2.protocol_25.status as l3_status
+
+    workspace = tmp_path / "workspace"
+    l3_inputs, manifest = _l3_fixture()
+    run_dir = workspace / "runs" / manifest.run_id
+    create_protocol_25_run_store(run_dir, manifest, l3_inputs)
+    monkeypatch.setattr(
+        l3_status,
+        "render_protocol_25_status",
+        lambda *_args, **kwargs: (
+            "{}\n"
+            if kwargs.get("as_json")
+            else "RE V2 — PROTOCOL 2.5\n" + "=" * 72 + "\n"
+        ),
+    )
+    requests = tuple(
+        DeepenOrchestrationRequestV1(
+            1,
+            "re-input",
+            content_digest(b"input-manifest"),
+            content_digest(b"input-terminal"),
+            manifest.source_snapshot_id,
+            manifest.partition_manifest_id,
+            replace(manifest.selection, source_ids=(source_id,)),
+            content_digest(f"l4-policy-{source_id}".encode()),
+            content_digest(b"l4-executors"),
+            content_digest(b"l3-request"),
+        )
+        for source_id in ("api", "worker")
+    )
+    for request in requests:
+        intent = create_or_load_orchestration(
+            workspace,
+            request,
+            clock=lambda: "2026-08-31T12:00:00Z",
+        )
+        DeepenOrchestrationController(
+            intent, clock=lambda: "2026-08-31T12:00:00Z"
+        ).bind_l3_child(manifest.run_id, content_digest(b"l3-manifest"))
+
+    output = render_v2_status(run_dir)
+
+    assert "pending L4 orchestrations: 2 open" in output
+    assert all(request.request_id in output for request in requests)
+    document = json.loads(render_v2_status(run_dir, as_json=True))
+    assert [item["request_id"] for item in document["pending_l4_orchestrations"]] == [
+        request.request_id for request in sorted(requests, key=lambda item: item.request_id)
+    ]

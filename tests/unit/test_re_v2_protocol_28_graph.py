@@ -73,6 +73,42 @@ def test_target_root_rejects_slice_with_mismatched_finding_assignment() -> None:
 
 
 @pytest.mark.unit
+def test_target_root_canonicalizes_accepted_input_order() -> None:
+    _plan_value, target_plan, accepted, _verifiers = _accepted_fixture()
+    second_entry = replace(target_plan.entries[0], category_id="security")
+    target_plan = replace(
+        target_plan,
+        entries=tuple(
+            sorted(
+                (*target_plan.entries, second_entry),
+                key=lambda item: (item.category_id, item.ordinal),
+            )
+        ),
+    )
+    second_spec = realize_slice(second_entry, {})
+    second = replace(
+        accepted[0],
+        plan_entry_id=second_entry.identity,
+        slice_spec_id=second_spec.identity,
+        output_artifact_key_id=second_spec.output_artifact_key_id,
+        candidate_hash=digest("second-candidate"),
+        producer_execution_capture_hash=digest("second-producer"),
+        verifier_result_hash=digest("second-verifier-result"),
+        verifier_execution_capture_hash=digest("second-verifier-capture"),
+        certification_receipt_hash=digest("second-certification"),
+        acceptance_receipt_hash=digest("second-acceptance"),
+    )
+    accepted = tuple(
+        sorted((*accepted, second), key=lambda item: item.plan_entry_id)
+    )
+
+    canonical = build_target_root(target_plan, accepted)
+    reordered = build_target_root(target_plan, tuple(reversed(accepted)))
+
+    assert reordered == canonical
+
+
+@pytest.mark.unit
 def test_run_root_requires_exact_target_root_set() -> None:
     plan, target_plan, accepted, _ = _accepted_fixture()
     target_root = build_target_root(target_plan, accepted)

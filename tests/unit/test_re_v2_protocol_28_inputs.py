@@ -89,6 +89,7 @@ def _fixture(run_id: str = "re-l4-inputs"):  # type: ignore[no-untyped-def]
         executors.identity,
         parent.source_snapshot_id,
         parent.partition_manifest_id,
+        plan.identity,
     )
     manifest = ExhaustiveRunManifestV7(
         schema_version=7,

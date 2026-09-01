@@ -241,14 +241,71 @@ def append_missing_checkpoint_events(
         )
     for event in history:
         state.consume(event)
+    l3_view = None
+    if inputs.manifest.target_layer == "L3":
+        from harness.re_v2.protocol_25.ledger import Protocol25LedgerView
+
+        l3_view = ledger.replay()
+        if not isinstance(l3_view, Protocol25LedgerView):
+            raise Protocol26AdoptionError(
+                "L3 checkpoint event requires protocol-2.5 ledger authority"
+            )
     for selection in inputs.checkpoint_selection.selected:
         if selection.source_kind != "workspace_checkpoint":
             continue
-        if selection.expected_work_item_id in state.adopted_work_items:
+        if selection.expected_work_item_id not in state.adopted_work_items:
+            event = event_store.append(
+                _CHECKPOINT_EVENT,
+                selection.to_event_payload(inputs.checkpoint_selection.identity),
+                occurred_at=clock(),
+            )
+            state.consume(event)
+        if inputs.manifest.target_layer != "L3":
+            continue
+        from harness.re_v2.protocol_22.schema import load_canonical_object
+        from harness.re_v2.protocol_25.artifacts import AuditCandidateV1
+
+        assert l3_view is not None
+        authority = selection.adopted_artifact_authority
+        certification = l3_view.semantic_certifications.get(
+            authority.certification_receipt_id
+        )
+        if certification is None:
+            continue
+        try:
+            candidate = load_canonical_object(
+                ledger.object_store.read_blob(authority.artifact_hash),
+                AuditCandidateV1.from_json_dict,
+            )
+        except Exception as exc:
+            raise Protocol26AdoptionError(
+                "L3 checkpoint is not a replayable audit candidate"
+            ) from exc
+        if (
+            candidate.identity != authority.artifact_hash
+            or certification.artifact_hash != candidate.identity
+            or certification.audit_target_id != candidate.audit_target_id
+        ):
+            raise Protocol26AdoptionError(
+                "L3 checkpoint audit authority is cross-bound"
+            )
+        payload = {
+            "audit_candidate_authority_id": candidate.identity,
+            "audit_target_id": candidate.audit_target_id,
+        }
+        delegate = cast(Protocol25ReplayState, state.delegate)
+        existing_candidate = delegate.audit_candidates.get(
+            candidate.audit_target_id
+        )
+        if existing_candidate is not None:
+            if existing_candidate != candidate.identity:
+                raise Protocol26AdoptionError(
+                    "L3 checkpoint audit event conflicts with existing authority"
+                )
             continue
         event = event_store.append(
-            _CHECKPOINT_EVENT,
-            selection.to_event_payload(inputs.checkpoint_selection.identity),
+            "audit_candidate_accepted",
+            payload,
             occurred_at=clock(),
         )
         state.consume(event)

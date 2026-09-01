@@ -583,9 +583,14 @@ def _entry(
     if len(primary_records) > policy.max_primary_records:
         raise Protocol28PlanningError("primary source record bin exceeds policy")
     subject_ids = tuple(sorted(item.identity for item in subjects))
-    lower_ids = tuple(sorted(set(
-        item for subject in subjects for item in subject.lower_authority_ids
-    )))
+    lower_ids = tuple(
+        sorted(
+            {
+                target.candidate_authority_hash,
+                *target.relevant_l2_root_ids,
+            }
+        )
+    )
     return SlicePlanEntryV1(
         1, target.target_kind, target.source_id, target.target_id, category, ordinal,
         target.identity, evidence.identity, subject_ids, (), primary_records, (),

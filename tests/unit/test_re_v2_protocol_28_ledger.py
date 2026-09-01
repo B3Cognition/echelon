@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,7 @@ def _captures(
     same_context: bool = False,
     bind_results: bool = True,
     producer_result_kind: str = "provider_result",
+    noncanonical_provider_json: bool = False,
 ):  # type: ignore[no-untyped-def]
     entry, _old_spec, evidence, candidate = _candidate_fixture()
     spec = realize_slice(entry, {})
@@ -68,7 +70,11 @@ def _captures(
         store,
         producer_envelope,
         (
-            canonical_json_bytes(candidate.to_json_dict())
+            (
+                json.dumps(candidate.to_json_dict(), indent=2).encode("utf-8")
+                if noncanonical_provider_json
+                else canonical_json_bytes(candidate.to_json_dict())
+            )
             if bind_results
             else b"producer-result"
         ),
@@ -91,7 +97,16 @@ def _captures(
         store,
         verifier_envelope,
         (
-            canonical_json_bytes(_pass_verification(entry, spec, candidate).to_json_dict())
+            (
+                json.dumps(
+                    _pass_verification(entry, spec, candidate).to_json_dict(),
+                    indent=2,
+                ).encode("utf-8")
+                if noncanonical_provider_json
+                else canonical_json_bytes(
+                    _pass_verification(entry, spec, candidate).to_json_dict()
+                )
+            )
             if bind_results
             else b"verifier-result"
         ),

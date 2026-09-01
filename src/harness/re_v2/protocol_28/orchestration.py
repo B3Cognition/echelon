@@ -951,7 +951,11 @@ def _validated_l3_parent_from_context(
     recovered = recover_protocol_25_run(context)
     state = recovered.controller_state
     if state.terminal_state not in {"complete", "blocked_plateau"}:
-        reason = state.terminal_state or "unfinished"
+        reason = (
+            "paused_resource"
+            if state.paused_resource
+            else state.terminal_state or "unfinished"
+        )
         raise DeepenOrchestrationError(f"L3 authority is terminal-ineligible: {reason}")
     if state.audit_epoch_id is None or len(recovered.ledger.audit_epochs) != 1:
         raise DeepenOrchestrationError("L3 authority has no unique frozen audit epoch")
@@ -993,6 +997,8 @@ def _validated_l3_parent_from_context(
     objects[manifest_hash] = manifest_bytes
     objects[terminal_hash] = terminal_bytes
     objects[epoch.identity] = canonical_json_bytes(epoch.to_json_dict())
+    for root_id in epoch.audited_l2_root_hashes:
+        objects[root_id] = context.object_store.read_blob(root_id)
     blockers: set[str] = set()
     targets: list[ValidatedL3TargetV1] = []
     selected_source_ids = (
@@ -1042,8 +1048,6 @@ def _validated_l3_parent_from_context(
         overlay_ids = tuple(sorted(overlays_by_target.get(target_id, ())))
         for overlay_id in overlay_ids:
             objects[overlay_id] = context.object_store.read_blob(overlay_id)
-        for lower_id in candidate.audit_target.lower_dependency_hashes:
-            objects[lower_id] = context.object_store.read_blob(lower_id)
         targets.append(
             ValidatedL3TargetV1(
                 1,
@@ -1057,7 +1061,7 @@ def _validated_l3_parent_from_context(
                 overlay_ids,
                 receipts,
                 "deeper-evidence-blocked" if unresolved else "complete",
-                candidate.audit_target.lower_dependency_hashes,
+                epoch.audited_l2_root_hashes,
                 epoch.audit_policy_hash,
                 epoch.executor_authority_hash,
                 epoch.identity,
@@ -1104,6 +1108,23 @@ def _validated_l3_parent_from_context(
     # direct parent identity.
     semantic_bytes = canonical_json_bytes(semantic_manifest.to_json_dict())
     objects[content_digest(semantic_bytes)] = semantic_bytes
+    audit_policy_bytes = canonical_json_bytes(
+        context.semantic_inputs.audit_policy.to_json_dict()
+    )
+    if content_digest(audit_policy_bytes) != epoch.audit_policy_hash:
+        raise DeepenOrchestrationError(
+            "L3 audit policy bytes differ from frozen epoch authority"
+        )
+    objects[epoch.audit_policy_hash] = audit_policy_bytes
+    audit_executor = context.semantic_inputs.executor_contract.entry_for(
+        "semantic-audit"
+    )
+    executor_bytes = canonical_json_bytes(audit_executor.to_json_dict())
+    if content_digest(executor_bytes) != epoch.executor_authority_hash:
+        raise DeepenOrchestrationError(
+            "L3 executor bytes differ from frozen epoch authority"
+        )
+    objects[epoch.executor_authority_hash] = executor_bytes
     return parent, objects
 
 
@@ -1175,7 +1196,7 @@ def execute_deepen_orchestration(
         except DeepenOrchestrationError as exc:
             reason = (
                 "l3_prerequisite_resource_blocked"
-                if "terminal-ineligible: paused" in str(exc)
+                if "terminal-ineligible: paused_resource" in str(exc)
                 else "l3_prerequisite_ineligible"
             )
             controller.block("l3", reason)
@@ -1195,7 +1216,7 @@ def execute_deepen_orchestration(
     )
 
     projection = controller.rebuild_projection()
-    if projection.state == "awaiting_l4":
+    if projection.state == "awaiting_l4" and projection.l4_run_id is None:
         created = options.l4_inputs_factory(resolved, intent)
         if not isinstance(created, Protocol28CreationInputs):
             raise DeepenOrchestrationError(
@@ -1227,11 +1248,10 @@ def execute_deepen_orchestration(
             checkpoint_adoption=checkpoint_adoption,
         )
         l4_manifest = load_run_manifest(l4_dir)
-        if projection.l4_run_id is None:
-            controller.bind_l4_child(
-                l4_manifest.run_id,
-                content_digest(canonical_json_bytes(l4_manifest.to_json_dict())),
-            )
+        controller.bind_l4_child(
+            l4_manifest.run_id,
+            content_digest(canonical_json_bytes(l4_manifest.to_json_dict())),
+        )
     else:
         if projection.l4_run_id is None:
             raise DeepenOrchestrationError("orchestration lost its L4 child binding")

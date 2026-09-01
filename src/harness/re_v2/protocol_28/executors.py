@@ -129,6 +129,7 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
         "type": "array",
         "uniqueItems": True,
     }
+    nonempty_digest_array = {**digest_array, "minItems": 1}
 
     def closed_object(
         fields: tuple[str, ...], properties: dict[str, object]
@@ -186,8 +187,21 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
                             "negative-space",
                         ]
                     },
-                    "subject_ids": digest_array,
-                    "evidence_anchor_ids": digest_array,
+                    "subject_ids": {
+                        **nonempty_digest_array,
+                        "description": (
+                            "Copy one or more IDs from plan_entry.primary_subject_ids "
+                            "or plan_entry.supporting_subject_ids. When primary_subject_ids "
+                            "is empty, use the relevant supporting_subject_ids."
+                        ),
+                    },
+                    "evidence_anchor_ids": {
+                        **nonempty_digest_array,
+                        "description": (
+                            "Copy one or more anchor_id values from "
+                            "permitted_evidence_anchors."
+                        ),
+                    },
                     "statement": {"maxLength": 4096, "type": "string"},
                 },
             ),

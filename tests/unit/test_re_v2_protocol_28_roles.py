@@ -73,6 +73,9 @@ def test_analyst_is_bounded_and_never_claims_controller_authority() -> None:
     assert "ExhaustiveEvidenceSliceV1" in body
     assert "echelon_result:" in body
     assert "verdict: DONE" in body
+    assert "absent sibling slices" in body
+    assert "every claim has at least one `subject_ids` value" in body
+    assert "supporting_subject_ids" in body
 
 
 def test_verifier_uses_fresh_context_and_cannot_modify_candidate() -> None:
@@ -84,6 +87,7 @@ def test_verifier_uses_fresh_context_and_cannot_modify_candidate() -> None:
     assert "PASS" in body and "REPAIR" in body
     assert "ExhaustiveVerificationV1" in body
     assert "malformed-result-contract" in body
+    assert "global absence claims" in body
 
 
 def test_producer_and_verifier_response_contracts_are_distinct() -> None:

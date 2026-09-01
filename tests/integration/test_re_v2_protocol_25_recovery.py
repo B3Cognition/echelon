@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from types import MappingProxyType
 
 import pytest
@@ -22,6 +23,7 @@ from harness.re_v2.protocol_22.execution import (
     Protocol22ExecutionStore,
     ProviderExecutionDependenciesV1,
 )
+from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
     plan_next_v2,
@@ -1020,7 +1022,9 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1043,6 +1047,13 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
         lambda _context, _recovered: shared_recovery,
     )
     monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
+    )
+    monkeypatch.setattr(
         Protocol25Controller,
         "_execute_one",
         lambda _self, selected, recovery: observed.append((selected, recovery)),
@@ -1051,6 +1062,105 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
     context.apply_controller_action(action)
 
     assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_resolution_pauses_before_next_reservation_exceeds_semantic_pool(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A semantic dispatch must never start when its reservation crosses the pool."""
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    audit, epoch, semantic_context, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    finding_ids = tuple(
+        finding.finding_key_id for finding in audit.normalized_findings
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=epoch.identity,
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=audit.artifact.audit_target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=finding_ids,
+                unresolved_finding_ids=finding_ids,
+            ),
+        ),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "resolve_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        context.event_store.replay(),
+        context.ledger.replay(),
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "semantic-resolution"
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic resolver\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(
+            generation_attempts={},
+            retry_eligibility={},
+        )
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_resolution_dispatch_authority",
+        lambda _context, _action: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 2_000_000, 1)
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: dispatched.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(action)
+
+    assert dispatched == []
+    pause = context.event_store.replay()[-1]
+    assert pause.type == "run_paused"
+    assert pause.payload["reason_code"] == "semantic_tokens_exhausted"
 
 
 @pytest.mark.integration
@@ -1125,7 +1235,9 @@ def test_recheck_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1146,6 +1258,13 @@ def test_recheck_action_enters_inherited_single_dispatch_kernel(
         recovery_module,
         "_shared_action_recovery",
         lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
     )
     monkeypatch.setattr(
         Protocol25Controller,
@@ -1218,7 +1337,9 @@ def test_source_guard_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1239,6 +1360,13 @@ def test_source_guard_action_enters_inherited_single_dispatch_kernel(
         recovery_module,
         "_shared_action_recovery",
         lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
     )
     monkeypatch.setattr(
         Protocol25Controller,

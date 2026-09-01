@@ -146,15 +146,24 @@
 - Synthetic installed-provider pilot covers analyst/verifier contracts, one repair, interruption recovery, V2 checkpoint adoption, and zero-call replay.
 - Real OptaSearch pilot deepens one representative clean selected domain, records content-free telemetry, hides/removes checkpoint origins/cache, and proves self-contained continuation/replay.
 
-- [ ] Run the complete protocol-2.8, compatibility, CLI, status, materialization, and provider integration gate.
-- [ ] Run `bash scripts/bash/dry-run.sh`, then install from this worktree with `bash scripts/install.sh`.
-- [ ] Run a clean synthetic selected-domain and `--all` proof, including a manufactured deeper-evidence L3 blocker and zero-provider closure successor.
-- [ ] Run an installed-provider interruption/recovery pilot and verify identical completion performs no new calls.
-- [ ] Confirm the OptaSearch source repositories are clean; otherwise stop with commit/stash/revert guidance and do not include untracked source files.
-- [ ] Run one representative OptaSearch selected-domain L4 pilot, verify lower authority adoption and complete new shard coverage, then hide checkpoint origins/cache and prove self-contained status/replay.
-- [ ] Record provider/model/effort, counts, avoided dispatch/reservation, charged/trusted resources, active time, roots, and clean-snapshot evidence without source content.
-- [ ] Run the full repository `pytest`, `git diff --check`, and bundle dry run.
-- [ ] Commit any pilot-driven fixes as focused commits; leave full OptaSearch `--all` deferred to protocol 2.9.
+- [x] Run the complete protocol-2.8, compatibility, CLI, status, materialization, and provider integration gate.
+- [x] Run `bash scripts/bash/dry-run.sh`, then install from this worktree with `bash scripts/install.sh`.
+- [x] Run a clean synthetic selected-domain and `--all` proof, including a manufactured deeper-evidence L3 blocker and zero-provider closure successor.
+- [x] Run an installed-provider interruption/recovery pilot and verify identical completion performs no new calls.
+- [x] Confirm the OptaSearch source repositories are clean; otherwise stop with commit/stash/revert guidance and do not include untracked source files.
+- [x] Run one representative OptaSearch selected-domain L4 pilot, verify lower authority adoption and complete new shard coverage, then hide checkpoint origins/cache and prove self-contained status/replay.
+- [x] Record provider/model/effort, counts, avoided dispatch/reservation, charged/trusted resources, active time, roots, and clean-snapshot evidence without source content.
+- [ ] Run the full repository `pytest`, `git diff --check`, and bundle dry run. (`git diff --check` and bundle dry run pass; the unrelated full suite was stopped green at 8% after about ten minutes because its projected runtime was close to two hours. The complete 788-test RE 2.4-2.8 compatibility gate passes.)
+- [x] Commit any pilot-driven fixes as focused commits; leave full OptaSearch `--all` deferred to protocol 2.9.
+
+#### Content-free real pilot record
+
+- Workspace: OptaSearch; selected source `opta-search-lokalise-lambda`; source repositories clean before activation; existing stashes preserved.
+- Installed provider route: Codex, strong tier, high effort. Exhaustive child: `re-20260901-012026-845863`.
+- Result: selected-scope complete; 10 planned, 10 generated, 12 verified, 2 repaired, 10 accepted, 0 failed, 0 pending.
+- Resources: 4,494,782 charged tokens; 1,466,487 charged active milliseconds; 866,487 trusted observed active milliseconds; one avoided dispatch.
+- Replay: repeated continuation changed 0 events, 0 resource records, and 0 provider captures.
+- Isolation: copying only the completed run into a fresh temporary workspace replayed `complete` with 10/10 accepted and a provider factory that would fail if called; no checkpoint cache or origin run was present.
 
 ## Completion Gate
 

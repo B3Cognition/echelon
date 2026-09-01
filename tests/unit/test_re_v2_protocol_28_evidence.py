@@ -191,7 +191,13 @@ def test_behavioral_binary_blocks_before_evidence_catalog_exists(tmp_path: Path)
     """Unknown binary source content must not be relabelled as exhaustive metadata."""
     snapshot, partition = _fixture(tmp_path, {"plugin.bin": b"\x00\x01"})
 
-    with pytest.raises(Protocol28EvidenceError, match="unsupported_behavioral_content"):
+    with pytest.raises(
+        Protocol28EvidenceError,
+        match=(
+            r"unsupported_behavioral_content: api/plugin\.bin "
+            r"\(regular, contains_nul, 2 bytes\)"
+        ),
+    ):
         stage_snapshot_evidence(
             snapshot,
             partition,

@@ -475,6 +475,11 @@ def _next_action(context, state, blocker, orchestration):  # type: ignore[no-unt
         )
     if state.blocker_kind == "closure_integrity":
         return "repair or reconstruct the deterministic closure authority"
+    if state.failed_output_ids:
+        return (
+            "address the terminal slice failures and start a new L4 child; "
+            "this immutable run cannot continue"
+        )
     if state.run_root_id is None:
         return (
             "continue exact unresolved L4 work with "
