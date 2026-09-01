@@ -2377,6 +2377,44 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "task-deliverable-missing"
         assert "T-015: README.md" in result.failures[0].error
 
+    def test_completed_task_ignores_inline_code_after_declared_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the leading code span in a Files bullet names a deliverable."""
+        worktree = tmp_path / "worktree"
+        declared_files = (
+            "apps/api/src/http/progress-routes.ts",
+            "apps/api/src/http/collection-routes.ts",
+            "package.json",
+            "apps/web/src/scene/interaction-controller.tsx",
+        )
+        for declared_file in declared_files:
+            path = worktree / declared_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n", encoding="utf-8")
+        markdown = (
+            "- [x] T-005 complexity=standard phase=authority req=FR-003 "
+            "depends=none target=sources/demo\n"
+            "\n"
+            "  **Files:**\n"
+            "  - `sources/demo/apps/api/src/http/progress-routes.ts` - strict "
+            "`GET /api/v1/progress`\n"
+            "  - `sources/demo/apps/api/src/http/collection-routes.ts` - strict "
+            "`POST /api/v1/collections`\n"
+            "  - `sources/demo/package.json` - pin `@fastify/rate-limit`\n"
+            "  - `sources/demo/apps/web/src/scene/interaction-controller.tsx` - "
+            "handle the `E` key\n"
+        )
+
+        missing = ralph._missing_completed_task_deliverables(
+            markdown,
+            task_statuses={"T-005": "DONE"},
+            worktree_path=worktree,
+            implementation_target="sources/demo",
+        )
+
+        assert missing == []
+
     def test_build_reported_task_ids_mark_canonical_tasks_done(
         self, tmp_path: Path
     ) -> None:

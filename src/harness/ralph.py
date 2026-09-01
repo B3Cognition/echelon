@@ -91,7 +91,7 @@ _BANZAI_MILESTONE_DEFER_REASON = (
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
 _TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
-_BACKTICK_PATH_RE = re.compile(r"`(?P<path>[^`]+)`")
+_TASK_FILE_BULLET_RE = re.compile(r"^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)")
 _VERIFICATION_ARTIFACT_PATHS = (
     "test-results/**",
     "playwright-report/**",
@@ -135,15 +135,17 @@ def _missing_completed_task_deliverables(
                 break
             if not in_files:
                 continue
-            for path_match in _BACKTICK_PATH_RE.finditer(task_line):
-                declared = path_match.group("path").strip().lstrip("./")
-                relative = (
-                    declared[len(target) + 1:]
-                    if target and declared.startswith(target + "/")
-                    else declared
-                )
-                if relative and not (worktree_path / relative).is_file():
-                    missing.append(f"{task_id}: {relative}")
+            path_match = _TASK_FILE_BULLET_RE.match(task_line)
+            if path_match is None:
+                continue
+            declared = path_match.group("path").strip().lstrip("./")
+            relative = (
+                declared[len(target) + 1:]
+                if target and declared.startswith(target + "/")
+                else declared
+            )
+            if relative and not (worktree_path / relative).is_file():
+                missing.append(f"{task_id}: {relative}")
     return missing
 
 
