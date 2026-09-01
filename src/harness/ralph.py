@@ -1205,6 +1205,22 @@ class RalphController:
                             final_verify=inner_result.get("final_verify"),
                         )
 
+                    if _is_task_progress_incomplete(inner_result.get("final_verify")):
+                        # Canonical task evidence is a delivery-completeness
+                        # blocker, not an implementation retry or a publication
+                        # failure. Do not consume more outer iterations or try
+                        # to checkpoint incidental verification artifacts.
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="task_progress_incomplete",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=inner_result.get("final_verify"),
+                        )
+
                     # No-progress guard: if the LLM made no file changes on a
                     # failed iteration, increment the stuck counter and escalate
                     # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.

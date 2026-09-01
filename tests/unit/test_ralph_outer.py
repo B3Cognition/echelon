@@ -7785,6 +7785,35 @@ class TestOuterLoopConvergence:
 class TestOuterLoopCap:
     """Test outer loop hits cap."""
 
+    def test_open_tasks_block_without_misreporting_publication_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Open canonical tasks are not a failed checkpoint publication."""
+        controller, _provider, gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        _commit_all(worktree)
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = worktree
+        task_gap = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "task-progress-incomplete",
+                    "canonical delivery tasks remain open: T-014, T-015.",
+                )
+            ],
+        )
+
+        with patch.object(controller, "_exec_verify", return_value=task_gap):
+            result = controller.run_loop(max_outer=5, max_inner=3)
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "task_progress_incomplete"
+        gitops.commit.assert_not_called()
+        gitops.push.assert_not_called()
+
     def test_outer_cap_reached(self, tmp_path: Path) -> None:
         """All verifications fail -> outer_cap."""
         controller, provider, gitops, state_store = _make_controller(
