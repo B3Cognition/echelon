@@ -12446,7 +12446,10 @@ def _prepare_re_v26_creation(
     from harness.re_v2.protocol_26.reconstruction import (
         reconstruct_origin_checkpoints,
     )
-    from harness.re_v2.protocol_26.selection import select_checkpoints
+    from harness.re_v2.protocol_26.selection import (
+        compatibility_mismatches,
+        select_checkpoints,
+    )
 
     if target_layer == "L1":
         if parent_run is not None or deepen_options is not None:
@@ -12562,6 +12565,18 @@ def _prepare_re_v26_creation(
             )
         except CheckpointCacheError:
             candidate_hints = ()
+        expected_by_key = {
+            item.output_key.identity: item for item in (expected_work_items or ())
+        }
+        candidate_hints = tuple(
+            candidate
+            for candidate in candidate_hints
+            if (
+                (expected := expected_by_key.get(candidate.artifact_key_id))
+                is not None
+                and not compatibility_mismatches(expected, candidate)
+            )
+        )
         hints_by_origin: dict[str, list[object]] = {}
         for candidate in candidate_hints:
             hints_by_origin.setdefault(candidate.origin_run_id, []).append(candidate)
