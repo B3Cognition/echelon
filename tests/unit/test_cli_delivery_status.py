@@ -136,6 +136,16 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("status", ["initialized", "running", "interrupted"])
+def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step({"status": status}, "001")
+
+    assert next_step == "echelon delivery run 001"
+
+
+@pytest.mark.unit
 def test_delivery_status_shows_failed_runnability_action(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
