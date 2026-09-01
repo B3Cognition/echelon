@@ -94,7 +94,8 @@ def test_writes_immutable_redacted_receipt(
     assert "abc.def.ghi" not in serialized
     assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB" not in serialized
     assert payload["status"] == "passed"
-    assert payload["authority"] == "ralph-host-verifier"
+    assert payload["authority"] == "ralph-verifier"
+    assert payload["execution"] == {"mode": "host"}
     assert validate_verification_receipt(
         ref,
         candidate_commit="a" * 40,

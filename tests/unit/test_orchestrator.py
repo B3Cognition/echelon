@@ -370,6 +370,57 @@ class TestRunMultiTarget:
         assert calls[1]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/web"
         assert calls[0]["env"]["ECHELON_DECLARED_TARGETS"] == "sources/web,sources/api"
 
+    def test_failed_target_skips_dependents_but_runs_independent_targets(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        sources = tmp_path / "sources"
+        api = sources / "a-api"
+        worker = sources / "b-worker"
+        web = sources / "c-web"
+        api.mkdir(parents=True)
+        worker.mkdir()
+        web.mkdir()
+        spec_dir = tmp_path / "specs" / "001-dashboard"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 "
+            "depends=none target=sources/a-api\n"
+            "- [ ] T-002 complexity=standard phase=worker req=FR-002 "
+            "depends=none target=sources/b-worker\n"
+            "- [ ] T-003 complexity=standard phase=web req=FR-003 "
+            "depends=T-001 target=sources/c-web\n",
+            encoding="utf-8",
+        )
+        calls: list[str] = []
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            name = Path(cwd).name
+            calls.append(name)
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 1 if name == "a-api" else 0
+            mock.wait.return_value = None
+            return mock
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = run_multi_target(
+                "001-dashboard",
+                [web, worker, api],
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+            )
+
+        assert result == 1
+        assert calls == ["a-api", "b-worker"]
+        captured = capsys.readouterr()
+        assert "c-web" in captured.err
+        assert "skipped because dependency target(s) failed: a-api" in captured.err
+        assert "✓ [b-worker]: exit 0" in captured.out
+        assert "✗ [c-web]: exit 1" in captured.out
+
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path
     ) -> None:

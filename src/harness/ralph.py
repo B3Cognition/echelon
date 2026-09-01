@@ -40,6 +40,7 @@ from harness.documentation_gate import (
 )
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
+from harness.errors import NotSupportedError, SandboxError
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
 from harness.fulfillment_runner import FulfillmentRunner
@@ -62,6 +63,7 @@ from harness.verification_evidence import (
     VerificationStage,
     write_verification_receipt,
 )
+from harness.verification_plan import build_verification_plan, materialize_services
 from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
@@ -895,6 +897,24 @@ class RalphController:
                         return self._finalize(
                             status="blocked",
                             reason="verify_command_needed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
+                    # Infrastructure cannot be repaired by the product agent.
+                    # Block immediately with a durable reason instead of consuming
+                    # build retries and misreporting a coordinator exception.
+                    if any(
+                        f.id == "sandbox-verification-unavailable"
+                        for f in verify_result.failures
+                    ):
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="sandbox_verification_unavailable",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -1820,33 +1840,172 @@ class RalphController:
             "stderr": result.stderr,
         }
 
-    def _exec_verify(self, handle: SandboxHandle, worktree_path: str = "") -> VerifyResult:
+    def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
 
-        When the LLM build runner path is active and worktree_path is provided, runs verification
-        locally on the host via the detected package manager's install + test + build
-        commands (avoids Docker networking issues where the internal network blocks
-        package downloads). Falls back to sandbox provider path otherwise.
+        Verification runs in a managed sandbox by default.  Host execution is an
+        explicit compatibility fallback only; the LLM build process itself may
+        still run on the host.
 
         Returns parsed VerifyResult.
         """
-        if self._llm_build_runner and worktree_path:
+        if (
+            self._llm_build_runner
+            and worktree_path
+            and self._config.verification.execution == "host"
+        ):
             return self._exec_verify_locally(worktree_path)
 
-        result = self._provider.exec(handle, "echelon verify", timeout_ms=600_000)
-
-        # Parse verify result from stdout
+        owned_handle = False
         try:
-            data = json.loads(result.stdout)
-            return VerifyResult.from_dict(data)
-        except (json.JSONDecodeError, Exception):
-            # If parsing fails, create a failed VerifyResult
-            return VerifyResult(
+            if handle is None:
+                handle = self._provider.create(
+                    self._build_sandbox_spec(worktree_path, 0)
+                )
+                owned_handle = True
+            verification_plan = build_verification_plan(
+                Path(worktree_path), self._config,
+                services=tuple(self._config.verification_services),
+            )
+            service_env: dict[str, str] = {}
+            verification_stages: list[VerificationStage] = []
+            if verification_plan.services:
+                start_services = getattr(self._provider, "start_services", None)
+                if start_services is None:
+                    raise NotSupportedError(
+                        "sandbox provider does not support verification services"
+                    )
+                materialized_services = materialize_services(
+                    verification_plan.services, session_id=handle.session_id
+                )
+                start_services(handle, materialized_services.services)
+                service_env = dict(materialized_services.verifier_environment)
+            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+            candidate_path = Path(worktree_path)
+            candidate_commit = (
+                _current_git_commit(candidate_path)
+                if candidate_path.is_dir()
+                else None
+            )
+            sandbox_context = {
+                "mode": "sandbox",
+                "image": verification_plan.image,
+                "network": "internal",
+                "services": [service.service_name for service in verification_plan.services],
+            }
+            for command in verification_plan.bootstrap_commands:
+                bootstrap_started_at = datetime.now(timezone.utc).isoformat()
+                bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
+                verification_stages.append(VerificationStage(
+                    name="bootstrap", command=tuple(shlex.split(command)),
+                    exit_code=bootstrap.exit_code, duration_ms=bootstrap.duration_ms,
+                    stdout=bootstrap.stdout.encode(), stderr=bootstrap.stderr.encode(),
+                    started_at=bootstrap_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ))
+                if bootstrap.exit_code != 0:
+                    failures = [FailureEntry(
+                        category=FailureCategory.BUILD,
+                        id="sandbox-bootstrap",
+                        error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
+                    )]
+                    return self._attach_host_verification_receipt(
+                        worktree_path=worktree_path,
+                        candidate_commit=candidate_commit,
+                        fingerprint_before=fingerprint_before,
+                        fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                        verifier_source="sandbox",
+                        detection_evidence=("sandbox bootstrap",),
+                        stages=tuple(verification_stages),
+                        failures=failures,
+                        duration_s=bootstrap.duration_ms / 1000.0,
+                        execution_context=sandbox_context,
+                    )
+
+            command = self._config.verify_command
+            detection_evidence: tuple[str, ...] = ("harness verify_command",)
+            legacy_sandbox_verifier = False
+            if not command:
+                if self._llm_build_runner is None:
+                    # Existing sandbox-native build providers return the
+                    # structured result from their harness verifier. Keep that
+                    # contract while LLM delivery uses detected project commands.
+                    command = "echelon verify"
+                    legacy_sandbox_verifier = True
+                else:
+                    detection = detect_verify_command(Path(worktree_path))
+                    if detection.command is None:
+                        return VerifyResult(
+                            passed=False,
+                            failures=[FailureEntry(
+                                category=FailureCategory.BUILD,
+                                id="local-verify-skipped",
+                                error=(
+                                    "no high-confidence verifier was detected; "
+                                    "set harness.verify_command"
+                                ),
+                            )],
+                        )
+                    command = detection.command
+                    detection_evidence = tuple(detection.evidence)
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
+
+            if legacy_sandbox_verifier:
+                try:
+                    return VerifyResult.from_dict(json.loads(result.stdout))
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    return VerifyResult(
+                        passed=result.exit_code == 0,
+                        failures=[] if result.exit_code == 0 else [FailureEntry(
+                            category=FailureCategory.TEST,
+                            id="verify-command",
+                            error=(result.stdout + result.stderr)[-2000:],
+                        )],
+                        duration_s=result.duration_ms / 1000.0,
+                        token_usage=_estimate_tokens(result),
+                    )
+
+            verify = VerifyResult(
                 passed=result.exit_code == 0,
-                failures=[],
+                failures=[] if result.exit_code == 0 else [FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command",
+                    error=(result.stdout + result.stderr)[-2000:],
+                )],
                 duration_s=result.duration_ms / 1000.0,
                 token_usage=_estimate_tokens(result),
             )
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                verifier_source="sandbox",
+                detection_evidence=("sandbox provider", *detection_evidence),
+                stages=(*verification_stages, VerificationStage(
+                    name="verify", command=tuple(shlex.split(command)),
+                    exit_code=result.exit_code, duration_ms=result.duration_ms,
+                    stdout=result.stdout.encode(), stderr=result.stderr.encode(),
+                    started_at=stage_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )),
+                failures=verify.failures,
+                duration_s=verify.duration_s,
+                execution_context=sandbox_context,
+            )
+        except SandboxError as exc:
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="sandbox-verification-unavailable",
+                    error=str(exc),
+                )],
+            )
+        finally:
+            if owned_handle and handle is not None:
+                self._provider.destroy(handle)
 
     def _apply_fulfillment_gate(
         self,
@@ -2974,8 +3133,9 @@ class RalphController:
         stages: tuple[VerificationStage, ...],
         failures: list[FailureEntry],
         duration_s: float,
+        execution_context: Mapping[str, object] | None = None,
     ) -> VerifyResult:
-        """Persist and attach evidence for one Ralph-owned host verification."""
+        """Persist and attach evidence for one Ralph-owned verification."""
         if not candidate_commit or not fingerprint_before or not fingerprint_after:
             missing = [
                 name
@@ -2994,7 +3154,7 @@ class RalphController:
                         category=FailureCategory.OTHER,
                         id="verification-evidence-invalid",
                         error=(
-                            "could not bind host verification to the candidate "
+                            "could not bind verification to the candidate "
                             "commit and content fingerprint; missing "
                             + ", ".join(missing)
                         ),
@@ -3006,7 +3166,7 @@ class RalphController:
             self._state_store.state_dir.parent
             / "evidence"
             / self._strategy_id
-            / "host-verification"
+            / "verification"
         )
         sequence = self._next_host_verification_attempt(evidence_dir)
         try:
@@ -3024,6 +3184,7 @@ class RalphController:
                 fingerprint_after=fingerprint_after,
                 verifier_source=verifier_source,
                 detection_evidence=detection_evidence,
+                execution_context=execution_context,
                 stages=stages,
                 attempt_sequence=sequence,
                 sensitive_environment=os.environ,
@@ -3037,7 +3198,7 @@ class RalphController:
                     FailureEntry(
                         category=FailureCategory.OTHER,
                         id="verification-evidence-invalid",
-                        error=f"could not persist host verification evidence: {exc}",
+                        error=f"could not persist verification evidence: {exc}",
                     ),
                 ],
                 duration_s=duration_s,
@@ -5360,8 +5521,15 @@ class RalphController:
         """Build SandboxSpec from config and context."""
         from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
 
+        from harness.verification_plan import build_verification_plan
+
+        verification_plan = build_verification_plan(
+            Path(worktree_path),
+            self._config,
+            services=tuple(self._config.verification_services),
+        )
         return SandboxSpec(
-            image=self._config.base_image or "python:3.9-slim",
+            image=verification_plan.image,
             image_source="config_override" if self._config.base_image else "fingerprint",
             worktree_mount=worktree_path,
             container_mount="/workspace",
@@ -5386,6 +5554,7 @@ class RalphController:
                 "spec_id": self._spec_id,
                 "run_id": str(outer_iter),
             },
+            ephemeral_volumes=["node_modules"],
         )
 
     def _append_iteration_log(

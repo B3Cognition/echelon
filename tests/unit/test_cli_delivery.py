@@ -6,11 +6,41 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from harness.config import HarnessConfig, LlmConfig
+
+
+def _write_postgres_stack_config(project_root: Path) -> None:
+    config_file = project_root / ".echelon" / "config.yml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        "stacks:\n"
+        "  selected:\n"
+        "    - game-persistence-postgres\n"
+        "harness:\n"
+        "  provider: docker\n"
+        "  verify_command: pytest\n",
+        encoding="utf-8",
+    )
+
+
+def _write_target_delivery_spec(project_root: Path, target: Path) -> Path:
+    spec_dir = project_root / "specs" / "001-postgres"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\ntargets:\n  - sources/api\n---\n# Postgres delivery\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-001 "
+        "depends=none target=sources/api\n",
+        encoding="utf-8",
+    )
+    (target / ".git").mkdir(parents=True)
+    return spec_dir
 
 
 def _artifact_only_provider_config() -> HarnessConfig:
@@ -422,6 +452,142 @@ def test_delivery_run_routes_to_harness_run(monkeypatch: pytest.MonkeyPatch) -> 
         command_prefix="echelon delivery run",
         display_args=["001", "strategy=codegen"],
     )
+
+
+@pytest.mark.unit
+def test_delivery_does_not_construct_provider_when_postgres_provisioning_is_missing(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _cmd_harness_run
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "sources" / "api"
+    target.mkdir(parents=True)
+    (workspace / ".git").mkdir(parents=True)
+    _write_postgres_stack_config(workspace)
+    _write_target_delivery_spec(workspace, target)
+
+    monkeypatch.chdir(target)
+    monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(workspace))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr(
+        "echelon.cli._apply_target_verify_command_detection",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with patch("harness.spec_snapshot.snapshot_spec_dir"), \
+         patch("harness.gitops.GitOpsManager") as gitops, \
+         patch("harness.docker_provider.DockerWorktreeProvider") as provider, \
+         patch("harness.skills.run_skill.run") as run_harness:
+        with pytest.raises(SystemExit) as exc:
+            _cmd_harness_run(["001-postgres"])
+
+    assert exc.value.code == 1
+    gitops.assert_not_called()
+    provider.assert_not_called()
+    run_harness.assert_not_called()
+    err = capsys.readouterr().err
+    assert "STACK_PROVISIONING_MISSING" in err
+    assert f"echelon stack provision --target {target.resolve()}" in err
+
+
+@pytest.mark.unit
+def test_delivery_provisioning_allows_external_database_url_to_reach_harness_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _cmd_harness_run
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "sources" / "api"
+    target.mkdir(parents=True)
+    (workspace / ".git").mkdir(parents=True)
+    _write_postgres_stack_config(workspace)
+    spec_dir = _write_target_delivery_spec(workspace, target)
+
+    monkeypatch.chdir(target)
+    monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(workspace))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://isolated")
+    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr(
+        "echelon.cli._apply_target_verify_command_detection",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr("echelon.cli._block_if_harness_phase_a_not_ready", lambda *_args: None)
+    monkeypatch.setattr("echelon.cli._prepare_delivery_build_state", lambda **_kwargs: "build-test")
+
+    config = HarnessConfig(
+        target_repo=str(target),
+        target_default_branch="main",
+        provider="docker",
+        verify_command="pytest",
+    )
+    gitops = MagicMock()
+    provider = MagicMock()
+    with patch("harness.spec_snapshot.snapshot_spec_dir"), \
+         patch("harness.config.load_config", return_value=config), \
+         patch("harness.paths.mirror_path", return_value=workspace / "missing-mirror"), \
+         patch("harness.gitops.GitOpsManager", return_value=gitops), \
+         patch("harness.docker_provider.DockerWorktreeProvider", return_value=provider), \
+         patch("harness.skills.run_skill._count_tasks", return_value=1), \
+         patch("harness.skills.run_skill.run") as run_harness:
+        _cmd_harness_run(["001-postgres"])
+
+    run_harness.assert_called_once()
+    assert run_harness.call_args.args[1] is provider
+    assert run_harness.call_args.args[2] is gitops
+    assert run_harness.call_args.kwargs["orchestration_root"] == workspace.resolve()
+    assert spec_dir.is_dir()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ["continue", "resume"])
+def test_delivery_provisioning_gate_blocks_continue_and_resume_before_provider_construction(
+    command: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _cmd_harness_continue, _cmd_harness_resume
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "sources" / "api"
+    target.mkdir(parents=True)
+    (workspace / ".git").mkdir(parents=True)
+    _write_postgres_stack_config(workspace)
+    _write_target_delivery_spec(workspace, target)
+
+    monkeypatch.chdir(target)
+    monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(workspace))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+    monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_args: None)
+    monkeypatch.setattr(
+        "echelon.cli._apply_target_verify_command_detection",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with patch("harness.gitops.GitOpsManager") as gitops, \
+         patch("harness.docker_provider.DockerWorktreeProvider") as provider, \
+         patch("harness.skills.run_skill.run") as run_harness:
+        with pytest.raises(SystemExit) as exc:
+            if command == "continue":
+                _cmd_harness_continue(["001-postgres"])
+            else:
+                _cmd_harness_resume(["001-postgres", "continue now"])
+
+    assert exc.value.code == 1
+    gitops.assert_not_called()
+    provider.assert_not_called()
+    run_harness.assert_not_called()
+    assert "STACK_PROVISIONING_MISSING" in capsys.readouterr().err
 
 
 @pytest.mark.unit

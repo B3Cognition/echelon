@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import os
+from pathlib import Path
 import subprocess
-from typing import Callable
+from typing import Callable, Mapping
 
+from harness.stacks.provisioning import provisioning_statuses
 from harness.stacks.resolver import ResolvedStacks
 
 
@@ -46,6 +49,8 @@ def run_stack_preflight(
     probe_tools: bool = False,
     command_runner: CommandRunner | None = None,
     timeout_seconds: int = 30,
+    target_root: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> StackPreflightResult:
     """Check host availability for requirements declared by resolved stacks."""
     import shutil
@@ -115,10 +120,62 @@ def run_stack_preflight(
             )
         )
 
+    if target_root is not None:
+        findings.extend(
+            _provisioning_findings(
+                resolved,
+                target_root=target_root,
+                environment=environment if environment is not None else os.environ,
+            )
+        )
+
     return StackPreflightResult(
         findings=findings,
         checked_commands=checked_commands,
     )
+
+
+def _provisioning_findings(
+    resolved: ResolvedStacks,
+    *,
+    target_root: Path,
+    environment: Mapping[str, str],
+) -> list[StackPreflightFinding]:
+    findings: list[StackPreflightFinding] = []
+    for status in provisioning_statuses(resolved, target_root, environment):
+        if status.state == "ready":
+            continue
+        if status.state == "missing":
+            findings.append(
+                StackPreflightFinding(
+                    severity="error",
+                    code="STACK_PROVISIONING_MISSING",
+                    message=(
+                        f"Verification provisioner `{status.provisioner_id}` for stack "
+                        f"`{status.owner_stack_id}` is missing. Configure its required "
+                        "environment or render its verification artifacts with "
+                        "`echelon stack provision`."
+                    ),
+                    stack_id=status.owner_stack_id,
+                )
+            )
+            continue
+        if status.state == "prepared":
+            path = f" at `{status.path}`" if status.path is not None else ""
+            findings.append(
+                StackPreflightFinding(
+                    severity="warning",
+                    code="STACK_PROVISIONING_PREPARED",
+                    message=(
+                        f"Verification provisioner `{status.provisioner_id}` for stack "
+                        f"`{status.owner_stack_id}` is prepared{path}, but Echelon did "
+                        "not start Docker. Start the Compose service manually or configure "
+                        "the required environment."
+                    ),
+                    stack_id=status.owner_stack_id,
+                )
+            )
+    return findings
 
 
 def preflight_to_dict(result: StackPreflightResult) -> dict:

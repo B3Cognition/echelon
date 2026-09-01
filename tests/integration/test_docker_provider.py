@@ -16,11 +16,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 from typing import Optional
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from harness.docker_provider import (
     DockerWorktreeProvider,
+    _generate_squid_conf,
     _check_credential_leak,
     _run_docker,
     _truncate_output,
@@ -41,6 +44,7 @@ from harness.provider import (
     SandboxHandle,
     SandboxSpec,
 )
+from harness.verification_plan import SandboxServiceSpec
 
 
 def _make_spec(**overrides) -> SandboxSpec:
@@ -93,6 +97,22 @@ class TestCredentialLeakDetection:
     def test_credential_in_secrets_env_blocked(self) -> None:
         with pytest.raises(CredentialLeakError):
             _check_credential_leak(env={}, secrets_env={"GIT_TOKEN": "secret"})
+
+
+def test_generated_proxy_policy_allows_registry_without_host_network() -> None:
+    path = Path(_generate_squid_conf(["registry.example.test"]))
+    try:
+        content = path.read_text(encoding="utf-8")
+    finally:
+        path.unlink(missing_ok=True)
+
+    assert "registry.npmjs.org" in content
+    assert "registry.example.test" in content
+
+
+def test_podman_proxy_uses_podman_egress_network() -> None:
+    provider = DockerWorktreeProvider(container_cli="podman")
+    assert provider._container_cli == "podman"
 
 
 @pytest.mark.integration
@@ -185,6 +205,108 @@ class TestDockerProviderInit:
     def test_capabilities_empty(self) -> None:
         provider = DockerWorktreeProvider()
         assert provider.capabilities() == set()
+
+
+@pytest.mark.integration
+class TestVerificationSidecars:
+    def test_service_uses_sandbox_network_without_host_port(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": [],
+        })()
+        service = SandboxServiceSpec(service_name="postgres", image="postgres:16.4-alpine")
+
+        with patch("harness.docker_provider._run_docker") as run:
+            run.return_value = MagicMock(stdout="service-id\n", stderr="", returncode=0)
+            provider.start_services(handle, (service,))
+
+        command = run.call_args.args[0]
+        assert "--network" in command
+        assert "internal-net" in command
+        assert "--network-alias" in command
+        assert "postgres" in command
+        assert "-p" not in command
+
+    def test_destroy_removes_sidecar_before_network(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": ["service-id"],
+        })()
+
+        with patch("harness.docker_provider.subprocess.run") as run:
+            provider.destroy(handle)
+
+        calls = [call.args[0] for call in run.call_args_list]
+        assert calls[0] == ["docker", "rm", "-f", "service-id"]
+        assert calls[-1] == ["docker", "network", "rm", "internal-net"]
+
+    def test_sidecar_health_command_runs_inside_service(self) -> None:
+        provider = DockerWorktreeProvider()
+        handle = SandboxHandle(id="sandbox-id", session_id="session-id")
+        provider._containers[handle.session_id] = type("Info", (), {
+            "sandbox_id": "sandbox-id", "proxy_id": None,
+            "network_name": "internal-net", "service_ids": [],
+        })()
+        service = SandboxServiceSpec(
+            service_name="postgres", image="postgres:16.4-alpine",
+            health_command=("pg_isready",),
+        )
+
+        with patch("harness.docker_provider._run_docker") as run:
+            run.return_value = MagicMock(stdout="service-id\n", stderr="", returncode=0)
+            provider.start_services(handle, (service,))
+
+        assert run.call_args_list[1].args[0] == ["exec", "service-id", "pg_isready"]
+        assert run.call_args_list[1].kwargs["check"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.docker
+@pytest.mark.docker_image("postgres:16.4-alpine")
+def test_real_verification_sidecar_and_dependency_volume_are_isolated(
+    tmp_path: Path,
+) -> None:
+    """A verifier reaches its sidecar without exposing state to the host."""
+    host_dependencies = tmp_path / "node_modules"
+    host_dependencies.mkdir()
+    (host_dependencies / "host-marker").write_text("host", encoding="utf-8")
+    provider = DockerWorktreeProvider()
+    handle = provider.create(_make_spec(worktree_mount=str(tmp_path), ephemeral_volumes=["node_modules"]))
+    service = SandboxServiceSpec(
+        service_name="postgres",
+        image="postgres:16.4-alpine",
+        health_command=(
+            "pg_isready", "-h", "127.0.0.1", "-U", "echelon", "-d", "echelon_verify"
+        ),
+        environment=(
+            ("POSTGRES_USER", "echelon"),
+            ("POSTGRES_PASSWORD", "test-only-password"),
+            ("POSTGRES_DB", "echelon_verify"),
+        ),
+    )
+    volume_name = provider._containers[handle.session_id].volume_names[0]
+    try:
+        provider.start_services(handle, (service,))
+        result = provider.exec(
+            handle,
+            "test ! -e /workspace/node_modules/host-marker "
+            "&& touch /workspace/node_modules/sandbox-marker "
+            "&& python -c \"import socket; socket.create_connection(('postgres', 5432), 5)\"",
+        )
+        assert result.exit_code == 0, result.stderr
+    finally:
+        provider.destroy(handle)
+
+    assert not (host_dependencies / "sandbox-marker").exists()
+    assert (host_dependencies / "host-marker").is_file()
+    volume = subprocess.run(
+        ["docker", "volume", "inspect", volume_name], capture_output=True, text=True, check=False
+    )
+    assert volume.returncode != 0
 
 
 @pytest.mark.integration

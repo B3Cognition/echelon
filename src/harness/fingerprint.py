@@ -32,7 +32,6 @@ LANGUAGE_IMAGES = {
 }
 
 # Playwright image override
-PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.42.0-jammy"
 
 
 @dataclass
@@ -66,6 +65,24 @@ def detect_playwright(repo_path: Path) -> bool:
     return False
 
 
+def playwright_version(repo_path: Path) -> str | None:
+    """Return the declared Playwright version without reading host state."""
+    package_json = repo_path / "package.json"
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return None
+    for dep_key in ("dependencies", "devDependencies"):
+        dependencies = data.get(dep_key, {})
+        if not isinstance(dependencies, dict):
+            continue
+        for name in ("@playwright/test", "playwright"):
+            value = dependencies.get(name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
 def fingerprint_repo(repo_path: Path) -> Fingerprint:
     """Detect language and select appropriate base image.
 
@@ -89,10 +106,7 @@ def fingerprint_repo(repo_path: Path) -> Fingerprint:
     # Check for Playwright (overrides image selection)
     has_playwright = detect_playwright(repo_path)
 
-    if has_playwright:
-        image = PLAYWRIGHT_IMAGE
-    else:
-        image = LANGUAGE_IMAGES.get(detected_language, LANGUAGE_IMAGES["generic"])
+    image = LANGUAGE_IMAGES.get(detected_language, LANGUAGE_IMAGES["generic"])
 
     if detected_language == "generic":
         logger.warning(

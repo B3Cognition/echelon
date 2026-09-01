@@ -1115,6 +1115,127 @@ def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "ech
     )
 
 
+def _delivery_provisioning_blockers(
+    project_root: Path,
+    target_root: Path,
+) -> list[str]:
+    """Return target-local verification provisioning blockers without side effects."""
+    from harness.config import get_full_resolved_config
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    target_config_dir = target_root / ".echelon"
+    # A configured source owns its stack selection. Targets without their own
+    # config keep the historical workspace-root selection for compatibility.
+    target_has_source_config = target_root != project_root and any(
+        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    stack_config_root = target_root if target_has_source_config else project_root
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    target_archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not all(
+        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
+    ):
+        raise StackSelectionError(
+            "stacks.selected must be a list of non-empty stack IDs"
+        )
+    if not isinstance(target_archetypes, list) or not all(
+        isinstance(archetype, str) and archetype.strip()
+        for archetype in target_archetypes
+    ):
+        raise StackSelectionError(
+            "stacks.target_archetypes must be a list of non-empty archetype IDs"
+        )
+    if not selected:
+        return []
+
+    definitions = _load_stack_definitions_for_project(project_root)
+    resolved = resolve_stacks(
+        selected,
+        definitions,
+        target_archetypes=set(target_archetypes) or None,
+    )
+    target = target_root
+    blockers: list[str] = []
+    for status in provisioning_statuses(resolved, target, os.environ):
+        provisioner = next(
+            item.provisioner
+            for item in resolved.provisioners
+            if item.owner_stack_id == status.owner_stack_id
+            and item.provisioner.id == status.provisioner_id
+        )
+        environment = ", ".join(provisioner.required_environment)
+        if status.state == "missing":
+            blockers.append(
+                "STACK_PROVISIONING_MISSING: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "is not configured for this target. Run: "
+                f"echelon stack provision --target {target}"
+            )
+        elif status.state == "prepared":
+            blockers.append(
+                "STACK_PROVISIONING_PREPARED: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "has target-local artifacts, but Echelon did not start the service. "
+                "Start the prepared service manually or configure an external URL via "
+                f"{environment}."
+            )
+    return blockers
+
+
+def _resolve_delivery_verification_services(
+    config: object,
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    """Attach target-applicable sandbox services from the stack contract."""
+    from harness.config import get_full_resolved_config
+
+    target_config_dir = target_root.resolve() / ".echelon"
+    stack_config_root = (
+        target_root.resolve()
+        if target_root.resolve() != project_root.resolve()
+        and any((target_config_dir / name).is_file() for name in ("config.yml", "local.yml"))
+        else project_root.resolve()
+    )
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not isinstance(archetypes, list):
+        raise StackSelectionError("stack selection must use list values")
+    resolved = resolve_stacks(
+        [str(value) for value in selected],
+        _load_stack_definitions_for_project(project_root),
+        target_archetypes={str(value) for value in archetypes} or None,
+    )
+    config.verification_services = list(resolved.services)
+
+
+def _block_if_delivery_provisioning_incomplete(
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    blockers = _delivery_provisioning_blockers(project_root, target_root)
+    if not blockers:
+        return
+    print(
+        "✗ Delivery verification provisioning is not ready for this target.\n"
+        + "".join(f"  - {blocker}\n" for blocker in blockers),
+        file=sys.stderr,
+        end="",
+    )
+    raise SystemExit(1)
+
+
 def _block_if_spec_task_targets_mismatch(
     spec_dir: Path,
     declared_targets: list[str],
@@ -2191,6 +2312,16 @@ def _cmd_harness_run(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2254,7 +2385,7 @@ def _cmd_harness_run(
         _write_spec_status(spec_dir, "in_progress")
 
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -2264,6 +2395,10 @@ def _cmd_harness_run(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        # A child target process is the authority for its own delivery outcome.
+        # Multi-target orchestration must never infer success from rendered text.
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -2287,6 +2422,19 @@ def _cmd_harness_run(
             command=rerun_command,
             exc=exc,
         )
+
+
+def _delivery_outcome_exit_code(outcome: object) -> int:
+    """Return a process outcome from typed delivery state, never rendered text."""
+    from harness.delivery_results import DeliveryRunOutcome
+
+    if not isinstance(outcome, DeliveryRunOutcome):
+        # Keeps CLI adapters compatible with legacy/mocked run adapters. The
+        # production run skill always returns a typed DeliveryRunOutcome.
+        return 0
+    if outcome.landing.status == "blocked":
+        return 1
+    return 0 if any(result.status == "converged" for result in outcome.results) else 1
 
 
 def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
@@ -2748,6 +2896,17 @@ def _cmd_harness_resume(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
+
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
@@ -17378,8 +17537,11 @@ from harness.stacks import (  # noqa: E402  (CLI command helpers)
     detection_report_to_yaml,
     load_stack_definitions,
     preflight_to_dict,
+    provisioning_statuses,
+    ProvisioningError,
     render_detection_markdown,
     render_preflight_markdown,
+    render_provisioner,
     resolve_stacks,
     resolved_to_dict,
     run_stack_preflight,
@@ -17404,6 +17566,7 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
             "[--write] [--format text|yaml] [--json]\n"
             "  echelon stack preflight [--stack <id>] "
             "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]\n"
+            "  echelon stack provision [--stack <id>] [--target <path>] [--force] [--json]\n"
             "  echelon stack selected [--json]\n"
             "  echelon stack enable <stack-id>... [--dry-run]\n"
             "  echelon stack disable <stack-id>... [--dry-run]\n"
@@ -17422,6 +17585,10 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
 
     if subcmd == "preflight":
         _cmd_stack_preflight(args[1:], project_root=project_root)
+        return
+
+    if subcmd == "provision":
+        _cmd_stack_provision(args[1:], project_root=project_root)
         return
 
     if subcmd == "enable":
@@ -17620,6 +17787,7 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         selected,
         target_archetypes,
         from_detect,
+        target_root,
         probe_tools,
         json_output,
     ) = _parse_stack_preflight_args(args, project_root=project_root)
@@ -17658,7 +17826,12 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    result = run_stack_preflight(resolved, probe_tools=probe_tools)
+    result = run_stack_preflight(
+        resolved,
+        probe_tools=probe_tools,
+        target_root=target_root or project_root,
+        environment=os.environ,
+    )
 
     if json_output:
         import json
@@ -17683,14 +17856,137 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         sys.exit(1)
 
 
+def _cmd_stack_provision(args: list[str], *, project_root: Path) -> None:
+    selected, target_root, force, json_output = _parse_stack_provision_args(
+        args, project_root=project_root
+    )
+    if not selected:
+        selected = list(_load_cli_config(project_root).stacks.selected)
+    if not selected:
+        message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
+        if json_output:
+            print(json.dumps({"target": str(target_root), "generated": [], "message": message}, indent=2))
+        else:
+            print(message)
+        return
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        resolved = resolve_stacks(selected, definitions)
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+        generated = _render_missing_provisioners(
+            resolved, statuses, target_root=target_root, force=force
+        )
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+    except (StackError, ProvisioningError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "target": str(target_root),
+                    "generated": [str(path) for path in generated],
+                    "provisioners": [
+                        {
+                            "id": status.provisioner_id,
+                            "stack_id": status.owner_stack_id,
+                            "state": status.state,
+                            "message": status.message,
+                            "path": str(status.path) if status.path is not None else None,
+                        }
+                        for status in statuses
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not resolved.provisioners:
+        print("Selected stacks declare no verification provisioners.")
+        return
+
+    if generated:
+        print("Generated verification provisioning files:")
+        for path in generated:
+            print(f"- {path}")
+    else:
+        print("No verification provisioning files were generated.")
+    print("Echelon did not start Docker. Review the files, then run:")
+    print("  docker compose -f docker-compose.echelon-verify.yml up -d")
+    print("  export DATABASE_URL='postgresql://<user>:<password>@<host>/<database>'")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres pg_isready -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres psql -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml down -v")
+
+
+def _render_missing_provisioners(
+    resolved,
+    statuses,
+    *,
+    target_root: Path,
+    force: bool,
+) -> list[Path]:
+    generated: list[Path] = []
+    rendered_ids: set[str] = set()
+    for item, status in zip(resolved.provisioners, statuses):
+        if status.provisioner_id in rendered_ids:
+            continue
+        if status.state == "ready" or (status.state == "prepared" and not force):
+            continue
+        generated.extend(render_provisioner(item, target_root, force=force))
+        rendered_ids.add(status.provisioner_id)
+    return generated
+
+
+def _parse_stack_provision_args(
+    args: list[str], *, project_root: Path
+) -> tuple[list[str], Path, bool, bool]:
+    selected: list[str] = []
+    target_root = project_root
+    force = False
+    json_output = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--stack":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --stack requires a value", file=sys.stderr)
+                sys.exit(1)
+            selected.append(args[index])
+        elif arg.startswith("--stack="):
+            selected.append(arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--force":
+            force = True
+        elif arg == "--json":
+            json_output = True
+        else:
+            print(f"echelon stack provision: unknown argument '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+    return selected, target_root, force, json_output
+
+
 def _parse_stack_preflight_args(
     args: list[str],
     *,
     project_root: Path,
-) -> tuple[list[str], list[str], Path | None, bool, bool]:
+) -> tuple[list[str], list[str], Path | None, Path | None, bool, bool]:
     selected: list[str] = []
     target_archetypes: list[str] = []
     from_detect: Path | None = None
+    target_root: Path | None = None
     probe_tools = False
     json_output = False
 
@@ -17727,6 +18023,14 @@ def _parse_stack_preflight_args(
             from_detect = _resolve_cli_path(project_root, args[index])
         elif arg.startswith("--from-detect="):
             from_detect = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack preflight: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
         elif arg == "--probe-tools":
             probe_tools = True
         elif arg == "--json":
@@ -17736,7 +18040,7 @@ def _parse_stack_preflight_args(
             sys.exit(1)
         index += 1
 
-    return selected, target_archetypes, from_detect, probe_tools, json_output
+    return selected, target_archetypes, from_detect, target_root, probe_tools, json_output
 
 
 def _stack_selection_from_detection(report) -> tuple[list[str], list[str]]:
@@ -17801,6 +18105,25 @@ def _stack_definition_to_dict(stack) -> dict:
         },
         "detection": stack.detection.to_dict(),
         "tools": sorted(stack.tools),
+        "provisioners": [
+            {
+                "id": provisioner.id,
+                "scope": provisioner.scope,
+                "services": provisioner.services,
+                "environment": {"required": provisioner.required_environment},
+                "readiness": {"command": provisioner.readiness_command},
+                "satisfiers": [
+                    {
+                        "kind": satisfier.kind,
+                        "variable": satisfier.variable,
+                        "output": satisfier.output,
+                        "env_example": satisfier.env_example,
+                    }
+                    for satisfier in provisioner.satisfiers
+                ],
+            }
+            for provisioner in stack.provisioners
+        ],
     }
 
 

@@ -214,3 +214,44 @@ def test_stack_preflight_without_selected_stacks_is_noop(
     _cmd_stack(["preflight"], project_root=tmp_path)
 
     assert "No Echelon stacks selected" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_stack_provision_writes_target_local_files(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_stack
+
+    _cmd_stack(
+        [
+            "provision",
+            "--stack",
+            "game-persistence-postgres",
+            "--target",
+            str(tmp_path),
+        ],
+        project_root=tmp_path,
+    )
+
+    assert (tmp_path / "docker-compose.echelon-verify.yml").is_file()
+    assert (tmp_path / ".env.echelon-verify.example").is_file()
+    assert (
+        "docker compose -f docker-compose.echelon-verify.yml up -d"
+        in capsys.readouterr().out
+    )
+
+
+@pytest.mark.unit
+def test_stack_list_json_exposes_provisioners(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_stack
+
+    _cmd_stack(["list", "--json"], project_root=Path(__file__).resolve().parents[2])
+
+    payload = json.loads(capsys.readouterr().out)
+    postgres = next(
+        stack for stack in payload["stacks"] if stack["id"] == "game-persistence-postgres"
+    )
+    assert postgres["provisioners"][0]["id"] == "postgres-verify"

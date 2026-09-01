@@ -4,13 +4,20 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 from harness.stacks.errors import StackConflictError, StackResolutionError
-from harness.stacks.schema import StackDefinition, StackTool
+from harness.stacks.schema import StackDefinition, StackProvisioner, StackTool
+from harness.verification_plan import SandboxServiceSpec
 
 
 @dataclass(frozen=True)
 class ResolvedCapability:
     value: str
     sources: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ResolvedStackProvisioner:
+    owner_stack_id: str
+    provisioner: StackProvisioner
 
 
 @dataclass(frozen=True)
@@ -23,6 +30,8 @@ class ResolvedStacks:
     required_commands: list[str]
     required_registries: list[str]
     context_files: list[str]
+    provisioners: list[ResolvedStackProvisioner] = field(default_factory=list)
+    services: list[SandboxServiceSpec] = field(default_factory=list)
 
 
 def resolve_stacks(
@@ -40,6 +49,8 @@ def resolve_stacks(
             required_commands=[],
             required_registries=[],
             context_files=[],
+            provisioners=[],
+            services=[],
         )
 
     normalized_selected = _normalize_stack_ids(selected_ids)
@@ -95,6 +106,9 @@ def resolve_stacks(
     required_commands: list[str] = []
     required_registries: list[str] = []
     context_files: list[str] = []
+    provisioners: list[ResolvedStackProvisioner] = []
+    services: list[SandboxServiceSpec] = []
+    provisioners_by_id: dict[str, StackProvisioner] = {}
 
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
@@ -137,6 +151,31 @@ def resolve_stacks(
             resolved_context = str(stack.source_path.parent / context_file)
             context_files = _append_unique(context_files, resolved_context)
 
+        for provisioner in stack.provisioners:
+            existing = provisioners_by_id.get(provisioner.id)
+            if existing is None:
+                provisioners_by_id[provisioner.id] = provisioner
+            elif existing != provisioner:
+                raise StackConflictError(
+                    f"Stack provisioner conflict for {provisioner.id}: "
+                    f"definitions do not match between resolved stacks"
+                )
+            provisioners.append(
+                ResolvedStackProvisioner(
+                    owner_stack_id=stack_id,
+                    provisioner=provisioner,
+                )
+            )
+            if provisioner.id == "postgres-verify":
+                services.append(
+                    SandboxServiceSpec(
+                        service_name="postgres",
+                        image="postgres:16.4-alpine",
+                        environment_names=("TEST_DATABASE_URL",),
+                        health_command=("pg_isready", "-U", "echelon", "-d", "echelon_verify"),
+                    )
+                )
+
     return ResolvedStacks(
         selected_ids=normalized_selected,
         resolved_ids=resolved_ids,
@@ -146,6 +185,8 @@ def resolve_stacks(
         required_commands=required_commands,
         required_registries=required_registries,
         context_files=context_files,
+        provisioners=provisioners,
+        services=services,
     )
 
 

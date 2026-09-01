@@ -47,6 +47,7 @@ from harness.provider import (
     SandboxSpec,
     register_provider,
 )
+from harness.verification_plan import SandboxServiceSpec
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,27 @@ TRUNCATION_TAIL_RATIO = 0.80
 
 # Timeout for docker commands themselves
 DOCKER_CMD_TIMEOUT = 30
+_SAFE_PROXY_HOST = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
+
+
+def _generate_squid_conf(allowlist: List[str]) -> str:
+    """Create one private proxy policy file for this sandbox lifecycle."""
+    template = Path(__file__).resolve().parents[2] / "network" / "squid.conf.template"
+    try:
+        content = template.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SandboxCreationError(f"could not load squid policy template: {exc}") from exc
+    additions = "\n".join(
+        f"acl allowlist dstdomain {host}"
+        for host in allowlist
+        if _SAFE_PROXY_HOST.fullmatch(host)
+    )
+    content = content.replace("# {{ADDITIONAL_ALLOWLIST}}", additions)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", prefix="echelon-squid-", suffix=".conf", delete=False
+    ) as output:
+        output.write(content)
+        return output.name
 
 
 def _run_docker(
@@ -263,6 +285,7 @@ class DockerWorktreeProvider(SandboxProvider):
         network_name = f"harness-net-{session_id}"
         proxy_container_id = None
         sandbox_container_id = None
+        generated_squid_conf: str | None = None
 
         try:
             # Create internal Docker network
@@ -273,18 +296,30 @@ class DockerWorktreeProvider(SandboxProvider):
             ], cli=self._container_cli)
             network_id = result.stdout.strip()
 
-            # Start Squid proxy sidecar (if squid conf available)
-            if self._squid_conf_path and os.path.isfile(self._squid_conf_path):
+            # The private network needs a proxy for package/bootstrap traffic.
+            squid_conf_path = self._squid_conf_path
+            if not squid_conf_path or not os.path.isfile(squid_conf_path):
+                generated_squid_conf = _generate_squid_conf(spec.network_policy.allowlist)
+                squid_conf_path = generated_squid_conf
+            if squid_conf_path:
                 proxy_result = _run_docker([
                     "run", "-d",
                     "--network", network_name,
                     "--name", f"harness-proxy-{session_id}",
-                    "--volume", f"{self._squid_conf_path}:/etc/squid/squid.conf:ro",
+                    "--volume", f"{squid_conf_path}:/etc/squid/squid.conf:ro",
                     "--label", f"echelon-harness.session_id={session_id}",
                     "--label", "echelon-harness.type=squid-proxy",
                     spec.network_policy.proxy_image,
                 ], cli=self._container_cli)
                 proxy_container_id = proxy_result.stdout.strip()
+                # The verifier remains on the internal network only. The proxy
+                # has a second bridge attachment solely to reach allowlisted
+                # registries and browser-download hosts.
+                egress_network = "podman" if self._container_cli == "podman" else "bridge"
+                _run_docker(
+                    ["network", "connect", egress_network, proxy_container_id],
+                    cli=self._container_cli,
+                )
 
             # Build sandbox container args
             docker_args = [
@@ -304,6 +339,13 @@ class DockerWorktreeProvider(SandboxProvider):
                 docker_args.extend([
                     "--label", f"echelon-harness.{key}={value}",
                 ])
+
+            ephemeral_volumes = [
+                f"harness-volume-{session_id}-{path.replace('/', '-').strip('-')}"
+                for path in spec.ephemeral_volumes
+            ]
+            for volume_name, path in zip(ephemeral_volumes, spec.ephemeral_volumes):
+                docker_args.extend(["--volume", f"{volume_name}:{spec.container_mount}/{path}"])
 
             # Inject environment variables
             for key, value in spec.env.items():
@@ -355,6 +397,8 @@ class DockerWorktreeProvider(SandboxProvider):
                 sandbox_id=sandbox_container_id,
                 proxy_id=proxy_container_id,
                 network_name=network_name,
+                volume_names=ephemeral_volumes,
+                generated_squid_conf=generated_squid_conf,
             )
 
             return handle
@@ -362,6 +406,8 @@ class DockerWorktreeProvider(SandboxProvider):
         except Exception as e:
             # Clean up partial resources on failure
             self._cleanup_partial(sandbox_container_id, proxy_container_id, network_name)
+            if generated_squid_conf:
+                Path(generated_squid_conf).unlink(missing_ok=True)
             if isinstance(e, (CredentialLeakError, SandboxCreationError, SandboxExecError)):
                 raise
             raise SandboxCreationError(
@@ -511,6 +557,15 @@ class DockerWorktreeProvider(SandboxProvider):
             )
             return
 
+        # Remove verification sidecars before their internal network.
+        for service_id in info.service_ids:
+            subprocess.run(
+                [self._container_cli, "rm", "-f", service_id],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
         # Remove sandbox container
         subprocess.run(
             [self._container_cli, "rm", "-f", info.sandbox_id],
@@ -535,10 +590,73 @@ class DockerWorktreeProvider(SandboxProvider):
             timeout=10,
             check=False,
         )
+        for volume_name in getattr(info, "volume_names", []):
+            subprocess.run(
+                [self._container_cli, "volume", "rm", "-f", volume_name],
+                capture_output=True, timeout=10, check=False,
+            )
+        generated_squid_conf = getattr(info, "generated_squid_conf", None)
+        if generated_squid_conf:
+            Path(generated_squid_conf).unlink(missing_ok=True)
 
     def capabilities(self) -> Set[Capability]:
         """Phase 1: no optional capabilities."""
         return set()
+
+    def start_services(
+        self,
+        handle: SandboxHandle,
+        services: tuple[SandboxServiceSpec, ...],
+    ) -> tuple[str, ...]:
+        """Start labelled verification sidecars on the sandbox internal network."""
+        info = self._containers.get(handle.session_id)
+        if info is None:
+            raise SandboxCreationError("sandbox handle is not active")
+        started: list[str] = []
+        try:
+            for service in services:
+                result = _run_docker([
+                    "run", "-d",
+                    "--network", info.network_name,
+                    "--network-alias", service.service_name,
+                    "--label", f"echelon-harness.session_id={handle.session_id}",
+                    "--label", "echelon-harness.type=verification-service",
+                    "--label", f"echelon-harness.service={service.service_name}",
+                    "--name", f"harness-service-{service.service_name}-{handle.session_id}",
+                    *sum((["--env", f"{key}={value}"] for key, value in service.environment), []),
+                    service.image,
+                ], cli=self._container_cli)
+                service_id = result.stdout.strip()
+                if not service_id:
+                    raise SandboxCreationError(
+                        f"verification service {service.service_name!r} did not return an id"
+                    )
+                started.append(service_id)
+                if service.health_command:
+                    deadline = time.monotonic() + 30
+                    while True:
+                        health = _run_docker(
+                            ["exec", service_id, *service.health_command],
+                            cli=self._container_cli,
+                            check=False,
+                        )
+                        if health.returncode == 0:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise SandboxCreationError(
+                                f"verification service {service.service_name!r} "
+                                "did not become healthy within 30 seconds"
+                            )
+                        time.sleep(0.5)
+            info.service_ids.extend(started)
+            return tuple(started)
+        except Exception:
+            for service_id in started:
+                subprocess.run(
+                    [self._container_cli, "rm", "-f", service_id],
+                    capture_output=True, timeout=10, check=False,
+                )
+            raise
 
     # --- Internal helpers ---
 
@@ -569,17 +687,22 @@ class DockerWorktreeProvider(SandboxProvider):
 class _ContainerInfo:
     """Internal tracking of container resources for cleanup."""
 
-    __slots__ = ("sandbox_id", "proxy_id", "network_name")
+    __slots__ = ("sandbox_id", "proxy_id", "network_name", "service_ids", "volume_names", "generated_squid_conf")
 
     def __init__(
         self,
         sandbox_id: str,
         proxy_id: Optional[str],
         network_name: str,
+        volume_names: list[str] | None = None,
+        generated_squid_conf: str | None = None,
     ) -> None:
         self.sandbox_id = sandbox_id
         self.proxy_id = proxy_id
         self.network_name = network_name
+        self.service_ids: list[str] = []
+        self.volume_names = volume_names or []
+        self.generated_squid_conf = generated_squid_conf
 
 
 # --- Registration ---

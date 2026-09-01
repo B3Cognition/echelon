@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "1.1"
 stack:
   id: game-persistence-postgres
   name: Game Persistence with Postgres
@@ -19,6 +19,22 @@ provides:
   x.game.persistence_cadence: bounded
 implies: []
 requires: {}
+provisioning:
+  - id: postgres-verify
+    scope: verification
+    services:
+      - postgres
+    environment:
+      required:
+        - DATABASE_URL
+    readiness:
+      command: pg_isready
+    satisfiers:
+      - kind: environment
+        variable: DATABASE_URL
+      - kind: compose-template
+        output: docker-compose.echelon-verify.yml
+        env_example: .env.echelon-verify.example
 context:
   files:
     - context.md
