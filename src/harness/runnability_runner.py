@@ -271,6 +271,7 @@ class RunnabilityRunner:
                     variables,
                     observation_ids=contract.persistence_probe.observation_ids,
                     stage_name="persistence_before_restart",
+                    execute_browser_steps=False,
                 )
                 if before.status != "passed":
                     before = self._attach_application_logs(handle, before)
@@ -313,6 +314,7 @@ class RunnabilityRunner:
                     variables,
                     observation_ids=contract.persistence_probe.observation_ids,
                     stage_name="persistence_after_restart",
+                    execute_browser_steps=False,
                 )
                 if after.status != "passed":
                     after = self._attach_application_logs(handle, after)
@@ -543,6 +545,7 @@ class RunnabilityRunner:
         *,
         observation_ids: Sequence[str],
         stage_name: str,
+        execute_browser_steps: bool = True,
     ) -> RunnabilityStage:
         selected = {
             item.id: item
@@ -555,7 +558,13 @@ class RunnabilityRunner:
             item.id for item in selected.values() if item.kind == "browser_dom"
         ]
         if browser_ids:
-            result = self._run_browser(handle, contract, variables, browser_ids)
+            result = self._run_browser(
+                handle,
+                contract,
+                variables,
+                browser_ids,
+                execute_steps=execute_browser_steps,
+            )
             results.append(result)
             command_labels.append("browser journey")
         for observation in selected.values():
@@ -612,8 +621,12 @@ class RunnabilityRunner:
         contract: RunnabilityContract,
         variables: Mapping[str, str],
         observation_ids: Sequence[str],
+        *,
+        execute_steps: bool,
     ) -> ExecResult:
         plan = _expand_value(asdict(contract.primary_journey), variables)
+        if not execute_steps:
+            plan["steps"] = []
         plan["observation_ids"] = list(observation_ids)
         self._provider.write_file(
             handle,

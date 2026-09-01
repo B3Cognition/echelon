@@ -304,6 +304,10 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
         assert argv[argv.index("--dbname") + 1] == "echelon_verify"
         statement = argv[argv.index("-c") + 1]
         assert re.search(r"'[0-9a-f-]{36}'", statement)
+    persistence_browser_plan = json.loads(
+        provider.files["/tmp/echelon-user-runnability-plan.json"]
+    )
+    assert persistence_browser_plan["steps"] == []
     assert validate_runnability_report(
         result.evidence,
         candidate_commit="b" * 40,
