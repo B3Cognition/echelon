@@ -544,6 +544,11 @@ def _commands(value: Any, field: str) -> tuple[str, ...]:
 
 
 def _reject_unknown(raw: dict[str, Any], allowed: set[str], field: str) -> None:
-    for key in raw:
-        if key not in allowed:
-            raise RunnabilityContractError(f"unknown {field} key: {key}")
+    unknown = [str(key) for key in raw if key not in allowed]
+    if not unknown:
+        return
+    label = "key" if len(unknown) == 1 else "keys"
+    raise RunnabilityContractError(
+        f"unknown {field} {label}: {', '.join(unknown)}; "
+        f"allowed {field} keys: {', '.join(sorted(allowed))}"
+    )

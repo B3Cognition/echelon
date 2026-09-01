@@ -79,6 +79,12 @@ def test_browser_stack_context_explains_candidate_owned_runnability_contract() -
     assert "postgres_query" in stack_context
     assert "echelon delivery status" in stack_context
     assert "echelon spec defer-runnability" in stack_context
+    assert "## Candidate Runnability Contract Schema" in stack_context
+    assert "schema_version: 1" in stack_context
+    assert "install_commands:" in stack_context
+    assert "real_services_required: [web, api, postgres]" in stack_context
+    assert "persistence_probe:" in stack_context
+    assert "invent aliases such as `runtime`, `provision`" in stack_context
 
 
 @pytest.mark.unit

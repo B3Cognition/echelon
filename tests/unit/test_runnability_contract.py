@@ -104,6 +104,27 @@ def test_contract_rejects_product_policy_override(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_contract_reports_all_unknown_root_keys_and_allowed_schema(
+    tmp_path: Path,
+) -> None:
+    text = """\
+version: 1
+runtime: linux_container
+provision:
+  command: pnpm install
+"""
+
+    with pytest.raises(RunnabilityContractError) as raised:
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+    message = str(raised.value)
+    assert "unknown root keys: version, runtime, provision" in message
+    assert "allowed root keys:" in message
+    assert "schema_version" in message
+    assert "install_commands" in message
+
+
+@pytest.mark.unit
 def test_contract_requires_harness_observation_beyond_exit_status(tmp_path: Path) -> None:
     text = """\
 schema_version: 1
