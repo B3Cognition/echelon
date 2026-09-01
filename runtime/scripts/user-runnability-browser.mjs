@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
-import { chromium } from "playwright";
+import { chromium } from "@playwright/test";
 
 const planPath = process.argv[2];
 if (!planPath) {

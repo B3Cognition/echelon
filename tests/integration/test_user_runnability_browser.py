@@ -19,11 +19,13 @@ def _node() -> str:
     return executable
 
 
-def _write_fake_playwright(root: Path) -> None:
-    package = root / "node_modules" / "playwright"
+def _write_fake_playwright_test(root: Path) -> None:
+    package = root / "node_modules" / "@playwright" / "test"
     package.mkdir(parents=True)
     (package / "package.json").write_text(
-        json.dumps({"name": "playwright", "type": "module", "exports": "./index.js"}),
+        json.dumps(
+            {"name": "@playwright/test", "type": "module", "exports": "./index.js"}
+        ),
         encoding="utf-8",
     )
     (package / "index.js").write_text(
@@ -59,7 +61,7 @@ export const chromium = {
 
 @pytest.mark.integration
 def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path) -> None:
-    _write_fake_playwright(tmp_path)
+    _write_fake_playwright_test(tmp_path)
     helper = tmp_path / HELPER.name
     helper.write_bytes(HELPER.read_bytes())
     plan = tmp_path / "plan.json"
@@ -109,7 +111,7 @@ def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path)
 
 @pytest.mark.integration
 def test_browser_helper_rejects_untyped_candidate_script_action(tmp_path: Path) -> None:
-    _write_fake_playwright(tmp_path)
+    _write_fake_playwright_test(tmp_path)
     helper = tmp_path / HELPER.name
     helper.write_bytes(HELPER.read_bytes())
     plan = tmp_path / "plan.json"
