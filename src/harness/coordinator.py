@@ -17,7 +17,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from harness.budget import slice_budget
 from harness.paths import build_dir, strategies_dir as _strategies_dir_fn
@@ -166,6 +166,7 @@ class StrategyCoordinator:
         base_dir: str = ".",
         build_id: str = "",
         orchestration_root: str | Path | None = None,
+        fresh_branch_bases: Mapping[str, str] | None = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -181,6 +182,7 @@ class StrategyCoordinator:
         self._state_dir = self._build_dir / "state"
         self._strategies_dir = _strategies_dir_fn(Path(base_dir))
         self._escalation_dir = self._build_dir
+        self._fresh_branch_bases = dict(fresh_branch_bases or {})
 
         # Convergence event for kill_losers
         self._convergence_event = threading.Event()
@@ -1111,6 +1113,7 @@ class StrategyCoordinator:
                     or should_resume_blocked
                     or pending_effects_only_resume
                 ),
+                fresh_branch_base=self._fresh_branch_bases.get(strategy_id),
             )
 
             pending_reentry = _pending_review_reentry(

@@ -246,6 +246,7 @@ class RalphController:
         fulfillment_runner: Optional[FulfillmentRunner] = None,
         build_id: str = "",
         fresh_delivery: bool = False,
+        fresh_branch_base: Optional[str] = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -268,6 +269,7 @@ class RalphController:
         )
         self._build_id = build_id
         self._fresh_delivery = fresh_delivery
+        self._fresh_branch_base = fresh_branch_base
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -410,6 +412,11 @@ class RalphController:
                 build_id=self._build_id,
                 prepare_codegraph=True,
                 fresh_branch=self._fresh_delivery and outer_iter == start_outer,
+                fresh_branch_base=(
+                    self._fresh_branch_base
+                    if self._fresh_delivery and outer_iter == start_outer
+                    else None
+                ),
             )
             preserve_worktree = False
 

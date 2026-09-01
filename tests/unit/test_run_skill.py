@@ -473,6 +473,53 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_new_budget_uses_checkpoint_from_prior_blocked_run(
+        self,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A new delivery must not reset durable unfinished work to main."""
+        from harness.paths import current_build_marker
+        from harness.skills.run_skill import run
+
+        intent = RunIntent(spec_id="012", mode="semi", auto_merge=False)
+        mock_parse.return_value = intent
+        candidate = "a" * 40
+        prior_state = tmp_path / "runs" / "build-prior" / "state"
+        prior_state.mkdir(parents=True)
+        (prior_state / "default.json").write_text(json.dumps({
+            "status": "blocked",
+            "termination_reason": "task_progress_incomplete",
+            "checkpoint_commits": [{"commit": candidate}],
+        }), encoding="utf-8")
+        marker = current_build_marker(tmp_path, "012")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        # A newer aborted build owns the marker but has no checkpoint.  Baseline
+        # selection must still recover the durable prior candidate.
+        newer_state = tmp_path / "runs" / "build-newer" / "state"
+        newer_state.mkdir(parents=True)
+        (newer_state / "default.json").write_text(json.dumps({
+            "status": "running", "termination_reason": None,
+        }), encoding="utf-8")
+        marker.write_text("build-newer", encoding="utf-8")
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {}, "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        run("spec 012", provider=MagicMock(), gitops=MagicMock(), base_dir=str(tmp_path))
+
+        assert mock_coordinator_cls.call_args.kwargs["fresh_branch_bases"] == {"default": candidate}
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
     @patch("harness.land.land")
     def test_land_returns_false_logs_warning(
         self,

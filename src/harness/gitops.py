@@ -491,6 +491,7 @@ class GitOpsManager:
         build_id: str = "",
         prepare_codegraph: bool = False,
         fresh_branch: bool = False,
+        fresh_branch_base: Optional[str] = None,
     ) -> str:
         """Create ephemeral worktree from mirror.
 
@@ -505,7 +506,9 @@ class GitOpsManager:
         prior iteration branch when available, otherwise from the default branch
         HEAD. A fresh delivery resets iteration zero to the target's current
         default branch instead of reusing an identically named branch from an
-        older run.
+        older run.  ``fresh_branch_base`` is an explicit, checkpointed candidate
+        from a prior interrupted delivery; when supplied it is the only exception
+        to that reset rule.
 
         Returns:
             Absolute path to the worktree directory.
@@ -620,7 +623,9 @@ class GitOpsManager:
             # prior iteration branch when one exists.
             default_branch = self.get_default_branch()
             branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
-            if fresh_branch and outer_iter == 0:
+            if fresh_branch_base and outer_iter == 0:
+                branch_base = fresh_branch_base
+            elif fresh_branch and outer_iter == 0:
                 try:
                     branch_base, _ = self._fetch_upstream_branch(default_branch)
                 except GitOpsError:
@@ -639,7 +644,10 @@ class GitOpsManager:
                 check=False,
             )
             if existing_branch.returncode == 0:
-                reset_existing = fresh_branch and outer_iter == 0
+                reset_existing = (
+                    (fresh_branch or fresh_branch_base is not None)
+                    and outer_iter == 0
+                )
                 if not reset_existing:
                     ancestry = _run_git(
                         [
