@@ -205,6 +205,16 @@ def test_schema_4_manifest_round_trips_canonically(run_mode: str) -> None:
     assert manifest.run_manifest_id == manifest.identity
 
 
+def test_schema_4_manifest_accepts_only_supported_semantic_layer_versions() -> None:
+    model = _protocol_25_model()
+    corrected = replace(_manifest_v4(), engine_protocol_version="2.5.1")
+
+    assert model.RunManifestV4.from_json_dict(corrected.to_json_dict()) == corrected
+
+    with pytest.raises(model.Protocol25SchemaError, match="engine_protocol_version"):
+        replace(_manifest_v4(), engine_protocol_version="2.5.2")
+
+
 def test_schema_4_manifest_rejects_mode_authority_mismatch() -> None:
     model = _protocol_25_model()
 

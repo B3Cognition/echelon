@@ -9,6 +9,7 @@ from harness.re_v2.protocol_25.lifecycle import (
     guidance_id_for,
     normalize_guidance_answer,
     semantic_request_id_v2,
+    semantic_request_id_v3,
 )
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import manifest_v4
@@ -38,6 +39,31 @@ def _request(**changes: object) -> str:
     return semantic_request_id_v2(**values)  # type: ignore[arg-type]
 
 
+def _request_v3(engine_protocol_version: str, **changes: object) -> str:
+    manifest = manifest_v4()
+    values = {
+        "engine_protocol_version": engine_protocol_version,
+        "lineage_root_run_id": manifest.parent_lineage.lineage_root_run_id,
+        "lineage_root_manifest_hash": manifest.parent_lineage.lineage_root_manifest_hash,
+        "direct_parent_run_id": manifest.parent_lineage.direct_parent_run_id,
+        "direct_parent_manifest_hash": manifest.parent_lineage.direct_parent_manifest_hash,
+        "direct_parent_terminal_event_hash": manifest.parent_lineage.direct_parent_terminal_event_hash,
+        "source_snapshot_id": manifest.source_snapshot_id,
+        "partition_manifest_id": manifest.partition_manifest_id,
+        "selection": manifest.selection,
+        "run_mode": "new-audit-epoch",
+        "artifact_policy_hash": manifest.artifact_policy_catalog.object_hash,
+        "executor_contract_hash": manifest.executor_contract_catalog.object_hash,
+        "audit_policy_hash": manifest.audit_policy_catalog.object_hash,
+        "accepted_audit_target_ids": (),
+        "frozen_audit_epoch_id": None,
+        "closure_root_hash": None,
+        "guidance_hash": None,
+    }
+    values.update(changes)
+    return semantic_request_id_v3(**values)  # type: ignore[arg-type]
+
+
 @pytest.mark.unit
 def test_semantic_request_identity_binds_authority_but_not_resource_ceiling() -> None:
     baseline = _request()
@@ -54,6 +80,18 @@ def test_semantic_request_identity_binds_authority_but_not_resource_ceiling() ->
         guidance_hash=digest("guide"),
         accepted_audit_target_ids=(digest("accepted"),),
     )
+
+
+@pytest.mark.unit
+def test_semantic_request_v3_binds_semantic_layer_protocol() -> None:
+    legacy = _request_v3("2.5")
+    corrected = _request_v3("2.5.1")
+
+    assert legacy != corrected
+    assert corrected == _request_v3("2.5.1")
+
+    with pytest.raises(ValueError, match="protocol"):
+        _request_v3("2.5.2")
 
 
 @pytest.mark.unit

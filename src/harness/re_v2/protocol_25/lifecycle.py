@@ -267,6 +267,57 @@ def semantic_request_id_v2(
     )
 
 
+def semantic_request_id_v3(
+    *,
+    engine_protocol_version: str,
+    lineage_root_run_id: str,
+    lineage_root_manifest_hash: str,
+    direct_parent_run_id: str,
+    direct_parent_manifest_hash: str,
+    direct_parent_terminal_event_hash: str,
+    source_snapshot_id: str,
+    partition_manifest_id: str,
+    selection: SelectionScopeV1,
+    run_mode: RunModeV1,
+    artifact_policy_hash: str,
+    executor_contract_hash: str,
+    audit_policy_hash: str,
+    accepted_audit_target_ids: tuple[str, ...],
+    frozen_audit_epoch_id: str | None,
+    closure_root_hash: str | None,
+    guidance_hash: str | None,
+) -> str:
+    """Identify a versioned L3 request while preserving schema-2 identity."""
+    if engine_protocol_version not in {"2.5", "2.5.1"}:
+        raise ValueError("semantic request protocol is unsupported")
+    legacy_request_id = semantic_request_id_v2(
+        lineage_root_run_id=lineage_root_run_id,
+        lineage_root_manifest_hash=lineage_root_manifest_hash,
+        direct_parent_run_id=direct_parent_run_id,
+        direct_parent_manifest_hash=direct_parent_manifest_hash,
+        direct_parent_terminal_event_hash=direct_parent_terminal_event_hash,
+        source_snapshot_id=source_snapshot_id,
+        partition_manifest_id=partition_manifest_id,
+        selection=selection,
+        run_mode=run_mode,
+        artifact_policy_hash=artifact_policy_hash,
+        executor_contract_hash=executor_contract_hash,
+        audit_policy_hash=audit_policy_hash,
+        accepted_audit_target_ids=accepted_audit_target_ids,
+        frozen_audit_epoch_id=frozen_audit_epoch_id,
+        closure_root_hash=closure_root_hash,
+        guidance_hash=guidance_hash,
+    )
+    return content_digest(
+        {
+            "engine_protocol_version": engine_protocol_version,
+            "legacy_semantic_request_id": legacy_request_id,
+            "schema_version": 3,
+            "target_layer": "L3",
+        }
+    )
+
+
 def find_exact_protocol_25_child(
     workspace_root: Path,
     semantic_request_id: str,
@@ -322,6 +373,7 @@ def prepare_new_audit_epoch(
     active_ms_limit: int,
     semantic_token_limit: int,
     semantic_active_ms_limit: int,
+    engine_protocol_version: str = "2.5.1",
 ) -> PreparedProtocol25Creation:
     """Prepare an L3 child from an already authenticated L1/L2 authority."""
     from harness.re_v2.canonical import canonical_json_bytes
@@ -413,7 +465,17 @@ def prepare_new_audit_epoch(
         lineage_root_run_id=lineage_root_run_id,
         lineage_root_manifest_hash=lineage_root_manifest_hash,
     )
-    semantic_id = semantic_request_id_v2(
+    request_id_builder = (
+        semantic_request_id_v2
+        if engine_protocol_version == "2.5"
+        else semantic_request_id_v3
+    )
+    semantic_id = request_id_builder(
+        **(
+            {"engine_protocol_version": engine_protocol_version}
+            if request_id_builder is semantic_request_id_v3
+            else {}
+        ),
         lineage_root_run_id=lineage.lineage_root_run_id,
         lineage_root_manifest_hash=lineage.lineage_root_manifest_hash,
         direct_parent_run_id=lineage.direct_parent_run_id,
@@ -434,7 +496,7 @@ def prepare_new_audit_epoch(
     manifest = RunManifestV4(
         schema_version=4,
         engine="re-v2",
-        engine_protocol_version="2.5",
+        engine_protocol_version=engine_protocol_version,
         run_id="re-pending-semantic-audit",
         created_at=created_at,
         source_snapshot_id=parent.manifest.source_snapshot_id,
@@ -980,7 +1042,17 @@ def _prepare_protocol_25_l3_child(
         if frozen_epoch.identity != semantic.audit_epoch_id:
             raise ValueError("guided successor frozen epoch authority is inconsistent")
 
-    semantic_id = semantic_request_id_v2(
+    request_id_builder = (
+        semantic_request_id_v2
+        if parent_manifest.engine_protocol_version == "2.5"
+        else semantic_request_id_v3
+    )
+    semantic_id = request_id_builder(
+        **(
+            {"engine_protocol_version": parent_manifest.engine_protocol_version}
+            if request_id_builder is semantic_request_id_v3
+            else {}
+        ),
         lineage_root_run_id=lineage.lineage_root_run_id,
         lineage_root_manifest_hash=lineage.lineage_root_manifest_hash,
         direct_parent_run_id=lineage.direct_parent_run_id,
@@ -1009,7 +1081,7 @@ def _prepare_protocol_25_l3_child(
     manifest = RunManifestV4(
         schema_version=4,
         engine="re-v2",
-        engine_protocol_version="2.5",
+        engine_protocol_version=parent_manifest.engine_protocol_version,
         run_id="re-pending-semantic-successor",
         created_at=created_at,
         source_snapshot_id=parent_manifest.source_snapshot_id,

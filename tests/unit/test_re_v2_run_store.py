@@ -221,7 +221,7 @@ def test_load_rejects_manifest_with_unsupported_pinned_protocol(tmp_path: Path) 
 def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
     assert RE_V2_PROTOCOL == "2.3"
     assert RE_V2_SCHEMA_3_PROTOCOLS == ("2.4",)
-    assert getattr(re_v2, "RE_V2_SCHEMA_4_PROTOCOLS", None) == ("2.5",)
+    assert getattr(re_v2, "RE_V2_SCHEMA_4_PROTOCOLS", None) == ("2.5", "2.5.1")
     assert getattr(re_v2, "RE_V2_SCHEMA_5_PROTOCOLS", None) == ("2.6",)
     assert getattr(re_v2, "RE_V2_SCHEMA_6_PROTOCOLS", None) == ("2.7",)
     assert getattr(re_v2, "RE_V2_SCHEMA_7_PROTOCOLS", None) == ("2.8",)
@@ -232,6 +232,7 @@ def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
         "2.3",
         "2.4",
         "2.5",
+        "2.5.1",
         "2.6",
         "2.7",
         "2.8",

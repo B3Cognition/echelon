@@ -36,6 +36,7 @@ from .model import (
     Protocol25SchemaError,
     RunManifestV4,
     RunModeV1,
+    SemanticLayerProtocolV1,
     SemanticClosurePolicyV1,
 )
 from .policies import (
@@ -101,6 +102,7 @@ __all__ = (
     "PreparedProtocol25Creation",
     "RunManifestV4",
     "RunModeV1",
+    "SemanticLayerProtocolV1",
     "ResolutionEntryV1",
     "SUBJECT_KINDS",
     "SemanticFindingV1",
@@ -147,6 +149,7 @@ __all__ = (
     "reconstruct_accepted_audit_results",
     "semantic_response_schema",
     "semantic_request_id_v2",
+    "semantic_request_id_v3",
     "import_protocol_25_parent_closure",
     "create_protocol_25_run_store",
     "load_protocol_25_inputs",
@@ -256,6 +259,7 @@ _LAZY_LIFECYCLE_EXPORTS = frozenset(
         "prepare_next_audit_epoch",
         "PreparedProtocol25Creation",
         "semantic_request_id_v2",
+        "semantic_request_id_v3",
     }
 )
 
