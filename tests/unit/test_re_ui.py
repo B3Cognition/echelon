@@ -116,6 +116,25 @@ def test_re_progress_tracker_reports_dispatch_acceptance_and_pause() -> None:
 
 
 @pytest.mark.unit
+def test_re_progress_heartbeat_claims_provider_work_only_during_dispatch() -> None:
+    from echelon.re_ui import ReProgressTracker
+
+    tracker = ReProgressTracker(layer="L3", total=81, accepted=7)
+
+    assert tracker.heartbeat() == (
+        "[re] L3 · 7/81 accepted · controller still working"
+    )
+    tracker.consume({"type": "dispatch_started", "payload": {}})
+    assert tracker.heartbeat() == (
+        "[re] L3 · 7/81 accepted · provider still working"
+    )
+    tracker.consume({"type": "dispatch_observed", "payload": {}})
+    assert tracker.heartbeat() == (
+        "[re] L3 · 7/81 accepted · controller still working"
+    )
+
+
+@pytest.mark.unit
 def test_re_status_card_preserves_nested_l1_progress_and_not_run_state() -> None:
     from echelon.re_ui import print_re_status_card
 

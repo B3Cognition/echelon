@@ -248,16 +248,21 @@ class ReProgressTracker:
     layer: str
     total: int
     accepted: int = 0
+    provider_active: bool = False
 
     def consume(self, event: Mapping[str, object]) -> str | None:
         event_type = str(event.get("type") or "")
         payload = event.get("payload")
         details = payload if isinstance(payload, Mapping) else {}
         if event_type in {"dispatch_started", "provider_started"}:
+            self.provider_active = True
             return (
                 f"[re] {self.layer} · {self.accepted}/{self.total} accepted · "
                 "provider dispatch started"
             )
+        if event_type in {"dispatch_observed", "provider_completed"}:
+            self.provider_active = False
+            return None
         if event_type in {
             "artifact_accepted",
             "accepted_slice_recorded",
@@ -271,10 +276,22 @@ class ReProgressTracker:
             "run_completed",
             "run_blocked",
         }:
+            self.provider_active = False
             state = event_type.removeprefix("run_")
             reason = str(details.get("reason") or "").strip()
             return f"[re] {self.layer} · {state}" + (f" · {reason}" if reason else "")
         return None
+
+    def heartbeat(self) -> str:
+        activity = (
+            "provider still working"
+            if self.provider_active
+            else "controller still working"
+        )
+        return (
+            f"[re] {self.layer} · {self.accepted}/{self.total} accepted · "
+            f"{activity}"
+        )
 
 
 class _EventMonitor:
@@ -309,9 +326,7 @@ class _EventMonitor:
             now = time.monotonic()
             if now - self._last_visible >= 15:
                 print(
-                    f"[re] {self._tracker.layer} · "
-                    f"{self._tracker.accepted}/{self._tracker.total} accepted · "
-                    "provider still working",
+                    self._tracker.heartbeat(),
                     file=self._file,
                     flush=True,
                 )
