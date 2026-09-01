@@ -12599,8 +12599,11 @@ def _re_v25_expected_checkpoint_work_items(
     }
     targets = graph.ready_audit_targets(accepted)
     templates = tuple(graph.audit_templates)
+    # An L1 parent may still need to generate L2 before any L3 work can be
+    # instantiated. In that case no sibling L3 checkpoint is yet exact.
     if len(targets) != len(templates):
-        raise ValueError("L3 checkpoint selection requires complete audit authority")
+        targets = ()
+        templates = ()
     audit_items = tuple(
         graph.instantiate_audit_item(
             template,
