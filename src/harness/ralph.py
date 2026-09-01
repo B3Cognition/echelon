@@ -5115,18 +5115,24 @@ class RalphController:
         return "worktree"
 
     def _llm_build_prompt_metadata(self, worktree_path: str) -> dict[str, object]:
-        """Authorize only TECH WRITER/DOCS VERIFIER external spec outputs."""
+        """Authorize candidate contract and narrow external documentation outputs."""
+        write_paths = [
+            str(Path(worktree_path) / ".echelon" / "runnability.yml")
+        ]
         if self._spec_artifacts_mode() != "external":
-            return {}
+            return {"tool_write_paths": write_paths}
         spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
-            return {}
-        return {
-            "tool_read_roots": [str(spec_dir)],
-            "tool_write_paths": [
+            return {"tool_write_paths": write_paths}
+        write_paths.extend(
+            (
                 str(spec_dir / "documentation-impact-report.md"),
                 str(spec_dir / "docs-verification-report.md"),
-            ],
+            )
+        )
+        return {
+            "tool_read_roots": [str(spec_dir)],
+            "tool_write_paths": write_paths,
         }
 
     def _target_task_ids(self) -> set[str] | None:

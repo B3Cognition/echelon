@@ -145,6 +145,33 @@ class TestAICodingCliProvider:
             in prompt_metadata["tool_forbidden_roots"]
         )
 
+    def test_provider_boundary_exposes_only_authorized_candidate_contract(
+        self, tmp_path
+    ):
+        provider = AICodingCliProvider(_config(cli="codex"))
+        contract = (tmp_path / ".echelon" / "runnability.yml").resolve()
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="done", stderr=""),
+        ) as run_backend:
+            provider.run_prompt_result(
+                str(tmp_path),
+                "repair the candidate",
+                request_metadata={
+                    "prompt_metadata": {"tool_write_paths": [str(contract)]}
+                },
+            )
+
+        request = run_backend.call_args.args[0]
+        assert "The sole candidate-owned control-plane exception" in request.prompt
+        assert "invocation is `.echelon/runnability.yml`" in request.prompt
+        assert str(contract) in request.metadata["prompt_metadata"]["tool_write_paths"]
+        assert str((tmp_path / ".echelon").resolve()) in request.metadata[
+            "prompt_metadata"
+        ]["tool_forbidden_roots"]
+
     def test_provider_does_not_duplicate_product_plane_contract(self, tmp_path):
         provider = AICodingCliProvider(_config(cli="codex"))
         prompt = "## Echelon Product-Plane Boundary\n\nExisting boundary.\n\nDo work."

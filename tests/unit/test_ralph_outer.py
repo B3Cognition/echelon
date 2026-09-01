@@ -8295,9 +8295,44 @@ class TestLlmProviderDispatch:
         prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
         assert prompt_metadata["tool_read_roots"] == [str(spec_dir)]
         assert prompt_metadata["tool_write_paths"] == [
+            str(worktree / ".echelon" / "runnability.yml"),
             str(spec_dir / "documentation-impact-report.md"),
             str(spec_dir / "docs-verification-report.md"),
         ]
+
+    def test_exec_build_authorizes_candidate_runnability_contract_for_single_repo(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+        controller, _, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+
+        controller._exec_build(
+            handle=MagicMock(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            prompt="build this",
+        )
+
+        prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
+        assert prompt_metadata == {
+            "tool_write_paths": [
+                str(worktree / ".echelon" / "runnability.yml")
+            ]
+        }
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""

@@ -445,7 +445,9 @@ def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
         rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
     for path in write_paths:
         rule_path = _claude_absolute_rule_path(path)
-        rules.extend(f"{tool}({rule_path})" for tool in ("Write", "Edit"))
+        rules.extend(
+            f"{tool}({rule_path})" for tool in ("Read", "Write", "Edit")
+        )
     return [
         "--safe-mode",
         "--setting-sources",
@@ -532,6 +534,7 @@ def _workspace_sandbox_profile(
             rule
             for path in write_paths
             for rule in (
+                f"(allow file-read* (literal {json.dumps(path)}))",
                 f"(allow file-write* (literal {json.dumps(str(Path(path).parent))}))",
                 f"(allow file-write* (literal {json.dumps(path)}))",
             )
