@@ -191,6 +191,27 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
     enabled = root_raw.get("enabled")
     if type(enabled) is not bool:
         raise RunnabilityContractError("enabled must be a boolean")
+    if not enabled:
+        return RunnabilityContract(
+            schema_version=1,
+            enabled=False,
+            install_commands=(),
+            bootstrap_commands=(),
+            start_commands=(),
+            readiness=RunnabilityReadiness(url="", timeout_ms=0),
+            identity=None,
+            primary_journey=PrimaryJourney(
+                kind="",
+                url=None,
+                requirements=(),
+                real_services_required=(),
+                session_storage=(),
+                steps=(),
+                observations=(),
+            ),
+            persistence_probe=None,
+            stop_commands=(),
+        )
 
     readiness = _parse_readiness(root_raw.get("readiness"))
     identity = _parse_identity(root_raw.get("identity"))

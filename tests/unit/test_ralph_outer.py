@@ -40,6 +40,9 @@ from harness import ralph
 from harness.build_result import BuildResult
 from harness.llm_tool_policy import LlmToolPolicy
 from harness.ralph import RalphController
+from harness.runnability_evidence import RunnabilityEvidenceRef
+from harness.runnability_runner import RunnabilityRunResult
+from harness.stacks.resolver import ResolvedRunnability
 from harness.state import StateStore
 
 
@@ -345,6 +348,199 @@ def test_sandbox_setup_error_is_a_typed_verification_failure(tmp_path: Path) -> 
 
     assert result.passed is False
     assert result.failures[0].id == "sandbox-verification-unavailable"
+
+
+def _required_browser_runnability() -> ResolvedRunnability:
+    return ResolvedRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        capabilities=("install", "start", "primary_journey", "stop"),
+        required_observations=("browser_dom",),
+        sources=("browser-game",),
+    )
+
+
+def _write_enabled_runnability_contract(worktree: Path) -> None:
+    contract = worktree / ".echelon" / "runnability.yml"
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    contract.write_text(
+        "schema_version: 1\n"
+        "enabled: true\n"
+        "install_commands: []\n"
+        "bootstrap_commands: []\n"
+        "start_commands: [make start]\n"
+        "readiness:\n"
+        "  url: http://127.0.0.1:${ECHELON_PORT}/health\n"
+        "  timeout_ms: 30000\n"
+        "primary_journey:\n"
+        "  kind: browser\n"
+        "  url: ${ECHELON_BASE_URL}\n"
+        "  requirements: [FR-001]\n"
+        "  real_services_required: [web]\n"
+        "  steps:\n"
+        "    - action: goto\n"
+        "      path: /\n"
+        "  observations:\n"
+        "    - id: canvas-visible\n"
+        "      kind: browser_dom\n"
+        "      selector: canvas\n"
+        "      expectation: present\n"
+        "stop_commands: [make stop]\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.unit
+def test_required_user_facing_stack_cannot_pass_gate_without_candidate_contract(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-contract-missing"
+    assert result.failures[0].details["contract"] == ".echelon/runnability.yml"
+
+
+@pytest.mark.unit
+def test_required_user_facing_stack_cannot_converge_without_candidate_contract(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_runnability = _required_browser_runnability()
+    controller, _provider, gitops, _state = _make_controller(
+        tmp_path,
+        verify_results=[{"passed": True, "failures": []}],
+        config=config,
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    gitops.create_worktree.return_value = str(worktree)
+
+    result = controller.run_loop(max_outer=1, max_inner=0)
+
+    assert result.status != "verified"
+    assert result.final_verify is not None
+    assert result.final_verify.failures[0].id == "user-runnability-contract-missing"
+
+
+@pytest.mark.unit
+def test_candidate_disabled_contract_cannot_downgrade_required_stack(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    worktree = tmp_path / "worktree"
+    contract = worktree / ".echelon" / "runnability.yml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("schema_version: 1\nenabled: false\n", encoding="utf-8")
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-contract-disabled"
+
+
+@pytest.mark.unit
+def test_non_runnable_stack_without_contract_preserves_existing_gate_result(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = ResolvedRunnability()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    original = VerifyResult(passed=True)
+
+    result = controller._apply_user_runnability_gate(
+        original,
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result is original
+
+
+@pytest.mark.unit
+def test_runnability_failure_persists_compact_state_and_actionable_report_context(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    controller._config.resolved_stacks = object()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _write_enabled_runnability_contract(worktree)
+    evidence_dir = tmp_path / "evidence" / "user-runnability"
+    evidence_dir.mkdir(parents=True)
+    report = evidence_dir / "attempt-0001-a.md"
+    evidence = RunnabilityEvidenceRef(
+        path=evidence_dir / "attempt-0001-a.json",
+        markdown_path=report,
+        receipt_sha256="receipt",
+        evidence_sha256="evidence",
+        candidate_commit="a" * 40,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        status="not_runnable",
+    )
+    run_result = RunnabilityRunResult(
+        status="not_runnable",
+        failed_stage="primary_journey",
+        failure_class="primary_journey_failed",
+        summary="The canvas never became interactive.",
+        stages=(),
+        evidence=evidence,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        user_commands={"start": ("make start",)},
+    )
+
+    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+        runner_type.return_value.run.return_value = run_result
+        result = controller._apply_user_runnability_gate(
+            VerifyResult(passed=True),
+            str(worktree),
+            candidate_commit="a" * 40,
+            evidence_dir=evidence_dir,
+        )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-primary-journey-failed"
+    assert result.failures[0].details["report"] == str(report)
+    assert result.failures[0].details["required_repair"].startswith("Repair the candidate")
+    prompt = controller._make_feedback_prompt("Continue delivery.", result, 1)
+    assert "primary_journey_failed" in prompt
+    assert str(report) in prompt
+    state = controller._state_store.read()["user_runnability"]
+    assert state == {
+        "status": "not_runnable",
+        "failed_stage": "primary_journey",
+        "failure_class": "primary_journey_failed",
+        "summary": "The canvas never became interactive.",
+        "report": str(report),
+        "candidate_fingerprint": "product-1",
+        "contract_hash": "contract-1",
+        "stack_hash": "stack-1",
+        "user_commands": {"start": ["make start"]},
+    }
 
 
 def _init_git_repo(path: Path) -> None:

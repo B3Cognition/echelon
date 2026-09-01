@@ -352,6 +352,7 @@ class StrategyCoordinator:
                 "salvage_verified": state.get("salvage_verified"),
                 "escalation_file": state.get("escalation_file"),
                 "fulfillment_refresh": state.get("fulfillment_refresh"),
+                "user_runnability": state.get("user_runnability"),
             }
 
         # Summary

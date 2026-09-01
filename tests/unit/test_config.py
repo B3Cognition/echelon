@@ -122,6 +122,22 @@ class TestParseConfigValid:
         assert isinstance(config.stacks, StacksConfig)
         assert config.stacks.selected == []
         assert config.verification.execution == "sandbox"
+        assert config.resolved_stacks is None
+        assert config.resolved_runnability is None
+
+    def test_candidate_config_cannot_supply_runtime_stack_resolution(self) -> None:
+        config = _parse_config(
+            {
+                **MINIMAL,
+                "resolved_stacks": {"selected_ids": ["candidate-owned"]},
+                "resolved_runnability": {"policy": "not_applicable"},
+                "verification_services": [{"name": "candidate-service"}],
+            }
+        )
+
+        assert config.resolved_stacks is None
+        assert config.resolved_runnability is None
+        assert config.verification_services == []
 
     def test_host_verification_requires_explicit_opt_in(self) -> None:
         config = _parse_config({

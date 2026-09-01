@@ -265,6 +265,8 @@ class HarnessConfig:
     # Runtime-resolved sidecars are derived from the selected stack contract by
     # the delivery adapter. They are never read from user configuration.
     verification_services: List[Any] = field(default_factory=list)
+    resolved_stacks: Any = None
+    resolved_runnability: Any = None
     verify_command: Optional[str] = None
 
 

@@ -49,6 +49,16 @@ from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_contract import (
+    CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH,
+    RunnabilityContractError,
+    load_runnability_contract,
+)
+from harness.runnability_disposition import (
+    RunnabilityDispositionError,
+    read_runnability_disposition,
+)
+from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
 from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.secret_scan import scan_git_staged
 from harness.spec_frontmatter import find_spec_dir
@@ -98,6 +108,29 @@ _VERIFICATION_ARTIFACT_PATHS = (
     "blob-report/**",
     "coverage/**",
 )
+
+
+def _is_user_runnability_sandbox_prerequisite(result: VerifyResult) -> bool:
+    return any(
+        failure.id == "user-runnability-sandbox-prerequisite"
+        for failure in result.failures
+    )
+
+
+def _runnability_target_id(target_repo: str) -> str:
+    target = str(target_repo).strip().rstrip("/")
+    if not target:
+        return "workspace"
+    return Path(target).name or "target"
+
+
+def _next_runnability_attempt_sequence(evidence_dir: Path) -> int:
+    highest = 0
+    for path in Path(evidence_dir).glob("attempt-*.json"):
+        match = re.match(r"attempt-(\d+)-", path.name)
+        if match is not None:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
 
 
 def _missing_completed_task_deliverables(
@@ -161,13 +194,16 @@ def _is_verification_environment_deferral(
 
 
 def _current_git_commit(worktree: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
     if result.returncode != 0:
         return None
     commit = result.stdout.strip()
@@ -871,6 +907,12 @@ class RalphController:
                     verify_result = self._apply_fulfillment_gate(
                         verify_result, worktree_path
                     )
+                    verify_result = self._apply_user_runnability_gate(
+                        verify_result,
+                        worktree_path,
+                        candidate_commit=_current_git_commit(Path(worktree_path)) or "",
+                        evidence_dir=self._runnability_evidence_dir(),
+                    )
                     verify_result = self._apply_documentation_gate(
                         verify_result,
                         worktree_path,
@@ -938,6 +980,18 @@ class RalphController:
                         return self._finalize(
                             status="blocked",
                             reason="sandbox_verification_unavailable",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
+                    if _is_user_runnability_sandbox_prerequisite(verify_result):
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="user_runnability_sandbox_prerequisite",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -1415,6 +1469,15 @@ class RalphController:
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
             }
+        if _is_user_runnability_sandbox_prerequisite(verify_result):
+            return {
+                "converged": False,
+                "blocked": True,
+                "blocked_reason": "user_runnability_sandbox_prerequisite",
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
 
         failure_history: List[List[str]] = []
         current_verify = verify_result
@@ -1641,6 +1704,9 @@ class RalphController:
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
             inner_changed_files = self._changed_files_since_head(worktree_path)
+            current_verify = self._apply_task_progress_gate(
+                current_verify, worktree_path, require_completion=False
+            )
             current_verify = self._refresh_fulfillment_report(
                 current_verify,
                 worktree_path,
@@ -1649,6 +1715,12 @@ class RalphController:
             )
             current_verify = self._apply_fulfillment_gate(
                 current_verify, worktree_path
+            )
+            current_verify = self._apply_user_runnability_gate(
+                current_verify,
+                worktree_path,
+                candidate_commit=_current_git_commit(Path(worktree_path)) or "",
+                evidence_dir=self._runnability_evidence_dir(),
             )
             current_verify = self._apply_documentation_gate(
                 current_verify,
@@ -1692,6 +1764,16 @@ class RalphController:
                 return {
                     "converged": False,
                     "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
+            if _is_user_runnability_sandbox_prerequisite(current_verify):
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "blocked_reason": "user_runnability_sandbox_prerequisite",
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
                     "final_verify": current_verify,
@@ -2178,6 +2260,214 @@ class RalphController:
             token_usage=verify_result.token_usage,
             verification_evidence=dict(verify_result.verification_evidence),
         )
+
+    def _apply_user_runnability_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+        *,
+        candidate_commit: str,
+        evidence_dir: Path,
+    ) -> VerifyResult:
+        """Require a fresh composed journey when resolved stacks demand it."""
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        resolved_policy = getattr(self._config, "resolved_runnability", None)
+        policy = str(getattr(resolved_policy, "policy", "not_applicable"))
+        required = policy == "required"
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is not None:
+            try:
+                disposition = read_runnability_disposition(spec_dir)
+            except RunnabilityDispositionError as exc:
+                return self._runnability_failure(
+                    verify_result,
+                    failure_id="user-runnability-disposition-invalid",
+                    error=f"Owner runnability disposition is invalid: {exc}",
+                    details={"disposition": str(spec_dir / "runnability-disposition.json")},
+                )
+            if disposition is not None and disposition.status == "deferred":
+                self._record_user_runnability_state(
+                    {
+                        "status": "deferred",
+                        "failed_stage": None,
+                        "failure_class": "owner_deferred",
+                        "summary": disposition.reason,
+                        "report": disposition.evidence_report,
+                        "candidate_fingerprint": "",
+                        "contract_hash": "",
+                        "stack_hash": "",
+                        "user_commands": {},
+                    }
+                )
+                return verify_result
+
+        candidate_contract_path = Path(worktree_path) / RUNNABILITY_CONTRACT_PATH
+        if not candidate_contract_path.exists():
+            if not required:
+                return verify_result
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-missing",
+                error=(
+                    "Selected stacks require a composed user-runnability journey, but "
+                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
+                ),
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Add the project-owned runnability contract and real journey.",
+                },
+            )
+
+        try:
+            contract = load_runnability_contract(Path(worktree_path))
+        except (OSError, RunnabilityContractError) as exc:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-invalid",
+                error=f"Candidate runnability contract is invalid: {exc}",
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Repair the candidate-owned runnability contract.",
+                },
+            )
+
+        if contract is None:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-missing",
+                error=(
+                    "Selected stacks require a composed user-runnability journey, but "
+                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
+                ),
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Add the project-owned runnability contract and real journey.",
+                },
+            )
+        if not contract.enabled:
+            if not required:
+                return verify_result
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-disabled",
+                error="A candidate contract cannot disable a stack-required runnability gate.",
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Enable and complete the candidate runnability contract.",
+                },
+            )
+
+        resolved_stacks = getattr(self._config, "resolved_stacks", None)
+        if resolved_stacks is None:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-stack-resolution-missing",
+                error="Resolved stack evidence is unavailable for the runnability gate.",
+                details={
+                    "required_repair": "Rerun delivery with resolved stack runtime data."
+                },
+            )
+
+        runner = RunnabilityRunner(
+            provider=self._provider,
+            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
+                str(worktree), 0
+            ),
+            spec_id=self._spec_id,
+            target_id=_runnability_target_id(self._config.target_repo),
+            strategy_id=self._strategy_id,
+            build_id=self._build_id or str(self._state_store.read().get("run_id") or "run"),
+        )
+        result = runner.run(
+            worktree=Path(worktree_path),
+            contract=contract,
+            resolved=resolved_stacks,
+            candidate_commit=candidate_commit,
+            evidence_dir=evidence_dir,
+            attempt_sequence=_next_runnability_attempt_sequence(evidence_dir),
+        )
+        self._record_user_runnability_result(result)
+        if result.status == "runnable":
+            return verify_result
+
+        report_path = str(result.evidence.markdown_path)
+        failure_id = (
+            "user-runnability-sandbox-prerequisite"
+            if result.failure_class == "sandbox_prerequisite_missing"
+            else f"user-runnability-{result.failure_class.replace('_', '-')}"
+        )
+        repair = (
+            "Repair the sandbox/provider prerequisite and retry delivery."
+            if result.failure_class == "sandbox_prerequisite_missing"
+            else "Repair the candidate product or .echelon/runnability.yml, then retry delivery."
+        )
+        return self._runnability_failure(
+            verify_result,
+            failure_id=failure_id,
+            error=(
+                f"User runnability {result.failure_class} failed at "
+                f"{result.failed_stage or 'unknown'}: "
+                f"{result.summary}. Evidence: {report_path}"
+            ),
+            details={
+                "failed_stage": result.failed_stage,
+                "failure_class": result.failure_class,
+                "summary": result.summary,
+                "report": report_path,
+                "required_repair": repair,
+            },
+        )
+
+    def _runnability_failure(
+        self,
+        verify_result: VerifyResult,
+        *,
+        failure_id: str,
+        error: str,
+        details: dict[str, object],
+    ) -> VerifyResult:
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=failure_id,
+                    error=error,
+                    details=details,
+                )
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
+        )
+
+    def _runnability_evidence_dir(self) -> Path:
+        return self._state_store.state_dir.parent / "evidence" / "user-runnability"
+
+    def _record_user_runnability_result(self, result: RunnabilityRunResult) -> None:
+        self._record_user_runnability_state(
+            {
+                "status": result.status,
+                "failed_stage": result.failed_stage,
+                "failure_class": result.failure_class,
+                "summary": result.summary,
+                "report": str(result.evidence.markdown_path),
+                "candidate_fingerprint": result.candidate_fingerprint,
+                "contract_hash": result.contract_hash,
+                "stack_hash": result.stack_hash,
+                "user_commands": {
+                    key: list(commands)
+                    for key, commands in result.user_commands.items()
+                },
+            }
+        )
+
+    def _record_user_runnability_state(self, summary: dict[str, object]) -> None:
+        state = self._state_store.read()
+        state["user_runnability"] = summary
+        self._state_store.write(state)
 
     def _apply_documentation_gate(
         self,

@@ -1217,6 +1217,8 @@ def _resolve_delivery_verification_services(
         target_archetypes={str(value) for value in archetypes} or None,
     )
     config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
 
 
 def _block_if_delivery_provisioning_incomplete(
