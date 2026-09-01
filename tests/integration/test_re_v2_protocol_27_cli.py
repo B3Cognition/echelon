@@ -114,4 +114,7 @@ def test_terminal_cli_continuation_is_byte_stable(
         name: (run_dir / "v2" / name).read_bytes()
         for name in ("run.json", "events.jsonl", "ledger.jsonl")
     }
-    assert "RE WORKSPACE SYNTHESIS — COMPLETE OVER ACCEPTED PARTIAL INPUTS" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE RUN" in output
+    assert "✈ echelon · RE STATUS" in output
+    assert "RE WORKSPACE SYNTHESIS — COMPLETE OVER ACCEPTED PARTIAL INPUTS" in output

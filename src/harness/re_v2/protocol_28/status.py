@@ -179,7 +179,10 @@ def protocol_28_orchestration_status_document(
     path = supplied_paths.root if supplied_paths is not None else Path(intent)
     loaded = load_orchestration(Path(path))
     projection = recover_orchestration(loaded.paths.root)
-    banner, reason_code, next_action = _orchestration_terminal_state(projection)
+    banner, reason_code, next_action = _orchestration_terminal_state(
+        projection,
+        loaded.request,
+    )
     return {
         "request_id": loaded.request.request_id,
         "state": projection.state,
@@ -513,20 +516,45 @@ def _next_action(context, state, blocker, orchestration):  # type: ignore[no-unt
         == "all-scope"
     ):
         return "run protocol-2.9 workspace synthesis when available"
+    if isinstance(orchestration, Mapping):
+        input_run_id = orchestration.get("input_run_id")
+        if isinstance(input_run_id, str):
+            return (
+                "`echelon re deepen --to L4 --all --from-run "
+                f"{input_run_id}`"
+            )
     return (
         "deepen remaining intentionally unselected scope or run "
         "protocol-2.9 synthesis"
     )
 
 
-def _orchestration_terminal_state(projection):  # type: ignore[no-untyped-def]
+def _deepen_command(request):  # type: ignore[no-untyped-def]
+    command = [
+        "echelon re deepen",
+        "--to L4",
+        f"--from-run {request.input_run_id}",
+    ]
+    if request.selection.all_sources:
+        command.append("--all")
+    else:
+        command.extend(f"--source {value}" for value in request.selection.source_ids)
+        command.extend(f"--domain {value}" for value in request.selection.domain_keys)
+    return " ".join(command)
+
+
+def _orchestration_terminal_state(
+    projection,
+    request,
+):  # type: ignore[no-untyped-def]
     reason = projection.blocked_reason_code or "none"
     if projection.state == "awaiting_l3":
         if projection.blocked_reason_code == "l3_prerequisite_resource_blocked":
             return (
                 "L4 PENDING — L3 PREREQUISITE RESOURCE BLOCKED",
                 reason,
-                f"continue L3 run {projection.l3_run_id or 'pending'}; L4 remains pending",
+                "first run the copy-paste L3 continuation command above; "
+                f"after L3 completes, then rerun `{_deepen_command(request)}`",
             )
         if projection.blocked_reason_code is not None:
             return (
@@ -537,7 +565,8 @@ def _orchestration_terminal_state(projection):  # type: ignore[no-untyped-def]
         return (
             "L4 PENDING — L3 PREREQUISITE RESOURCE BLOCKED",
             "l3_prerequisite_pending",
-            f"continue L3 run {projection.l3_run_id or 'pending'}; L4 remains pending",
+            "first run the copy-paste L3 continuation command above; "
+            f"after L3 completes, then rerun `{_deepen_command(request)}`",
         )
     if projection.state == "awaiting_l4" and projection.l4_run_id is None:
         return (

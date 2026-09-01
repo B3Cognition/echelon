@@ -980,7 +980,13 @@ def test_invalid_v2_pin_fails_before_execution_or_side_effects(
     assert result.exit_code == 2
     assert isinstance(result.exception, SystemExit)
     assert _captured_stderr(result) in {"", result.output}
-    assert result.output.startswith(f"echelon re {operation}: ")
+    assert "✈ echelon · RE ERROR" in result.output
+    assert "COMMAND FAILED" in result.output
+    assert f"echelon re {operation}" in result.output
+    assert (
+        "invalid immutable v2 run manifest" in result.output
+        or "unsupported pinned RE engine/protocol" in result.output
+    )
     assert _tree_snapshot(tmp_path) == before
     assert not (v2_dir / "events.jsonl").exists()
     assert not (v2_dir / "ledger.jsonl").exists()

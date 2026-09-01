@@ -6,6 +6,72 @@ import pytest
 from typer.testing import CliRunner
 
 
+def _completed_l4_anchor(tmp_path: Path) -> tuple[Path, Path]:
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+    from harness.re_v2.protocol_28.lifecycle import (
+        create_or_reuse_protocol_28_child,
+        run_protocol_28_exhaustive,
+    )
+    from harness.re_v2.protocol_28.materialization import materialize_l4_closure
+    from harness.re_v2.protocol_28.orchestration import (
+        DeepenOrchestrationController,
+        DeepenOrchestrationRequestV1,
+        create_or_load_orchestration,
+    )
+    from tests.re_v2_protocol_24_fixtures import manifest_v3
+    from tests.unit.test_re_v2_protocol_28_inputs import _fixture
+    from tests.unit.test_re_v2_protocol_28_lifecycle import _PassingBackend
+
+    workspace = tmp_path / "workspace"
+    input_manifest = manifest_v3(run_id="re-l2-input")
+    input_dir = workspace / "runs" / input_manifest.run_id
+    (input_dir / "v2").mkdir(parents=True)
+    input_bytes = canonical_json_bytes(input_manifest.to_json_dict())
+    (input_dir / "v2" / "run.json").write_bytes(input_bytes)
+
+    l4_manifest, l4_inputs = _fixture("re-l4-complete-anchor")
+    l4_dir = create_or_reuse_protocol_28_child(workspace, l4_inputs)
+    result = run_protocol_28_exhaustive(l4_dir, lambda: _PassingBackend())
+    l4_context = load_protocol_28_run_context(l4_dir)
+    materialize_l4_closure(l4_context)
+    l4_context.controller.complete_run(
+        result.run_root_id,
+        closure_required=False,
+    )
+    l4_hash = content_digest(canonical_json_bytes(l4_manifest.to_json_dict()))
+    request = DeepenOrchestrationRequestV1(
+        1,
+        input_manifest.run_id,
+        content_digest(input_bytes),
+        content_digest(b"input-terminal"),
+        l4_manifest.source_snapshot_id,
+        l4_manifest.partition_manifest_id,
+        l4_manifest.selection,
+        l4_manifest.exhaustive_policy_catalog_id,
+        l4_manifest.executor_catalog_id,
+        content_digest(b"l3-request"),
+    )
+    intent = create_or_load_orchestration(
+        workspace,
+        request,
+        clock=lambda: "2026-09-01T12:00:00Z",
+    )
+    controller = DeepenOrchestrationController(
+        intent,
+        clock=lambda: "2026-09-01T12:00:00Z",
+    )
+    controller.bind_l3_child("re-l3-parent", content_digest(b"l3-manifest"))
+    controller.satisfy_l3("re-l3-parent", content_digest(b"l3-terminal"))
+    controller.bind_l4_child(l4_manifest.run_id, l4_hash)
+    controller.complete_l4(
+        l4_manifest.run_id,
+        content_digest(b"l4-terminal"),
+        closure_required=False,
+    )
+    return l4_dir, input_dir
+
+
 @pytest.mark.integration
 def test_l4_parser_accepts_public_limits_and_shadow() -> None:
     from echelon.cli import _parse_re_deepen_options
@@ -90,6 +156,66 @@ def test_l4_dispatch_routes_only_to_protocol_28(
 
 
 @pytest.mark.integration
+def test_l4_command_reports_preflight_before_parent_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    run_dir = tmp_path / "runs" / "re-active"
+    run_dir.mkdir(parents=True)
+    options = cli._parse_re_deepen_options(["--to", "L4", "--all"])
+    monkeypatch.setattr(
+        cli,
+        "_resolve_re_v24_parent_path",
+        lambda *_args: run_dir,
+    )
+
+    def stop_after_visible_progress(*_args: object) -> Path:
+        raise RuntimeError("stop after progress")
+
+    monkeypatch.setattr(
+        cli,
+        "_re_v28_orchestration_input_path",
+        stop_after_visible_progress,
+    )
+
+    with pytest.raises(RuntimeError, match="stop after progress"):
+        cli._run_re_v28_deepen(tmp_path, options)
+
+    assert "[re] preparing L4 all-scope request" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_completed_l4_active_anchor_resolves_to_original_analysis_input(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _re_v28_orchestration_input_path
+
+    l4_dir, input_dir = _completed_l4_anchor(tmp_path)
+
+    assert _re_v28_orchestration_input_path(
+        tmp_path / "workspace", l4_dir
+    ) == input_dir
+
+
+@pytest.mark.integration
+def test_completed_selected_l4_status_prints_exact_all_scope_command(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_28.status import protocol_28_status_document
+
+    l4_dir, _input_dir = _completed_l4_anchor(tmp_path)
+
+    document = protocol_28_status_document(l4_dir)
+
+    assert document["next_action"] == (
+        "`echelon re deepen --to L4 --all --from-run re-l2-input`"
+    )
+
+
+@pytest.mark.integration
 def test_schema7_context_and_exhaustive_continuation_dispatch_by_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -119,9 +245,12 @@ def test_schema7_context_and_exhaustive_continuation_dispatch_by_manifest(
 
     output = capsys.readouterr().out
     assert backend.roles == ["producer", "verifier"]
-    assert "PROTOCOL 2.8" in output
-    assert "accepted=1" in output
-    assert output.rstrip().endswith("L4 SELECTED SCOPE COMPLETE")
+    assert "✈ echelon · RE RUN" in output
+    assert "[re] L4" in output and "controller started" in output
+    assert "✈ echelon · RE STATUS" in output
+    assert "2.8" in output
+    assert "1/1 slices accepted" in output
+    assert "L4 SELECTED SCOPE COMPLETE" in output
     assert (run_dir / "re" / "l4" / "materialization.json").is_file()
 
 
@@ -154,7 +283,9 @@ def test_schema7_closure_continuation_rejects_resources_and_replays_zero_call(
         time_limit_minutes=None,
     )
 
-    assert "mode: l4-closure-successor" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE STATUS" in output
+    assert "L4" in output and "COMPLETE" in output
 
 
 @pytest.mark.integration

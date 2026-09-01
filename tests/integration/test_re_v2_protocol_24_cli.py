@@ -450,7 +450,11 @@ def test_schema3_live_execution_uses_protocol24_controller(
     legacy_cli._run_re_v2_live(context)
 
     assert calls == [context]
-    assert "PROTOCOL 2.4" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE RUN" in output
+    assert "[re] L2" in output and "controller started" in output
+    assert "✈ echelon · RE STATUS" in output
+    assert "2.4" in output
 
 
 @pytest.mark.integration

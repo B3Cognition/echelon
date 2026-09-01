@@ -361,3 +361,31 @@ def test_orchestration_status_uses_exact_pre_child_banner(
     output = render_protocol_28_orchestration_status(intent.paths.root)
 
     assert output.rstrip().endswith(banner)
+
+
+@pytest.mark.unit
+def test_l3_resource_blocker_explains_how_to_resume_l4_orchestration(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.protocol_28.orchestration import (
+        DeepenOrchestrationController,
+        create_or_load_orchestration,
+    )
+    from harness.re_v2.protocol_28.status import (
+        render_protocol_28_orchestration_status,
+    )
+    from tests.unit.test_re_v2_protocol_28_orchestration import NOW, _request
+    from tests.re_v2_protocol_28_fixtures import digest
+
+    intent = create_or_load_orchestration(tmp_path, _request(), clock=lambda: NOW)
+    controller = DeepenOrchestrationController(intent, clock=lambda: NOW)
+    controller.bind_l3_child("re-l3", digest("l3-manifest"))
+    controller.block("l3", "l3_prerequisite_resource_blocked")
+
+    output = render_protocol_28_orchestration_status(intent.paths.root)
+
+    assert "first run the copy-paste L3 continuation command above" in output
+    assert (
+        "then rerun `echelon re deepen --to L4 --from-run re-l2-input "
+        "--source api --domain sha256:" in output
+    )

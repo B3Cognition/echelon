@@ -13,7 +13,7 @@ import shutil
 import stat
 import tempfile
 from types import MappingProxyType
-from typing import Iterator, Mapping
+from typing import Callable, Iterator, Mapping
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_26.model import CheckpointManifestV1
@@ -249,7 +249,11 @@ class CheckpointCacheGenerationV1:
         object.__setattr__(self, "authority_objects", MappingProxyType(authority))
 
 
-def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV1:
+def rebuild_checkpoint_cache(
+    workspace_root: Path,
+    *,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> CheckpointCacheGenerationV1:
     """Reconstruct all safe origins and atomically replace cache projections."""
     paths = CheckpointCachePaths.for_workspace(workspace_root)
     _ensure_cache_layout(paths)
@@ -257,7 +261,10 @@ def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV
         manifests: dict[str, CheckpointManifestV1] = {}
         authority_objects: dict[str, Mapping[str, bytes]] = {}
         quarantine: list[OriginCheckpointRejectionV1] = []
-        for origin in _enumerate_origins(paths.root.parents[2]):
+        origins = _enumerate_origins(paths.root.parents[2])
+        if progress is not None:
+            progress("origin-reconstruction", 0, len(origins))
+        for completed, origin in enumerate(origins, start=1):
             if origin.is_symlink() or not origin.is_dir():
                 quarantine.append(
                     OriginCheckpointRejectionV1(
@@ -265,23 +272,25 @@ def rebuild_checkpoint_cache(workspace_root: Path) -> CheckpointCacheGenerationV
                         reason="checkpoint_manifest_invalid",
                     )
                 )
-                continue
-            result = reconstruct_origin_checkpoints(paths.root.parents[2], origin)
-            quarantine.extend(result.rejected)
-            for checkpoint in result.manifests:
-                existing = manifests.get(checkpoint.identity)
-                if existing is not None and existing != checkpoint:
-                    quarantine.append(
-                        OriginCheckpointRejectionV1(
-                            origin_run_id=checkpoint.origin_run_id,
-                            reason="checkpoint_authority_conflict",
+            else:
+                result = reconstruct_origin_checkpoints(paths.root.parents[2], origin)
+                quarantine.extend(result.rejected)
+                for checkpoint in result.manifests:
+                    existing = manifests.get(checkpoint.identity)
+                    if existing is not None and existing != checkpoint:
+                        quarantine.append(
+                            OriginCheckpointRejectionV1(
+                                origin_run_id=checkpoint.origin_run_id,
+                                reason="checkpoint_authority_conflict",
+                            )
                         )
-                    )
-                    continue
-                manifests[checkpoint.identity] = checkpoint
-                authority_objects[checkpoint.identity] = result.authority_objects[
-                    checkpoint.identity
-                ]
+                        continue
+                    manifests[checkpoint.identity] = checkpoint
+                    authority_objects[checkpoint.identity] = result.authority_objects[
+                        checkpoint.identity
+                    ]
+            if progress is not None:
+                progress("origin-reconstruction", completed, len(origins))
         ordered_manifests = dict(sorted(manifests.items()))
         ordered_quarantine = tuple(
             sorted(quarantine, key=lambda item: (item.origin_run_id, item.reason))

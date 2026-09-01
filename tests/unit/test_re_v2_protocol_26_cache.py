@@ -32,6 +32,23 @@ def test_cache_rebuild_is_deterministic_and_disposable(
     assert second.index.manifest_ids == first.index.manifest_ids
 
 
+def test_cache_rebuild_reports_origin_reconstruction_progress(
+    checkpoint_workspace: CheckpointWorkspace,
+) -> None:
+    checkpoint_workspace.origin_with_one_accepted_domain("active")
+    updates: list[tuple[str, int, int]] = []
+
+    rebuild_checkpoint_cache(
+        checkpoint_workspace.root,
+        progress=lambda stage, completed, total: updates.append(
+            (stage, completed, total)
+        ),
+    )
+
+    assert updates[0] == ("origin-reconstruction", 0, 1)
+    assert updates[-1] == ("origin-reconstruction", 1, 1)
+
+
 def test_v1_cache_bytes_ignore_adjacent_schema7_origin(
     checkpoint_workspace: CheckpointWorkspace,
 ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 import json
 import os
@@ -89,6 +90,10 @@ class _CheckpointAdoptionFactory(Protocol):
     def __call__(self, inputs: object) -> object: ...
 
 
+class _L4ProgressFactory(Protocol):
+    def __call__(self, run_dir: Path) -> AbstractContextManager[None]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Protocol28OrchestrationOptions:
     """Runtime dependencies for advancing one durable semantic intent."""
@@ -102,6 +107,7 @@ class Protocol28OrchestrationOptions:
     ) = None
     closure_inputs_factory: _ClosureInputsFactory | None = None
     checkpoint_adoption_factory: _CheckpointAdoptionFactory | None = None
+    l4_progress_factory: _L4ProgressFactory | None = None
     token_limit: int | None = None
     active_ms_limit: int | None = None
     clock: Callable[[], str] | None = None
@@ -1257,7 +1263,13 @@ def execute_deepen_orchestration(
             raise DeepenOrchestrationError("orchestration lost its L4 child binding")
         l4_dir = root / "runs" / projection.l4_run_id
 
-    l4_result = run_protocol_28_exhaustive(l4_dir, provider_factory)  # type: ignore[arg-type]
+    progress = (
+        options.l4_progress_factory(l4_dir)
+        if options.l4_progress_factory is not None
+        else nullcontext()
+    )
+    with progress:
+        l4_result = run_protocol_28_exhaustive(l4_dir, provider_factory)  # type: ignore[arg-type]
     if l4_result.run_root_id is None:
         controller.block("l4", l4_result.reason_code or l4_result.state)
         return _orchestration_result(controller.rebuild_projection())

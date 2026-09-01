@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import replace
 
@@ -258,11 +259,20 @@ def test_durable_orchestration_completes_exact_l4_and_replays_zero_calls(
         manifest.executor_catalog_id,
         content_digest(b"l3-prerequisite-request"),
     )
+    progress_events: list[tuple[str, Path]] = []
+
+    @contextmanager
+    def l4_progress(run_dir: Path):
+        progress_events.append(("entered", run_dir))
+        yield
+        progress_events.append(("exited", run_dir))
+
     options = Protocol28OrchestrationOptions(
         from_run="re-input",
         selection=manifest.selection,
         request=request,
         l4_inputs_factory=lambda *_args: inputs,
+        l4_progress_factory=l4_progress,
         clock=lambda: "2026-08-31T12:00:00Z",
     )
     backend = _PassingBackend()
@@ -273,6 +283,12 @@ def test_durable_orchestration_completes_exact_l4_and_replays_zero_calls(
     assert first.state == second.state == "complete"
     assert first.l4_run_id == manifest.run_id
     assert backend.roles == ["producer", "verifier"]
+    assert progress_events == [
+        ("entered", tmp_path / "runs" / manifest.run_id),
+        ("exited", tmp_path / "runs" / manifest.run_id),
+        ("entered", tmp_path / "runs" / manifest.run_id),
+        ("exited", tmp_path / "runs" / manifest.run_id),
+    ]
     l4_context = load_protocol_28_run_context(
         tmp_path / "runs" / manifest.run_id
     )

@@ -1004,6 +1004,41 @@ def test_re_status_routes_pinned_v2_without_reading_outer_state(
 
 
 @pytest.mark.unit
+def test_re_status_human_uses_shared_branded_card(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_status
+
+    run_dir = _create_pinned_v2_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    document = {
+        "engine_protocol_version": "2.5",
+        "run_id": run_dir.name,
+        "status": "paused",
+        "banner": "L3 PAUSED - CONTINUABLE",
+        "selection": {"selected_sources": 7, "selected_domains": 74},
+        "artifact_counts": {"adopted": 243, "generated": 2},
+        "next_action": "run `echelon re continue re-test`",
+    }
+
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        lambda _run, *, as_json=False: (
+            json.dumps(document) + "\n" if as_json else "legacy protocol text\n"
+        ),
+    )
+
+    _cmd_re_status([])
+
+    output = capsys.readouterr().out
+    assert "✈ echelon · RE STATUS" in output
+    assert "L3 PAUSED - CONTINUABLE" in output
+    assert "legacy protocol text" not in output
+
+
+@pytest.mark.unit
 def test_re_run_defaults_to_v1_without_constructing_v2(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

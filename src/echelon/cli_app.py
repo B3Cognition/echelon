@@ -975,7 +975,12 @@ def re_deepen(
         help="For L4, validate and preview exact work without mutation or dispatch.",
     ),
 ) -> None:
-    """Create or reuse a self-contained selected-scope RE v2 child run."""
+    """Deepen a completed RE v2 run to L2, L3, or L4.
+
+    L4 automatically creates or reuses its required L3 prerequisite. If that
+    prerequisite pauses, run the copy-paste continuation command shown in the
+    status output, then rerun the same deepen command after L3 completes.
+    """
     if all_sources and (source or domain):
         raise typer.BadParameter(
             "--all cannot be combined with --source or --domain",
@@ -1049,7 +1054,7 @@ def re_status(
 def re_continue(
     run_id: Optional[str] = typer.Argument(
         None,
-        help="Protocol-2.7/2.8 run id below runs/; defaults to the active RE run.",
+        help="RE v2 run ID below runs/; defaults to the active RE run.",
     ),
     re_max_inner: Optional[int] = typer.Option(
         None,
@@ -1061,25 +1066,37 @@ def re_continue(
         None,
         "--re-token-limit",
         min=1,
-        help="Raise the active run's token ceiling without resetting it.",
+        help=(
+            "Set a higher absolute total token ceiling for the active run; "
+            "this is not an increment."
+        ),
     ),
     re_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-time-limit-minutes",
         min=1,
-        help="Raise the active run's active-time ceiling without resetting it.",
+        help=(
+            "Set a higher absolute total active-time ceiling in minutes; "
+            "this is not an increment."
+        ),
     ),
     re_semantic_token_limit: Optional[int] = typer.Option(
         None,
         "--re-semantic-token-limit",
         min=1,
-        help="Raise the active L3 run's independent semantic token ceiling.",
+        help=(
+            "Set a higher absolute total token ceiling for the active L3 "
+            "semantic pool."
+        ),
     ),
     re_semantic_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-semantic-time-limit-minutes",
         min=1,
-        help="Raise the active L3 run's independent semantic time ceiling.",
+        help=(
+            "Set a higher absolute total active-time ceiling in minutes for "
+            "the active L3 semantic pool."
+        ),
     ),
 ) -> None:
     """Continue the active RE run without a human answer."""
