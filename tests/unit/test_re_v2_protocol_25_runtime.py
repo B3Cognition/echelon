@@ -432,6 +432,17 @@ def test_audit_schema_exposes_the_closed_certifier_taxonomy(
 
 
 @pytest.mark.unit
+def test_audit_schema_binds_subject_kind_to_subject_ref_prefix() -> None:
+    payload = _audit_payload()
+    payload["findings"][0]["subject_kind"] = "surface"  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        Draft202012Validator(
+            semantic_response_schema("semantic-audit-findings")
+        ).validate(payload)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "controller_field",
     (

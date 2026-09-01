@@ -125,6 +125,13 @@ NEVER reinterpret `assessment_kind`, omit a supplied finding from a target
 recheck, or treat a passing target recheck as a passing source-composition
 guard.
 
+#### Rule V2.5 - Subject Authority Pairing
+ALWAYS set each finding's `subject_kind` to the exact prefix before the first
+colon in its controller-issued `subject_ref` (for example,
+`operation:search` requires `subject_kind: operation`).
+NEVER combine a controller-issued `subject_ref` with a different
+`subject_kind`, even when that kind also appears in the supplied vocabulary.
+
 ### Protocol 2.5 Candidate Contract
 
 For `AUDIT_EPOCH_TARGET`, audit the exact supplied L2 target and evidence
