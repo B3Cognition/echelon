@@ -99,10 +99,12 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
     """Return checkpoint commits a new delivery budget may safely retain.
 
     A normal fresh delivery intentionally restarts from the target default branch.
-    The exception is a previous blocked run for the same spec whose last durable
-    checkpoint represents unfinished delivery work.  This decision is made before
-    the current-build marker is advanced, so the new build cannot accidentally
-    erase the only recoverable candidate branch.
+    The exception is a prior stopped run for the same spec whose last durable
+    checkpoint represents unfinished delivery work.  A state left ``running`` by
+    an ungraceful process exit is recoverable only after its lock owner is dead;
+    a live owner prevents a competing delivery.  This decision is made before the
+    current-build marker is advanced, so the new build cannot accidentally erase
+    the only recoverable candidate branch.
     """
     if getattr(intent, "reset", False) or getattr(intent, "resume", False):
         return {}
@@ -131,10 +133,21 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
                 state = json.loads(state_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            if (
-                state.get("status") != "blocked"
-                or state.get("termination_reason") not in _RECOVERABLE_BASELINE_REASONS
-            ):
+            status = str(state.get("status") or "")
+            if status == "running" and _state_lock_owner_is_alive(state_path):
+                raise RunContextError(
+                    "delivery is already active for "
+                    f"{intent.spec_id}/{strategy_id} in {prior_build_id}"
+                )
+            recoverable = (
+                status in {"interrupted", "running"}
+                or (
+                    status == "blocked"
+                    and state.get("termination_reason")
+                    in _RECOVERABLE_BASELINE_REASONS
+                )
+            )
+            if not recoverable:
                 continue
             checkpoints = state.get("checkpoint_commits")
             if not isinstance(checkpoints, list):
@@ -149,6 +162,29 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
             if strategy_id in baselines:
                 break
     return baselines
+
+
+def _state_lock_owner_is_alive(state_path: Path) -> bool:
+    """Return whether a delivery state lock names a currently live process."""
+    try:
+        lock_text = state_path.with_suffix(".lock").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
+    if match is None:
+        return False
+    pid = int(match.group(1))
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
