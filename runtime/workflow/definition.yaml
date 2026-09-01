@@ -353,6 +353,7 @@ phases:
     human_input:
       - reason_code: human_clarification_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -405,6 +406,7 @@ phases:
     human_input:
       - reason_code: human_clarification_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -559,6 +561,7 @@ phases:
     human_input:
       - reason_code: human_clarification_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -650,6 +653,7 @@ phases:
     human_input:
       - reason_code: human_clarification_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -658,6 +662,7 @@ phases:
         context_paths: ["{spec_dir}/evidence-resolution.md"]
       - reason_code: investigation_access_required
         classification: external_prerequisite
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -742,6 +747,7 @@ phases:
     human_input:
       - reason_code: checkpoint_assess_decision_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: gate_outcome
         allow_free_text: false
@@ -879,6 +885,7 @@ phases:
     human_input:
       - reason_code: human_clarification_required
         classification: material
+        recommendation_mode: controller
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
@@ -1318,6 +1325,7 @@ phases:
     human_input:
       - reason_code: checkpoint_plan_decision_required
         classification: operational
+        recommendation_mode: static
         semi_policy: auto_if_recommended_low_risk
         resolution_handler: gate_outcome
         allow_free_text: false
