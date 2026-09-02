@@ -195,7 +195,7 @@ class TestCmdHarnessResume:
             "termination_reason": "containment_violation",
             "containment_violation": {
                 "changed_status": [
-                    "?? specs/001-demo/documentation-impact-report.md",
+                    " M specs/001-demo/documentation-impact-report.md",
                     "?? specs/001-demo/docs-verification-report.md",
                 ],
             },
