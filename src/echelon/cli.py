@@ -2723,6 +2723,14 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
 
 
+def _outer_cap_delivery_action(spec_id: str) -> tuple[str, str]:
+    """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    return (
+        f"echelon delivery run {spec_id}",
+        "Starts a fresh outer-loop budget from the latest durable checkpoint.",
+    )
+
+
 def _cmd_harness_resume(
     args: list[str],
     *,
@@ -2982,6 +2990,17 @@ def _cmd_harness_resume(
         *continuation_reasons,
         *retryable_error_reasons,
     }:
+        if termination_reason == "outer_cap":
+            next_command, next_explanation = _outer_cap_delivery_action(spec_id)
+            print(
+                f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
+                f"  Next: {next_command}\n"
+                f"  {next_explanation}\n"
+                "  Destructive alternative: "
+                f"echelon delivery run {spec_id} --reset discards the blocked delivery checkpoints.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if termination_reason == "build_blocked":
             build_reason = str(state.get("build_reason") or "the build agent reported a blocker")
             print(
@@ -3062,7 +3081,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3072,6 +3091,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3132,7 +3153,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3142,6 +3163,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3221,7 +3244,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3231,6 +3254,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3277,7 +3302,7 @@ def _cmd_harness_resume(
     )
     user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -3287,6 +3312,8 @@ def _cmd_harness_resume(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -6116,6 +6143,9 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
+        if termination_reason == "outer_cap":
+            command, explanation = _outer_cap_delivery_action(effective_spec)
+            return f"{command}  # {explanation}"
         if str(state.get("escalation_file") or ""):
             choices = escalation.get("choices") if escalation else None
             if isinstance(choices, list):
@@ -6157,7 +6187,11 @@ def _delivery_status_summary(
     status = str(state.get("status") or "unknown")
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
-    escalation = _delivery_status_escalation(state, project_root)
+    escalation = (
+        None
+        if str(state.get("termination_reason") or "") == "outer_cap"
+        else _delivery_status_escalation(state, project_root)
+    )
     summary = {
         "spec_id": spec_id,
         "strategy": strategy,
@@ -6188,6 +6222,12 @@ def _delivery_status_summary(
     }
     if escalation is not None:
         summary["escalation"] = escalation
+    publication_failure = state.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        summary["publication_failure"] = {
+            "stage": str(publication_failure.get("stage") or ""),
+            "error": str(publication_failure.get("error") or ""),
+        }
     runnability = _normalized_delivery_runnability(state.get("user_runnability"))
     if runnability is not None:
         summary["user_runnability"] = runnability
@@ -6279,6 +6319,14 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         value = str(summary.get(key) or "").strip()
         if value:
             fields.append((label, value[:12] if key.endswith("_commit") else value))
+    publication_failure = summary.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        stage = str(publication_failure.get("stage") or "").strip()
+        error = str(publication_failure.get("error") or "").strip()
+        if stage:
+            fields.append(("publish stage", stage))
+        if error:
+            fields.append(("publish error", error))
     escalation = summary.get("escalation")
     if isinstance(escalation, dict):
         question = str(escalation.get("question") or "").strip()

@@ -3890,6 +3890,12 @@ class TestOuterLoopConvergence:
         assert state["branch"] == "harness/spec-001-default-iter-0"
         assert state["verified_publish_checkpoint"]["stage"] == "push"
         assert state["verified_publish_checkpoint"]["commit"] == "verified-head"
+        assert state["publication_failure"] == {
+            "stage": "push",
+            "error": "Push failed: network error",
+            "branch": "harness/spec-001-default-iter-0",
+            "worktree_path": state["verified_publish_checkpoint"]["worktree_path"],
+        }
 
     def test_verified_publish_resume_retries_effects_without_provider_build(
         self, tmp_path: Path
@@ -3915,6 +3921,10 @@ class TestOuterLoopConvergence:
                     "commit": "verified-head",
                     "product_evidence_fingerprint": "product-fingerprint",
                 },
+                "publication_failure": {
+                    "stage": "push",
+                    "error": "old network failure",
+                },
             }
         )
         state_store.write(state)
@@ -3936,6 +3946,7 @@ class TestOuterLoopConvergence:
         assert provider._exec_count == 0
         recovered_state = state_store.read()
         assert "verified_publish_checkpoint" not in recovered_state
+        assert "publication_failure" not in recovered_state
         assert recovered_state["verified_publish_recovery"]["status"] == "completed"
 
     def test_verified_publish_resume_invalidates_changed_product_before_build(

@@ -516,6 +516,12 @@ def _print_delivery_summary(
                             f"next: echelon delivery run {intent.spec_id}  "
                             "# continue with a fresh outer-loop budget"
                         )
+                if reason == "publish_failed":
+                    failure = info.get("publication_failure")
+                    if isinstance(failure, Mapping):
+                        stage = str(failure.get("stage") or "publication")
+                        error = str(failure.get("error") or "unknown error")
+                        lines.append(f"publish failure: {stage}: {error}")
             fv = getattr(result, "final_verify", None)
             if fv is not None:
                 duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
@@ -700,6 +706,7 @@ def _print_delivery_exception_summary(
             "provider_limit_message": state.get("provider_limit_message"),
             "provider_reset_hint": state.get("provider_reset_hint"),
             "completed_task_ids": state.get("completed_task_ids") or [],
+            "publication_failure": state.get("publication_failure"),
         }
     _print_delivery_summary(
         intent,

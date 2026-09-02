@@ -1043,6 +1043,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=verify_result,
+                                    error=e,
                                 ),
                             )
                         if not self._merge_verified_branch(worktree_path, branch, verify_result):
@@ -1083,6 +1084,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=verify_result,
+                                    error=e,
                                 ),
                             )
                         try:
@@ -1104,6 +1106,7 @@ class RalphController:
                                     branch=branch,
                                     stage="pr",
                                     verify_result=verify_result,
+                                    error=exc,
                                 ),
                             )
                         # Phase 2/3 and landing consume the converged delivery
@@ -1190,6 +1193,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=inner_result.get("final_verify"),
+                                    error=e,
                                 ),
                             )
                         if not self._merge_verified_branch(
@@ -1232,6 +1236,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=inner_result.get("final_verify"),
+                                    error=e,
                                 ),
                             )
                         try:
@@ -1253,6 +1258,7 @@ class RalphController:
                                     branch=branch,
                                     stage="pr",
                                     verify_result=inner_result.get("final_verify"),
+                                    error=exc,
                                 ),
                             )
                         # Phase 2/3 and landing consume the converged delivery
@@ -1372,6 +1378,13 @@ class RalphController:
                             tokens_used=tokens_used,
                             final_verify=inner_result.get("final_verify"),
                             branch=e.branch,
+                            extra_state=self._publish_checkpoint_state(
+                                worktree_path=worktree_path,
+                                branch=e.branch,
+                                stage=e.stage,
+                                verify_result=inner_result.get("final_verify"),
+                                error=e,
+                            ),
                         )
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
 
@@ -6126,6 +6139,8 @@ class RalphController:
             state["last_verify_result"] = (
                 _verify_to_dict(final_verify) if final_verify else None
             )
+            if reason != "publish_failed":
+                state.pop("publication_failure", None)
             if extra_state:
                 state.update(extra_state)
             self._state_store.write(state)
@@ -6220,6 +6235,7 @@ class RalphController:
         branch: str,
         stage: str,
         verify_result: Optional[VerifyResult],
+        error: BaseException | None = None,
     ) -> Optional[Dict[str, Any]]:
         checkpoint = self._verified_publish_checkpoint(
             worktree_path=worktree_path,
@@ -6227,7 +6243,17 @@ class RalphController:
             stage=stage,
             verify_result=verify_result,
         )
-        return {"verified_publish_checkpoint": checkpoint} if checkpoint else None
+        state: Dict[str, Any] = {}
+        if checkpoint:
+            state["verified_publish_checkpoint"] = checkpoint
+        if error is not None:
+            state["publication_failure"] = {
+                "stage": stage,
+                "error": str(error),
+                "branch": branch,
+                "worktree_path": worktree_path,
+            }
+        return state or None
 
     def resume_verified_publication(self) -> Optional[ImplementationResult]:
         """Retry verified publication effects without dispatching another build."""
@@ -6298,7 +6324,15 @@ class RalphController:
                     tokens_used=tokens_used,
                     final_verify=verify_result,
                     branch=branch,
-                    extra_state={"verified_publish_checkpoint": checkpoint},
+                    extra_state={
+                        "verified_publish_checkpoint": checkpoint,
+                        "publication_failure": {
+                            "stage": "push",
+                            "error": str(exc),
+                            "branch": branch,
+                            "worktree_path": worktree_path,
+                        },
+                    },
                 )
             stage = "target_merge"
 
@@ -6337,7 +6371,15 @@ class RalphController:
                     tokens_used=tokens_used,
                     final_verify=verify_result,
                     branch=branch,
-                    extra_state={"verified_publish_checkpoint": checkpoint},
+                    extra_state={
+                        "verified_publish_checkpoint": checkpoint,
+                        "publication_failure": {
+                            "stage": exc.stage,
+                            "error": str(exc),
+                            "branch": branch,
+                            "worktree_path": worktree_path,
+                        },
+                    },
                 )
             stage = "pr"
 
@@ -6355,11 +6397,20 @@ class RalphController:
                 tokens_used=tokens_used,
                 final_verify=verify_result,
                 branch=branch,
-                extra_state={"verified_publish_checkpoint": checkpoint},
+                extra_state={
+                    "verified_publish_checkpoint": checkpoint,
+                    "publication_failure": {
+                        "stage": "pr",
+                        "error": str(exc),
+                        "branch": branch,
+                        "worktree_path": worktree_path,
+                    },
+                },
             )
 
         state = self._state_store.read()
         state.pop("verified_publish_checkpoint", None)
+        state.pop("publication_failure", None)
         state["verified_publish_recovery"] = {
             "status": "completed",
             "commit": commit,

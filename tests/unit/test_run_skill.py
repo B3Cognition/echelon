@@ -758,6 +758,51 @@ class TestRunSkillAutoLand:
         assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
+    def test_delivery_summary_explains_publication_failure(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = replace(
+            _make_checkpoint_result(), termination_reason="publish_failed"
+        )
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": "publish_failed",
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                    "publication_failure": {
+                        "stage": "dirty_adjudication",
+                        "error": "Dirty worktree adjudication blocked commit",
+                    },
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
+        )
+
+        captured = capsys.readouterr()
+        assert (
+            "publish failure: dirty_adjudication: Dirty worktree adjudication blocked commit"
+            in captured.err
+        )
+
     def test_delivery_summary_includes_human_readable_worked_on_section(
         self,
         tmp_path: Path,

@@ -263,6 +263,31 @@ def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
 
 
 @pytest.mark.unit
+def test_delivery_status_prints_publication_failure_cause(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "publish_failed"
+    state["publication_failure"] = {
+        "stage": "dirty_adjudication",
+        "error": "Dirty worktree adjudication blocked commit",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "publish stage" in out
+    assert "dirty_adjudication" in out
+    assert "publish error" in out
+    assert "Dirty worktree adjudication blocked commit" in out
+
+
+@pytest.mark.unit
 def test_delivery_status_json_filters_strategy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
 
@@ -330,3 +355,32 @@ def test_delivery_status_renders_escalation_question_and_recommended_command(
     assert "Continue with the isolated verification database." in out
     assert str(escalation_path) in out
     assert "echelon delivery resume 001 'Continue with the isolated verification database.'" in out
+
+
+@pytest.mark.unit
+def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budget(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An exhausted loop cannot advertise an answer-based resume it rejects."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "outer_cap"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    _write_escalation(tmp_path)
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "echelon delivery run 001" in out
+    assert "fresh outer-loop budget" in out
+    assert "echelon delivery resume 001" not in out
+    assert "Which database should verification use?" not in out
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest"]["next"].startswith("echelon delivery run 001")
+    assert "escalation" not in payload["latest"]
