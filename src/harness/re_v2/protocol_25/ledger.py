@@ -481,18 +481,18 @@ class _Protocol25LedgerState:
                 "closure receipt does not match target/source assessments"
             )
         previous = self.latest_finding_closures.get(receipt.finding_key_id)
-        if receipt.semantic_round == 1:
-            if previous is not None:
+        if previous is None:
+            if receipt.previous_closure_receipt_id is not None:
                 raise ReV2LedgerError(
-                    "first closure receipt conflicts with preceding receipt"
+                    "first closure receipt cannot depend on a preceding receipt"
                 )
         elif (
-            previous is None
-            or receipt.previous_closure_receipt_id != previous.identity
-            or receipt.semantic_round != previous.semantic_round + 1
+            receipt.previous_closure_receipt_id != previous.identity
+            or receipt.semantic_round <= previous.semantic_round
         ):
             raise ReV2LedgerError(
-                "later closure receipt requires the consecutive preceding receipt"
+                "later closure receipt requires the latest preceding receipt "
+                "from an earlier semantic round"
             )
         self.finding_closures[receipt.identity] = receipt
         self.latest_finding_closures[receipt.finding_key_id] = receipt

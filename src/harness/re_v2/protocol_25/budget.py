@@ -185,10 +185,12 @@ def evaluate_semantic_budget(
             else:
                 unknown_active = _add(unknown_active, 1, "unknown active dispatches")
             if (
-                payload["reported_token_usage"] is not None
+                payload["token_usage_status"] == "trusted_exact"
+                and payload["reported_token_usage"] is not None
                 and int(payload["reported_token_usage"]) > reservation.tokens
             ) or (
-                payload["observed_active_ms"] is not None
+                payload["active_usage_status"] == "trusted_exact"
+                and payload["observed_active_ms"] is not None
                 and int(payload["observed_active_ms"]) > reservation.active_ms
             ):
                 breaches.add(dispatch_id)

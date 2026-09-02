@@ -13514,6 +13514,37 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     return context
 
 
+def _re_l3_authority_mismatch_message(run_dir: Path, manifest: object) -> str:
+    """Explain an immutable L3 authority mismatch without protocol jargon."""
+    selection = getattr(manifest, "selection", None)
+    arguments = ["echelon", "re", "deepen", "--to", "L3"]
+    if bool(getattr(selection, "all_sources", False)):
+        arguments.append("--all")
+    else:
+        for source_id in getattr(selection, "source_ids", ()):
+            arguments.extend(("--source", str(source_id)))
+        for domain_key in getattr(selection, "domain_keys", ()):
+            arguments.extend(("--domain", str(domain_key)))
+    lineage = getattr(manifest, "parent_lineage", None)
+    parent_run_id = getattr(lineage, "direct_parent_run_id", None)
+    if parent_run_id:
+        arguments.extend(("--from-run", str(parent_run_id)))
+    successor_command = " ".join(shlex.quote(argument) for argument in arguments)
+    status_command = (
+        "echelon re status "
+        f"{shlex.quote(run_dir.name)} --json"
+    )
+    return (
+        "This run was created with a different RE implementation and cannot "
+        "be continued safely.\n"
+        "Its accepted artifacts remain unchanged.\n"
+        "Create a compatible successor with:\n"
+        f"{successor_command}\n"
+        "For internal authority details, run:\n"
+        f"{status_command}"
+    )
+
+
 def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> object:
     """Reconstruct schema-4 execution solely from authenticated child authority."""
     from dataclasses import replace
@@ -13746,10 +13777,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
     )
     if mismatches:
-        details = ", ".join(
-            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
-        )
-        raise ValueError(f"protocol-2.5 installed authority mismatch: {details}")
+        raise ValueError(_re_l3_authority_mismatch_message(run_dir, manifest))
 
     context_ref: dict[str, object] = {}
     workspace_bytes = canonical_json_bytes(
@@ -14833,6 +14861,59 @@ def _run_re_v25_continue(
         ),
     }
 
+    def budget_decisions(recovered: object) -> tuple[object, object]:
+        active_manifest = load_run_manifest(context.paths.root.parent)
+        manifest = (
+            context.semantic_graph.manifest
+            if isinstance(active_manifest, RunManifestV5)
+            else active_manifest
+        )
+        event_protocol = (
+            protocol_26_events_for("L3")
+            if isinstance(active_manifest, RunManifestV5)
+            else PROTOCOL_25_EVENTS
+        )
+        return (
+            evaluate_budget_v22(
+                manifest.initial_budget_policy,
+                recovered.events,
+                (),
+                _re_v2_now(),
+                event_protocol=event_protocol,
+            ),
+            evaluate_semantic_budget(
+                manifest.semantic_closure_policy,
+                recovered.events,
+                event_protocol=event_protocol,
+            ),
+        )
+
+    def stale_accounting_pause(recovered: object) -> bool:
+        last_control = next(
+            (
+                event
+                for event in reversed(recovered.events)
+                if event.type in {"run_paused", "run_resumed"}
+            ),
+            None,
+        )
+        if (
+            last_control is None
+            or last_control.type != "run_paused"
+            or last_control.payload["reason_code"]
+            != "semantic_budget_authorization_required"
+        ):
+            return False
+        run_budget, semantic_budget = budget_decisions(recovered)
+        return not any(
+            (
+                run_budget.resources_exhausted,
+                run_budget.reservation_breaches,
+                semantic_budget.resources_exhausted,
+                semantic_budget.reservation_breaches,
+            )
+        )
+
     def validate(recovered: object) -> list[tuple[str, str, int, int | None]]:
         state = recovered.controller_state
         changes = [
@@ -14853,33 +14934,13 @@ def _run_re_v25_continue(
                 )
             return []
         if not changes:
+            if stale_accounting_pause(recovered):
+                return []
             raise ValueError(
                 "paused protocol-2.5 continuation requires a strictly higher "
                 "run-wide or semantic ceiling"
             )
-        active_manifest = load_run_manifest(context.paths.root.parent)
-        manifest = (
-            context.semantic_graph.manifest
-            if isinstance(active_manifest, RunManifestV5)
-            else active_manifest
-        )
-        event_protocol = (
-            protocol_26_events_for("L3")
-            if isinstance(active_manifest, RunManifestV5)
-            else PROTOCOL_25_EVENTS
-        )
-        run_budget = evaluate_budget_v22(
-            manifest.initial_budget_policy,
-            recovered.events,
-            (),
-            _re_v2_now(),
-            event_protocol=event_protocol,
-        )
-        semantic_budget = evaluate_semantic_budget(
-            manifest.semantic_closure_policy,
-            recovered.events,
-            event_protocol=event_protocol,
-        )
+        run_budget, semantic_budget = budget_decisions(recovered)
         validated: list[tuple[str, str, int, int | None]] = []
         for pool, dimension, value in changes:
             if pool == "run":
@@ -14916,6 +14977,30 @@ def _run_re_v25_continue(
         )
         return
     if not changes:
+        if not recovered.controller_state.paused_resource:
+            _run_re_v2_live(context)
+            return
+        with protocol_22_run_lock(context.paths):
+            recovered = recover_protocol_25_run(context)
+            changes = validate(recovered)
+            if changes:
+                raise ValueError(
+                    "stale protocol-2.5 accounting pause unexpectedly requires "
+                    "resource authorization"
+                )
+            context.event_store.append(
+                "operator_pause_requested",
+                {
+                    "reason": "CLI accounting-pause revalidation requested",
+                    "requested_by": "echelon-cli",
+                },
+                occurred_at=_re_v2_now(),
+            )
+            context.event_store.append(
+                "run_resumed",
+                {"reason": "CLI continuation after accounting-pause revalidation"},
+                occurred_at=_re_v2_now(),
+            )
         _run_re_v2_live(context)
         return
     with protocol_22_run_lock(context.paths):

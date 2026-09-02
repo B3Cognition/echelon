@@ -313,8 +313,16 @@ def build_semantic_v1_policy_catalog() -> SemanticArtifactPolicyCatalogV1:
             producer_family=producer_families[kind],
             content_policy_version="semantic-closure-v1",
             max_canonical_json_bytes=128 * 1024,
-            max_context_bundle_bytes=192 * 1024,
-            max_conservative_input_tokens=196_608,
+            max_context_bundle_bytes=(
+                224 * 1024
+                if kind == "source-composition-assessment"
+                else 192 * 1024
+            ),
+            max_conservative_input_tokens=(
+                224 * 1024
+                if kind == "source-composition-assessment"
+                else 196_608
+            ),
             evidence_rule_id="immutable-snapshot-evidence-v1",
             ownership_rule_id="controller-issued-context-v1",
         )

@@ -401,6 +401,45 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
     )
     assert continued == [rebuilt]
 
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "next semantic dispatch exceeds remaining authorization",
+            "reason_code": "semantic_budget_authorization_required",
+        },
+        occurred_at=manifest.created_at,
+    )
+    continued.clear()
+    legacy_cli._run_re_v25_continue(
+        rebuilt,
+        token_limit=None,
+        time_limit_minutes=None,
+        semantic_token_limit=None,
+        semantic_time_limit_minutes=None,
+    )
+    assert [event.type for event in rebuilt.event_store.replay()[-2:]] == [
+        "operator_pause_requested",
+        "run_resumed",
+    ]
+    assert continued == [rebuilt]
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "semantic tokens exhausted",
+            "reason_code": "semantic_tokens_exhausted",
+        },
+        occurred_at=manifest.created_at,
+    )
+    with pytest.raises(ValueError, match="strictly higher"):
+        legacy_cli._run_re_v25_continue(
+            rebuilt,
+            token_limit=None,
+            time_limit_minutes=None,
+            semantic_token_limit=None,
+            semantic_time_limit_minutes=None,
+        )
+
     from harness.re_v2.status import render_v2_status
 
     routed = json.loads(render_v2_status(first, as_json=True))
@@ -503,10 +542,10 @@ def test_schema4_live_execution_uses_protocol25_controller(
     assert calls == [context]
     assert materialized == [context]
     output = capsys.readouterr().out
-    assert "✈ echelon · RE RUN" in output
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in output
     assert "[re] L3 · 0/1 accepted · controller started" in output
-    assert "✈ echelon · RE STATUS" in output
     assert "L3 PAUSED - CONTINUABLE" in output
+    assert "protocol" not in output.lower()
 
 
 @pytest.mark.integration

@@ -43,6 +43,7 @@ _SEMANTIC_EVENTS = frozenset(
     {
         "audit_context_preflight_completed",
         "audit_context_preflight_failed",
+        "semantic_context_projection_failed",
         "audit_candidate_accepted",
         "audit_epoch_frozen",
         *_SEMANTIC_START_EVENTS,
@@ -168,6 +169,20 @@ _PAYLOAD_SCHEMAS = {
         "measured_canonical_json_bytes": _nullable_nonnegative,
         "max_canonical_json_bytes": _positive,
         "provider_dispatch_count": _zero,
+    },
+    "semantic_context_projection_failed": {
+        "max_canonical_json_bytes": _positive,
+        "measured_canonical_json_bytes": _nullable_nonnegative,
+        "operation": _choice("source-composition-guard"),
+        "participating_target_ids": _digest_array,
+        "provider_dispatch_count": _zero,
+        "reason_code": _choice(
+            "semantic_context_byte_ceiling_exceeded",
+            "semantic_context_projection_invalid",
+        ),
+        "semantic_round": _positive,
+        "source_cycle_id": _safe_id,
+        "source_id": _safe_id,
     },
     "audit_candidate_accepted": {
         "audit_candidate_authority_id": _digest,
@@ -315,6 +330,7 @@ class Protocol25ReplayState(EventReplayState):
     audit_context_preflight_entries: tuple[AuditContextPreflightEntryV1, ...] = ()
     audit_context_preflight_failure_id: str | None = None
     audit_context_preflight_failed_target_id: str | None = None
+    semantic_context_projection_failure: Mapping[str, object] | None = None
     audit_candidates: dict[str, str] = field(default_factory=dict)
     audit_epoch_id: str | None = None
     audit_target_ids: tuple[str, ...] = ()
@@ -389,6 +405,20 @@ class Protocol25ReplayState(EventReplayState):
             if event.payload["reason"] != "semantic audit context preflight failed":
                 raise ReV2EventError(
                     "preflight run failure has an inconsistent reason"
+                )
+            shared = self.shared.shared
+            if shared.active is not None or shared.lease_dispatch_id is not None:
+                raise ReV2EventError("run_failed is invalid with active work")
+            shared.terminal = True
+            shared._finish(event.type)
+            return
+        if (
+            event.type == "run_failed"
+            and self.semantic_context_projection_failure is not None
+        ):
+            if event.payload["reason"] != "semantic context projection failed":
+                raise ReV2EventError(
+                    "semantic projection run failure has an inconsistent reason"
                 )
             shared = self.shared.shared
             if shared.active is not None or shared.lease_dispatch_id is not None:
@@ -478,6 +508,8 @@ class Protocol25ReplayState(EventReplayState):
             self._complete_audit_context_preflight(payload)
         elif event_type == "audit_context_preflight_failed":
             self._fail_audit_context_preflight(payload)
+        elif event_type == "semantic_context_projection_failed":
+            self._fail_semantic_context_projection(payload)
         elif event_type == "audit_candidate_accepted":
             self._accept_audit_candidate(payload)
         elif event_type == "audit_epoch_frozen":
@@ -555,6 +587,43 @@ class Protocol25ReplayState(EventReplayState):
         ):
             raise ReV2EventError("audit candidate target and authority must be unique")
         self.audit_candidates[target] = authority
+
+    def _fail_semantic_context_projection(
+        self, payload: Mapping[str, object]
+    ) -> None:
+        if self.semantic_context_projection_failure is not None:
+            raise ReV2EventError("semantic context projection may fail only once")
+        shared = self.shared.shared
+        if shared.active is not None or shared.lease_dispatch_id is not None:
+            raise ReV2EventError(
+                "semantic context projection failure conflicts with active dispatch"
+            )
+        cycle = self.source_cycles.get(str(payload["source_cycle_id"]))
+        participants = tuple(payload["participating_target_ids"])
+        if (
+            self.audit_epoch_id is None
+            or cycle is None
+            or cycle.source_id != payload["source_id"]
+            or cycle.semantic_round != payload["semantic_round"]
+            or (
+                bool(cycle.participating_targets)
+                and cycle.participating_targets != participants
+            )
+            or set(cycle.target_assessments) != set(participants)
+            or cycle.source_assessment_id is not None
+        ):
+            raise ReV2EventError(
+                "semantic context projection failure is outside a ready source guard"
+            )
+        measured = payload["measured_canonical_json_bytes"]
+        if payload["reason_code"] == "semantic_context_byte_ceiling_exceeded" and (
+            measured is None or int(measured) <= int(payload["max_canonical_json_bytes"])
+        ):
+            raise ReV2EventError(
+                "semantic context projection ceiling failure does not exceed its ceiling"
+            )
+        cycle.participating_targets = participants
+        self.semantic_context_projection_failure = dict(payload)
 
     def _freeze_epoch(self, payload: Mapping[str, object]) -> None:
         if self.audit_epoch_id is not None:

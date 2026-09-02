@@ -48,9 +48,9 @@ def test_live_cli_completes_multi_source_compact_baseline_once(
 
     assert continued.exit_code == 0, continued.output
     assert len(fixture.provider.requests) == initial_calls
-    assert "✈ echelon · RE RUN" in result.output
+    assert "✈ echelon · RE v2 · L1 COMPACT BASELINE" in result.output
     assert "[re] L1" in result.output and "controller started" in result.output
-    assert "✈ echelon · RE STATUS" in result.output
+    assert "protocol" not in result.output.lower()
     assert "L1 COMPACT BASELINE COMPLETE" in result.output
     assert "semantic audit" in result.output and "not run" in result.output
     assert "workspace synthesis" in result.output

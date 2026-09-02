@@ -80,6 +80,22 @@ def test_l3_policy_catalog_is_layered_over_exact_l2_catalog() -> None:
     )
 
 
+def test_source_composition_guard_has_bounded_aggregate_context_headroom() -> None:
+    catalog = _policies().build_semantic_v1_policy_catalog()
+
+    assert (
+        catalog.entry_for(
+            "L3", "source-composition-assessment"
+        ).max_context_bundle_bytes
+        == 224 * 1024
+    )
+    assert all(
+        entry.max_context_bundle_bytes == 192 * 1024
+        for entry in catalog.l3_entries
+        if entry.artifact_kind != "source-composition-assessment"
+    )
+
+
 def test_audit_taxonomy_is_closed_and_exact() -> None:
     module = _policies()
     taxonomy = module.build_semantic_v1_policy_catalog().audit_taxonomy

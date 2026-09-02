@@ -425,7 +425,11 @@ containing:
 
 A closure receipt cannot refer to a finding outside its epoch or to an overlay
 that did not target that finding. A later receipt for the same finding must
-depend on the preceding receipt and overlay, preserving the full chain.
+depend on the preceding receipt and overlay, preserving the full chain. A
+finding's first receipt may occur in any semantic round because a failed source
+guard emits no receipts. Subsequent receipts bind the latest preceding receipt
+and a strictly later semantic round; their round numbers need not be
+consecutive when intervening source guards failed.
 
 ### AuditClosureRootV1 and L3SourceRootV1
 

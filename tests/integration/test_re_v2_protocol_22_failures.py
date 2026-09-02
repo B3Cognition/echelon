@@ -96,7 +96,7 @@ def test_usage_breach_blocks_exact_executor_and_cannot_be_budget_reopened(
     assert calls == 1
     assert len(fixture.provider.requests) == calls
     assert continued.exit_code == 2
-    assert "terminal protocol-2.2 runs cannot receive budget" in continued.output
+    assert "terminal RE v2 runs cannot receive budget" in continued.output
     assert paths.events.read_bytes() == events_before
 
     status = protocol_22_status_document(run_dir)

@@ -371,8 +371,13 @@ def test_later_closure_receipt_requires_previous_dependency() -> None:
     second = _closure_receipt(previous=first.identity)
 
     assert second.previous_closure_receipt_id == first.identity
-    with pytest.raises(_artifacts().Protocol25SchemaError, match="previous"):
-        replace(second, semantic_round=2, previous_closure_receipt_id=None)
+
+
+def test_first_closure_receipt_may_follow_a_failed_source_guard_round() -> None:
+    receipt = replace(_closure_receipt(), semantic_round=2)
+
+    assert receipt.semantic_round == 2
+    assert receipt.previous_closure_receipt_id is None
 
 
 def test_closure_root_unresolved_set_equals_latest_receipts() -> None:

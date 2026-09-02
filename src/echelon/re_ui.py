@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -22,6 +23,12 @@ _STATUS_ICONS = {
     "active": "▶",
 }
 
+_INTERNAL_PROTOCOL_RE = re.compile(r"\bprotocol[- ]?\d+(?:\.\d+)*\b", re.IGNORECASE)
+
+
+def _public_text(value: object) -> str:
+    return _INTERNAL_PROTOCOL_RE.sub("RE v2", str(value))
+
 
 def _layer(document: Mapping[str, object]) -> str:
     banner_text = str(document.get("banner") or "").strip()
@@ -30,6 +37,18 @@ def _layer(document: Mapping[str, object]) -> str:
         return first
     target = str(document.get("target_layer") or "").strip().upper()
     return target if target in {"L0", "L1", "L2", "L3", "L4"} else "RE"
+
+
+def _public_stage(document: Mapping[str, object]) -> str:
+    if "synthesis_status" in document:
+        return "WORKSPACE SYNTHESIS"
+    return {
+        "L0": "L0 INVENTORY",
+        "L1": "L1 COMPACT BASELINE",
+        "L2": "L2 BEHAVIORAL DEEPENING",
+        "L3": "L3 SEMANTIC AUDIT",
+        "L4": "L4 EXHAUSTIVE ANALYSIS",
+    }.get(_layer(document), "ANALYSIS")
 
 
 def _status(document: Mapping[str, object]) -> str:
@@ -172,17 +191,6 @@ def print_re_status_card(
     result = _result(document)
     fields = [
         ("run", str(document.get("run_id") or "unknown")),
-        (
-            "protocol",
-            (
-                f"outer {document['engine_protocol_version']} · embedded "
-                f"{_layer(document)} {document['layer_protocol_version']}"
-                if document.get("layer_protocol_version") is not None
-                and document.get("layer_protocol_version")
-                != document.get("engine_protocol_version")
-                else str(document.get("engine_protocol_version") or "unknown")
-            ),
-        ),
         ("scope", _scope(document)),
         ("progress", _progress(document)),
         ("result", result),
@@ -235,10 +243,11 @@ def print_re_status_card(
     next_action = document.get("next_action")
     if isinstance(next_action, str) and next_action.strip() and next_action != "none":
         fields.append(("next", next_action.replace("`", "")))
+    public_fields = [(label, _public_text(value)) for label, value in fields]
     banner(
-        title,
-        fields,
-        subtitle=f"{_STATUS_ICONS.get(status, '✗')} {result}",
+        f"RE v2 · {_public_stage(document)}",
+        public_fields,
+        subtitle=f"{_STATUS_ICONS.get(status, '✗')} {_public_text(result)}",
         file=file,
     )
 
@@ -246,8 +255,8 @@ def print_re_status_card(
 def print_re_error(command: str, error: object, *, file: IO[str] | None = None) -> None:
     """Render one actionable RE command error through the shared UI."""
     banner(
-        "RE ERROR",
-        [("command", command), ("error", str(error))],
+        "RE v2 · ERROR",
+        [("command", command), ("error", _public_text(error))],
         subtitle="✗ COMMAND FAILED",
         file=file if file is not None else sys.stderr,
     )
@@ -290,7 +299,7 @@ class ReProgressTracker:
         }:
             self.provider_active = False
             state = event_type.removeprefix("run_")
-            reason = str(details.get("reason") or "").strip()
+            reason = _public_text(details.get("reason") or "").strip()
             return f"[re] {self.layer} · {state}" + (f" · {reason}" if reason else "")
         return None
 

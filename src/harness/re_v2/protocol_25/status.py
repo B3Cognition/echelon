@@ -352,9 +352,16 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         required_provider=required_provider,
     )
     preflight = _preflight_document(authority)
+    projection_failure = (
+        None
+        if replay.semantic_context_projection_failure is None
+        else dict(replay.semantic_context_projection_failure)
+    )
     banner = (
         "L3 BLOCKED - AUDIT CONTEXT PREFLIGHT FAILED"
         if preflight["state"] == "failed"
+        else "L3 BLOCKED - SOURCE COMPOSITION CONTEXT FAILED"
+        if projection_failure is not None
         else _BANNERS[status]
     )
     return {
@@ -380,6 +387,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             },
         },
         "completion_scope": "selected L3 scope only",
+        "context_projection_failure": projection_failure,
         "continuable": status == "paused",
         "engine": manifest.engine,
         "engine_protocol_version": manifest.engine_protocol_version,
@@ -393,6 +401,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             manifest,
             authorization_recommended,
             preflight_failed=preflight["state"] == "failed",
+            projection_failed=projection_failure is not None,
         ),
         "not_run": {
             "exhaustive_re_l4": "not run",
@@ -714,9 +723,10 @@ def _next_action(
     authorization_required: Mapping[str, Mapping[str, int]],
     *,
     preflight_failed: bool = False,
+    projection_failed: bool = False,
 ) -> str:
     run_id = manifest.run_id
-    if preflight_failed:
+    if preflight_failed or projection_failed:
         return f"run `{_fresh_l3_command(manifest)}`"
     if status == "complete":
         return "none — selected L3 scope is complete"
@@ -824,6 +834,16 @@ def _render_human(document: Mapping[str, object]) -> str:
             "provider calls made by preflight: "
             f"{preflight.get('provider_dispatch_count', 0)}"
         )
+    projection_failure = document.get("context_projection_failure")
+    if isinstance(projection_failure, Mapping):
+        measured = projection_failure.get("measured_canonical_json_bytes")
+        ceiling = projection_failure.get("max_canonical_json_bytes")
+        lines.append(
+            "source composition context: "
+            f"{measured if isinstance(measured, int) else 'unmeasured'} bytes; "
+            f"limit {ceiling}"
+        )
+        lines.append("provider calls made after projection failure: 0")
     provider_failure = document.get("last_provider_failure")
     if isinstance(provider_failure, Mapping):
         provider = provider_failure.get("provider", "unknown")

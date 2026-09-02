@@ -366,3 +366,31 @@ The amendment is complete when:
    pass; and
 9. the OptaSearch L3 prerequisite can complete and advance into L4 without a
    monolithic source prompt.
+
+## 2026-09-02 follow-up: bounded source-composition projection
+
+The first corrected `2.5.1` run exposed a second aggregate path after audit
+preflight: a 16-target source-composition guard measured 205,128 bytes against
+the original 196,608-byte context ceiling. Audit preflight could not detect it
+because overlays and target assessments do not exist until after provider work.
+
+The source guard now uses a deterministic bounded projection while retaining
+the original frozen authority:
+
+- the full lower-dependency, context-object, and evidence-object hash lists are
+  each stored as one content-addressed aggregate and represented by its Merkle
+  hash in the guard target;
+- unresolved findings retain their exact `FindingKeyV1`, finding-key identity,
+  and title, while repair explanation/recommendation prose already superseded
+  by accepted overlay claims is replaced by a fixed projection marker;
+- accepted overlays, target assessments, source-overview content, authorized
+  evidence, epoch authority, and source-wide guard behavior remain complete;
+- only `source-composition-assessment` receives a 224 KiB context ceiling; all
+  other L3 context ceilings remain 192 KiB; and
+- a guard that still exceeds its pinned ceiling records
+  `semantic_context_projection_failed` and a zero-dispatch terminal blocker,
+  then recommends a fresh L3 successor instead of identical continuation.
+
+The changed artifact-policy identity creates a distinct immutable successor
+request without reinterpreting the failed run. Unchanged audit, resolution, and
+target-recheck work identities remain eligible for exact checkpoint adoption.

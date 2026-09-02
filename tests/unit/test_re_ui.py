@@ -35,13 +35,76 @@ def test_re_status_card_uses_shared_echelon_presentation() -> None:
     )
 
     rendered = output.getvalue()
-    assert "✈ echelon · RE STATUS" in rendered
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in rendered
     assert "◐ L3 PAUSED - CONTINUABLE" in rendered
-    assert "protocol" in rendered and "2.5" in rendered
-    assert "outer 2.6 · embedded L3 2.5.1" in rendered
+    assert "outer 2.6" not in rendered
+    assert "embedded L3 2.5.1" not in rendered
     assert "scope" in rendered and "7 sources · 74 domains" in rendered
     assert "progress" in rendered and "2 generated · 243 adopted" in rendered
     assert "echelon re continue re-l3-child" in rendered
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("document", "title"),
+    (
+        (
+            {
+                "target_layer": "L1",
+                "status": "complete",
+                "banner": "L1 COMPACT BASELINE COMPLETE",
+            },
+            "RE v2 · L1 COMPACT BASELINE",
+        ),
+        (
+            {
+                "target_layer": "L2",
+                "status": "complete",
+                "banner": "L2 BEHAVIORAL DEEPENING COMPLETE",
+            },
+            "RE v2 · L2 BEHAVIORAL DEEPENING",
+        ),
+        (
+            {
+                "target_layer": "L4",
+                "status": "in_progress",
+                "banner": "L4 EXHAUSTIVE RE IN PROGRESS",
+            },
+            "RE v2 · L4 EXHAUSTIVE ANALYSIS",
+        ),
+        (
+            {
+                "synthesis_status": "in_progress",
+                "status": "in_progress",
+            },
+            "RE v2 · WORKSPACE SYNTHESIS",
+        ),
+    ),
+)
+def test_re_status_card_uses_public_stage_names_without_internal_protocols(
+    document: dict[str, object],
+    title: str,
+) -> None:
+    from echelon.re_ui import print_re_status_card
+
+    output = StringIO()
+    print_re_status_card(
+        {
+            "engine_protocol_version": "2.7",
+            "layer_protocol_version": "2.5.1",
+            "run_id": "re-stage",
+            "selection": {"selected_sources": 1, "selected_domains": 1},
+            "artifact_counts": {"generated": 0, "adopted": 0},
+            **document,
+        },
+        file=output,
+    )
+
+    rendered = output.getvalue()
+    assert f"✈ echelon · {title}" in rendered
+    assert "protocol" not in rendered.lower()
+    assert "2.5.1" not in rendered
+    assert "2.7" not in rendered
 
 
 @pytest.mark.unit
@@ -88,6 +151,23 @@ def test_re_status_card_surfaces_preflight_failure_without_provider_call() -> No
 
 
 @pytest.mark.unit
+def test_re_error_uses_public_version_and_hides_internal_protocol_number() -> None:
+    from echelon.re_ui import print_re_error
+
+    output = StringIO()
+    print_re_error(
+        "echelon re continue",
+        ValueError("protocol-2.5 run cannot continue"),
+        file=output,
+    )
+
+    rendered = output.getvalue()
+    assert "✈ echelon · RE v2 · ERROR" in rendered
+    assert "RE v2 run cannot continue" in rendered
+    assert "protocol-2.5" not in rendered
+
+
+@pytest.mark.unit
 def test_l3_progress_total_includes_domain_and_source_audit_targets() -> None:
     from echelon.re_ui import _accepted_total
 
@@ -118,6 +198,12 @@ def test_re_progress_tracker_reports_dispatch_acceptance_and_pause() -> None:
             "payload": {"reason": "resource authorization required"},
         }
     ) == "[re] L3 · paused · resource authorization required"
+    assert tracker.consume(
+        {
+            "type": "run_completed",
+            "payload": {"reason": "all requested protocol-2.5.1 artifacts are accepted"},
+        }
+    ) == "[re] L3 · completed · all requested RE v2 artifacts are accepted"
 
     l4 = ReProgressTracker(layer="L4", total=2, accepted=0)
     assert l4.consume({"type": "provider_started", "payload": {}}) == (

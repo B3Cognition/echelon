@@ -696,5 +696,5 @@ def test_terminal_protocol_22_run_rejects_budget_authorization_without_mutation(
     )
 
     assert result.exit_code == 2
-    assert "terminal protocol-2.2" in result.output
+    assert "terminal RE v2" in result.output
     assert paths.events.read_bytes() == before

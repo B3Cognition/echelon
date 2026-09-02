@@ -17,6 +17,7 @@ from harness.re_v2.protocol_25.recovery import (
 from harness.re_v2.protocol_25.status import (
     _authority,
     _document,
+    _next_action,
     _render_human,
     protocol_25_status_document,
     render_protocol_25_status,
@@ -26,6 +27,22 @@ from tests.integration.test_re_v2_protocol_25_recovery import (
     _accept_every_prerequisite,
     _context,
 )
+
+
+@pytest.mark.unit
+def test_projection_blocker_recommends_a_fresh_l3_successor(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+
+    assert _next_action(
+        "blocked_incomplete",
+        context.semantic_graph.manifest,
+        {},
+        projection_failed=True,
+    ) == (
+        "run `echelon re deepen --to L3 --source api "
+        f"--domain {context.semantic_graph.manifest.selection.domain_keys[0]} "
+        "--from-run re-parent`"
+    )
 
 
 @pytest.mark.unit

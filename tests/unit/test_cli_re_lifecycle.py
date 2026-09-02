@@ -1033,7 +1033,8 @@ def test_re_status_human_uses_shared_branded_card(
     _cmd_re_status([])
 
     output = capsys.readouterr().out
-    assert "✈ echelon · RE STATUS" in output
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in output
+    assert "protocol" not in output.lower()
     assert "L3 PAUSED - CONTINUABLE" in output
     assert "legacy protocol text" not in output
 

@@ -8,6 +8,30 @@ from typer.testing import CliRunner
 
 
 @pytest.mark.unit
+def test_l3_authority_mismatch_explains_how_to_create_a_compatible_successor(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _re_l3_authority_mismatch_message
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    manifest = manifest_v4()
+    message = _re_l3_authority_mismatch_message(
+        tmp_path / "runs" / "re-l3-child",
+        manifest,
+    )
+
+    assert "different RE implementation" in message
+    assert "accepted artifacts remain unchanged" in message
+    assert (
+        "echelon re deepen --to L3 --source api "
+        f"--domain {manifest.selection.domain_keys[0]} --from-run re-parent"
+    ) in message
+    assert "echelon re status re-l3-child --json" in message
+    assert "protocol-2.5" not in message
+    assert "verifier:" not in message
+
+
+@pytest.mark.unit
 def test_deepen_routes_l3_semantic_authorization_without_provider_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -506,7 +530,7 @@ def test_re_continue_validation_error_uses_shared_branded_card(
 
     assert exc.value.code == 2
     error = capsys.readouterr().err
-    assert "✈ echelon · RE ERROR" in error
+    assert "✈ echelon · RE v2 · ERROR" in error
     assert "echelon re continue" in error
     assert "usage: echelon re continue [<run-id>]" in error
 

@@ -980,7 +980,7 @@ def test_invalid_v2_pin_fails_before_execution_or_side_effects(
     assert result.exit_code == 2
     assert isinstance(result.exception, SystemExit)
     assert _captured_stderr(result) in {"", result.output}
-    assert "✈ echelon · RE ERROR" in result.output
+    assert "✈ echelon · RE v2 · ERROR" in result.output
     assert "COMMAND FAILED" in result.output
     assert f"echelon re {operation}" in result.output
     assert (

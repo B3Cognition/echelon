@@ -331,7 +331,23 @@ def test_finding_close_requires_assessments_and_passing_source(tmp_path: Path) -
         ledger.record_finding_closure(receipt)
 
 
-def test_non_epoch_finding_and_out_of_order_receipt_fail_closed(tmp_path: Path) -> None:
+def test_first_finding_closure_may_be_recorded_after_an_earlier_failed_round(
+    tmp_path: Path,
+) -> None:
+    ledger, objects = _ledger(tmp_path)
+    closure = _record_closure_prerequisites(ledger, objects)
+    delayed = replace(closure.receipt, semantic_round=2)
+    _put(objects, delayed)
+
+    ledger.record_finding_closure(delayed)
+
+    replayed = ledger.replay()
+    assert replayed.latest_finding_closures[delayed.finding_key_id] == delayed
+
+
+def test_finding_receipt_chain_allows_failed_round_gaps_and_rejects_bad_links(
+    tmp_path: Path,
+) -> None:
     ledger, objects = _ledger(tmp_path)
     closure = _record_closure_prerequisites(ledger, objects)
     outside = replace(closure.receipt, finding_key_id=digest("outside-finding"))
@@ -346,12 +362,15 @@ def test_non_epoch_finding_and_out_of_order_receipt_fail_closed(tmp_path: Path) 
         previous_closure_receipt_id=closure.receipt.identity,
     )
     _put(objects, skipped)
-    with pytest.raises(ReV2LedgerError, match="consecutive|preceding receipt"):
-        ledger.record_finding_closure(skipped)
+    ledger.record_finding_closure(skipped)
+    assert (
+        ledger.replay().latest_finding_closures[skipped.finding_key_id]
+        == skipped
+    )
 
     missing_previous = replace(
-        closure.receipt,
-        semantic_round=2,
+        skipped,
+        semantic_round=4,
         previous_closure_receipt_id=digest("missing-receipt"),
     )
     _put(objects, missing_previous)

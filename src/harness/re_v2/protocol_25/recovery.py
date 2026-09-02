@@ -20,6 +20,7 @@ from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.recovery import (
     Protocol22RecoveryResult,
     Protocol22RunContext,
+    resolve_execution_dependencies,
 )
 from harness.re_v2.protocol_22.schema import load_canonical_object
 from harness.re_v2.protocol_26.authority import (
@@ -523,6 +524,7 @@ def recover_protocol_25_run(context: Protocol25RunContext) -> Protocol25Recovery
             replay.shared.shared.failed_work_items
             or replay.shared.shared.failed_executors
             or replay.audit_context_preflight_failure_id is not None
+            or replay.semantic_context_projection_failure is not None
         ),
     )
     return Protocol25RecoveryResult(state, events, ledger)
@@ -1090,6 +1092,75 @@ def build_recheck_dispatch_authority(
     return item, semantic_context
 
 
+def _source_guard_target_projection(
+    context: Protocol25RunContext,
+    audit_target: object,
+    vocabulary: object,
+) -> tuple[object, object]:
+    """Merkle-compact repeated source closure lists for one guard context."""
+    from .findings import AuditTargetV1, FindingAuthorityVocabularyV1
+
+    if (
+        not isinstance(audit_target, AuditTargetV1)
+        or audit_target.target_kind != "source"
+        or not isinstance(vocabulary, FindingAuthorityVocabularyV1)
+        or vocabulary.audit_target_id != audit_target.identity
+    ):
+        raise Protocol25RecoveryError(
+            "source guard projection requires exact source audit authority"
+        )
+
+    def aggregate(kind: str, hashes: tuple[str, ...]) -> str:
+        payload = canonical_json_bytes(
+            {
+                "schema_version": 1,
+                "authority_kind": kind,
+                "object_hashes": list(hashes),
+            }
+        )
+        return context.object_store.put_blob(payload)
+
+    projected_target = replace(
+        audit_target,
+        lower_dependency_hashes=(
+            aggregate(
+                "source-guard-lower-dependency-closure",
+                audit_target.lower_dependency_hashes,
+            ),
+        ),
+        context_object_hashes=(
+            aggregate(
+                "source-guard-context-object-closure",
+                audit_target.context_object_hashes,
+            ),
+        ),
+        evidence_object_hashes=(
+            aggregate(
+                "source-guard-evidence-object-closure",
+                audit_target.evidence_object_hashes,
+            ),
+        ),
+    )
+    return projected_target, replace(
+        vocabulary,
+        audit_target_id=projected_target.identity,
+    )
+
+
+def _source_guard_finding_projection(finding: object) -> object:
+    """Retain finding identity while removing repair prose duplicated by overlays."""
+    from .findings import SemanticFindingV1
+
+    if not isinstance(finding, SemanticFindingV1):
+        raise Protocol25RecoveryError("source guard finding authority is invalid")
+    return replace(
+        finding,
+        explanation="Resolved claim is supplied by the accepted semantic overlay.",
+        recommendation="Evaluate the accepted semantic overlay.",
+        repair_context="Evaluate the accepted semantic overlay.",
+    )
+
+
 def build_source_guard_dispatch_authority(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
@@ -1221,14 +1292,31 @@ def build_source_guard_dispatch_authority(
         if not isinstance(receipt, FindingClosureReceiptV1):
             raise Protocol25RecoveryError("source guard sibling receipt is invalid")
         authority_payloads[receipt_id] = context.object_store.read_blob(receipt_id)
+    projected_target, projected_vocabulary = _source_guard_target_projection(
+        context,
+        source_candidate.audit_target,
+        base_context.vocabulary,
+    )
+    projected_lower_hashes = tuple(
+        sorted(
+            {
+                *(item.artifact_hash for item in projected_target.audited_artifacts),
+                *projected_target.lower_dependency_hashes,
+                *projected_target.context_object_hashes,
+                *projected_target.evidence_object_hashes,
+            }
+        )
+    )
     semantic_context = context.semantic_runtime.build_context(
         mode="SOURCE_COMPOSITION_GUARD",
-        audit_target=source_candidate.audit_target,
-        vocabulary=base_context.vocabulary,
+        audit_target=projected_target,
+        vocabulary=projected_vocabulary,
         authorized_evidence=base_context.authorized_evidence,
         authority_payloads=authority_payloads,
-        lower_authority_hashes=base_context.lower_authority_hashes,
-        unresolved_findings=unresolved,
+        lower_authority_hashes=projected_lower_hashes,
+        unresolved_findings=tuple(
+            _source_guard_finding_projection(item) for item in unresolved
+        ),
         overlay_hashes=tuple(sorted(item.identity for item in overlays)),
         target_assessment_hashes=tuple(
             sorted(item.identity for item in assessments)
@@ -1259,11 +1347,86 @@ def build_source_guard_dispatch_authority(
         _semantic_operation_item(
             context,
             audit_item,
-            source_candidate.audit_target,
+            projected_target,
             "source-composition-assessment",
             dependencies,
         ),
         semantic_context,
+    )
+
+
+def _measure_source_guard_context(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+) -> int | None:
+    """Measure a rejected guard context without widening its pinned authority."""
+    policy = context.semantic_runtime.artifact_policy
+    original_ceiling = policy.entry_for(
+        "L3", "source-composition-assessment"
+    ).max_context_bundle_bytes
+    measurement_entries = tuple(
+        replace(item, max_context_bundle_bytes=1_000_000_000)
+        if item.artifact_kind == "source-composition-assessment"
+        else item
+        for item in policy.l3_entries
+    )
+    measurement_context = replace(
+        context,
+        semantic_runtime=replace(
+            context.semantic_runtime,
+            artifact_policy=replace(policy, l3_entries=measurement_entries),
+        ),
+    )
+    try:
+        _item, semantic_context = build_source_guard_dispatch_authority(
+            measurement_context,
+            action,
+        )
+    except (Protocol25RecoveryError, Protocol25RuntimeError):
+        return None
+    raw = semantic_context.to_json_dict()
+    raw["max_canonical_json_bytes"] = original_ceiling
+    return len(canonical_json_bytes(raw))
+
+
+def _record_semantic_context_projection_failure(
+    context: Protocol25RunContext,
+    action: Protocol25ControllerActionV1,
+    exc: Protocol25RuntimeError,
+) -> None:
+    """Stop deterministically before a provider dispatch can be reserved."""
+    ceiling = context.semantic_inputs.artifact_policy.entry_for(
+        "L3", "source-composition-assessment"
+    ).max_context_bundle_bytes
+    measured = (
+        _measure_source_guard_context(context, action)
+        if "byte ceiling" in str(exc).lower()
+        else None
+    )
+    reason_code = (
+        "semantic_context_byte_ceiling_exceeded"
+        if measured is not None and measured > ceiling
+        else "semantic_context_projection_invalid"
+    )
+    context.event_store.append(
+        "semantic_context_projection_failed",
+        {
+            "max_canonical_json_bytes": ceiling,
+            "measured_canonical_json_bytes": measured,
+            "operation": "source-composition-guard",
+            "participating_target_ids": list(action.participating_target_ids),
+            "provider_dispatch_count": 0,
+            "reason_code": reason_code,
+            "semantic_round": action.semantic_round,
+            "source_cycle_id": action.source_cycle_id,
+            "source_id": action.source_id,
+        },
+        occurred_at=context.clock(),
+    )
+    context.event_store.append(
+        "run_failed",
+        {"reason": "semantic context projection failed"},
+        occurred_at=context.clock(),
     )
 
 
@@ -1469,7 +1632,7 @@ def _execute_semantic_action(
             raise Protocol25RecoveryError(
                 "semantic retry has no exact shared retry authority"
             )
-        dependencies = context.dependencies_for(item, attempt_kind)
+        dependencies = resolve_execution_dependencies(context, item, attempt_kind)
         if not isinstance(dependencies, ProviderExecutionDependenciesV1):
             raise Protocol25RecoveryError(
                 "semantic retry dependencies are not provider authority"
@@ -1935,10 +2098,14 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "source guard action differs from fresh controller authority"
             )
-        item, semantic_context = build_source_guard_dispatch_authority(
-            context,
-            action,
-        )
+        try:
+            item, semantic_context = build_source_guard_dispatch_authority(
+                context,
+                action,
+            )
+        except Protocol25RuntimeError as exc:
+            _record_semantic_context_projection_failure(context, action, exc)
+            return
         dependencies = context.dependencies_for(item, "initial_generation")
         if (
             not isinstance(dependencies, ProviderExecutionDependenciesV1)
@@ -1974,6 +2141,12 @@ def _apply_controller_action(
     }.get(action.kind)
     if terminal is not None:
         events = context.event_store.replay()
+        replay = _replay_protocol_25_events(context, events)
+        if (
+            action.kind == "terminal_blocked_incomplete"
+            and replay.semantic_context_projection_failure is not None
+        ):
+            terminal = ("run_failed", "semantic context projection failed")
         existing = next(
             (
                 item

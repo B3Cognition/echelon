@@ -451,6 +451,44 @@ def test_resolution_recheck_guard_receipts_and_progress_are_ordered(
 
 
 @pytest.mark.unit
+def test_source_guard_context_failure_is_a_durable_zero_dispatch_terminal(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _freeze(store)
+    _resolution(store, TARGET_A, "a")
+    _resolution(store, TARGET_B, "b")
+    _recheck(store, TARGET_A, "a")
+    _recheck(store, TARGET_B, "b")
+    _append(
+        store,
+        "semantic_context_projection_failed",
+        {
+            "max_canonical_json_bytes": 196_608,
+            "measured_canonical_json_bytes": 205_128,
+            "operation": "source-composition-guard",
+            "participating_target_ids": sorted((TARGET_A, TARGET_B)),
+            "provider_dispatch_count": 0,
+            "reason_code": "semantic_context_byte_ceiling_exceeded",
+            "semantic_round": 1,
+            "source_cycle_id": "cycle-1",
+            "source_id": SOURCE,
+        },
+    )
+    _append(store, "run_failed", {"reason": "semantic context projection failed"})
+
+    replay = PROTOCOL_25_EVENTS.new_state()
+    for event in store.replay():
+        replay.consume(event)
+
+    assert isinstance(replay, Protocol25ReplayState)
+    assert replay.semantic_context_projection_failure is not None
+    assert replay.semantic_context_projection_failure["provider_dispatch_count"] == 0
+    assert replay.shared.shared.terminal is True
+
+
+@pytest.mark.unit
 def test_semantic_operation_retry_rebinds_same_work_without_reopening_cycle(
     tmp_path: Path,
 ) -> None:

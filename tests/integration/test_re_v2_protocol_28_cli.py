@@ -245,10 +245,9 @@ def test_schema7_context_and_exhaustive_continuation_dispatch_by_manifest(
 
     output = capsys.readouterr().out
     assert backend.roles == ["producer", "verifier"]
-    assert "✈ echelon · RE RUN" in output
+    assert "✈ echelon · RE v2 · L4 EXHAUSTIVE ANALYSIS" in output
     assert "[re] L4" in output and "controller started" in output
-    assert "✈ echelon · RE STATUS" in output
-    assert "2.8" in output
+    assert "protocol" not in output.lower()
     assert "1/1 slices accepted" in output
     assert "L4 SELECTED SCOPE COMPLETE" in output
     assert (run_dir / "re" / "l4" / "materialization.json").is_file()
@@ -284,7 +283,7 @@ def test_schema7_closure_continuation_rejects_resources_and_replays_zero_call(
     )
 
     output = capsys.readouterr().out
-    assert "✈ echelon · RE STATUS" in output
+    assert "✈ echelon · RE v2 · L4 EXHAUSTIVE ANALYSIS" in output
     assert "L4" in output and "COMPLETE" in output
 
 

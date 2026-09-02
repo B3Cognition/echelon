@@ -451,10 +451,9 @@ def test_schema3_live_execution_uses_protocol24_controller(
 
     assert calls == [context]
     output = capsys.readouterr().out
-    assert "✈ echelon · RE RUN" in output
+    assert "✈ echelon · RE v2 · L2 BEHAVIORAL DEEPENING" in output
     assert "[re] L2" in output and "controller started" in output
-    assert "✈ echelon · RE STATUS" in output
-    assert "2.4" in output
+    assert "protocol" not in output.lower()
 
 
 @pytest.mark.integration
