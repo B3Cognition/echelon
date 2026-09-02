@@ -50,8 +50,14 @@ def _failed(message: str) -> ExecResult:
 
 
 class RecordingProvider:
-    def __init__(self, *, fail_at: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_at: str | None = None,
+        application_logs: str = "application process log: API failed to bind",
+    ) -> None:
         self.fail_at = fail_at
+        self.application_logs = application_logs
         self.created: list[SandboxHandle] = []
         self.destroyed: list[SandboxHandle] = []
         self.commands: list[str] = []
@@ -100,7 +106,7 @@ class RecordingProvider:
         elif "echelon-runnability-readiness" in cmd:
             stage = "readiness"
         elif "echelon-runnability-app-logs" in cmd:
-            return _ok("application process log: API failed to bind")
+            return _ok(self.application_logs)
         elif "user-runnability-browser.mjs" in cmd:
             stage = "primary_journey"
         elif cmd == "restart-application":
@@ -287,6 +293,7 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
         "primary_journey",
         "persistence_before_restart",
         "restart",
+        "readiness_after_restart",
         "persistence_after_restart",
         "stop",
         "teardown",
@@ -300,6 +307,13 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
         and "echelon-runnability-restart" in command
         for command in provider.commands
     )
+    restart_readiness = next(
+        command
+        for command in provider.commands
+        if "echelon-runnability-readiness-after-restart" in command
+    )
+    assert "sleep 1" in restart_readiness
+    assert "successes=$((successes+1))" in restart_readiness
     assert len(provider.created) == 1
     assert provider.destroyed == provider.created
     assert provider.services_started == 1
@@ -476,3 +490,23 @@ def test_journey_failure_includes_background_application_logs(
     assert result.status == "not_runnable"
     assert "application process log: API failed to bind" in result.summary
     assert any("echelon-runnability-app-logs" in command for command in provider.commands)
+
+
+@pytest.mark.unit
+def test_application_log_diagnostics_strip_null_bytes(tmp_path: Path) -> None:
+    provider = RecordingProvider(
+        fail_at="primary_journey",
+        application_logs="old process output\0\0new process output",
+    )
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=_contract(),
+        resolved=_resolved(),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+
+    assert "\0" not in result.summary
+    assert "old process outputnew process output" in result.summary

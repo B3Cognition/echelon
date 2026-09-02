@@ -297,7 +297,12 @@ class RunnabilityRunner:
                     )
                 stages.append(restart)
                 readiness_after = self._wait_for_readiness(
-                    handle, contract, variables, stage_name="readiness_after_restart"
+                    handle,
+                    contract,
+                    variables,
+                    stage_name="readiness_after_restart",
+                    initial_delay_seconds=1,
+                    consecutive_successes=3,
                 )
                 if readiness_after.status != "passed":
                     readiness_after = self._attach_application_logs(
@@ -309,6 +314,7 @@ class RunnabilityRunner:
                         "persistence_failed",
                         _stage_error(readiness_after),
                     )
+                stages.append(readiness_after)
                 after = self._run_observations(
                     handle,
                     contract,
@@ -496,8 +502,9 @@ class RunnabilityRunner:
         wrapped: list[str] = []
         command_sequence = contract.start_commands if commands is None else commands
         for index, command in enumerate(command_sequence):
+            log_path = f"/tmp/echelon-runnability-{stage_name}-app-{index}.log"
             inner = (
-                f"({command}) > /tmp/echelon-runnability-app-{index}.log 2>&1 & "
+                f"({command}) > {log_path} 2>&1 & "
                 f"echo $! > /tmp/echelon-runnability-app-{index}.pid"
             )
             shell = (
@@ -524,17 +531,26 @@ class RunnabilityRunner:
         variables: Mapping[str, str],
         *,
         stage_name: str = "readiness",
+        initial_delay_seconds: int = 0,
+        consecutive_successes: int = 1,
     ) -> RunnabilityStage:
         url = _expand(contract.readiness.url, variables)
         timeout_s = max(1, contract.readiness.timeout_ms // 1000)
+        delay = (
+            f"sleep {initial_delay_seconds}; " if initial_delay_seconds > 0 else ""
+        )
         script = (
-            f"deadline=$((SECONDS+{timeout_s})); "
-            f"until node -e 'fetch(process.argv[1]).then(r=>{{if(!r.ok)process.exit(1)}})"
-            f".catch(()=>process.exit(1))' {shlex.quote(url)}; do "
-            "if [ $SECONDS -ge $deadline ]; then exit 1; fi; sleep 1; done"
+            f"deadline=$((SECONDS+{timeout_s})); successes=0; {delay}"
+            "while [ $SECONDS -lt $deadline ]; do "
+            f"if node -e 'fetch(process.argv[1]).then(r=>{{if(!r.ok)process.exit(1)}})"
+            f".catch(()=>process.exit(1))' {shlex.quote(url)}; then "
+            "successes=$((successes+1)); "
+            f"if [ $successes -ge {consecutive_successes} ]; then exit 0; fi; "
+            "else successes=0; fi; sleep 1; done; exit 1"
         )
         command = (
-            f"sh -lc {shlex.quote(script)} # echelon-runnability-readiness"
+            f"sh -lc {shlex.quote(script)} "
+            f"# echelon-runnability-{stage_name.replace('_', '-')}"
         )
         result = self._provider.exec(
             handle,
@@ -604,7 +620,7 @@ class RunnabilityRunner:
     ) -> RunnabilityStage:
         """Attach bounded background-process output to a readiness failure."""
         command = (
-            "sh -lc 'for file in /tmp/echelon-runnability-app-*.log; do "
+            "sh -lc 'for file in /tmp/echelon-runnability-*-app-*.log; do "
             "test ! -f \"$file\" || { echo \"== $file ==\"; tail -n 120 \"$file\"; }; "
             "done' # echelon-runnability-app-logs"
         )
@@ -615,7 +631,9 @@ class RunnabilityRunner:
             timeout_ms=10_000,
         )
         diagnostics = "\n".join(
-            item.strip() for item in (result.stdout, result.stderr) if item.strip()
+            item.replace("\x00", "").strip()
+            for item in (result.stdout, result.stderr)
+            if item.replace("\x00", "").strip()
         )
         if not diagnostics:
             return stage
@@ -897,6 +915,7 @@ def _required_stage_names(
             (
                 "persistence_before_restart",
                 "restart",
+                "readiness_after_restart",
                 "persistence_after_restart",
             )
         )
