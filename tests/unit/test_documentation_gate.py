@@ -120,8 +120,36 @@ COMPLETE_USER_COMMANDS = {
     "stop": ("pnpm stop:local", "docker compose down"),
 }
 
+COMPLETE_LOCAL_USER_COMMANDS = {
+    "prerequisites": ("Docker with Compose v2", "pnpm 9"),
+    "provision": ("docker compose up -d postgres",),
+    "readiness": ("docker compose exec -T postgres pg_isready",),
+    "prepare": ("pnpm db:prepare-local-test",),
+    "verify": ("pnpm verify:local",),
+    "start": ("pnpm start",),
+    "open": ("http://127.0.0.1:3000",),
+    "stop": ("pnpm stop",),
+    "cleanup": ("docker compose down -v",),
+}
 
-def _passing_runnability_report(tmp_path: Path, *, user_commands=COMPLETE_USER_COMMANDS):
+
+def _combined_user_commands(
+    local_commands: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    keys = set(COMPLETE_USER_COMMANDS) | set(local_commands)
+    return {
+        key: COMPLETE_USER_COMMANDS.get(key, ()) + local_commands.get(key, ())
+        for key in keys
+    }
+
+
+def _passing_runnability_report(
+    tmp_path: Path,
+    *,
+    user_commands=COMPLETE_USER_COMMANDS,
+    local_journey_status: str = "not_required",
+    local_user_commands=None,
+):
     return write_runnability_report(
         evidence_dir=tmp_path / "evidence" / "user-runnability",
         spec_id="001-demo",
@@ -140,10 +168,22 @@ def _passing_runnability_report(tmp_path: Path, *, user_commands=COMPLETE_USER_C
         attempt_sequence=1,
         sensitive_environment={},
         user_commands=user_commands,
+        local_journey_status=local_journey_status,
+        local_journey_reason=(
+            "No compatible local runner executed these commands."
+            if local_journey_status == "unverified"
+            else ""
+        ),
+        local_user_commands=local_user_commands,
     )
 
 
-def _write_runnability_docs_project(tmp_path: Path, commands: dict[str, tuple[str, ...]]) -> Path:
+def _write_runnability_docs_project(
+    tmp_path: Path,
+    commands: dict[str, tuple[str, ...]],
+    *,
+    extra_readme: str = "",
+) -> Path:
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     command_lines = "\n".join(
@@ -152,7 +192,11 @@ def _write_runnability_docs_project(tmp_path: Path, commands: dict[str, tuple[st
         for command in values
     )
     (tmp_path / "README.md").write_text(
-        FIRST_RUN_README + "\n## Local game\n\n```bash\n" + command_lines + "\n```\n",
+        FIRST_RUN_README
+        + "\n## Local game\n\n```bash\n"
+        + command_lines
+        + "\n```\n"
+        + extra_readme,
         encoding="utf-8",
     )
     (tmp_path / "CHANGELOG.md").write_text(
@@ -209,6 +253,74 @@ def test_docs_runnability_gate_accepts_exact_observed_first_run(tmp_path: Path) 
     metadata = (spec_dir / "docs-verification-report.md").read_text(encoding="utf-8")
     assert f"runnability_evidence_sha256: {report.evidence_sha256}" in metadata
     assert "runnability_commands_current: true" in metadata
+
+
+def test_docs_runnability_gate_rejects_missing_local_journey_command(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+    )
+    incomplete = dict(COMPLETE_LOCAL_USER_COMMANDS)
+    incomplete.pop("verify")
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(incomplete),
+        extra_readme="\nThe local journey is unverified on the user's machine.\n",
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "FAIL"
+    assert any(
+        finding.section == "Local User Journey"
+        and "pnpm verify:local" in finding.required_repair
+        for finding in result.findings
+    )
+
+
+def test_docs_runnability_gate_rejects_claiming_unverified_local_journey_without_disclosure(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+    )
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(COMPLETE_LOCAL_USER_COMMANDS),
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "FAIL"
+    assert any(
+        finding.section == "Local User Journey"
+        and "unverified" in finding.required_repair.lower()
+        for finding in result.findings
+    )
+
+
+def test_docs_runnability_gate_accepts_complete_truthful_local_journey(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+    )
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(COMPLETE_LOCAL_USER_COMMANDS),
+        extra_readme="\nThe local journey is unverified on the user's machine.\n",
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "PASS"
 
 
 def test_docs_runnability_gate_rejects_provisional_verdict_without_current_evidence(

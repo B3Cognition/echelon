@@ -66,6 +66,30 @@ stop_commands:
 """
 
 
+LOCAL_JOURNEY = """\
+local_journey:
+  prerequisites:
+    - Docker with Compose v2
+    - pnpm 9
+  provision_commands:
+    - docker compose up -d postgres
+  readiness_commands:
+    - docker compose exec -T postgres pg_isready -U game -d browser_3d_game
+  prepare_commands:
+    - docker compose exec -T postgres createdb -U game browser_3d_game_test
+  verify_commands:
+    - TEST_DATABASE_URL=postgresql://game:local-development-only@127.0.0.1:5432/browser_3d_game_test pnpm verify
+  start_commands:
+    - pnpm start
+  open_urls:
+    - http://127.0.0.1:3000
+  stop_commands:
+    - pnpm stop
+  cleanup_commands:
+    - docker compose down -v
+"""
+
+
 def _write_contract(root: Path, text: str) -> Path:
     path = root / ".echelon" / "runnability.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +112,87 @@ def test_loads_candidate_owned_browser_contract(tmp_path: Path) -> None:
         "checkpoint-visible",
         "checkpoint-persisted",
     )
+    assert contract.local_journey is None
+
+
+@pytest.mark.unit
+def test_loads_complete_local_user_journey_as_immutable_contract(
+    tmp_path: Path,
+) -> None:
+    contract = load_runnability_contract(
+        _write_contract(tmp_path, BROWSER_CONTRACT + LOCAL_JOURNEY)
+    )
+
+    assert contract is not None
+    assert contract.local_journey is not None
+    assert contract.local_journey.prerequisites == (
+        "Docker with Compose v2",
+        "pnpm 9",
+    )
+    assert contract.local_journey.provision_commands == (
+        "docker compose up -d postgres",
+    )
+    assert contract.local_journey.readiness_commands == (
+        "docker compose exec -T postgres pg_isready -U game -d browser_3d_game",
+    )
+    assert contract.local_journey.prepare_commands == (
+        "docker compose exec -T postgres createdb -U game browser_3d_game_test",
+    )
+    assert contract.local_journey.verify_commands == (
+        "TEST_DATABASE_URL=postgresql://game:local-development-only@127.0.0.1:5432/browser_3d_game_test pnpm verify",
+    )
+    assert contract.local_journey.start_commands == ("pnpm start",)
+    assert contract.local_journey.open_urls == ("http://127.0.0.1:3000",)
+    assert contract.local_journey.stop_commands == ("pnpm stop",)
+    assert contract.local_journey.cleanup_commands == ("docker compose down -v",)
+
+
+@pytest.mark.unit
+def test_local_user_journey_rejects_unknown_fields(tmp_path: Path) -> None:
+    text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
+        "  cleanup_commands:\n",
+        "  host_execution: true\n  cleanup_commands:\n",
+    )
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match="unknown local_journey key: host_execution",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field",
+    [
+        "prerequisites",
+        "provision_commands",
+        "readiness_commands",
+        "prepare_commands",
+        "verify_commands",
+        "start_commands",
+        "open_urls",
+        "stop_commands",
+        "cleanup_commands",
+    ],
+)
+def test_local_user_journey_requires_every_lifecycle_field(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    lines = LOCAL_JOURNEY.splitlines()
+    start = lines.index(f"  {field}:")
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("    "):
+        end += 1
+    del lines[start:end]
+    text = BROWSER_CONTRACT + "\n".join(lines) + "\n"
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match=rf"local_journey\.{field} must not be empty",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
 
 
 @pytest.mark.unit

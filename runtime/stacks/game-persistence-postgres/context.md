@@ -28,6 +28,14 @@ the same marker with a harness-owned direct `postgres_query` observation.
 `DATABASE_URL` is injected into the sandbox for this composition; do not require
 the user to install project dependencies or a database on the host.
 
+The candidate must also declare a complete `local_journey` in that same
+contract: prerequisites, provision, readiness, disposable-state preparation,
+verification, start, open, stop, and cleanup. These are candidate-owned local
+instructions, not harness-generated Compose commands. Echelon reports them as
+`unverified` unless a compatible runner actually executes them; never imply
+that sandbox credentials or sidecars prove the host-local path.
+
 The report under `evidence/user-runnability/` is authoritative. README commands
-must match its observed provision/bootstrap/start/open/stop facts, which are
-shown by `echelon delivery status <spec_id>` after a passing run.
+must match its sandbox facts and its separately declared local journey, including
+the local verification status. The current report is shown by
+`echelon delivery status <spec_id>` after a passing sandbox run.

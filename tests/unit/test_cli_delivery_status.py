@@ -218,6 +218,60 @@ def test_delivery_status_runnability_shows_passing_local_run_commands(
 
 
 @pytest.mark.unit
+def test_delivery_status_surfaces_separate_unverified_local_journey(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    local_journey = {
+        "status": "unverified",
+        "reason": "No compatible local runner executed these commands.",
+        "commands": {
+            "prerequisites": ["Docker with Compose v2"],
+            "provision": ["docker compose up -d postgres"],
+            "readiness": ["docker compose exec -T postgres pg_isready"],
+            "prepare": ["pnpm db:prepare-local-test"],
+            "verify": ["pnpm verify:local"],
+            "start": ["pnpm start"],
+            "open": ["http://127.0.0.1:3000"],
+            "stop": ["pnpm stop"],
+            "cleanup": ["docker compose down -v"],
+        },
+    }
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "failed_stage": None,
+            "failure_class": "",
+            "summary": "The sandbox journey passed.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": {"start": ["pnpm start:sandbox"]},
+            "local_journey": local_journey,
+        },
+    )
+
+    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    json_payload = json.loads(capsys.readouterr().out)
+    assert json_payload["latest"]["user_runnability"]["local_journey"] == local_journey
+
+    _cmd_delivery_status([], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "local journey" in output
+    assert "unverified" in output
+    assert "local provision" in output
+    assert "docker compose up -d postgres" in output
+    assert "local verify" in output
+    assert "pnpm verify:local" in output
+    assert "local cleanup" in output
+    assert "docker compose down -v" in output
+
+
+@pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
 

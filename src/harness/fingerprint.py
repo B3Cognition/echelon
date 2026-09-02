@@ -32,6 +32,7 @@ LANGUAGE_IMAGES = {
 }
 
 # Playwright image override
+PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.42.0-jammy"
 
 
 @dataclass
@@ -106,7 +107,10 @@ def fingerprint_repo(repo_path: Path) -> Fingerprint:
     # Check for Playwright (overrides image selection)
     has_playwright = detect_playwright(repo_path)
 
-    image = LANGUAGE_IMAGES.get(detected_language, LANGUAGE_IMAGES["generic"])
+    if has_playwright:
+        image = PLAYWRIGHT_IMAGE
+    else:
+        image = LANGUAGE_IMAGES.get(detected_language, LANGUAGE_IMAGES["generic"])
 
     if detected_language == "generic":
         logger.warning(

@@ -88,7 +88,13 @@ def test_stack_schema_parses_required_linux_runnability() -> None:
             "classification": "user_facing",
             "policy": "required",
             "runner": "linux_container",
-            "capabilities": ["install", "start", "primary_journey", "stop"],
+            "capabilities": [
+                "install",
+                "start",
+                "primary_journey",
+                "local_journey",
+                "stop",
+            ],
             "required_observations": ["browser_dom"],
         },
     }
@@ -99,7 +105,13 @@ def test_stack_schema_parses_required_linux_runnability() -> None:
         classification="user_facing",
         policy="required",
         runner="linux_container",
-        capabilities=("install", "start", "primary_journey", "stop"),
+        capabilities=(
+            "install",
+            "start",
+            "primary_journey",
+            "local_journey",
+            "stop",
+        ),
         required_observations=("browser_dom",),
     )
 

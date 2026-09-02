@@ -42,7 +42,7 @@ def test_ranged_playwright_dependency_bootstraps_inside_sandbox(tmp_path: Path) 
 
     plan = build_verification_plan(tmp_path, _parse_config({"provider": "docker"}))
 
-    assert plan.image == "node:20-slim"
+    assert plan.image == "mcr.microsoft.com/playwright:v1.42.0-jammy"
     assert plan.bootstrap_commands == (
         "corepack enable && pnpm install --frozen-lockfile",
         "pnpm exec playwright install --with-deps chromium",

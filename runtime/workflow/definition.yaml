@@ -25,6 +25,7 @@
 # =============================================================================
 
 schema_version: 1
+controller_runtime_compatibility_version: 3
 controller_state_contracts_file: controller-state-contracts.yaml
 
 # =============================================================================
@@ -476,6 +477,7 @@ phases:
     agent: echelon.cartographer
     tier: exploration
     context_pack:
+      - user_request
       - .echelon/constitution.md
       - glossary.md
       - mental-model.md
@@ -940,7 +942,7 @@ phases:
     tier: solution
     context_pack:
       - spec.md
-      - constitution.md
+      - .echelon/constitution.md
       - requirements-overview.md
       - gatekeeper output (constraints, scope)
       - security-findings.md        # from echelon.guardian (GUARDIAN) (if exists)
@@ -984,7 +986,7 @@ phases:
         context_pack:
           - spec.md            # architecture.md does not exist yet — specialists run before echelon.architect (ARCHITECT)
           - boundaries.md
-          - constitution.md
+          - .echelon/constitution.md
           - "{context_dir}/prior-spec-context.md"
           - "{context_dir}/current-feature-context.md"
           - "{context_dir}/stale-memory-report.md"
@@ -1082,6 +1084,9 @@ phases:
       - security-findings.md    # if exists
       - research.md             # if exists
       - quality-gates.md
+      - issues.md               # if WHY3 re-dispatch recorded a repair
+      - tasks.md                # if PLAN/PLAN2 already produced it
+      - dependencies.md         # if PLAN/PLAN2 already produced it
       - calibration_map entry for echelon.sentinel (SENTINEL)
     outputs:
       - test-strategy.md
@@ -1104,7 +1109,7 @@ phases:
     tier: solution
     context_pack:
       - spec.md
-      - constitution.md
+      - .echelon/constitution.md
       - architecture.md
       - adr/ADR-*.md
       - test-strategy.md
@@ -1291,6 +1296,18 @@ phases:
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND quality_gates.fail AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-what
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase1-what AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase3-how
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase3-how AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase3-sentinel
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase3-sentinel AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase3-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase3-plan AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
       - to: checkpoint-plan
@@ -1299,16 +1316,6 @@ phases:
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND gate_decision = accept_with_risk"
       - to: checkpoint-plan
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND phase_recommendation = advance_past_consensus_to_delivery"
-      # Ownership-based re-dispatch (phase3-consensus.md §Consensus Gate Check).
-      # A WHY3 FAIL is a SPEC-quality failure (Structure gate / glossary /
-      # atomicity / ambiguity) owned by CARTOGRAPHER — route to WHAT, not HOW.
-      # ARCHITECT cannot amend spec.md, so routing a WHY3 FAIL to phase3-how
-      # reproduces the identical FAIL every cycle until force-kill (the
-      # 002-echelon-control-fe non-convergence loop). Mirrors the proven
-      # phase1-why2 → phase1-what spec-quality re-dispatch (same agent, SAGE).
-      # Evaluated before the ASSESS2 branch so a combined failure repairs the
-      # upstream (spec) constraint first, then re-flows.
-      # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
       - to: phase3-how
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND assess2-verdict = REJECTED AND iteration < max_iterations"
         action: increment_iteration

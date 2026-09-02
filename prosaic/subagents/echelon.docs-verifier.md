@@ -47,8 +47,8 @@ ALWAYS independently inspect every `delivery_change_id`, its cited source or tes
 NEVER copy TECH WRITER's coverage dispositions into a PASS verdict without checking them against implementation evidence.
 
 ### Rule 7 - Current User-Runnability Evidence
-ALWAYS require the README command sequence and final report digest to match the current passing `evidence/user-runnability/report.json` when runnability is required.
-NEVER pass a missing, failed, stale, or provisional runnability result, or treat `.echelon/runnability.yml` and README prose as execution evidence.
+ALWAYS require the README sandbox sequence, complete declared local sequence, local-journey status, and final report digest to match the current passing `evidence/user-runnability/report.json` when runnability is required.
+NEVER pass a missing, failed, stale, or provisional runnability result, treat `.echelon/runnability.yml` and README prose as execution evidence, or let README claim an `unverified` local journey passed.
 
 ## Inputs
 

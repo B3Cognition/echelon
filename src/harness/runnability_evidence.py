@@ -22,6 +22,9 @@ SCHEMA_VERSION = 1
 VALID_STATUSES = frozenset(
     {"runnable", "not_runnable", "blocked", "deferred", "not_applicable"}
 )
+VALID_LOCAL_JOURNEY_STATUSES = frozenset(
+    {"not_required", "missing", "unverified", "passed", "failed"}
+)
 
 
 @dataclass(frozen=True)
@@ -126,10 +129,15 @@ def write_runnability_report(
     attempt_sequence: int,
     sensitive_environment: Mapping[str, str],
     user_commands: Mapping[str, Sequence[str]],
+    local_journey_status: str = "not_required",
+    local_journey_reason: str = "",
+    local_user_commands: Mapping[str, Sequence[str]] | None = None,
 ) -> RunnabilityEvidenceRef:
     """Write one immutable attempt and update bounded human-facing pointers."""
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid runnability status: {status}")
+    if local_journey_status not in VALID_LOCAL_JOURNEY_STATUSES:
+        raise ValueError(f"invalid local journey status: {local_journey_status}")
     if attempt_sequence < 1:
         raise ValueError("attempt_sequence must be positive")
     stage_by_name = {stage.name: stage for stage in stages}
@@ -178,6 +186,20 @@ def write_runnability_report(
                 for command in commands
             ]
             for key, commands in sorted(user_commands.items())
+        },
+        "local_journey": {
+            "status": local_journey_status,
+            "reason": redact_verification_text(
+                local_journey_reason,
+                sensitive_environment,
+            ),
+            "commands": {
+                key: [
+                    redact_verification_text(str(command), sensitive_environment)
+                    for command in commands
+                ]
+                for key, commands in sorted((local_user_commands or {}).items())
+            },
         },
     }
     evidence_sha256 = _stable_evidence_sha256(payload)
@@ -353,6 +375,8 @@ def _stable_evidence_sha256(payload: Mapping[str, object]) -> str:
         "stages": stable_stages,
         "user_commands": payload.get("user_commands"),
     }
+    if "local_journey" in payload:
+        stable["local_journey"] = payload.get("local_journey")
     return _sha256_json(stable)
 
 
@@ -369,12 +393,34 @@ def _render_markdown(payload: Mapping[str, object]) -> str:
         f"- Candidate fingerprint: `{payload.get('candidate_fingerprint')}`",
         f"- Contract hash: `{payload.get('contract_hash')}`",
         f"- Stack hash: `{payload.get('stack_hash')}`",
-        "",
-        "## Stages",
-        "",
-        "| Stage | Status | Exit code |",
-        "|---|---|---:|",
     ]
+    local_journey = payload.get("local_journey")
+    if isinstance(local_journey, Mapping):
+        lines.extend(
+            [
+                f"- Local journey: `{local_journey.get('status') or 'not_required'}`",
+                f"- Local journey reason: {local_journey.get('reason') or 'None.'}",
+            ]
+        )
+        commands = local_journey.get("commands")
+        if isinstance(commands, Mapping) and commands:
+            lines.extend(["", "## Local User Commands", ""])
+            for section, values in commands.items():
+                if not isinstance(values, list):
+                    continue
+                lines.append(f"### {str(section).replace('_', ' ').title()}")
+                lines.append("")
+                lines.extend(f"- `{value}`" for value in values)
+                lines.append("")
+    lines.extend(
+        [
+            "",
+            "## Stages",
+            "",
+            "| Stage | Status | Exit code |",
+            "|---|---|---:|",
+        ]
+    )
     stages = payload.get("stages")
     if isinstance(stages, list):
         for stage in stages:

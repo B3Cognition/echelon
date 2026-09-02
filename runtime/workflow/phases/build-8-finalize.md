@@ -53,8 +53,11 @@ echelon.engineering-manager (ENGINEERING MANAGER) must confirm:
 6. **User-runnability evidence is current**: for a required stack, the
    harness-owned `user-runnability` report exists and is passing, its product,
    candidate-contract, and resolved-stack hashes still match, and the final docs
-   report is not provisional. A missing, failed, stale, or provisional result
-   always routes to rework or the explicit owner-controlled deferral path.
+   report is not provisional. When the stack requires a local journey, the
+   report contains the complete declared sequence and its truthful verification
+   status; `unverified` must never be presented as passed. A missing, failed,
+   stale, or provisional result always routes to rework or the explicit
+   owner-controlled deferral path.
 
 If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 

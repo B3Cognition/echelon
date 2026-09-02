@@ -878,7 +878,7 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
     assert "--json" in help_result.output
 
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_delivery_status", lambda args: calls.append(args))
+    monkeypatch.setattr("echelon.delivery_status.command", lambda args: calls.append(args))
 
     run(["delivery", "status", "001", "--strategy", "codegen", "--json"])
 

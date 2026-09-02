@@ -86,6 +86,13 @@ def test_browser_stack_context_explains_candidate_owned_runnability_contract() -
     assert "kind: http" in stack_context
     assert "expectation: status_200" in stack_context
     assert "persistence_probe:" in stack_context
+    assert "local_journey:" in stack_context
+    assert "provision_commands:" in stack_context
+    assert "readiness_commands:" in stack_context
+    assert "prepare_commands:" in stack_context
+    assert "verify_commands:" in stack_context
+    assert "cleanup_commands:" in stack_context
+    assert "No compatible runner executes these local commands" in stack_context
     assert "invent aliases such as `runtime`, `provision`" in stack_context
     assert "`expect` requires `selector` plus `state`" in stack_context
     assert "`text:<exact text>`" in stack_context

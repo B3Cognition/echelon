@@ -16,6 +16,7 @@ from harness.provider import (
 )
 from harness.runnability_contract import (
     JourneyStep,
+    LocalUserJourney,
     Observation,
     PersistenceProbe,
     PrimaryJourney,
@@ -218,6 +219,20 @@ def _contract() -> RunnabilityContract:
             observation_ids=("checkpoint-visible", "checkpoint-persisted"),
         ),
         stop_commands=("stop-application",),
+    )
+
+
+def _local_journey() -> LocalUserJourney:
+    return LocalUserJourney(
+        prerequisites=("Docker with Compose v2", "pnpm 9"),
+        provision_commands=("docker compose up -d postgres",),
+        readiness_commands=("docker compose exec -T postgres pg_isready",),
+        prepare_commands=("pnpm db:prepare-local-test",),
+        verify_commands=("pnpm verify:local",),
+        start_commands=("pnpm start",),
+        open_urls=("http://127.0.0.1:3000",),
+        stop_commands=("pnpm stop",),
+        cleanup_commands=("docker compose down -v",),
     )
 
 
@@ -449,6 +464,74 @@ def test_runner_rejects_omitting_stack_required_observation(
     assert result.failure_class == "mocked_dependency_detected"
     assert "stack-required observation 'http'" in result.summary
     assert provider.created == []
+
+
+@pytest.mark.unit
+def test_runner_rejects_missing_stack_required_local_journey(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider()
+    resolved = _resolved()
+    resolved = replace(
+        resolved,
+        runnability=replace(
+            resolved.runnability,
+            capabilities=resolved.runnability.capabilities + ("local_journey",),
+        ),
+    )
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=_contract(),
+        resolved=resolved,
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+
+    assert result.status == "not_runnable"
+    assert result.failure_class == "local_journey_missing"
+    assert result.failed_stage == "local_journey"
+    assert "local_journey" in result.summary
+    assert result.local_journey_status == "missing"
+    assert provider.created == []
+
+
+@pytest.mark.unit
+def test_runner_reports_declared_local_journey_as_unverified_without_host_execution(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingProvider()
+    contract = replace(_contract(), local_journey=_local_journey())
+    resolved = _resolved()
+    resolved = replace(
+        resolved,
+        runnability=replace(
+            resolved.runnability,
+            capabilities=resolved.runnability.capabilities + ("local_journey",),
+        ),
+    )
+
+    result = _runner(provider).run(
+        worktree=_worktree(tmp_path),
+        contract=contract,
+        resolved=resolved,
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+        attempt_sequence=1,
+    )
+    payload = json.loads(result.evidence.path.read_text(encoding="utf-8"))
+
+    assert result.status == "runnable"
+    assert result.local_journey_status == "unverified"
+    assert result.local_user_commands["provision"] == (
+        "docker compose up -d postgres",
+    )
+    assert payload["local_journey"]["status"] == "unverified"
+    assert payload["local_journey"]["commands"]["cleanup"] == [
+        "docker compose down -v"
+    ]
+    assert "docker compose up -d postgres" not in provider.commands
 
 
 @pytest.mark.unit

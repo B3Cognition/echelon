@@ -2465,22 +2465,33 @@ class RalphController:
         return self._state_store.state_dir.parent / "evidence" / "user-runnability"
 
     def _record_user_runnability_result(self, result: RunnabilityRunResult) -> None:
-        self._record_user_runnability_state(
-            {
-                "status": result.status,
-                "failed_stage": result.failed_stage,
-                "failure_class": result.failure_class,
-                "summary": result.summary,
-                "report": str(result.evidence.markdown_path),
-                "candidate_fingerprint": result.candidate_fingerprint,
-                "contract_hash": result.contract_hash,
-                "stack_hash": result.stack_hash,
-                "user_commands": {
+        summary: dict[str, object] = {
+            "status": result.status,
+            "failed_stage": result.failed_stage,
+            "failure_class": result.failure_class,
+            "summary": result.summary,
+            "report": str(result.evidence.markdown_path),
+            "candidate_fingerprint": result.candidate_fingerprint,
+            "contract_hash": result.contract_hash,
+            "stack_hash": result.stack_hash,
+            "user_commands": {
+                key: list(commands)
+                for key, commands in result.user_commands.items()
+            },
+        }
+        if (
+            result.local_journey_status != "not_required"
+            or result.local_user_commands
+        ):
+            summary["local_journey"] = {
+                "status": result.local_journey_status,
+                "reason": result.local_journey_reason,
+                "commands": {
                     key: list(commands)
-                    for key, commands in result.user_commands.items()
+                    for key, commands in result.local_user_commands.items()
                 },
             }
-        )
+        self._record_user_runnability_state(summary)
 
     def _record_user_runnability_state(self, summary: dict[str, object]) -> None:
         state = self._state_store.read()

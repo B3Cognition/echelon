@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import json
 from pathlib import Path
 import shlex
@@ -49,6 +49,9 @@ class RunnabilityRunResult:
     contract_hash: str
     stack_hash: str
     user_commands: dict[str, tuple[str, ...]]
+    local_journey_status: str = "not_required"
+    local_journey_reason: str = ""
+    local_user_commands: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 class RunnabilityRunner:
@@ -86,7 +89,51 @@ class RunnabilityRunner:
         contract_hash = runnability_contract_sha256(contract)
         stack_hash = resolved_stack_contract_sha256(resolved)
         user_commands = _user_commands(contract)
+        local_user_commands = _local_user_commands(contract)
+        local_journey_status = (
+            "unverified" if contract.local_journey is not None else "not_required"
+        )
+        local_journey_reason = (
+            "No compatible local runner executed these candidate-owned commands."
+            if contract.local_journey is not None
+            else "The resolved stack does not require a local user journey."
+        )
         required_stages = _required_stage_names(contract, resolved)
+        if (
+            "local_journey" in resolved.runnability.capabilities
+            and contract.local_journey is None
+        ):
+            summary = (
+                "Resolved stacks require a complete local_journey in "
+                ".echelon/runnability.yml; candidate-owned local provisioning, "
+                "readiness, verification, start, stop, and cleanup instructions "
+                "are missing."
+            )
+            return self._record(
+                evidence_dir=evidence_dir,
+                attempt_sequence=attempt_sequence,
+                candidate_commit=candidate_commit,
+                candidate_fingerprint=fingerprint_before,
+                contract_hash=contract_hash,
+                stack_hash=stack_hash,
+                status="not_runnable",
+                failed_stage="local_journey",
+                failure_class="local_journey_missing",
+                summary=summary,
+                stages=(
+                    RunnabilityStage(
+                        name="local_journey",
+                        status="failed",
+                        stderr=summary.encode(),
+                    ),
+                ),
+                required_stages=required_stages,
+                sensitive_environment={},
+                user_commands=user_commands,
+                local_journey_status="missing",
+                local_journey_reason=summary,
+                local_user_commands=local_user_commands,
+            )
         missing_required = _missing_stack_observation(contract, resolved)
         if missing_required:
             summary = (
@@ -114,6 +161,9 @@ class RunnabilityRunner:
                 required_stages=required_stages,
                 sensitive_environment={},
                 user_commands=user_commands,
+                local_journey_status=local_journey_status,
+                local_journey_reason=local_journey_reason,
+                local_user_commands=local_user_commands,
             )
         missing_boundary = _missing_service_boundary(contract)
         if missing_boundary:
@@ -141,6 +191,9 @@ class RunnabilityRunner:
                 required_stages=required_stages,
                 sensitive_environment={},
                 user_commands=user_commands,
+                local_journey_status=local_journey_status,
+                local_journey_reason=local_journey_reason,
+                local_user_commands=local_user_commands,
             )
 
         variables = {
@@ -428,6 +481,9 @@ class RunnabilityRunner:
             required_stages=required_stages,
             sensitive_environment=sensitive_environment,
             user_commands=user_commands,
+            local_journey_status=local_journey_status,
+            local_journey_reason=local_journey_reason,
+            local_user_commands=local_user_commands,
         )
 
     def _run_commands(
@@ -845,6 +901,9 @@ class RunnabilityRunner:
         required_stages: tuple[str, ...],
         sensitive_environment: Mapping[str, str],
         user_commands: dict[str, tuple[str, ...]],
+        local_journey_status: str,
+        local_journey_reason: str,
+        local_user_commands: dict[str, tuple[str, ...]],
     ) -> RunnabilityRunResult:
         evidence = write_runnability_report(
             evidence_dir=evidence_dir,
@@ -864,6 +923,9 @@ class RunnabilityRunner:
             attempt_sequence=attempt_sequence,
             sensitive_environment=sensitive_environment,
             user_commands=user_commands,
+            local_journey_status=local_journey_status,
+            local_journey_reason=local_journey_reason,
+            local_user_commands=local_user_commands,
         )
         return RunnabilityRunResult(
             status=status,
@@ -876,6 +938,9 @@ class RunnabilityRunner:
             contract_hash=contract_hash,
             stack_hash=stack_hash,
             user_commands=user_commands,
+            local_journey_status=local_journey_status,
+            local_journey_reason=local_journey_reason,
+            local_user_commands=local_user_commands,
         )
 
 
@@ -1016,4 +1081,23 @@ def _user_commands(contract: RunnabilityContract) -> dict[str, tuple[str, ...]]:
         "start": contract.start_commands,
         "open": (contract.primary_journey.url or "",),
         "stop": contract.stop_commands,
+    }
+
+
+def _local_user_commands(
+    contract: RunnabilityContract,
+) -> dict[str, tuple[str, ...]]:
+    journey = contract.local_journey
+    if journey is None:
+        return {}
+    return {
+        "prerequisites": journey.prerequisites,
+        "provision": journey.provision_commands,
+        "readiness": journey.readiness_commands,
+        "prepare": journey.prepare_commands,
+        "verify": journey.verify_commands,
+        "start": journey.start_commands,
+        "open": journey.open_urls,
+        "stop": journey.stop_commands,
+        "cleanup": journey.cleanup_commands,
     }

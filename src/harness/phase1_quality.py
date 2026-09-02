@@ -15,6 +15,7 @@ from harness.phase1_quality_debt import has_current_quality_debt_authorization
 from harness.proportional_quality import (
     AuthoritativeSageEvidenceSnapshot,
     QualityCandidateIntegrityError,
+    is_actionable_sage_issue,
     load_authoritative_sage_evidence_snapshot,
     require_current_authoritative_sage_evidence_snapshot,
 )
@@ -52,7 +53,10 @@ def build_phase1_quality_certificate(
         or assessment.numeric_pass is not True
         or assessment.provider_verdict != "PASS"
         or assessment.sage_verdict != "PASS"
-        or assessment.authoritative_issues
+        or any(
+            is_actionable_sage_issue(issue)
+            for issue in assessment.authoritative_issues
+        )
         or assessment.exact_routes
         or assessment.ordinary_pass is not True
         or assessment.proportional_failure is not False
@@ -80,7 +84,10 @@ def build_phase1_quality_certificate(
         sage_snapshot.project_relative_path
         != _relative_or_absolute(issues_path, project_root)
         or sage_snapshot.verdict != "PASS"
-        or sage_snapshot.issues
+        or any(
+            is_actionable_sage_issue(issue)
+            for issue in sage_snapshot.issues
+        )
         or sage_snapshot.verdict != assessment.sage_verdict
         or sage_snapshot.issues != assessment.authoritative_issues
     ):
@@ -200,7 +207,9 @@ def has_current_phase1_quality_certificate(
                 numeric_pass=True,
                 provider_verdict="PASS",
                 sage_verdict="PASS",
-                authoritative_issues=(),
+                authoritative_issues=tuple(
+                    dict(issue) for issue in sage_snapshot.issues
+                ),
                 exact_routes=(),
                 ordinary_pass=True,
                 proportional_failure=False,
@@ -247,7 +256,7 @@ def _current_v2_sage_evidence(
     if (
         snapshot.project_relative_path != expected_ref
         or snapshot.verdict != "PASS"
-        or snapshot.issues
+        or any(is_actionable_sage_issue(issue) for issue in snapshot.issues)
         or snapshot.sha256 != stored_digest
     ):
         return None

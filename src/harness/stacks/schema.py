@@ -61,6 +61,7 @@ VALID_RUNNABILITY_CAPABILITIES = {
     "start",
     "readiness",
     "primary_journey",
+    "local_journey",
     "persistence",
     "stop",
 }

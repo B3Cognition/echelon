@@ -745,38 +745,23 @@ def _cmd_init(
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
-    local_cfg = project_dir / ".echelon" / "local.yml"
     try:
-        _assert_local_config_untracked(project_dir)
-        local_config = (
-            yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
-            if local_cfg.exists()
-            else {}
-        )
-        if not isinstance(local_config, dict):
-            raise ValueError(f"local config must be a mapping: {local_cfg}")
         selected_llm_cli = _apply_workspace_llm_selection(
-            local_config,
+            config,
             llm_cli=llm_cli,
             openai_base_url=openai_base_url,
             openai_model=openai_model,
             openai_api_key_file=openai_api_key_file,
             openai_api_key_env=openai_api_key_env,
         )
-        local_cfg.parent.mkdir(parents=True, exist_ok=True)
-        local_cfg.write_text(
-            yaml.dump(local_config, default_flow_style=False, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
-        _ensure_local_config_ignored(project_dir)
     except Exception as e:
-        print(f"✗ Cannot write local LLM provider: {e}", file=sys.stderr)
+        print(f"✗ Cannot configure LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
     echelon_cfg.write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"✓ local LLM provider configured: {selected_llm_cli}")
+    print(f"✓ LLM provider configured: {selected_llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
@@ -2257,12 +2242,52 @@ def _cmd_harness_run(
         _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
         sys.exit(1)
 
+    # Validate authored build inputs before Phase A readiness.  A malformed
+    # published task/plan needs its migration guidance, while a well-formed but
+    # incomplete spec needs the Phase A recovery guidance.  Both checks happen
+    # before creating Git or sandbox resources.
+    from harness.skills.run_skill import _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError
+
+    try:
+        task_count = _count_tasks(spec_id, str(spec_search_root))
+    except TaskValidationError as e:
+        tasks_path = (
+            spec_dir / "tasks.md"
+            if spec_dir is not None
+            else Path("specs") / spec_id / "tasks.md"
+        )
+        print(
+            "✗ tasks.md is not in canonical format.\n"
+            f"  Error: {e}\n"
+            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
+            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
+            f"  Then rerun:        {rerun_command}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if spec_dir is not None and (spec_dir / "plan.md").exists():
+        try:
+            validate_plan_file(spec_dir / "plan.md")
+        except PlanValidationError as e:
+            plan_path = spec_dir / "plan.md"
+            print(
+                "✗ plan.md is not in canonical format.\n"
+                f"  Error: {e}\n"
+                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
+                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
+                f"  Then rerun:        {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if spec_dir is not None:
+        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run, _count_tasks
-    from harness.plan_validation import PlanValidationError, validate_plan_file
-    from harness.task_validation import TaskValidationError
+    from harness.skills.run_skill import run
 
     # Single-repo mode: require local Echelon harness config.
     echelon_yml = _project_echelon_config(config_root)
@@ -2291,6 +2316,12 @@ def _cmd_harness_run(
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
     if direct_target_path is not None:
         config.target_repo = str(direct_target_path.resolve())
         if not getattr(config, "target_default_branch", None):
@@ -2331,41 +2362,6 @@ def _cmd_harness_run(
         buffer_limit_bytes=config.buffer_limit_bytes,
         container_cli=_container_runtime_cli(config),
     )
-
-    try:
-        task_count = _count_tasks(spec_id, str(spec_search_root))
-    except TaskValidationError as e:
-        tasks_path = (
-            spec_dir / "tasks.md"
-            if spec_dir is not None
-            else Path("specs") / spec_id / "tasks.md"
-        )
-        print(
-            "✗ tasks.md is not in canonical format.\n"
-            f"  Error: {e}\n"
-            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
-            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
-            f"  Then rerun:        {rerun_command}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if spec_dir is not None and (spec_dir / "plan.md").exists():
-        try:
-            validate_plan_file(spec_dir / "plan.md")
-        except PlanValidationError as e:
-            plan_path = spec_dir / "plan.md"
-            print(
-                "✗ plan.md is not in canonical format.\n"
-                f"  Error: {e}\n"
-                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
-                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
-                f"  Then rerun:        {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-    if spec_dir is not None:
-        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
 
     assert spec_dir is not None
     delivery_build_id = _prepare_delivery_build_state(
@@ -2883,6 +2879,12 @@ def _cmd_harness_resume(
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
     if direct_target_path is not None:
         config.target_repo = str(direct_target_path.resolve())
         if not getattr(config, "target_default_branch", None):
@@ -6386,6 +6388,34 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
                 values = commands.get(command_kind)
                 if isinstance(values, list) and values:
                     fields.append((command_kind, "; ".join(str(value) for value in values)))
+        local_journey = runnability.get("local_journey")
+        if isinstance(local_journey, dict):
+            local_status = str(local_journey.get("status") or "unknown").strip()
+            fields.append(("local journey", local_status))
+            local_reason = str(local_journey.get("reason") or "").strip()
+            if local_reason:
+                fields.append(("local reason", local_reason))
+            local_commands = local_journey.get("commands")
+            if isinstance(local_commands, dict):
+                for command_kind in (
+                    "prerequisites",
+                    "provision",
+                    "readiness",
+                    "prepare",
+                    "verify",
+                    "start",
+                    "open",
+                    "stop",
+                    "cleanup",
+                ):
+                    values = local_commands.get(command_kind)
+                    if isinstance(values, list) and values:
+                        fields.append(
+                            (
+                                f"local {command_kind}",
+                                "; ".join(str(value) for value in values),
+                            )
+                        )
         report = str(runnability.get("report") or "").strip()
         if report:
             fields.append(("evidence", report))
@@ -6434,6 +6464,29 @@ def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
             normalized = [str(item).strip() for item in raw_values if str(item).strip()]
             if normalized:
                 commands[str(key)] = normalized
+    local_journey: dict[str, object] | None = None
+    raw_local_journey = value.get("local_journey")
+    if isinstance(raw_local_journey, dict):
+        local_status = str(raw_local_journey.get("status") or "").strip()
+        local_commands: dict[str, list[str]] = {}
+        raw_local_commands = raw_local_journey.get("commands")
+        if isinstance(raw_local_commands, dict):
+            for key, raw_values in raw_local_commands.items():
+                if not isinstance(raw_values, list):
+                    continue
+                normalized = [
+                    str(item).strip()
+                    for item in raw_values
+                    if str(item).strip()
+                ]
+                if normalized:
+                    local_commands[str(key)] = normalized
+        if local_status:
+            local_journey = {
+                "status": local_status,
+                "reason": str(raw_local_journey.get("reason") or "").strip(),
+                "commands": local_commands,
+            }
     diagnostic = str(value.get("summary") or "").strip()
     if len(diagnostic) > 240:
         diagnostic = diagnostic[:237].rstrip() + "..."
@@ -6447,6 +6500,7 @@ def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
         "contract_hash": str(value.get("contract_hash") or "").strip(),
         "stack_hash": str(value.get("stack_hash") or "").strip(),
         "user_commands": commands,
+        **({"local_journey": local_journey} if local_journey is not None else {}),
         **(
             {"proposal": str(value.get("proposal") or "").strip()}
             if value.get("proposal")

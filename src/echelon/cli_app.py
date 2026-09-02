@@ -132,6 +132,11 @@ spec_evidence_memory_app = typer.Typer(
     help="Mine spec verification evidence in MemPalace.",
     no_args_is_help=True,
 )
+harness_app = typer.Typer(
+    add_completion=False,
+    help="Compatibility aliases for delivery commands.",
+    no_args_is_help=True,
+)
 llm_app = typer.Typer(
     add_completion=False,
     help="LLM provider diagnostics.",
@@ -186,6 +191,7 @@ app.add_typer(phase_app, name="phase")
 app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
+app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
 app.add_typer(graph_app, name="graph")
 app.add_typer(topology_app, name="topology")
@@ -202,6 +208,63 @@ delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 re_app.add_typer(re_memory_app, name="memory")
 spec_evidence_app.add_typer(spec_evidence_memory_app, name="memory")
 graph_app.add_typer(graph_workspace_app, name="workspace")
+
+
+@harness_app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def harness_run(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., help="Spec id to deliver."),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode."),
+) -> None:
+    """Compatibility alias for ``echelon delivery run``."""
+    args = [spec_id]
+    if mode:
+        args.append(f"mode={mode}")
+    args.extend(_ctx_args(ctx))
+    display_args = [spec_id]
+    if mode:
+        display_args.append(f"mode={mode}")
+    _legacy_cli()._cmd_harness_run(
+        args,
+        command_prefix="echelon delivery run",
+        display_args=display_args,
+    )
+
+
+@harness_app.command(
+    "land",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def harness_land(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., help="Spec id to land."),
+    continue_landing: bool = typer.Option(False, "--continue", help="Resume landing."),
+) -> None:
+    """Compatibility alias for ``echelon delivery land``."""
+    args = [spec_id]
+    if continue_landing:
+        args.append("--continue")
+    args.extend(_ctx_args(ctx))
+    _legacy_cli()._cmd_land(args)
+
+
+@harness_app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def harness_continue(ctx: typer.Context, spec_id: str = typer.Argument(...)) -> None:
+    _legacy_cli()._cmd_harness_continue([spec_id, *_ctx_args(ctx)])
+
+
+@harness_app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def harness_resume(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(...),
+    answer: Optional[str] = typer.Argument(None),
+) -> None:
+    _legacy_cli()._cmd_harness_resume(
+        [spec_id, *([answer] if answer else []), *_ctx_args(ctx)]
+    )
 
 
 class TopologyDirection(str, Enum):
@@ -247,7 +310,7 @@ def topology_list_sources(
 
 @topology_app.command("search")
 def topology_search(
-    query: str = typer.Argument(..., help="Lexical node query."),
+    query: str = typer.Argument(..., metavar="QUERY", help="Lexical node query."),
     source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
     node_types: Optional[list[str]] = typer.Option(
         None,
@@ -274,7 +337,7 @@ def topology_search(
 
 @topology_app.command("explain")
 def topology_explain(
-    node: str = typer.Argument(..., help="Exact or unambiguous topology node selector."),
+    node: str = typer.Argument(..., metavar="NODE", help="Exact or unambiguous topology node selector."),
     source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
     as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
@@ -1100,7 +1163,7 @@ def re_resume(
 
 @re_app.command("publish")
 def re_publish(
-    run_id: str = typer.Argument(..., help="Run id below runs/ or squad/."),
+    run_id: str = typer.Argument(..., metavar="RUN_ID", help="Run id below runs/ or squad/."),
     allow_partial: bool = typer.Option(
         False,
         "--allow-partial",
@@ -1329,6 +1392,194 @@ def re_check_domain(
     _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
 
 
+@app.command("cicd", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_cicd(ctx: typer.Context) -> None:
+    """Retired CI/CD compatibility command."""
+    _legacy_cli()._cmd_cicd(_ctx_args(ctx))
+
+
+@app.command("init", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_init() -> None:
+    """Compatibility alias for workspace init."""
+    _legacy_cli()._cmd_init(Path.cwd())
+
+
+@app.command("artifacts", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_artifacts(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to index."),
+) -> None:
+    """Compatibility alias for spec artifact indexing."""
+    _legacy_cli()._cmd_artifacts([spec_id, *_ctx_args(ctx)])
+
+
+@app.command("status", hidden=True)
+def root_status() -> None:
+    """Compatibility alias for spec status."""
+    _legacy_cli()._cmd_status(Path.cwd())
+
+
+@app.command("land", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_land(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to land."),
+    continue_: bool = typer.Option(False, "--continue", help="Resume an interrupted land operation."),
+    prepare_only: bool = typer.Option(False, "--prepare-only", help="Prepare landing artifacts without merging."),
+    no_autoresolve: bool = typer.Option(False, "--no-autoresolve", help="Disable automatic local conflict resolution."),
+    allow_fulfillment_gaps: bool = typer.Option(False, "--allow-fulfillment-gaps", help="Allow landing with open fulfillment gaps."),
+    strategy: Optional[str] = typer.Option(None, "--strategy", help="Landing strategy, usually merge or rebase."),
+) -> None:
+    """Compatibility alias for delivery land."""
+    _legacy_cli()._cmd_land(_merge_land_args(
+        spec_id, _ctx_args(ctx), continue_=continue_, prepare_only=prepare_only,
+        no_autoresolve=no_autoresolve, allow_fulfillment_gaps=allow_fulfillment_gaps,
+        strategy=strategy,
+    ))
+
+
+@app.command("continue", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_continue(
+    ctx: typer.Context,
+    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override for legacy runs."),
+) -> None:
+    """Compatibility alias for spec continue."""
+    args = _ctx_args(ctx)
+    _extend_option(args, "--mode", mode)
+    _legacy_cli()._cmd_spec_continue(args)
+
+
+@app.command("rewind", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_rewind(
+    ctx: typer.Context,
+    phase_id: str = typer.Argument(..., metavar="CHECKPOINT", help="Recorded checkpoint phase or ID to rewind to."),
+    checkpoint_commit: Optional[str] = typer.Option(None, "--commit", help="Full checkpoint commit or unique abbreviated prefix."),
+    checkpoint_next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Exact next phase recorded by the selected checkpoint row."),
+    confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
+) -> None:
+    """Compatibility alias for spec rewind."""
+    args = [phase_id, *_ctx_args(ctx)]
+    _extend_option(args, "--commit", checkpoint_commit)
+    _extend_option(args, "--next-phase", checkpoint_next_phase)
+    if confirm:
+        args.append("--confirm")
+    _legacy_cli()._cmd_rewind(args, project_root=Path.cwd())
+
+
+@app.command("resume", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_resume(
+    ctx: typer.Context,
+    answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for an awaiting-human Phase A decision."),
+) -> None:
+    """Compatibility alias for spec resume."""
+    args = ([answer] if answer is not None else []) + _ctx_args(ctx)
+    _legacy_cli()._cmd_spec_resume(args)
+
+
+@app.command("run", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_run(
+    ctx: typer.Context,
+    description: Optional[str] = typer.Argument(None, metavar="DESCRIPTION", help="Spec request or task description."),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
+    reset: bool = typer.Option(False, "--reset", help="Discard blocked state and start fresh."),
+    init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
+    message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
+    next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
+    target: Optional[list[str]] = typer.Option(None, "--target", help="Implementation source id or path; repeat for multi-repo delivery."),
+    ignore_re: bool = typer.Option(False, "--ignore-re", help="Do not attach the latest published RE context."),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
+) -> None:
+    """Compatibility alias for spec run."""
+    spec_run(ctx, description=description, mode=mode, reset=reset, init=init,
+             message=message, next_phase=next_phase, target=target, input_values=None,
+             ignore_re=ignore_re, stash=stash, discard=discard, confirm=confirm)
+
+
+def _dispatch_compatibility_skill(command: str, args: list[str]) -> None:
+    _legacy_cli()._dispatch_skill_command(command, args)
+
+
+@app.command("build", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_build(
+    ctx: typer.Context,
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build."),
+    fix: bool = typer.Option(False, "--fix", help="Run build as a targeted fix pass."),
+    failures: Optional[str] = typer.Option(None, "--failures", help="Failure payload for fix passes."),
+    context: Optional[str] = typer.Option(None, "--context", help="Additional build context label."),
+) -> None:
+    """Compatibility alias for the build skill command."""
+    args = ([spec_id] if spec_id else [])
+    if fix:
+        args.append("--fix")
+    _extend_option(args, "--failures", failures)
+    _extend_option(args, "--context", context)
+    _dispatch_compatibility_skill("build", args + _ctx_args(ctx))
+
+
+@app.command("review", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_review(
+    ctx: typer.Context,
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to review."),
+    pr_url: Optional[str] = typer.Option(None, "--pr-url", help="Pull request URL to review."),
+) -> None:
+    """Compatibility alias for the review skill command."""
+    args = ([spec_id] if spec_id else [])
+    _extend_option(args, "--pr-url", pr_url)
+    _dispatch_compatibility_skill("review", args + _ctx_args(ctx))
+
+
+@app.command("codegen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_codegen(
+    ctx: typer.Context,
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build with SOAR codegen."),
+) -> None:
+    """Compatibility alias for the codegen skill command."""
+    _dispatch_compatibility_skill("codegen", ([spec_id] if spec_id else []) + _ctx_args(ctx))
+
+
+@app.command("verify-spec", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_verify_spec(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to audit."),
+    reconcile: bool = typer.Option(False, "--reconcile", help="Apply deterministic reconciliation fixes."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
+) -> None:
+    """Compatibility alias for spec verify."""
+    _reject_spec_verify_extra_args(ctx)
+    _run_spec_verify(Path.cwd(), spec_id, reconcile=reconcile, dry_run=dry_run)
+
+
+@app.command("reopen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_reopen(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to reopen."),
+    report: Optional[str] = typer.Argument(None, help="Optional from=<report> fulfillment report selector."),
+) -> None:
+    """Compatibility alias for spec reopen."""
+    _dispatch_compatibility_skill("reopen", [spec_id, *([report] if report else []), *_ctx_args(ctx)])
+
+
+@app.command("bugfix", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_bugfix(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to update."),
+    description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
+) -> None:
+    """Compatibility alias for spec bugfix."""
+    _dispatch_compatibility_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
+
+
+@app.command("change", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def root_change(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to update."),
+    description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
+) -> None:
+    """Compatibility alias for spec change."""
+    _dispatch_compatibility_skill("change", [spec_id, description, *_ctx_args(ctx)])
+
+
 @workspace_app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def workspace_init(
     ctx: typer.Context,
@@ -1444,7 +1695,7 @@ def phase_list() -> None:
 @phase_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def phase_run(
     ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Workflow phase id to replay."),
+    phase_id: str = typer.Argument(..., metavar="PHASE_ID", help="Workflow phase id to replay."),
     spec: Optional[str] = typer.Option(None, "--spec", help="Spec id to use as phase context."),
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
     message: Optional[str] = typer.Option(None, "--message", help="Additional phase replay context."),
@@ -1471,6 +1722,7 @@ def benchmark_show(
     ctx: typer.Context,
     target: Optional[str] = typer.Argument(
         None,
+        metavar="TARGET",
         help="latest, a summary path, or a benchmark run directory.",
     ),
 ) -> None:
@@ -1487,7 +1739,7 @@ def benchmark_show(
 @benchmark_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def benchmark_run(
     ctx: typer.Context,
-    fixture_id: str = typer.Argument(..., help="Benchmark fixture id."),
+    fixture_id: str = typer.Argument(..., metavar="FIXTURE_ID", help="Benchmark fixture id."),
     variant: Optional[str] = typer.Option(None, "--variant", help="Benchmark variant id."),
     baseline_ref: Optional[str] = typer.Option(
         None,
@@ -1814,7 +2066,7 @@ def _merge_land_args(
 )
 def spec_run(
     ctx: typer.Context,
-    description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
+    description: Optional[str] = typer.Argument(None, metavar="DESCRIPTION", help="Spec request or task description."),
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
     reset: bool = typer.Option(False, "--reset", help="Discard blocked state and start fresh."),
     perfectionist: bool = typer.Option(
@@ -1875,7 +2127,7 @@ def spec_run(
 
 @spec_app.command("retarget")
 def spec_retarget(
-    spec_id: str = typer.Argument(..., help="Active unimplemented spec id."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Active unimplemented spec id."),
     target: list[str] = typer.Option(
         ...,
         "--target",
@@ -2041,7 +2293,7 @@ def spec_repair_traceability(
 
 @spec_app.command("switch")
 def spec_switch(
-    spec_or_run_id: str = typer.Argument(..., help="Checkpointed spec id or Phase A run id."),
+    spec_or_run_id: str = typer.Argument(..., metavar="SPEC_OR_RUN_ID", help="Checkpointed spec id or Phase A run id."),
     stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
     discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to the checkpoint."),
     confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
@@ -3128,7 +3380,7 @@ def spec_target(
 
 @spec_app.command("targets")
 def spec_targets(
-    spec_id: str = typer.Argument(..., help="Spec id to inspect."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to inspect."),
 ) -> None:
     """Display every task grouped by delivery target."""
     from echelon import cli as legacy_cli
@@ -3156,7 +3408,7 @@ def spec_artifacts(
 )
 def spec_verify(
     ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to audit."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to audit."),
     reconcile: bool = typer.Option(
         False,
         "--reconcile",
@@ -3245,7 +3497,7 @@ def _run_spec_verify(
 )
 def spec_reopen(
     ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to reopen."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to reopen."),
     report: Optional[str] = typer.Argument(
         None,
         help="Optional from=<report> fulfillment report selector.",
@@ -3425,8 +3677,8 @@ def _run_scope_change(
 )
 def spec_bugfix(
     ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Bug description."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to update."),
+    description: str = typer.Argument(..., metavar="DESCRIPTION", help="Bug description."),
 ) -> None:
     """Diagnose and plan a bugfix."""
     from echelon import cli as legacy_cli
@@ -3440,8 +3692,8 @@ def spec_bugfix(
 )
 def spec_change(
     ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Spec id to update."),
-    description: str = typer.Argument(..., help="Change description."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec id to update."),
+    description: str = typer.Argument(..., metavar="DESCRIPTION", help="Change description."),
 ) -> None:
     """Plan a scope change."""
     from echelon import cli as legacy_cli
@@ -3455,8 +3707,8 @@ def spec_change(
 )
 def spec_amend(
     ctx: typer.Context,
-    spec_id: str = typer.Argument(..., help="Planned spec id to amend."),
-    description: str = typer.Argument(..., help="Product change summary."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Planned spec id to amend."),
+    description: str = typer.Argument(..., metavar="DESCRIPTION", help="Product change summary."),
     input_values: Optional[list[str]] = typer.Option(
         None,
         "--input",
@@ -3498,7 +3750,7 @@ def delivery_target(spec_id: str) -> None:
 
 @delivery_app.command("status")
 def delivery_status(
-    spec_id: Optional[str] = typer.Argument(None, help="Spec id to inspect."),
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to inspect."),
     strategy: Optional[str] = typer.Option(None, "--strategy", help="Delivery strategy id."),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
@@ -3601,8 +3853,8 @@ def delivery_run(
 )
 def delivery_resume(
     ctx: typer.Context,
-    spec_id: str,
-    answer: Optional[str] = typer.Argument(None, help="Answer for blocker escalation."),
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID"),
+    answer: Optional[str] = typer.Argument(None, metavar="ANSWER", help="Answer for blocker escalation."),
     mode: Optional[str] = typer.Option(None, "--mode"),
     strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:

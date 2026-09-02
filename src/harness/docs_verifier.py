@@ -280,6 +280,40 @@ def verify_docs(
                         f"Document the exact observed {section} instruction: {command}",
                     )
                 )
+            local_journey = runnability_payload.get("local_journey")
+            if isinstance(local_journey, Mapping):
+                readme_text = readme.read_text(encoding="utf-8")
+                missing_local_claims = _missing_local_journey_readme_claims(
+                    readme_text,
+                    local_journey.get("commands"),
+                )
+                for section, command in missing_local_claims:
+                    readme_first_run_manual = False
+                    findings.append(
+                        _finding(
+                            _next_id(findings),
+                            "README.md",
+                            "Local User Journey",
+                            f"README.md omits the declared local {section} instruction",
+                            command,
+                            f"Document the exact local {section} instruction: {command}",
+                        )
+                    )
+                if (
+                    str(local_journey.get("status") or "") == "unverified"
+                    and not re.search(r"\bunverified\b", readme_text, re.IGNORECASE)
+                ):
+                    readme_first_run_manual = False
+                    findings.append(
+                        _finding(
+                            _next_id(findings),
+                            "README.md",
+                            "Local User Journey",
+                            "README.md does not disclose that the local journey is unverified",
+                            str(local_journey.get("reason") or "unverified"),
+                            "State explicitly that the local journey is unverified on the user's machine.",
+                        )
+                    )
 
     if not changelog.exists():
         changelog_valid = False
@@ -701,6 +735,35 @@ def _missing_runnability_readme_claims(
         "start",
         "open",
         "stop",
+    ):
+        values = raw_commands.get(section)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            command = str(value).strip()
+            if command and _normalize_command_claim(command) not in normalized_readme:
+                missing.append((section, command))
+    return missing
+
+
+def _missing_local_journey_readme_claims(
+    readme_text: str,
+    raw_commands: object,
+) -> list[tuple[str, str]]:
+    if not isinstance(raw_commands, Mapping):
+        return []
+    normalized_readme = _normalize_command_claim(readme_text)
+    missing: list[tuple[str, str]] = []
+    for section in (
+        "prerequisites",
+        "provision",
+        "readiness",
+        "prepare",
+        "verify",
+        "start",
+        "open",
+        "stop",
+        "cleanup",
     ):
         values = raw_commands.get(section)
         if not isinstance(values, list):

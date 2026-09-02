@@ -1,5 +1,7 @@
 """Tests for the closed human-input policy registry."""
 
+from dataclasses import replace
+
 import pytest
 
 from harness.human_input import (
@@ -7,6 +9,10 @@ from harness.human_input import (
     HumanInputPolicy,
     HumanInputPolicyError,
     HumanInputPolicyRegistry,
+    ProportionalQualityRecommendationEvidence,
+    RecommendationEvidence,
+    controller_safeguard_policies,
+    prepare_controller_proportional_quality_decision,
     select_initial_decision_status,
 )
 
@@ -17,6 +23,7 @@ def _provider_policy(*, reason_code: str = "human_clarification_required") -> Hu
         producer_id="phase1-investigate",
         reason_code=reason_code,
         classification="material",
+        recommendation_mode="controller",
         semi_policy="auto_if_recommended_low_risk",
         resolution_handler="clarification_resume",
         allow_free_text=True,
@@ -34,6 +41,7 @@ def _gate_policy(*, options: tuple[HumanInputOption, ...] | None = None) -> Huma
         producer_id="checkpoint-plan",
         reason_code="checkpoint_plan_decision_required",
         classification="operational",
+        recommendation_mode="static",
         semi_policy="auto_if_recommended_low_risk",
         resolution_handler="gate_outcome",
         allow_free_text=False,
@@ -266,6 +274,8 @@ def test_banzai_routes_project_decisions_but_not_external_prerequisites(
         phase_id="phase1-investigate",
         reason_code="human_clarification_required",
         question="Choose the next investigation step.",
+        recommended_answer="Use the evidence-backed investigation scope.",
+        risk_level="low",
         source_state_revision=9,
     )
 
@@ -288,6 +298,191 @@ def test_registry_prepares_gate_options_from_the_exact_policy() -> None:
     assert request.options[0].next_phase == "phase4-document"
     policy = registry.lookup("human_gate", "checkpoint-plan", "checkpoint_plan_decision_required")
     assert select_initial_decision_status("guided", policy, request) == "awaiting_human"
+
+
+def test_prepared_choice_requires_one_recommendation_and_evidence() -> None:
+    registry = HumanInputPolicyRegistry((_gate_policy(),))
+    prepared_choice = registry.prepare(
+        source_kind="human_gate",
+        producer_id="checkpoint-plan",
+        phase_id="checkpoint-plan",
+        reason_code="checkpoint_plan_decision_required",
+        question="Approve this plan?",
+        source_state_revision=4,
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="exactly one option"):
+        replace(
+            prepared_choice,
+            options=tuple(
+                replace(option, recommended=False)
+                for option in prepared_choice.options
+            ),
+        )
+
+
+def test_human_only_free_text_requires_action_and_is_not_automatic() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+    prepared_free_text = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the existing product boundary.",
+        risk_level="low",
+        source_state_revision=7,
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="human-only.*evidence"):
+        replace(
+            prepared_free_text,
+            recommended_answer=None,
+            recommended_action='Run echelon spec resume "<answer>" with the requested value.',
+            automatic_eligible=False,
+        )
+
+    request = replace(
+        prepared_free_text,
+        recommended_answer=None,
+        recommended_action='Run echelon spec resume "<answer>" with the requested value.',
+        automatic_eligible=False,
+        recommendation_evidence=(),
+    )
+
+    assert request.recommended_action.startswith("Run echelon spec resume")
+
+
+def test_recommendation_evidence_is_lowercase_sha256_and_content_bound() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+    first = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the existing product boundary.",
+        risk_level="low",
+        source_state_revision=7,
+    )
+    second = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the documented API boundary.",
+        risk_level="low",
+        source_state_revision=7,
+    )
+
+    assert len(first.recommendation_evidence[0].digest) == 64
+    assert first.recommendation_evidence[0].digest != second.recommendation_evidence[0].digest
+
+    with pytest.raises(HumanInputPolicyError, match="lowercase SHA-256"):
+        RecommendationEvidence(
+            id="invalid-digest",
+            kind="provider_evidence",
+            reference="phase1-investigate:human_clarification_required",
+            digest="not-a-sha256-digest",
+        )
+
+
+def test_controller_recommendation_evidence_hashes_sealed_content() -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+    repair_state = {
+        "schema_version": 1,
+        "authoring_mode": "proportional",
+        "automatic_limit": 3,
+        "automatic_consumed": 3,
+        "extension_limit": 1,
+        "extension_authorized": 0,
+        "extension_consumed": 0,
+        "migration_basis": "fresh",
+        "baseline_candidate_id": "quality-candidate-0",
+        "candidate_ids": [
+            "quality-candidate-0",
+            "quality-candidate-1",
+            "quality-candidate-2",
+            "quality-candidate-3",
+        ],
+    }
+
+    def prepare_with_depth(current_depth: float):
+        return prepare_controller_proportional_quality_decision(
+            registry,
+            reason_code="proportional_quality_budget_exhausted",
+            phase_id="phase1-why2",
+            question="Choose how to resolve quality debt.",
+            source_state_revision=7,
+            repair_state=repair_state,
+            recommendation_evidence=ProportionalQualityRecommendationEvidence(
+                borderline_margin=0.05,
+                previous_gates=(
+                    ("depth", 0.70, 0.75, False),
+                    ("overall", 0.74, 0.75, False),
+                ),
+                current_gates=(
+                    ("depth", current_depth, 0.75, False),
+                    ("overall", 0.745, 0.75, False),
+                ),
+                previous_formal_statement_count=8,
+                formal_statement_count=8,
+            ),
+            option_contract=policy.options,
+        )
+
+    first = prepare_with_depth(0.72)
+    second = prepare_with_depth(0.73)
+
+    assert len(first.recommendation_evidence[0].digest) == 64
+    assert first.recommendation_evidence[0].digest != second.recommendation_evidence[0].digest
+
+
+def test_material_banzai_free_text_recommendation_is_intrinsically_eligible() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+
+    request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the existing product boundary.",
+        risk_level="low",
+        source_state_revision=7,
+    )
+
+    assert request.automatic_eligible
+
+
+def test_general_preparation_rejects_controller_option_injection() -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+    recommended_options = tuple(
+        replace(option, recommended=option.id == "extend_once")
+        for option in policy.options
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="policy-owned fields"):
+        registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id=policy.producer_id,
+            phase_id="phase1-why2",
+            reason_code=policy.reason_code,
+            question="Choose how to resolve quality debt.",
+            controller_options=recommended_options,
+            source_state_revision=7,
+        )
 
 
 def test_registry_rejects_duplicate_and_unknown_exact_keys() -> None:

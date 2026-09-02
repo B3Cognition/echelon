@@ -1,20 +1,26 @@
 from pathlib import Path
 import json
+import shlex
 import subprocess
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from echelon.checkpoint_cli import run_checkpoint_command
+from echelon.cli import _classify_run_recovery, _cmd_rewind
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,
 )
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpoint,
+    load_checkpoint_ledger,
     record_checkpoint_metadata,
 )
+from echelon.rewind import RewindResult
 
 
 class _CoverageGraph:

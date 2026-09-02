@@ -47,7 +47,7 @@ class TestFingerprint:
         assert fp.language == "generic"
         assert "ubuntu" in fp.image
 
-    def test_playwright_is_detected_without_selecting_host_dependent_image(self, tmp_path: Path) -> None:
+    def test_playwright_is_detected_with_a_sandbox_browser_image(self, tmp_path: Path) -> None:
         pkg = {
             "name": "test",
             "devDependencies": {"@playwright/test": "^1.42.0"},
@@ -57,7 +57,7 @@ class TestFingerprint:
         fp = fingerprint_repo(tmp_path)
         assert fp.language == "node"
         assert fp.has_playwright is True
-        assert fp.image == "node:20-slim"
+        assert fp.image == "mcr.microsoft.com/playwright:v1.42.0-jammy"
 
     def test_extracts_pinned_playwright_version(self, tmp_path: Path) -> None:
         (tmp_path / "package.json").write_text(json.dumps({

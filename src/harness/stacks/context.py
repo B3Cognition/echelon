@@ -86,6 +86,7 @@ def _render_runnability_contract_schema(runnability: object) -> str:
     """Render the exact candidate contract shape for required delivery agents."""
     if getattr(runnability, "policy", None) != "required":
         return ""
+    capabilities = set(getattr(runnability, "capabilities", ()))
     observations = set(getattr(runnability, "required_observations", ()))
     real_services = ["web"]
     if "postgres_query" in observations:
@@ -93,6 +94,7 @@ def _render_runnability_contract_schema(runnability: object) -> str:
     service_list = ", ".join(real_services)
     observation_rows: list[str] = []
     persistence = ""
+    local_journey = ""
     if "browser_dom" in observations:
         observation_rows.extend(
             (
@@ -128,6 +130,28 @@ persistence_probe:
   observations:
     - primary-view-visible
     - durable-marker-present
+"""
+    if "local_journey" in capabilities:
+        local_journey = """
+local_journey:
+  prerequisites:
+    - <local prerequisite with minimum version>
+  provision_commands:
+    - <command that provisions required local services>
+  readiness_commands:
+    - <command that proves local services are ready>
+  prepare_commands:
+    - <command that prepares disposable local verification state>
+  verify_commands:
+    - <project verification command using the provisioned local services>
+  start_commands:
+    - <local application start command>
+  open_urls:
+    - <local URL the user opens>
+  stop_commands:
+    - <local application stop command>
+  cleanup_commands:
+    - <command that removes disposable local services and state>
 """
     if not observation_rows:
         observation_rows.extend(
@@ -186,6 +210,7 @@ primary_journey:
 {persistence.rstrip()}
 stop_commands:
   - <application stop command>
+{local_journey.rstrip()}
 ```
 
 Journey step rules are exact: `goto` requires `path`; `click` and `fill` require
@@ -196,6 +221,10 @@ observation supports `present`, `absent`, `visible`, `hidden`, or
 `contains:<text>`. Postgres observations support `one_row_exact`, `one_row`, or
 `zero_rows`. An application restart must stop the old application boundary
 before starting it again; Echelon keeps provisioned sidecars alive.
+When `local_journey` is present, Echelon validates and reports its exact local
+instructions separately from the sandbox journey. No compatible runner executes these local commands
+in the current delivery environment, so evidence and README must
+describe them as unverified rather than claiming a local pass.
 """.rstrip()
 
 

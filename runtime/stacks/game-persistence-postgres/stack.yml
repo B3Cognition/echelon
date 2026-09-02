@@ -24,6 +24,7 @@ runnability:
   policy: not_applicable
   capabilities:
     - provision
+    - local_journey
     - persistence
   required_observations:
     - http

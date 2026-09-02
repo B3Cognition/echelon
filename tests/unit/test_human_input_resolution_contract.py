@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import harness.echelon_result_schema as result_schema
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_decision_resolution_result,
@@ -48,6 +49,35 @@ def test_decision_resolution_accepts_the_exact_choice_envelope() -> None:
     assert resolution.answer_text is None
     assert resolution.rationale == "The declared plan is internally consistent."
     assert resolution.confidence == "high"
+
+
+def test_decision_resolution_enforces_the_exported_rationale_limit() -> None:
+    limit = result_schema.DECISION_RESOLUTION_RATIONALE_MAX_CHARS
+    accepted = _decision_resolution_payload(
+        decision={
+            "selected_option_id": "approve",
+            "answer_text": None,
+            "rationale": "r" * limit,
+            "confidence": "high",
+        }
+    )
+    rejected = _decision_resolution_payload(
+        decision={
+            "selected_option_id": "approve",
+            "answer_text": None,
+            "rationale": "r" * (limit + 1),
+            "confidence": "high",
+        }
+    )
+
+    resolution = validate_decision_resolution_result(accepted, options=OPTIONS)
+
+    assert len(resolution.rationale) == limit
+    with pytest.raises(
+        EchelonResultValidationError,
+        match=rf"at most {limit:,} characters",
+    ):
+        validate_decision_resolution_result(rejected, options=OPTIONS)
 
 
 @pytest.mark.parametrize(

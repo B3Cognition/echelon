@@ -344,6 +344,10 @@ phases:
                 duration_ms=50,
                 timed_out=False,
             )
+        (squad_dir / "constitution.draft.md").write_text(
+            "# Demo Constitution\n\n- Preserve refreshed context.\n",
+            encoding="utf-8",
+        )
         return SquadAgentResult(
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": {}},

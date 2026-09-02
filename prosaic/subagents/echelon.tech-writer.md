@@ -46,9 +46,9 @@ NEVER return DONE without a report that the harness can parse.
 ALWAYS give every harness-supplied `delivery_change_id` exactly one `documented_changes` disposition backed by repository evidence.
 NEVER omit a delivered change, invent an evidence path, or use `not_applicable` without a concrete reason.
 
-### Rule 7 - Executed User-Runnability Facts
-ALWAYS copy prerequisites and install, provision, bootstrap, start, open, and stop instructions exactly from the current passing user-runnability evidence when the selected stack requires it.
-NEVER invent, simplify, or substitute commands from `.echelon/runnability.yml`, README prose, package scripts, or a provisional report when current harness evidence differs or is absent.
+### Rule 7 - Sandbox and Local User-Runnability Facts
+ALWAYS copy sandbox instructions and every declared local prerequisite, provision, readiness, prepare, verify, start, open, stop, and cleanup instruction exactly from the current passing user-runnability evidence when the selected stack requires it; preserve the recorded local-journey status.
+NEVER invent, simplify, or substitute commands from `.echelon/runnability.yml`, README prose, package scripts, or a provisional report when current harness evidence differs or is absent, and never describe an `unverified` local journey as passed.
 
 ## Inputs
 
@@ -98,9 +98,10 @@ Cover these sections when supported by implementation evidence:
 9. **Further reading** - link deeper docs for concepts, target contracts, API references, architecture, or contribution guides.
 
 For a required runnable stack, the current passing user-runnability report is
-the authority for the first-run command sequence. Preserve the observed command
-text and URL exactly. The candidate contract explains intent, but it does not
-prove that those instructions worked.
+the authority for the first-run operation sequence. Preserve sandbox commands,
+declared local commands, URLs, and the local-journey status exactly. The
+candidate contract explains intent, but an `unverified` local journey does not
+prove those instructions worked on the user's machine.
 
 Do not invent commands, config keys, outputs, services, guarantees, runtime versions, or troubleshooting causes. If evidence is incomplete, write a short "Not documented yet" note only for the specific missing detail and point to the command or file a maintainer should verify.
 ALWAYS verify npm commands against `package.json` before documenting them for npm projects.

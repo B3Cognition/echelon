@@ -112,6 +112,19 @@ class PersistenceProbe:
 
 
 @dataclass(frozen=True)
+class LocalUserJourney:
+    prerequisites: tuple[str, ...]
+    provision_commands: tuple[str, ...]
+    readiness_commands: tuple[str, ...]
+    prepare_commands: tuple[str, ...]
+    verify_commands: tuple[str, ...]
+    start_commands: tuple[str, ...]
+    open_urls: tuple[str, ...]
+    stop_commands: tuple[str, ...]
+    cleanup_commands: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RunnabilityContract:
     schema_version: int
     enabled: bool
@@ -123,6 +136,7 @@ class RunnabilityContract:
     primary_journey: PrimaryJourney
     persistence_probe: PersistenceProbe | None
     stop_commands: tuple[str, ...]
+    local_journey: LocalUserJourney | None = None
 
 
 _ROOT_FIELDS = {
@@ -136,6 +150,7 @@ _ROOT_FIELDS = {
     "primary_journey",
     "persistence_probe",
     "stop_commands",
+    "local_journey",
 }
 _READINESS_FIELDS = {"url", "timeout_ms"}
 _IDENTITY_FIELDS = {"command", "stdout_json"}
@@ -161,6 +176,17 @@ _OBSERVATION_FIELDS = {
     "command",
 }
 _PERSISTENCE_FIELDS = {"restart_commands", "observations"}
+_LOCAL_JOURNEY_FIELDS = {
+    "prerequisites",
+    "provision_commands",
+    "readiness_commands",
+    "prepare_commands",
+    "verify_commands",
+    "start_commands",
+    "open_urls",
+    "stop_commands",
+    "cleanup_commands",
+}
 _VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -211,6 +237,7 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
             ),
             persistence_probe=None,
             stop_commands=(),
+            local_journey=None,
         )
 
     readiness = _parse_readiness(root_raw.get("readiness"))
@@ -220,6 +247,7 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
         root_raw.get("persistence_probe"),
         observation_ids={item.id for item in journey.observations},
     )
+    local_journey = _parse_local_journey(root_raw.get("local_journey"))
     start_commands = _commands(root_raw.get("start_commands"), "start_commands")
     stop_commands = _commands(root_raw.get("stop_commands"), "stop_commands")
     if enabled and not start_commands:
@@ -241,6 +269,7 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
         primary_journey=journey,
         persistence_probe=persistence,
         stop_commands=stop_commands,
+        local_journey=local_journey,
     )
 
 
@@ -458,6 +487,53 @@ def _parse_persistence(
     return PersistenceProbe(
         restart_commands=restart,
         observation_ids=tuple(selected),
+    )
+
+
+def _parse_local_journey(value: Any) -> LocalUserJourney | None:
+    if value is None:
+        return None
+    raw = _mapping(value, "local_journey")
+    _reject_unknown(raw, _LOCAL_JOURNEY_FIELDS, "local_journey")
+
+    prerequisites = tuple(
+        _non_empty_string_list(
+            raw.get("prerequisites", []),
+            "local_journey.prerequisites",
+        )
+    )
+    open_urls = tuple(
+        _non_empty_string_list(
+            raw.get("open_urls", []),
+            "local_journey.open_urls",
+        )
+    )
+    commands: dict[str, tuple[str, ...]] = {}
+    for field in (
+        "provision_commands",
+        "readiness_commands",
+        "prepare_commands",
+        "verify_commands",
+        "start_commands",
+        "stop_commands",
+        "cleanup_commands",
+    ):
+        parsed = _commands(raw.get(field, []), f"local_journey.{field}")
+        if not parsed:
+            raise RunnabilityContractError(
+                f"local_journey.{field} must not be empty"
+            )
+        commands[field] = parsed
+    return LocalUserJourney(
+        prerequisites=prerequisites,
+        provision_commands=commands["provision_commands"],
+        readiness_commands=commands["readiness_commands"],
+        prepare_commands=commands["prepare_commands"],
+        verify_commands=commands["verify_commands"],
+        start_commands=commands["start_commands"],
+        open_urls=open_urls,
+        stop_commands=commands["stop_commands"],
+        cleanup_commands=commands["cleanup_commands"],
     )
 
 

@@ -6,13 +6,22 @@ import pytest
 
 from harness.blocked_decision import (
     BlockedDecisionError,
+    SCHEMA_V3,
     build_blocked_decision,
     build_blocked_decision_v2,
+    build_blocked_decision_v3,
     build_resume_metadata,
     ensure_blocked_decision,
     validate_blocked_decision,
     validate_blocked_decision_v2,
+    validate_blocked_decision_v3,
 )
+from harness.human_input import (
+    HumanInputOption,
+    PreparedHumanInput,
+    RecommendationEvidence,
+)
+from harness.recovery_instruction import validate_decision_recovery_pair
 
 
 def _v2_decision() -> dict[str, object]:
@@ -40,6 +49,294 @@ def _v2_decision() -> dict[str, object]:
         "created_at": "2026-07-28T10:00:00+00:00",
         "resolved_at": None,
     }
+
+
+def _v3_decision(**changes: object) -> dict[str, object]:
+    decision: dict[str, object] = {
+        **_v2_decision(),
+        "schema_version": SCHEMA_V3,
+        "options": [
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue with the attested result.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": None,
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for correction.",
+                "recommended": False,
+                "risk_level": "medium",
+                "next_phase": "terminal-blocked",
+                "outcome": None,
+            },
+        ],
+        "recommended_option_id": "approve",
+        "recommended_action": None,
+        "automatic_eligible": True,
+        "recommendation_rationale": "The attested checks support continuing.",
+        "recommendation_confidence": "high",
+        "recommendation_authority": "controller_evidence",
+        "recommendation_evidence": [
+            {
+                "id": "checkpoint-assess:quality",
+                "kind": "quality_certificate",
+                "reference": "state:phase1_quality_certificate",
+                "digest": "a" * 64,
+            }
+        ],
+        "resolution_rationale": None,
+        "resolution_confidence": None,
+        "recommendation_followed": None,
+        "override_reason": None,
+    }
+    decision.update(changes)
+    return decision
+
+
+def _v3_prepared_choice() -> PreparedHumanInput:
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        phase_id="checkpoint-assess",
+        reason_code="checkpoint_assess_decision_required",
+        classification="material",
+        question="May the attested candidate proceed?",
+        options=(
+            HumanInputOption(
+                id="approve",
+                label="Approve",
+                description="Continue with the attested result.",
+                recommended=True,
+                risk_level="low",
+                next_phase="phase2-decide",
+                outcome="approved",
+            ),
+            HumanInputOption(
+                id="reject",
+                label="Reject",
+                description="Stop for correction.",
+                recommended=False,
+                risk_level="medium",
+                next_phase="terminal-blocked",
+                outcome="rejected",
+            ),
+        ),
+        recommended_answer=None,
+        recommended_option_id="approve",
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale="The attested checks support continuing.",
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id="checkpoint-assess:quality",
+                kind="quality_certificate",
+                reference="state:phase1_quality_certificate",
+                digest="a" * 64,
+            ),
+        ),
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        source_state_revision=42,
+    )
+
+
+def test_schema_v3_dispatch_accepts_a_complete_unresolved_decision() -> None:
+    decision = _v3_decision()
+
+    assert validate_blocked_decision(decision)["schema_version"] == SCHEMA_V3
+    assert validate_blocked_decision_v3(decision) == decision
+
+
+def test_schema_v3_rejects_unresolved_resolution_audit() -> None:
+    decision = _v3_decision(resolution_rationale="Already decided.")
+
+    with pytest.raises(BlockedDecisionError, match="unresolved"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_automatic_override_requires_override_reason() -> None:
+    decision = _v3_decision(
+        status="resolved",
+        selected_option_id="reject",
+        resolved_by="COMMANDER",
+        resolved_at="2026-07-28T10:01:00+00:00",
+        resolution_rationale="The correction is safer.",
+        resolution_confidence="medium",
+        recommendation_followed=False,
+        override_reason=None,
+    )
+
+    with pytest.raises(BlockedDecisionError, match="override_reason"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_human_resolution_rejects_partial_optional_audit() -> None:
+    decision = _v3_decision(
+        status="resolved",
+        selected_option_id="approve",
+        resolved_by="user",
+        resolved_at="2026-07-28T10:01:00+00:00",
+        resolution_rationale="User supplied a rationale.",
+        resolution_confidence=None,
+        recommendation_followed=True,
+    )
+
+    with pytest.raises(BlockedDecisionError, match="rationale and confidence"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_rejects_boolean_migrated_attempt_count() -> None:
+    decision = _v3_decision(status="awaiting_human", attempts=True)
+
+    with pytest.raises(BlockedDecisionError, match="attempt"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_accepts_migrated_awaiting_human_first_attempt() -> None:
+    decision = _v3_decision(status="awaiting_human", attempts=1)
+
+    assert validate_blocked_decision(decision)["attempts"] == 1
+
+
+@pytest.mark.parametrize("autonomy_mode", ["guided", "semi"])
+def test_schema_v3_rejects_non_banzai_migrated_awaiting_human_attempt(
+    autonomy_mode: str,
+) -> None:
+    decision = _v3_decision(
+        status="awaiting_human",
+        attempts=1,
+        autonomy_mode=autonomy_mode,
+    )
+
+    with pytest.raises(BlockedDecisionError, match="Banzai"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_rejects_aggregate_recommendation_evidence_over_budget() -> None:
+    decision = _v3_decision(
+        recommendation_evidence=[
+            {
+                "id": f"evidence-{index}",
+                "kind": "controller_snapshot",
+                "reference": "r" * 3_900,
+                "digest": f"{index:x}" * 64,
+            }
+            for index in range(7)
+        ]
+    )
+
+    with pytest.raises(BlockedDecisionError, match="byte limit"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_rejects_ineligible_pending_decision() -> None:
+    decision = _v3_decision(
+        status="pending",
+        options=[],
+        recommended_option_id=None,
+        recommended_action='Run echelon spec resume "<answer>".',
+        automatic_eligible=False,
+        recommendation_evidence=[],
+    )
+
+    with pytest.raises(BlockedDecisionError, match="automatic_eligible"):
+        validate_blocked_decision(decision)
+
+
+def test_schema_v3_builder_persists_the_prepared_recommendation_snapshot() -> None:
+    decision = build_blocked_decision_v3(
+        prepared=_v3_prepared_choice(),
+        decision_id="dec-checkpoint",
+        status="pending",
+        autonomy_mode="banzai",
+        created_at="2026-07-28T10:00:00+00:00",
+    )
+
+    assert decision["schema_version"] == SCHEMA_V3
+    assert decision["recommended_option_id"] == "approve"
+    assert decision["automatic_eligible"] is True
+    assert decision["recommendation_evidence"] == [
+        {
+            "id": "checkpoint-assess:quality",
+            "kind": "quality_certificate",
+            "reference": "state:phase1_quality_certificate",
+            "digest": "a" * 64,
+        }
+    ]
+
+
+def test_schema_v3_builder_rejects_prepared_snapshot_override() -> None:
+    with pytest.raises(BlockedDecisionError, match="resolution field"):
+        build_blocked_decision_v3(
+            prepared=_v3_prepared_choice(),
+            decision_id="dec-checkpoint",
+            status="pending",
+            autonomy_mode="banzai",
+            recommendation_evidence=[
+                {
+                    "id": "attacker:evidence",
+                    "kind": "provider_claim",
+                    "reference": "unsealed:claim",
+                    "digest": "b" * 64,
+                }
+            ],
+        )
+
+
+def test_recovery_pair_accepts_v2_and_v3_decisions() -> None:
+    recovery = {
+        "schema_version": 2,
+        "kind": "resolve_decision",
+        "reason_code": "human_clarification_required",
+        "phase": "phase1-why1",
+        "requires_human_input": False,
+        "decision_id": "dec-7f4d2",
+    }
+
+    validate_decision_recovery_pair(_v2_decision(), recovery)
+    validate_decision_recovery_pair(_v3_decision(), recovery)
+
+
+def test_recovery_pair_rejects_non_human_input_schema_v1_decision() -> None:
+    decision = _v2_decision()
+    decision["schema_version"] = 1
+    recovery = {
+        "schema_version": 2,
+        "kind": "resolve_decision",
+        "reason_code": "human_clarification_required",
+        "phase": "phase1-why1",
+        "requires_human_input": False,
+        "decision_id": "dec-7f4d2",
+    }
+
+    with pytest.raises(BlockedDecisionError, match="schema"):
+        validate_decision_recovery_pair(decision, recovery)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "recommendation_confidence",
+        "recommendation_authority",
+        "resolution_confidence",
+    ],
+)
+def test_schema_v3_rejects_unhashable_recommendation_audit_enums(
+    field: str,
+) -> None:
+    decision = _v3_decision()
+    decision[field] = []
+
+    with pytest.raises(BlockedDecisionError, match=field):
+        validate_blocked_decision(decision)
 
 
 def test_builds_free_text_blocked_decision_when_no_choices_exist() -> None:
@@ -496,7 +793,7 @@ def test_schema_v2_blocked_decision_rejects_mixed_mapping_key_types(
         validate_blocked_decision_v2(decision)
 
 
-@pytest.mark.parametrize("schema_version", [True, "2", 3])
+@pytest.mark.parametrize("schema_version", [True, "2", 4])
 def test_blocked_decision_dispatch_requires_an_exact_integer_schema_version(
     schema_version: object,
 ) -> None:
@@ -520,6 +817,19 @@ def test_ensure_blocked_decision_never_replaces_a_schema_v2_mapping(
 ) -> None:
     decision = {"schema_version": 2, "opaque": "leave me untouched"}
     state["blocked_decision"] = decision
+
+    ensure_blocked_decision(state)
+
+    assert state["blocked_decision"] is decision
+
+
+def test_ensure_blocked_decision_never_replaces_a_schema_v3_mapping() -> None:
+    decision = {"schema_version": 3, "opaque": "leave me untouched"}
+    state: dict[str, object] = {
+        "status": "blocked",
+        "escalation_question": "Answer this.",
+        "blocked_decision": decision,
+    }
 
     ensure_blocked_decision(state)
 

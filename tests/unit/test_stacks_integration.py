@@ -31,6 +31,7 @@ def test_runnability_browser_3d_with_persistence_requires_all_service_observatio
         "http",
         "postgres_query",
     )
+    assert "local_journey" in resolved.runnability.capabilities
     assert "DATABASE_URL" in resolved.services[0].environment_names
 
 

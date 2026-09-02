@@ -1204,11 +1204,14 @@ deploy:
 # commands in the candidate worktree at `.echelon/runnability.yml`; never add
 # install/start/login/gameplay commands to this config file. Contract schema 1
 # supports browser, HTTP, and exec journeys plus browser_dom, http, exec, and
-# postgres_query observations. Echelon runs them in a fresh sandbox and stores
-# immutable evidence under:
+# postgres_query observations. Persistence stacks can additionally require a
+# complete candidate-owned local_journey. Echelon runs the sandbox journey and
+# records local instructions separately as unverified unless a compatible
+# runner executes them. Immutable evidence is stored under:
 #   runs/targets/<target>/runs/<build>/evidence/user-runnability/
 #
-# After delivery, print the exact successful local commands with:
+# After delivery, print exact sandbox commands plus declared local commands and
+# their verification status with:
 #   echelon delivery status <spec_id>
 # A required failure remains current-spec work unless the owner explicitly runs:
 #   echelon spec defer-runnability <spec_id> --reason "<reason>"

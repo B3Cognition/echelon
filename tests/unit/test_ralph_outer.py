@@ -511,6 +511,13 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
         contract_hash="contract-1",
         stack_hash="stack-1",
         user_commands={"start": ("make start",)},
+        local_journey_status="unverified",
+        local_journey_reason="No compatible local runner executed these commands.",
+        local_user_commands={
+            "provision": ("docker compose up -d postgres",),
+            "verify": ("make verify-local",),
+            "cleanup": ("docker compose down -v",),
+        },
     )
 
     with patch("harness.ralph.RunnabilityRunner") as runner_type:
@@ -540,6 +547,15 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
         "contract_hash": "contract-1",
         "stack_hash": "stack-1",
         "user_commands": {"start": ["make start"]},
+        "local_journey": {
+            "status": "unverified",
+            "reason": "No compatible local runner executed these commands.",
+            "commands": {
+                "provision": ["docker compose up -d postgres"],
+                "verify": ["make verify-local"],
+                "cleanup": ["docker compose down -v"],
+            },
+        },
     }
 
 
