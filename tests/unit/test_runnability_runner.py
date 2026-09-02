@@ -314,6 +314,8 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
     )
     assert "sleep 1" in restart_readiness
     assert "successes=$((successes+1))" in restart_readiness
+    assert "attempts=$((attempts-1))" in restart_readiness
+    assert "SECONDS" not in restart_readiness
     assert len(provider.created) == 1
     assert provider.destroyed == provider.created
     assert provider.services_started == 1

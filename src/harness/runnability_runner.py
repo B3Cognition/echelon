@@ -540,13 +540,13 @@ class RunnabilityRunner:
             f"sleep {initial_delay_seconds}; " if initial_delay_seconds > 0 else ""
         )
         script = (
-            f"deadline=$((SECONDS+{timeout_s})); successes=0; {delay}"
-            "while [ $SECONDS -lt $deadline ]; do "
+            f"attempts={timeout_s}; successes=0; {delay}"
+            "while [ $attempts -gt 0 ]; do "
             f"if node -e 'fetch(process.argv[1]).then(r=>{{if(!r.ok)process.exit(1)}})"
             f".catch(()=>process.exit(1))' {shlex.quote(url)}; then "
             "successes=$((successes+1)); "
             f"if [ $successes -ge {consecutive_successes} ]; then exit 0; fi; "
-            "else successes=0; fi; sleep 1; done; exit 1"
+            "else successes=0; fi; attempts=$((attempts-1)); sleep 1; done; exit 1"
         )
         command = (
             f"sh -lc {shlex.quote(script)} "
