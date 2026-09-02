@@ -59,24 +59,46 @@ async function executeStep(page, baseUrl, step) {
 async function observeDom(page, observation) {
   const locator = page.locator(requireString(observation.selector, "observation.selector"));
   const expectation = requireString(observation.expectation, "observation.expectation");
-  const count = await locator.count();
   if (expectation === "present") {
-    return { passed: count > 0, actual: count > 0 ? "present" : "absent" };
+    try {
+      await locator.waitFor({ state: "attached" });
+      return { passed: true, actual: "present" };
+    } catch {
+      return { passed: false, actual: "absent" };
+    }
   }
   if (expectation === "absent") {
-    return { passed: count === 0, actual: count === 0 ? "absent" : "present" };
+    try {
+      await locator.waitFor({ state: "detached" });
+      return { passed: true, actual: "absent" };
+    } catch {
+      return { passed: false, actual: "present" };
+    }
   }
   if (expectation === "visible") {
-    const visible = count > 0 && (await locator.isVisible());
-    return { passed: visible, actual: visible ? "visible" : "hidden" };
+    try {
+      await locator.waitFor({ state: "visible" });
+      return { passed: true, actual: "visible" };
+    } catch {
+      return { passed: false, actual: "hidden" };
+    }
   }
   if (expectation === "hidden") {
-    const hidden = count === 0 || !(await locator.isVisible());
-    return { passed: hidden, actual: hidden ? "hidden" : "visible" };
+    try {
+      await locator.waitFor({ state: "hidden" });
+      return { passed: true, actual: "hidden" };
+    } catch {
+      return { passed: false, actual: "visible" };
+    }
   }
   if (expectation.startsWith("text:")) {
     const expected = expectation.slice("text:".length);
-    const actual = count > 0 ? (await locator.textContent()) ?? "" : "";
+    try {
+      await locator.waitFor({ state: "attached" });
+    } catch {
+      return { passed: false, actual: "" };
+    }
+    const actual = (await locator.textContent()) ?? "";
     return { passed: actual === expected, actual };
   }
   throw new Error(`unsupported browser observation expectation: ${expectation}`);
@@ -134,7 +156,17 @@ try {
     (observationId) => observations[observationId]?.passed === true,
   );
   process.stdout.write(`${JSON.stringify({ status: passed ? "passed" : "failed", observations })}\n`);
-  if (!passed) process.exitCode = 1;
+  if (!passed) {
+    try {
+      recordDiagnostic(`visible page text: ${await page.locator("body").innerText()}`);
+    } catch {
+      // Retain any earlier browser diagnostics.
+    }
+    if (diagnostics.length > 0) {
+      console.error(`Browser diagnostics:\n${diagnostics.map(item => `- ${item}`).join("\n")}`);
+    }
+    process.exitCode = 1;
+  }
 } catch (error) {
   if (page) {
     try {

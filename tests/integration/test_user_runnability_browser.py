@@ -32,8 +32,9 @@ def _write_fake_playwright_test(root: Path) -> None:
         """\
 const calls = [];
 const handlers = {};
+const attached = new Set();
 const locator = selector => ({
-  count: async () => 1,
+  count: async () => attached.has(selector) ? 1 : 0,
   isVisible: async () => { throw new Error('one-shot visibility check is forbidden'); },
   waitFor: async options => {
     calls.push(`waitFor:${options.state}`);
@@ -45,6 +46,7 @@ const locator = selector => ({
       });
       throw new Error('timed out waiting for confirmed state');
     }
+    attached.add(selector);
   },
   textContent: async () => 'saved',
   innerText: async () => 'Collection rejected. Inventory unconfirmed.',
