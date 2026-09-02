@@ -238,6 +238,31 @@ def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.Capt
 
 
 @pytest.mark.unit
+def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "converged"
+    state["termination_reason"] = "converged"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    spec_dir = _write_spec(tmp_path)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest"]["spec_status"] == "landed"
+    assert payload["latest"]["next"] == "No action required; delivery is already landed."
+
+
+@pytest.mark.unit
 def test_delivery_status_json_filters_strategy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
 

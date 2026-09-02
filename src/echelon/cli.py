@@ -6200,6 +6200,10 @@ def _delivery_status_summary(
             frontmatter = read_frontmatter(spec_dir)
             if frontmatter.get("status"):
                 summary["spec_status"] = str(frontmatter.get("status"))
+                if status == "converged" and summary["spec_status"] == "landed":
+                    summary["next"] = (
+                        "No action required; delivery is already landed."
+                    )
             runnability = summary.get("user_runnability")
             if isinstance(runnability, dict) and runnability.get("status") == "deferred":
                 try:
