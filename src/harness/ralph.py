@@ -6778,7 +6778,7 @@ def _status_path(status_line: str) -> str:
     line = status_line.strip()
     if not line:
         return ""
-    path = line[3:].strip() if len(status_line) >= 4 else line
+    path = status_line[3:].strip() if len(status_line) >= 4 else line
     if " -> " in path:
         path = path.split(" -> ", 1)[1]
     return path.strip('"').replace("\\", "/")

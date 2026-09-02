@@ -4895,6 +4895,35 @@ class TestOuterLoopConvergence:
             violation["changed_status"]
         )
 
+    def test_containment_allows_modified_tracked_documentation_report(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        spec_dir = project / "specs" / "906-cli-output-styling"
+        spec_dir.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=project,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=project,
+            check=True,
+        )
+        report = spec_dir / "documentation-impact-report.md"
+        report.write_text("before\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=project, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=project, check=True)
+        worktree = project / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        before = ralph._snapshot_project_status(project, str(worktree))
+
+        report.write_text("after\n", encoding="utf-8")
+
+        assert ralph._detect_containment_violation(before, project, str(worktree)) is None
+
     def test_llm_build_blocks_when_transcript_touches_forbidden_source_root(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
