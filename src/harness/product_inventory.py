@@ -10,6 +10,7 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 import subprocess
+from typing import Iterable
 
 
 SCHEMA_VERSION = 1
@@ -38,11 +39,14 @@ def product_evidence_fingerprint(project_root: Path) -> str:
     """Return a stable digest of the bounded product evidence set."""
     root = project_root.expanduser().resolve(strict=True)
     relative_paths, _inventory_source = _inventory_paths(root)
-    entries = [
-        _entry(root, relative)
-        for relative in relative_paths
-        if not _fingerprint_ignored(relative)
-    ]
+    entries = _existing_entries(
+        root,
+        (
+            relative
+            for relative in relative_paths
+            if not _fingerprint_ignored(relative)
+        ),
+    )
     canonical = [
         {
             "path": entry["path"],
@@ -73,7 +77,7 @@ def write_product_inventory(
         raise ValueError(f"product inventory root is not a directory: {root}")
 
     relative_paths, inventory_source = _inventory_paths(root)
-    entries = [_entry(root, relative) for relative in relative_paths]
+    entries = _existing_entries(root, relative_paths)
     basename_counts = Counter(PurePosixPath(entry["path"]).name for entry in entries)
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -188,6 +192,26 @@ def _entry(root: Path, relative: PurePosixPath) -> dict[str, object]:
         "executable": executable,
         "sha256": _sha256(path),
     }
+
+
+def _existing_entries(
+    root: Path,
+    relative_paths: Iterable[PurePosixPath],
+) -> list[dict[str, object]]:
+    """Inventory the files that still exist after path enumeration.
+
+    Git's deliverable boundary intentionally includes tracked deletions. Tests and
+    other build tools may also remove files while evidence is being collected.
+    Missing entries therefore describe the current product tree and are skipped;
+    other filesystem errors remain actionable.
+    """
+    entries: list[dict[str, object]] = []
+    for relative in relative_paths:
+        try:
+            entries.append(_entry(root, relative))
+        except FileNotFoundError:
+            continue
+    return entries
 
 
 def _sha256(path: Path) -> str:

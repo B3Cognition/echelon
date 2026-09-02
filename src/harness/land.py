@@ -579,8 +579,41 @@ def _find_current_build_harness_branch(
 
     state = candidates[0]
     strategy = str(state.get("strategy_id") or "")
+    if not strategy:
+        raise RuntimeError("converged current build lacks branch identity")
+
+    recorded_branch = str(state.get("branch") or state.get("branch_name") or "").strip()
+    if recorded_branch:
+        valid_recorded_branch = any(
+            re.fullmatch(
+                rf"harness/{re.escape(alias)}/{re.escape(strategy)}/iter-\d+",
+                recorded_branch,
+            )
+            for alias in spec_identity_aliases(spec_id)
+        )
+        if not valid_recorded_branch:
+            raise RuntimeError(
+                "converged current build recorded an invalid delivery branch"
+            )
+        exists = _run_git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{recorded_branch}"],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if exists.returncode != 0:
+            raise RuntimeError(
+                "converged current build delivery branch is not available locally"
+            )
+        _validate_harness_branch_provenance(
+            project_dir,
+            spec_dir,
+            recorded_branch,
+            required=True,
+        )
+        return recorded_branch
+
     iteration = state.get("outer_iter")
-    if not strategy or not isinstance(iteration, int) or iteration < 0:
+    if not isinstance(iteration, int) or iteration < 0:
         raise RuntimeError("converged current build lacks branch identity")
 
     branches: list[str] = []
@@ -880,13 +913,13 @@ def land(
                         required=False,
                     )
         except RuntimeError as exc:
-            logger.error("land: could not resolve legacy harness branch for %s: %s", spec_id, exc)
+            logger.error("land: could not resolve delivery branch for %s: %s", spec_id, exc)
             _banner(
                 "LAND — BRANCH RESOLUTION BLOCKED",
                 [
                     ("spec", spec_id),
                     ("problem", str(exc)),
-                    ("next step", "resolve the legacy harness branch, then re-run land"),
+                    ("next step", "resolve the recorded delivery branch, then re-run land"),
                 ],
                 subtitle="Echelon will not mark a spec landed until its verified branch is resolved.",
             )
@@ -2267,10 +2300,10 @@ def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
                     check=True,
                     cwd=str(project_dir),
                 )
-                logger.info("land: deleted legacy branch %s", branch)
+                logger.info("land: deleted delivery branch %s", branch)
             except subprocess.CalledProcessError as e:
                 logger.warning(
-                    "land: preserved unmerged legacy branch %s for review: %s",
+                    "land: preserved unmerged delivery branch %s for review: %s",
                     branch,
                     e,
                 )

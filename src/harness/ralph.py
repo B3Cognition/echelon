@@ -3069,7 +3069,9 @@ class RalphController:
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
         total, completed = self._task_progress_counts()
-        tasks_complete = total > 0 and completed >= total
+        tasks_complete = (
+            total > 0 and completed >= total
+        ) or self._all_canonical_tasks_complete(worktree_path)
         if self._target_task_ids() is not None:
             state = self._state_store.read()
             declared_targets = state.get("declared_targets")
@@ -5642,6 +5644,7 @@ class RalphController:
         adjudication = adjudicate_dirty_worktree(
             Path(worktree_path),
             llm_provider=self._llm_provider,
+            exclude_paths=_VERIFICATION_ARTIFACT_PATHS,
         )
         if adjudication.status != "skipped":
             try:
@@ -5664,6 +5667,7 @@ class RalphController:
                 f"{adjudication.summary.get('left', 0)} unresolved path(s)",
                 branch=branch,
                 worktree_path=worktree_path,
+                stage="dirty_adjudication",
             )
         try:
             self._gitops.commit(

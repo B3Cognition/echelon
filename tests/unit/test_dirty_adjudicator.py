@@ -220,6 +220,44 @@ def test_llm_leave_decision_blocks_commit_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_excluded_verification_artifacts_do_not_block_commit_path(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    results = repo / "test-results"
+    results.mkdir()
+    artifact = results / "error-context.md"
+    artifact.write_text("old run\n", encoding="utf-8")
+    _git(repo, "add", "test-results/error-context.md")
+    _git(repo, "commit", "-m", "track historical test artifact")
+    artifact.unlink()
+    llm = _FakeLlm(
+        {
+            "decisions": [
+                {
+                    "path": "test-results/error-context.md",
+                    "classification": "leave",
+                    "confidence": 0.99,
+                    "reason": "tracked artifact deletion is ambiguous",
+                }
+            ]
+        }
+    )
+
+    result = adjudicate_dirty_worktree(
+        repo,
+        llm_provider=llm,
+        exclude_paths=("test-results/**",),
+    )
+
+    assert result.status == "clean"
+    assert result.blocked is False
+    assert result.decisions == ()
+    assert result.summary["total"] == 0
+
+
+@pytest.mark.unit
 def test_invalid_llm_output_falls_back_to_deterministic_policy(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)

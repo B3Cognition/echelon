@@ -1229,7 +1229,12 @@ class TestLand:
         gitops.destroy_worktree.assert_called_once_with(worktree_dir, keep_branch=True)
 
     @patch("harness.land.subprocess.run")
-    def test_deletes_harness_branches(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_deletes_harness_branches(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         list_result = MagicMock(
             returncode=0,
             stdout="  harness/042/strategy1/iter-1\n  harness/042/strategy1/iter-2\n",
@@ -1237,7 +1242,8 @@ class TestLand:
         delete_result = MagicMock(returncode=0, stdout="")
         mock_run.side_effect = [list_result, delete_result, delete_result]
 
-        _delete_harness_branches("042", tmp_path)
+        with caplog.at_level("INFO", logger="harness.land"):
+            _delete_harness_branches("042", tmp_path)
 
         # Verify git branch --list was called
         list_call = mock_run.call_args_list[0]
@@ -1248,6 +1254,9 @@ class TestLand:
         assert all(c[0][0][2] == "-d" for c in mock_run.call_args_list[1:])
         assert "harness/042/strategy1/iter-1" in deleted_branches
         assert "harness/042/strategy1/iter-2" in deleted_branches
+        messages = "\n".join(record.message for record in caplog.records)
+        assert "deleted delivery branch" in messages
+        assert "legacy branch" not in messages
 
     def test_accepts_explicit_state_dir(self, tmp_path: Path) -> None:
         custom_state = tmp_path / "custom-state"
@@ -2347,9 +2356,87 @@ def test_land_blocks_when_current_build_branch_misses_verified_commit(
 
     assert result is False
     assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
+    rendered_fields = " ".join(
+        str(value) for field in banner.call_args.args[1] for value in field
+    )
+    assert "legacy" not in rendered_fields.lower()
+    assert "recorded delivery branch" in rendered_fields.lower()
     assert not any(
         call.args[0] in {"harness/911/default/iter-1", "harness/911/default/iter-4"}
         for call in gitops.merge_branch_into_default.call_args_list
+    )
+
+
+@pytest.mark.unit
+def test_land_uses_recorded_converged_branch_instead_of_outer_counter(
+    tmp_path: Path,
+) -> None:
+    """A completed-iteration counter must not select a different delivery branch."""
+    wrapper = tmp_path / "wrapper"
+    target = wrapper / "sources" / "game"
+    _init_repo(wrapper)
+    _init_repo(target)
+    _commit(target, "README.md", "base\n", "base")
+
+    _git(target, "checkout", "-b", "harness/911/default/iter-1")
+    verified_commit = _commit(
+        target,
+        "game.ts",
+        "export const delivered = true;\n",
+        "verified delivery",
+    )
+    _git(target, "checkout", "main")
+    _git(target, "branch", "harness/911/default/iter-2")
+
+    spec_dir = wrapper / "specs" / "911-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\ntargets:\n- sources/game\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        f"---\nverified_commit: {verified_commit}\n---\n",
+        encoding="utf-8",
+    )
+    marker = wrapper / "runs" / ".current-build-911"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("build-911", encoding="utf-8")
+    state_dir = wrapper / "runs" / "build-911" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "911-demo",
+                "strategy_id": "default",
+                "outer_iter": 2,
+                "branch": "harness/911/default/iter-1",
+                "status": "converged",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch=None)
+    with (
+        patch("harness.land._check_ready_before_land", return_value=True),
+        patch(
+            "harness.land._prepare_for_land",
+            return_value=LandPrepareResult(
+                status="prepared",
+                branch="harness/911/default/iter-1",
+            ),
+        ),
+        patch("harness.land._verify_before_land", return_value=True),
+        patch(
+            "harness.land._clean_generated_drift_before_direct_merge",
+            return_value=True,
+        ),
+        patch("harness.land._finish_landing", return_value=True),
+    ):
+        assert land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
+
+    gitops.merge_branch_into_default.assert_called_once_with(
+        "harness/911/default/iter-1", str(target.resolve())
     )
 
 

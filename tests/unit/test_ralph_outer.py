@@ -3564,6 +3564,33 @@ class TestOuterLoopConvergence:
         assert decision["action"] == "full"
         assert decision["reason"] == "single target convergence boundary reached"
 
+    def test_resumed_single_target_uses_canonical_tasks_for_full_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """Resume must not lose convergence when transient build counters are absent."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "game"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-game"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            "- [x] T-002 complexity=standard phase=build req=FR-002 depends=T-001\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["implementation_target"] = "sources/game"
+        state["declared_targets"] = ["sources/game"]
+        state["target_task_ids"] = ["T-001", "T-002"]
+        state["spec_dir"] = str(spec_dir)
+        state.pop("build", None)
+        state_store.write(state)
+
+        decision = controller._fulfillment_refresh_decision(str(worktree))
+
+        assert decision["action"] == "full"
+        assert decision["reason"] == "single target convergence boundary reached"
+
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path
     ) -> None:
