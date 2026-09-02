@@ -93,6 +93,8 @@ class RecordingProvider:
             stage = "bootstrap"
         elif cmd == "issue-session":
             stage = "identity"
+        elif "echelon-runnability-restart" in cmd:
+            stage = "restart"
         elif "echelon-runnability-start" in cmd:
             stage = "start"
         elif "echelon-runnability-readiness" in cmd:
@@ -291,6 +293,12 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
     ]
     assert provider.commands.index("corepack enable") < provider.commands.index(
         "install-dependencies"
+    )
+    assert "restart-application" not in provider.commands
+    assert any(
+        "restart-application" in command
+        and "echelon-runnability-restart" in command
+        for command in provider.commands
     )
     assert len(provider.created) == 1
     assert provider.destroyed == provider.created

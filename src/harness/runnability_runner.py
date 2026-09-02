@@ -282,11 +282,12 @@ class RunnabilityRunner:
                         _stage_error(before),
                     )
                 stages.append(before)
-                restart = self._run_commands(
+                restart = self._start_application(
                     handle,
-                    "restart",
-                    contract.persistence_probe.restart_commands,
+                    contract,
                     variables,
+                    commands=contract.persistence_probe.restart_commands,
+                    stage_name="restart",
                 )
                 if restart.status != "passed":
                     restart = self._attach_application_logs(handle, restart)
@@ -487,15 +488,22 @@ class RunnabilityRunner:
         handle: SandboxHandle,
         contract: RunnabilityContract,
         variables: Mapping[str, str],
+        *,
+        commands: Sequence[str] | None = None,
+        stage_name: str = "start",
     ) -> RunnabilityStage:
         results: list[ExecResult] = []
         wrapped: list[str] = []
-        for index, command in enumerate(contract.start_commands):
+        command_sequence = contract.start_commands if commands is None else commands
+        for index, command in enumerate(command_sequence):
             inner = (
                 f"({command}) > /tmp/echelon-runnability-app-{index}.log 2>&1 & "
                 f"echo $! > /tmp/echelon-runnability-app-{index}.pid"
             )
-            shell = f"sh -lc {shlex.quote(inner)} # echelon-runnability-start"
+            shell = (
+                f"sh -lc {shlex.quote(inner)} "
+                f"# echelon-runnability-{stage_name}"
+            )
             wrapped.append(shell)
             result = self._provider.exec(
                 handle,
@@ -507,7 +515,7 @@ class RunnabilityRunner:
             results.append(result)
             if result.exit_code != 0:
                 break
-        return _combine_results("start", wrapped, results)
+        return _combine_results(stage_name, wrapped, results)
 
     def _wait_for_readiness(
         self,
