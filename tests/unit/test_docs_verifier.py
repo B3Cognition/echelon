@@ -5,7 +5,10 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from harness.docs_verifier import write_docs_verification_report
+from harness.docs_verifier import (
+    readme_first_run_manual_failure,
+    write_docs_verification_report,
+)
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "docs_verifier"
@@ -102,6 +105,57 @@ Run commands from the project root when the dry run creates nothing.
 npm run test
 ```
 """
+
+
+def test_database_web_app_readme_is_a_valid_first_run_manual(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"game","scripts":{"verify":"pnpm test"}}\n',
+        encoding="utf-8",
+    )
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        """# Browser game
+
+## Prerequisites
+
+Install Node, pnpm, Chromium, and PostgreSQL.
+
+## Install and configuration
+
+The only input needed for a minimal working run is an empty disposable
+PostgreSQL database:
+
+```sh
+pnpm install --frozen-lockfile
+TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/game pnpm verify
+```
+
+## First run (verification dry run)
+
+The command applies migrations and runs the complete application journey.
+
+## Expected dry-run output
+
+The successful run prints passing tests and exits with status 0.
+
+## Files and durable output created
+
+Generated outputs include `dist/web/index.html` and migrated database tables.
+
+## Development commands
+
+Run `pnpm dev` to start development.
+
+## Troubleshooting
+
+Check the database URL if the run cannot connect.
+""",
+        encoding="utf-8",
+    )
+
+    assert readme_first_run_manual_failure(readme, tmp_path) == ""
 
 
 def _git_repo(path: Path) -> None:

@@ -382,7 +382,17 @@ def readme_first_run_manual_failure(readme: Path, worktree: Path) -> str:
         missing.append("expected dry-run output")
     if not _has_terms(lowered, ("apply", "run", "start")):
         missing.append("first real run")
-    if not _has_terms(lowered, ("expected files", "generated files", "service url")):
+    if not _has_terms(
+        lowered,
+        (
+            "expected files",
+            "generated files",
+            "generated output",
+            "durable output",
+            "build artifacts",
+            "service url",
+        ),
+    ):
         missing.append("expected files or generated output")
     if "troubleshooting" not in lowered:
         missing.append("troubleshooting")
@@ -455,11 +465,18 @@ def has_minimal_working_input(text: str) -> bool:
         text,
     ):
         return True
-    return re.search(r"(?im)mkdir\s+-p\s+[^`\n]*(rules|commands|skills|subagents)", text) is not None
+    if re.search(
+        r"(?im)mkdir\s+-p\s+[^`\n]*(rules|commands|skills|subagents)", text
+    ):
+        return True
+    return (
+        re.search(r"(?i)minimal working (?:input|run)", text) is not None
+        and re.search(r"```[^\n]*\n[\s\S]*?\S[\s\S]*?```", text) is not None
+    )
 
 
 def has_expected_dry_run_output(text: str) -> bool:
-    if "expected output" not in text:
+    if re.search(r"expected (?:dry[- ]run )?output", text) is None:
         return False
     return "dry-run" in text or "dry run" in text
 
