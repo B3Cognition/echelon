@@ -217,6 +217,35 @@ def test_load_published_index_parses_valid_contract(tmp_path: Path) -> None:
     assert index.sources["api"].source_path == "sources/api"
     assert index.sources["api"].manifest == "re/sources/api/manifest.json"
     assert index.workspace.overview == "re/workspace/overview.md"
+    assert index.synthesis_quality is None
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_quality_is_closed_and_typed(tmp_path: Path) -> None:
+    ensure_re_layout(tmp_path)
+    payload = _valid_index()
+    digest = "sha256:" + "a" * 64
+    quality = {
+        "schema_version": 1,
+        "input_quality": "partial",
+        "synthesis_root_id": digest,
+        "materialization_manifest_id": digest,
+        "accepted_source_outcome_ids": [digest],
+        "debt_manifest_hashes": [digest],
+        "partial_acceptance_receipt_ids": [digest],
+    }
+    payload["quality"] = {"workspace_synthesis": quality}
+    _write_json(tmp_path / "re/index.json", payload)
+
+    index = load_published_index(tmp_path)
+
+    assert index is not None
+    assert index.synthesis_quality is not None
+    assert index.synthesis_quality.input_quality == "partial"
+    quality["unexpected"] = True
+    _write_json(tmp_path / "re/index.json", payload)
+    with pytest.raises(ReRegistryError, match="closed"):
+        load_published_index(tmp_path)
 
 
 @pytest.mark.unit

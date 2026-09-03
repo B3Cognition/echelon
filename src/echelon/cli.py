@@ -11650,16 +11650,54 @@ def _detect_re_engine_for_cli(run_dir: Path) -> str:
         raise ValueError(str(exc)) from exc
 
 
+def _resolve_named_re_run(project_root: Path, run_id: str) -> Path:
+    """Resolve one direct child of runs without accepting path syntax."""
+    if (
+        not run_id
+        or run_id in {".", ".."}
+        or any(
+            character
+            not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+            for character in run_id
+        )
+    ):
+        raise ValueError(f"unsafe RE run ID: {run_id!r}")
+    runs = project_root.resolve() / "runs"
+    run_dir = runs / run_id
+    if run_dir.resolve().parent != runs.resolve():
+        raise ValueError("RE run escaped the workspace run root")
+    if run_dir.is_symlink() or not run_dir.is_dir():
+        raise ValueError(f"RE run does not exist: {run_id}")
+    return run_dir
+
+
 def _cmd_re_status(args: list[str]) -> None:
     """Show the active RE controller state and every source's quality outcome."""
     from harness.re_lifecycle import resolve_current_re_run
     from harness.re_v2.status import ReV2StatusError, render_v2_status
 
-    as_json = args == ["--json"]
-    if args and not as_json:
-        print("Usage: echelon re status [--json]", file=sys.stderr)
+    as_json = False
+    positional: list[str] = []
+    for arg in args:
+        if arg == "--json" and not as_json:
+            as_json = True
+        elif arg.startswith("-"):
+            print(f"echelon re status: unknown argument {arg!r}", file=sys.stderr)
+            raise SystemExit(2)
+        else:
+            positional.append(arg)
+    if len(positional) > 1:
+        print("Usage: echelon re status [<run-id>] [--json]", file=sys.stderr)
         raise SystemExit(2)
-    run_dir = resolve_current_re_run(Path.cwd())
+    try:
+        run_dir = (
+            _resolve_named_re_run(Path.cwd(), positional[0])
+            if positional
+            else resolve_current_re_run(Path.cwd())
+        )
+    except ValueError as exc:
+        print(f"echelon re status: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
     if run_dir is None:
         print("echelon re status: no active RE run", file=sys.stderr)
         raise SystemExit(2)
@@ -13743,6 +13781,7 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.protocol_24.model import RunManifestV3
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_27.model import RunManifestV6
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
@@ -13758,6 +13797,10 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
         if manifest.target_layer == "L3":
             return _re_v25_context(project_root, run_dir, manifest)
         raise ValueError("unsupported protocol-2.6 target layer")
+    if isinstance(manifest, RunManifestV6):
+        from harness.re_v2.protocol_27.recovery import load_protocol_27_run_context
+
+        return load_protocol_27_run_context(run_dir)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -14258,9 +14301,36 @@ def _run_re_v2_continue(
 ) -> None:
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
     from harness.re_v2.protocol_25.recovery import Protocol25RunContext
+    from harness.re_v2.protocol_27.recovery import Protocol27RunContext
 
     project_root = run_dir.resolve().parent.parent
     context = _re_v2_context(project_root, run_dir)
+    if isinstance(context, Protocol27RunContext):
+        if any(
+            value is not None
+            for value in (
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
+        ):
+            raise ValueError(
+                "protocol-2.7 continuation uses its immutable synthesis budget"
+            )
+        from harness.config import load_config
+        from harness.re_v2.protocol_27.lifecycle import run_protocol_27_synthesis
+        from harness.re_v2.protocol_27.status import render_protocol_27_status
+        from harness.squad_provider import SquadCliProvider
+
+        _installed_re_runtime_or_exit(project_root)
+        config = load_config(project_root, squad_only=True)
+        run_protocol_27_synthesis(
+            run_dir,
+            lambda: SquadCliProvider(config),
+        )
+        print(render_protocol_27_status(run_dir), end="")
+        return
     if isinstance(context, Protocol25RunContext):
         _run_re_v25_continue(
             context,
@@ -16037,11 +16107,23 @@ def _cmd_re_continue(args: list[str]) -> None:
             allow_reset=False,
             allow_budget_overrides=True,
         )
-        if positional:
-            raise ValueError("echelon re continue does not accept positional arguments")
         project_root = Path.cwd()
-        run_dir = resolve_current_re_run(project_root)
+        if len(positional) > 1:
+            raise ValueError("usage: echelon re continue [<run-id>]")
+        run_dir = (
+            _resolve_named_re_run(project_root, positional[0])
+            if positional
+            else resolve_current_re_run(project_root)
+        )
         if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
+            if positional:
+                from harness.re_v2.protocol_27.model import RunManifestV6
+                from harness.re_v2.run_store import load_run_manifest
+
+                if not isinstance(load_run_manifest(run_dir), RunManifestV6):
+                    raise ValueError(
+                        "an explicit RE run ID is supported only for protocol 2.7"
+                    )
             if re_max_inner is not None:
                 raise ValueError(
                     "v2 has independent attempt budgets; this option is valid only for v1"
@@ -16061,6 +16143,10 @@ def _cmd_re_continue(args: list[str]) -> None:
             except RuntimeError as exc:
                 raise ValueError(str(exc)) from exc
             return
+        if positional:
+            raise ValueError(
+                "an explicit RE run ID is supported only for protocol 2.7"
+            )
         if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
             raise ValueError(
                 "semantic resource authorization is valid only for protocol 2.5"
@@ -16191,8 +16277,116 @@ def _cmd_re_finalize(args: list[str]) -> None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ReSynthesizeV2Options:
+    from_run: str
+    accepted_partial_sources: tuple[str, ...]
+    token_limit: int | None
+    active_ms_limit: int | None
+
+
+def _parse_re_synthesize_v2_options(args: list[str]) -> _ReSynthesizeV2Options:
+    values: dict[str, object] = {
+        "from_run": None,
+        "accepted_partial_sources": [],
+        "token_limit": None,
+        "active_ms_limit": None,
+    }
+    scalar = {
+        "--from-run": "from_run",
+        "--token-limit": "token_limit",
+        "--active-ms-limit": "active_ms_limit",
+    }
+    repeatable = {"--accept-partial": "accepted_partial_sources"}
+    index = 0
+    while index < len(args):
+        option = args[index]
+        name, separator, inline = option.partition("=")
+        if name not in scalar and name not in repeatable:
+            raise ValueError(f"unknown option {option!r}")
+        if not separator:
+            if index + 1 >= len(args):
+                raise ValueError(f"{name} requires a value")
+            inline = args[index + 1]
+            index += 2
+        else:
+            index += 1
+        value = inline.strip()
+        if not value:
+            raise ValueError(f"{name} requires a nonempty value")
+        if name in repeatable:
+            selected = values[repeatable[name]]
+            assert isinstance(selected, list)
+            if value in selected:
+                raise ValueError(f"duplicate {name} selector {value!r}")
+            selected.append(value)
+            continue
+        field = scalar[name]
+        if values[field] is not None:
+            raise ValueError(f"{name} may be supplied only once")
+        if name in {"--token-limit", "--active-ms-limit"}:
+            try:
+                parsed = int(value)
+            except ValueError as exc:
+                raise ValueError(f"{name} must be a positive integer") from exc
+            if parsed <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+            values[field] = parsed
+        else:
+            values[field] = value
+    if not isinstance(values["from_run"], str):
+        raise ValueError("--from-run is required for RE v2 synthesis")
+    selected = values["accepted_partial_sources"]
+    assert isinstance(selected, list)
+    return _ReSynthesizeV2Options(
+        from_run=values["from_run"],
+        accepted_partial_sources=tuple(sorted(selected)),
+        token_limit=(values["token_limit"] if isinstance(values["token_limit"], int) else None),
+        active_ms_limit=(
+            values["active_ms_limit"]
+            if isinstance(values["active_ms_limit"], int)
+            else None
+        ),
+    )
+
+
+def _cmd_re_synthesize_v2(args: list[str]) -> None:
+    from harness.config import load_config
+    from harness.re_v2.protocol_27.authority import Protocol27AuthorityError
+    from harness.re_v2.protocol_27.lifecycle import (
+        Protocol27LifecycleError,
+        run_synthesis_child,
+    )
+    from harness.re_v2.protocol_27.status import render_protocol_27_status
+    from harness.re_lifecycle import resolve_current_re_run
+    from harness.squad_provider import SquadCliProvider
+
+    try:
+        project_root = Path.cwd()
+        options = _parse_re_synthesize_v2_options(args)
+        _installed_re_runtime_or_exit(project_root)
+        config = load_config(project_root, squad_only=True)
+        run_synthesis_child(
+            project_root,
+            options,
+            lambda: SquadCliProvider(config),
+        )
+        run_dir = resolve_current_re_run(project_root)
+        if run_dir is None:
+            raise Protocol27LifecycleError(
+                "protocol-2.7 synthesis did not activate its child"
+            )
+        print(render_protocol_27_status(run_dir), end="")
+    except (OSError, Protocol27AuthorityError, Protocol27LifecycleError, ValueError) as exc:
+        print(f"echelon re synthesize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def _cmd_re_synthesize(args: list[str]) -> None:
     """Regenerate only workspace synthesis from accepted partial source results."""
+    if any(arg == "--from-run" or arg.startswith("--from-run=") for arg in args):
+        _cmd_re_synthesize_v2(args)
+        return
     from harness.config import load_config
     from harness.re_finalization import (
         ReFinalizationError,

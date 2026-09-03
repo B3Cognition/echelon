@@ -46,3 +46,6 @@ def test_status_survives_deleted_cache_and_has_no_completion_overclaim(
     assert "workspace synthesis complete" not in status["banner"].lower()
     assert "published" not in status["banner"].lower()
     assert "repair complete" not in status["banner"].lower()
+    assert "synthesis_status" not in status
+    assert "publication_status" not in status
+    assert "full_quality_claim" not in status

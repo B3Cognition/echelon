@@ -16,6 +16,12 @@ from tests.re_v2_protocol_22_fixtures import (
 )
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.re_v2_protocol_25_fixtures import manifest_v4
+from tests.re_v2_protocol_26_fixtures import manifest_v5
+from tests.re_v2_protocol_27_fixtures import (
+    accepted_source_outcome_v1,
+    manifest_v6,
+    synthesis_request_v1,
+)
 from tests.unit.test_re_v2_model import (
     valid_artifact_key,
     valid_run_manifest_dict,
@@ -87,6 +93,35 @@ def test_schema_3_manifest_identity_remains_frozen() -> None:
 def test_schema_4_manifest_identity_remains_frozen() -> None:
     assert manifest_v4().run_manifest_id == (
         "sha256:a5d1f7139906cbaf4a3973e9732f81faaa5dfdd777c5147a3aa42fb3ddce001d"
+    )
+
+
+@pytest.mark.parametrize(
+    ("target_layer", "expected"),
+    (
+        ("L1", "sha256:818480bdf4bcb67b869ddde9e872c9070b87c6a381c683dc3fed9e100597f9af"),
+        ("L2", "sha256:a6323d205d5af05e52a2f59f629c4439c0674a231063d504c5a3f62e5803e946"),
+        ("L3", "sha256:c110393eedfdd04a18633b10697a0e3e58ada8f97b17cf60b7304a941153a6f5"),
+    ),
+)
+def test_schema_5_manifest_identities_remain_frozen(
+    target_layer: str,
+    expected: str,
+) -> None:
+    assert manifest_v5(target_layer).run_manifest_id == expected
+
+
+def test_schema_6_manifest_and_request_identities_are_frozen() -> None:
+    sources = (
+        accepted_source_outcome_v1("api"),
+        accepted_source_outcome_v1("web", outcome="partial"),
+    )
+
+    assert manifest_v6().run_manifest_id == (
+        "sha256:b515fa0347d3320554aca5288e3b7498633135012c1edc85ff67f51fbd99d47d"
+    )
+    assert synthesis_request_v1(sources).request_id == (
+        "sha256:c5e10cd86cb16201db934833155963e5a30e90b96dd4098ffa794a03d508b233"
     )
 
 

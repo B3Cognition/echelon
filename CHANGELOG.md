@@ -45,6 +45,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-168 deferred RE workspace synthesis** — Opt-in RE v2 protocol `2.7`
+  and schema `6` now synthesize only an authenticated set of accepted complete
+  or source-specifically accepted partial outcomes. Granular source, domain,
+  and workspace artifacts adopt exact sibling checkpoints before dispatch;
+  only missing work uses the existing Prosaic/shared-provider path. The child
+  is independently resumable and reconstructable after origin/cache removal,
+  incremental source changes preserve unaffected artifacts, publication uses
+  the existing recoverable CAS transaction, and status distinguishes complete
+  synthesis over partial inputs from a full-quality claim while explaining an
+  unaffordable next reservation and separating repaired attempts from terminal
+  failures. Protocols 2.2 through 2.6 and v1 remain frozen; L4, atomic
+  lower-artifact repair, default-engine cutover, and full-quality certification
+  remain open.
+
 - **EGR-166 adoptable RE checkpoints** — New opt-in RE v2 L1/L2/L3 runs use
   protocol `2.6` to reconstruct exact controller-certified artifacts from
   workspace sibling runs, select a deterministic dependency-closed set, copy

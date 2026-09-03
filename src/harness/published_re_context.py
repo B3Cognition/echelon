@@ -137,7 +137,7 @@ def attach_published_re_context(
         selected_sources=selected_sources,
     )
     artifacts["rendered_briefings"] = rendered_briefings
-    return {
+    result: dict[str, object] = {
         "status": "attached",
         "generation": index.generation,
         "publication_status": index.publication_status,
@@ -147,6 +147,20 @@ def attach_published_re_context(
         "rendered_briefings": rendered_briefings,
         "artifacts": artifacts,
     }
+    if index.synthesis_quality is not None:
+        quality = index.synthesis_quality
+        result["synthesis_quality"] = {
+            "input_quality": quality.input_quality,
+            "debt_manifest_hashes": list(quality.debt_manifest_hashes),
+            "partial_acceptance_receipt_ids": list(
+                quality.partial_acceptance_receipt_ids
+            ),
+            "synthesis_root_id": quality.synthesis_root_id,
+            "full_quality_claim": (
+                "available" if quality.input_quality == "complete" else "unavailable"
+            ),
+        }
+    return result
 
 
 def write_canonical_re_context(
@@ -198,6 +212,11 @@ def write_canonical_re_context(
         "generation": generation,
         "artifacts": artifacts,
     }
+    quality = context.get("synthesis_quality")
+    if quality is not None:
+        if not isinstance(quality, Mapping):
+            raise ValueError("published RE synthesis quality must be an object")
+        payload["synthesis_quality"] = dict(quality)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

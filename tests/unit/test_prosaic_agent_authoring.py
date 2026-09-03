@@ -11,6 +11,7 @@ from harness.prompt_markdown import read_prompt_markdown
 ROOT = Path(__file__).resolve().parents[2]
 BASELINER = ROOT / "prosaic" / "subagents" / "echelon.re-baseliner.md"
 DEEPENER = ROOT / "prosaic" / "subagents" / "echelon.re-deepener.md"
+SYNTHESIZER = ROOT / "prosaic" / "subagents" / "echelon.re-synthesizer.md"
 
 
 def _rule_sections(body: str) -> list[str]:
@@ -111,5 +112,32 @@ def test_baseliner_result_block_is_the_exact_minimal_transport_contract() -> Non
     body = read_prompt_markdown(BASELINER).body
 
     assert _output_contract(body) == {
+        "echelon_result": {"verdict": "DONE", "state_updates": {}}
+    }
+
+
+def test_re_synthesizer_has_neutral_bounded_prosaic_contract() -> None:
+    prompt = read_prompt_markdown(SYNTHESIZER)
+
+    assert prompt.metadata == {
+        "name": "echelon.re-synthesizer",
+        "description": "RE-SYNTHESIZER — authors one bounded workspace synthesis payload",
+        "execution": "agent",
+        "tools": "write",
+        "color": "orange",
+        "model_tier": "strong",
+        "effort": "high",
+    }
+    assert all(
+        len([line for line in section.splitlines() if line.startswith("ALWAYS ")]) == 1
+        and len([line for line in section.splitlines() if line.startswith("NEVER ")]) == 1
+        for section in _rule_sections(prompt.body)
+    )
+    assert len(_rule_sections(prompt.body)) >= 6
+    assert "exactly `synthesis.json`" in prompt.body
+    assert "live source repositories" in prompt.body
+    assert "partial source and debt reference" in prompt.body
+    assert "full RE quality" in prompt.body
+    assert _output_contract(prompt.body) == {
         "echelon_result": {"verdict": "DONE", "state_updates": {}}
     }

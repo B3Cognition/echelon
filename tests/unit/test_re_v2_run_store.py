@@ -20,6 +20,7 @@ from harness.re_v2.protocol_22.model import RunManifestV2
 from harness.re_v2.protocol_24.model import RunManifestV3
 from harness.re_v2.protocol_25.model import RunManifestV4
 from harness.re_v2.protocol_26.model import RunManifestV5
+from harness.re_v2.protocol_27.model import RunManifestV6
 from harness.re_v2.run_store import (
     ReV2Paths,
     ReV2RunStoreError,
@@ -31,6 +32,7 @@ from tests.re_v2_protocol_22_fixtures import manifest_v2, manifest_v2_dict
 from tests.re_v2_protocol_24_fixtures import manifest_v3
 from tests.re_v2_protocol_25_fixtures import manifest_v4
 from tests.re_v2_protocol_26_fixtures import manifest_v5
+from tests.re_v2_protocol_27_fixtures import manifest_v6
 
 
 def _manifest(*, run_id: str) -> RunManifest:
@@ -191,6 +193,7 @@ def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
     assert RE_V2_SCHEMA_3_PROTOCOLS == ("2.4",)
     assert getattr(re_v2, "RE_V2_SCHEMA_4_PROTOCOLS", None) == ("2.5",)
     assert getattr(re_v2, "RE_V2_SCHEMA_5_PROTOCOLS", None) == ("2.6",)
+    assert getattr(re_v2, "RE_V2_SCHEMA_6_PROTOCOLS", None) == ("2.7",)
     assert RE_V2_SUPPORTED_PROTOCOLS == (
         "2.0",
         "2.1",
@@ -199,6 +202,7 @@ def test_supported_protocols_activate_23_and_keep_22_readable() -> None:
         "2.4",
         "2.5",
         "2.6",
+        "2.7",
     )
 
 
@@ -274,6 +278,20 @@ def test_run_store_loads_protocol_26_with_schema_5(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_run_store_loads_protocol_27_with_schema_6(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "re-v27"
+    paths = ReV2Paths.for_run(run_dir)
+    paths.root.mkdir(parents=True)
+    expected = manifest_v6(run_id=run_dir.name)
+    paths.manifest.write_bytes(canonical_json_bytes(expected.to_json_dict()))
+
+    loaded = load_run_manifest(run_dir)
+
+    assert isinstance(loaded, RunManifestV6)
+    assert loaded == expected
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("schema_version", "protocol_version"),
     (
@@ -287,6 +305,8 @@ def test_run_store_loads_protocol_26_with_schema_5(tmp_path: Path) -> None:
         (3, "2.5"),
         (5, "2.5"),
         (4, "2.6"),
+        (5, "2.7"),
+        (6, "2.6"),
         (2, "999"),
     ),
 )
