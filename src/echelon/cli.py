@@ -2743,7 +2743,8 @@ def _cmd_harness_resume(
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
             "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
-            "and recovery from build_incomplete/publish_failed committed work.\n\n"
+            "downstream visual/review/finalization failures, and recovery from\n"
+            "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. Fix the blocker shown by the previous delivery output.\n"
             "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
@@ -2974,6 +2975,34 @@ def _cmd_harness_resume(
         "provider_session_limit",
         "target_merge_failed",
     }
+    downstream_continuation_reasons = {
+        "visual": {
+            "app_runtime_failed",
+            "missing_registered_worktree",
+            "verified_provenance_mismatch",
+            "visual_failed",
+            "visual_feedback_failed",
+        },
+        "review": {
+            "missing_pr_url",
+            "review_boundary_failed",
+            "review_provider_failed",
+            "review_reentry_checkpoint_failed",
+            "review_side_effects_pending",
+            "review_staging_failed",
+        },
+        "finalization": {
+            "finalization_write_failed",
+            "lifecycle_status_conflict",
+            "target_merge_failed",
+            "verified_provenance_mismatch",
+        },
+    }
+    blocked_phase = str(state.get("blocked_phase") or "")
+    if termination_reason in downstream_continuation_reasons.get(
+        blocked_phase, set()
+    ):
+        continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
     retryable_error_reasons = {"harness_error"}

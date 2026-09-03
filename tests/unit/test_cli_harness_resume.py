@@ -236,6 +236,40 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    @pytest.mark.parametrize(
+        ("blocked_phase", "reason"),
+        [
+            ("visual", "visual_feedback_failed"),
+            ("visual", "app_runtime_failed"),
+            ("review", "review_provider_failed"),
+            ("finalization", "finalization_write_failed"),
+        ],
+    )
+    def test_downstream_phase_failure_can_continue_from_its_checkpoint(
+        self,
+        tmp_path: Path,
+        blocked_phase: str,
+        reason: str,
+    ) -> None:
+        """A status-recommended continue command must accept phase failures."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "blocked_phase": blocked_phase,
+            "termination_reason": reason,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
     def test_non_docs_containment_violation_stays_unsupported(
         self,
         tmp_path: Path,
