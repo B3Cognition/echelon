@@ -60,6 +60,7 @@ from harness.stacks.paths import find_stack_extension_root
 from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
 from harness.workspace_landing import (
     WorkspaceLandingResult,
+    finalize_landed_topology,
     finalize_workspace_landing,
     landing_transition_allows_retry,
 )
@@ -723,11 +724,12 @@ def _finish_branchless_landing(
             spec_id,
             "",
         )
-        _post_land_topology_reconciliation(
+        if _post_land_topology_reconciliation(
             spec_id,
             wrapper_project_dir,
             project_dir,
-        )
+        ) is False:
+            return False
         logger.info("land: %s is already landed (legacy status evidence)", spec_id)
         return True
 
@@ -838,11 +840,12 @@ def _finish_branchless_landing(
                 spec_id,
                 "",
             )
-            _post_land_topology_reconciliation(
+            if _post_land_topology_reconciliation(
                 spec_id,
                 wrapper_project_dir,
                 project_dir,
-            )
+            ) is False:
+                return False
             logger.info(
                 "land: %s has no feature branch, but verified commit %s is on %s",
                 spec_id,
@@ -2199,11 +2202,12 @@ def _finish_landing(
     if not _workspace_landing_succeeded(spec_id, finalization):
         return False
     _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
-    _post_land_topology_reconciliation(
+    if _post_land_topology_reconciliation(
         spec_id,
         spec_project_dir,
         project_dir,
-    )
+    ) is False:
+        return False
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
@@ -2260,7 +2264,7 @@ def _post_land_topology_reconciliation(
     spec_id: str,
     workspace_root: Path,
     target_root: Path,
-) -> None:
+) -> bool:
     """Report independent topology and semantic freshness after successful landing."""
     source_id = _configured_source_id_for_target(workspace_root, target_root)
     default_head = _current_git_commit(target_root)
@@ -2283,6 +2287,11 @@ def _post_land_topology_reconciliation(
         except Exception as exc:  # noqa: BLE001 - landing must remain successful.
             reconciliation_detail = str(exc)
 
+    finalization = finalize_landed_topology(spec_id, workspace_root)
+    if not _workspace_landing_succeeded(spec_id, finalization):
+        return False
+    # Committing workspace metadata can change a same-repository source HEAD.
+    # Audit the final state, not the pre-commit snapshot.
     topology_status = _landed_topology_status(workspace_root, source_id)
     semantic_status = _landed_semantic_re_status(workspace_root, source_id)
     _log_landed_freshness("topology", topology_status, reconciliation_detail)
@@ -2291,6 +2300,23 @@ def _post_land_topology_reconciliation(
         topology_status != "current" or semantic_status != "current"
     ):
         logger.warning("next: echelon re refresh --source %s", source_id)
+
+    for root in dict.fromkeys((workspace_root, target_root)):
+        if not (root / ".git").exists():
+            continue  # Legacy non-Git orchestration roots have no checkout.
+        status = _run_git(
+            ["status", "--porcelain", "--untracked-files=all"], cwd=str(root), check=False,
+        )
+        if status.returncode != 0 or status.stdout.strip():
+            return _workspace_landing_succeeded(
+                spec_id,
+                WorkspaceLandingResult(
+                    ok=False, reason="post_land_dirty",
+                    detail=f"post-landing reconciliation did not leave a clean checkout at {root}",
+                    paths=tuple(status.stdout.splitlines()),
+                ),
+            )
+    return True
 
 
 def _landed_topology_status(workspace_root: Path, source_id: str | None) -> str:

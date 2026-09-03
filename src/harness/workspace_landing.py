@@ -18,7 +18,7 @@ from echelon.spec_publish import (
 )
 from harness.config import get_full_resolved_config
 from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES, _spec_input_hash
-from harness.secret_scan import scan_git_staged
+from harness.secret_scan import scan_git_staged, scan_paths
 from harness.spec_frontmatter import (
     find_spec_dir,
     read_frontmatter,
@@ -308,6 +308,98 @@ def _commit_terminal_spec(
     return run_git(workspace_root, "rev-parse", "HEAD^{commit}").stdout.strip()
 
 
+def finalize_landed_topology(spec_id: str, workspace_root: Path) -> WorkspaceLandingResult:
+    """Commit only the hash-validated files of a published topology registry.
+
+    Also serves as recovery for older landings that published the registry after
+    the final cleanliness check. Unknown files and broken receipts remain intact.
+    """
+    from harness.gitops import GitOpsManager
+    from harness.re_lock import RePublishLock
+
+    workspace = Path(workspace_root).resolve()
+    topology = workspace / "re/topology"
+    if not topology.exists() and not topology.is_symlink():
+        return WorkspaceLandingResult(ok=True)
+    owner_id = "land-finalize-" + hashlib.sha256(spec_id.encode()).hexdigest()[:20]
+    try:
+        # The lock's persistent guard must stay ignored when switching to an
+        # older spec branch that predates re/.gitignore. Never ignore topology.
+        exclude = Path(run_git(workspace, "rev-parse", "--git-path", "info/exclude").stdout.strip())
+        if not exclude.is_absolute():
+            exclude = workspace / exclude
+        GitOpsManager._append_unique_line(exclude, "/re/.locks/.publish-claim.guard")
+        with RePublishLock.acquire(workspace, owner_id, None):
+            return _commit_landed_topology(spec_id, workspace)
+    except (GitHelperError, OSError, RuntimeError) as exc:
+        return WorkspaceLandingResult(ok=False, reason="topology_finalize_failed", detail=str(exc))
+
+
+def _commit_landed_topology(spec_id: str, workspace: Path) -> WorkspaceLandingResult:
+    """Validate and commit one registry while holding its publication lock."""
+    from echelon.topology_registry import (
+        TopologyRegistryError, load_topology_index, load_published_topology_from_index,
+    )
+
+    try:
+        changed = set()
+        for args in (
+            ("diff", "--name-only", "-z", "HEAD", "--", "re/topology"),
+            ("ls-files", "--others", "--exclude-standard", "-z", "--", "re/topology"),
+        ):
+            changed.update(filter(None, run_git(workspace, *args).stdout.split("\0")))
+        if not changed:
+            return WorkspaceLandingResult(ok=True)
+        default_branch, _ = _default_branch(workspace)
+        if run_git(workspace, "branch", "--show-current").stdout.strip() != default_branch:
+            raise RuntimeError("topology publication must be finalized on the workspace default branch")
+        index = load_topology_index(workspace)
+        if index is None:
+            raise RuntimeError("topology publication has no registry")
+        load_published_topology_from_index(workspace, index)
+        owned = {"re/topology/index.json"}
+        for source in index.sources.values():
+            owned.add(source.receipt.path)
+            for provider in source.providers.values():
+                owned.update(artifact.path for artifact in provider.artifacts.values())
+        deleted = set(filter(None, run_git(
+            workspace, "diff", "--name-only", "--diff-filter=D", "-z",
+            "HEAD", "--", "re/topology",
+        ).stdout.split("\0")))
+        if deleted:
+            # A valid replacement can retire providers/sources. Only accept
+            # removals explicitly owned by the previously committed registry.
+            previous_bytes = _git_file_at_head(workspace, "re/topology/index.json")
+            try:
+                previous = json.loads(previous_bytes or b"{}")
+                previous_owned = set()
+                for source in previous.get("sources", {}).values():
+                    previous_owned.add(source["receipt"]["path"])
+                    for provider in source["providers"].values():
+                        previous_owned.update(
+                            artifact["path"] for artifact in provider["artifacts"].values()
+                        )
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                raise RuntimeError("cannot establish ownership of removed topology files") from exc
+            owned.update(deleted & previous_owned)
+        if changed - owned:
+            raise RuntimeError("topology has files outside its validated registry: " + ", ".join(sorted(changed - owned)))
+        paths = sorted(changed)
+        scan = scan_paths(workspace / path for path in paths)
+        if not scan.ok:
+            raise RuntimeError("secret scan blocked topology commit: " + scan.format_summary())
+        run_git(workspace, "add", "--", *paths)
+        message = build_echelon_commit_message(
+            f"chore: finalize landed topology {spec_id}",
+            EchelonCommitMetadata(origin="delivery", action="workspace-topology-land", spec_id=spec_id),
+        )
+        # --only preserves any unrelated staged user changes.
+        run_git(workspace, "commit", "--only", "-m", message, "--", *paths)
+        return WorkspaceLandingResult(ok=True)
+    except (GitHelperError, PhaseAGitError, TopologyRegistryError, OSError, RuntimeError) as exc:
+        return WorkspaceLandingResult(ok=False, reason="topology_finalize_failed", detail=str(exc))
+
+
 def finalize_workspace_landing(
     spec_id: str,
     *,
@@ -326,6 +418,13 @@ def finalize_workspace_landing(
 
     try:
         default_branch, _default_commit = _default_branch(workspace)
+
+        # Older successful landings left topology uncommitted on main. Recover
+        # that bounded publication before switching back to the spec branch.
+        if run_git(workspace, "branch", "--show-current").stdout.strip() == default_branch:
+            topology = finalize_landed_topology(spec_id, workspace)
+            if not topology.ok:
+                return topology
 
         if polyrepo:
             target_status = _status_lines(target)

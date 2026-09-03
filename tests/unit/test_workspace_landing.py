@@ -118,6 +118,146 @@ def test_polyrepo_finalization_commits_publishes_and_returns_to_clean_main(
     assert manifest["source_commit"] == result.source_commit
 
 
+def _publish_test_topology(workspace: Path) -> None:
+    from tests.unit.test_topology_registry import build_topology
+    from harness.re_registry import ensure_re_layout
+
+    build_topology(workspace)
+    ensure_re_layout(workspace)
+    _git(workspace, "add", ".echelon/config.yml", "re/.gitignore")
+    _git(workspace, "commit", "-m", "configure topology source")
+
+
+def test_landing_retry_recovers_valid_topology_left_on_main(tmp_path: Path) -> None:
+    workspace, target = tmp_path / "workspace", tmp_path / "target"
+    _init_repo(workspace)
+    _init_repo(target)
+    _create_spec_branch(workspace)
+    assert finalize_workspace_landing(
+        "001-demo", workspace_root=workspace, target_root=target,
+    ).ok
+    _publish_test_topology(workspace)
+    index_bytes = (workspace / "re/topology/index.json").read_bytes()
+
+    result = finalize_workspace_landing(
+        "001-demo", workspace_root=workspace, target_root=target,
+    )
+
+    assert result.ok, result
+    assert _git(workspace, "branch", "--show-current") == "main"
+    assert _git(workspace, "status", "--porcelain") == ""
+    assert (workspace / "re/topology/index.json").read_bytes() == index_bytes
+    assert _git(workspace, "ls-files", "re/topology/index.json")
+
+
+@pytest.mark.parametrize("damage", ["extra_file", "hash_drift"])
+def test_topology_finalization_refuses_unowned_or_modified_evidence(
+    tmp_path: Path, damage: str,
+) -> None:
+    _init_repo(tmp_path / "workspace")
+    workspace = tmp_path / "workspace"
+    _publish_test_topology(workspace)
+    if damage == "extra_file":
+        (workspace / "re/topology/notes.txt").write_text("keep me\n")
+    else:
+        (workspace / "re/topology/sources/api/codegraph-analysis.json").write_text("{}")
+    head = _git(workspace, "rev-parse", "HEAD")
+    status = _git(workspace, "status", "--porcelain")
+
+    result = workspace_landing.finalize_landed_topology("001-demo", workspace)
+
+    assert not result.ok
+    assert _git(workspace, "rev-parse", "HEAD") == head
+    assert _git(workspace, "status", "--porcelain") == status
+    assert _git(workspace, "diff", "--cached", "--name-only") == ""
+
+
+def test_post_land_topology_is_committed_without_staging_user_changes(tmp_path: Path) -> None:
+    from unittest.mock import patch
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _publish_test_topology(workspace)
+    (workspace / "notes.txt").write_text("user note\n")
+    _git(workspace, "add", "notes.txt")
+    with patch(
+        "harness.topology_promotion.reconcile_landed_topology",
+        return_value=TopologyPromotionResult("current", "api"),
+    ):
+        assert _post_land_topology_reconciliation("001-demo", workspace, workspace) is False
+
+    # The topology commit is bounded, but landing still reports remaining dirt.
+    assert _git(workspace, "status", "--porcelain") == "A  notes.txt"
+    assert _git(workspace, "show", "--pretty=", "--name-only", "HEAD").splitlines() == sorted(
+        _git(workspace, "ls-files", "re/topology").splitlines()
+    )
+
+
+def test_topology_commit_accepts_removal_owned_by_previous_registry(tmp_path: Path) -> None:
+    from tests.unit.test_topology_registry import _write_json
+
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _publish_test_topology(workspace)
+    assert workspace_landing.finalize_landed_topology("001-demo", workspace).ok
+    receipt_path = workspace / "re/topology/sources/api/receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    removed = receipt["providers"].pop("perlgraph")
+    for artifact in removed["artifacts"].values():
+        (workspace / artifact["path"]).unlink()
+    receipt_hash = _write_json(receipt_path, receipt)
+    index_path = workspace / "re/topology/index.json"
+    index = json.loads(index_path.read_text())
+    index["sources"]["api"]["providers"].pop("perlgraph")
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_hash
+    _write_json(index_path, index)
+
+    result = workspace_landing.finalize_landed_topology("001-demo", workspace)
+
+    assert result.ok, result
+    assert _git(workspace, "status", "--porcelain") == ""
+
+
+def test_topology_finalization_respects_publication_lock(tmp_path: Path) -> None:
+    from harness.re_lock import RePublishLock
+
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _publish_test_topology(workspace)
+    head = _git(workspace, "rev-parse", "HEAD")
+    with RePublishLock.acquire(workspace, "another-publisher", None):
+        result = workspace_landing.finalize_landed_topology("001-demo", workspace)
+        assert not result.ok
+        assert "another-publisher" in result.detail
+        assert _git(workspace, "rev-parse", "HEAD") == head
+        assert _git(workspace, "diff", "--cached", "--name-only") == ""
+
+
+def test_post_land_freshness_is_audited_after_topology_commit(tmp_path: Path) -> None:
+    from unittest.mock import patch
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    _publish_test_topology(workspace)
+    head = _git(workspace, "rev-parse", "HEAD")
+
+    def audit_after_commit(*_args):
+        assert _git(workspace, "rev-parse", "HEAD") != head
+        return "stale"
+
+    with (
+        patch("harness.topology_promotion.reconcile_landed_topology",
+              return_value=TopologyPromotionResult("current", "api")),
+        patch("harness.land._landed_topology_status", side_effect=audit_after_commit),
+        patch("harness.land._landed_semantic_re_status", side_effect=audit_after_commit),
+    ):
+        assert _post_land_topology_reconciliation("001-demo", workspace, workspace)
+
+
 @pytest.mark.unit
 def test_monorepo_finalization_commits_bounded_spec_changes_on_main(
     tmp_path: Path,
