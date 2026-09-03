@@ -99,12 +99,16 @@ def _serialize_verify_result(result: Any) -> dict[str, Any] | None:
                 "error": str(getattr(failure, "error", "")),
             }
         )
-    return {
+    serialized = {
         "passed": bool(getattr(result, "passed", False)),
         "failures": failures,
         "duration_s": float(getattr(result, "duration_s", 0.0)),
         "token_usage": int(getattr(result, "token_usage", 0)),
     }
+    evidence = getattr(result, "verification_evidence", None)
+    if isinstance(evidence, dict) and evidence:
+        serialized["verification_evidence"] = dict(evidence)
+    return serialized
 
 
 def _pending_review_reentry(value: object) -> dict[str, object] | None:
@@ -1263,6 +1267,7 @@ class StrategyCoordinator:
                     spec_id=intent.spec_id,
                     strategy_id=strategy_id,
                     base_dir=self._base_dir,
+                    build_id=self._build_id,
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])
                 else None
@@ -1352,6 +1357,13 @@ class StrategyCoordinator:
             )
             if visual_reentry_block is not None:
                 return visual_reentry_block
+            if visual_result is not None and visual_result.evidence is not None:
+                visual_updates: dict[str, object] = {
+                    "visual_evidence": visual_result.evidence.as_mapping(),
+                }
+                if visual_result.status == "passed":
+                    visual_updates["last_completed_phase"] = "visual"
+                state_store.transition("validating", updates=visual_updates)
             if visual_result is not None and visual_result.status == "blocked":
                 return self._persist_phase_block(
                     state_store,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -221,24 +222,29 @@ def test_exec_visual_verify_non_json_stdout():
     assert result.failures[0].id == "playwright_parse_error"
 
 
-def test_run_loop_converges_on_first_pass():
+def test_run_loop_converges_on_first_pass(tmp_path: Path):
     """run_loop returns converged immediately when visual verify passes."""
     from harness.visual_ralph import VisualRalphController
 
     provider = MagicMock()
     provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
     provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON, exit_code=0)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
 
     ctrl = VisualRalphController(
         provider=provider,
         config=_make_config(max_iterations=3),
         spec_id="001",
         strategy_id="default",
-        base_dir=".",
+        base_dir=str(tmp_path),
+        build_id="build-1",
     )
 
-    with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
-        result = ctrl.run_loop(worktree_path="/tmp/wt")
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = ctrl.run_loop(worktree_path=str(worktree))
 
     assert result.status == "passed"
     assert result.termination_reason == "converged"
@@ -246,7 +252,76 @@ def test_run_loop_converges_on_first_pass():
     provider.destroy.assert_called_once()
 
 
-def test_run_loop_starts_waits_and_stops_command_app_runtime():
+def test_run_loop_retains_success_screenshot_as_candidate_evidence(
+    tmp_path: Path,
+) -> None:
+    """A successful visual gate persists sandbox imagery beyond retrieval staging."""
+    from harness.visual_evidence import validate_visual_receipt
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_PASS_JSON, exit_code=0)
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = ctrl.run_loop(worktree_path=str(worktree))
+
+    screenshot.unlink()
+    assert result.status == "passed"
+    assert result.evidence is not None
+    assert result.evidence.artifact_count == 1
+    assert validate_visual_receipt(
+        result.evidence,
+        candidate_fingerprint=result.evidence.candidate_fingerprint,
+    ).valid
+
+
+def test_run_loop_rejects_success_without_required_screenshot(tmp_path: Path) -> None:
+    """Executed tests alone cannot satisfy the browser visual artifact gate."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout=PLAYWRIGHT_PASS_JSON, exit_code=0),
+        _exec_result(stderr="could not create screenshot", exit_code=1),
+    ]
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
+        result = ctrl.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.final_verify is not None
+    assert result.final_verify.failures[0].id == "visual_artifacts_missing"
+    assert result.evidence is not None
+    assert result.evidence.passed is False
+
+
+def test_run_loop_starts_waits_and_stops_command_app_runtime(tmp_path: Path):
     """command app profile starts before Playwright and stops during cleanup."""
     from harness.visual_ralph import VisualRalphController
 
@@ -260,16 +335,22 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime():
         _exec_result(stdout="", exit_code=0),  # explicit stop command
         _exec_result(stdout="", exit_code=0),  # pid cleanup
     ]
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
 
     ctrl = VisualRalphController(
         provider=provider,
         config=_make_command_app_config(),
         spec_id="001",
         strategy_id="default",
-        base_dir=".",
+        base_dir=str(tmp_path),
+        build_id="build-1",
     )
 
-    result = ctrl.run_loop(worktree_path="/tmp/wt")
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = ctrl.run_loop(worktree_path=str(worktree))
 
     assert result.status == "passed"
     executed = [call.args[1] for call in provider.exec.call_args_list]

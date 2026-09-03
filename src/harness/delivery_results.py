@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from harness.verify_result import VerifyResult
+from harness.visual_evidence import VisualEvidenceRef
 
 
 IMPLEMENTATION_STATUSES = {"verified", "blocked", "interrupted", "failed", "cancelled"}
@@ -61,6 +62,7 @@ class VisualResult:
     iterations: int
     tokens_used: int
     final_verify: VerifyResult | None
+    evidence: VisualEvidenceRef | None = None
 
     def __post_init__(self) -> None:
         _validate_result(

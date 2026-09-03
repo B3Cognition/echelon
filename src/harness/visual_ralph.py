@@ -10,7 +10,7 @@ import json
 import logging
 import shlex
 import subprocess
-import tempfile
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -18,8 +18,10 @@ from harness.config import HarnessConfig
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
 from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
+from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +40,16 @@ class VisualRalphController:
         spec_id: str,
         strategy_id: str,
         base_dir: str = ".",
+        build_id: str = "",
     ) -> None:
         self._provider = provider
         self._config = config
         self._spec_id = spec_id
         self._strategy_id = strategy_id
         self._base_dir = base_dir
+        self._build_id = build_id or "unscoped"
         self._vc = config.visual_tests
+        self._last_staging_dir: Path | None = None
 
     # === Public entry point ===
 
@@ -95,16 +100,47 @@ class VisualRalphController:
                 verify_result = self._exec_visual_verify(handle)
                 tokens_used += verify_result.token_usage
 
-                if verify_result.passed:
+                attempt_sequence = self._next_visual_attempt_sequence()
+                screenshots = self._retrieve_screenshots(handle, attempt_sequence)
+                try:
+                    evidence = self._record_visual_evidence(
+                        worktree_path=Path(worktree_path),
+                        verify_result=verify_result,
+                        screenshots=screenshots,
+                        attempt_sequence=attempt_sequence,
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    evidence = None
+                    verify_result = self._with_visual_failure(
+                        verify_result,
+                        failure_id="visual_evidence_unavailable",
+                        error=str(exc),
+                    )
+                finally:
+                    self._cleanup_screenshot_staging()
+
+                if evidence is not None:
+                    verify_result.verification_evidence["visual"] = evidence.as_mapping()
+                    if verify_result.passed and not evidence.passed:
+                        verify_result = self._with_visual_failure(
+                            verify_result,
+                            failure_id="visual_artifacts_missing",
+                            error=(
+                                "The required browser visual gate produced no retained "
+                                "PNG or JPEG screenshot artifacts."
+                            ),
+                        )
+
+                if verify_result.passed and evidence is not None and evidence.passed:
                     return VisualResult(
                         status="passed",
                         termination_reason="converged",
                         iterations=iteration + 1,
                         tokens_used=tokens_used,
                         final_verify=verify_result,
+                        evidence=evidence,
                     )
 
-                screenshots = self._retrieve_screenshots(handle)
                 fix_result = self._exec_visual_feedback(handle, verify_result, screenshots)
                 tokens_used += fix_result.get("tokens", 0)
                 if not fix_result["passed"]:
@@ -114,6 +150,7 @@ class VisualRalphController:
                         iterations=iteration + 1,
                         tokens_used=tokens_used,
                         final_verify=verify_result,
+                        evidence=evidence,
                     )
                 return VisualResult(
                     status="fix_applied",
@@ -121,6 +158,7 @@ class VisualRalphController:
                     iterations=iteration + 1,
                     tokens_used=tokens_used,
                     final_verify=verify_result,
+                    evidence=evidence,
                 )
 
             finally:
@@ -301,32 +339,122 @@ class VisualRalphController:
 
     # === Screenshots ===
 
-    def _retrieve_screenshots(self, handle: SandboxHandle) -> List[str]:
+    def _retrieve_screenshots(
+        self, handle: SandboxHandle, attempt_sequence: int | None = None
+    ) -> List[str]:
         """Pull screenshot files from the container via the configured CLI."""
         container_src = f"/workspace/{self._vc.screenshot_dir}"
 
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                dest = Path(tmpdir) / "playwright-report"
-                proc = subprocess.run(
-                    [self._config.container_cli, "cp", f"{handle.id}:{container_src}", str(dest)],
-                    capture_output=True,
-                    timeout=30,
+            sequence = attempt_sequence or self._next_visual_attempt_sequence()
+            staging_root = self._visual_evidence_dir() / "staging"
+            staging_root.mkdir(parents=True, exist_ok=True)
+            dest = staging_root / f"attempt-{sequence:04d}"
+            if dest.exists() or dest.is_symlink():
+                raise FileExistsError(f"visual staging path already exists: {dest}")
+            proc = subprocess.run(
+                [self._config.container_cli, "cp", f"{handle.id}:{container_src}", str(dest)],
+                capture_output=True,
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                logger.debug(
+                    "%s cp failed for screenshots (%s): %s",
+                    self._config.container_cli,
+                    self._vc.screenshot_dir,
+                    proc.stderr.decode(errors="replace").strip(),
                 )
-                if proc.returncode != 0:
-                    logger.debug(
-                        "%s cp failed for screenshots (no playwright-report yet): %s",
-                        self._config.container_cli,
-                        proc.stderr.decode(errors="replace").strip(),
-                    )
-                    return []
+                return []
 
-                screenshots = list(dest.glob("**/*.png")) + list(dest.glob("**/*.jpg"))
-                logger.info("Retrieved %d screenshots from container", len(screenshots))
-                return [str(p) for p in screenshots]
+            self._last_staging_dir = dest
+            screenshots = (
+                list(dest.glob("**/*.png"))
+                + list(dest.glob("**/*.jpg"))
+                + list(dest.glob("**/*.jpeg"))
+            )
+            logger.info("Retrieved %d screenshots from container", len(screenshots))
+            return [str(p) for p in screenshots]
         except Exception as e:
             logger.warning("Screenshot retrieval failed: %s", e)
             return []
+
+    def _visual_evidence_dir(self) -> Path:
+        return (
+            Path(self._base_dir)
+            / "runs"
+            / self._build_id
+            / "evidence"
+            / "visual"
+            / self._strategy_id
+        )
+
+    def _next_visual_attempt_sequence(self) -> int:
+        root = self._visual_evidence_dir()
+        sequences: list[int] = []
+        for path in root.glob("attempt-*.json") if root.exists() else ():
+            try:
+                sequences.append(int(path.name.split("-", 2)[1]))
+            except (IndexError, ValueError):
+                continue
+        return max(sequences, default=0) + 1
+
+    def _record_visual_evidence(
+        self,
+        *,
+        worktree_path: Path,
+        verify_result: VerifyResult,
+        screenshots: List[str],
+        attempt_sequence: int,
+    ) -> VisualEvidenceRef:
+        fingerprint = product_evidence_fingerprint(worktree_path)
+        return write_visual_receipt(
+            evidence_dir=self._visual_evidence_dir(),
+            spec_id=self._spec_id,
+            strategy_id=self._strategy_id,
+            build_id=self._build_id,
+            candidate_commit=self._worktree_head(worktree_path),
+            candidate_fingerprint=fingerprint,
+            screenshot_dir=self._vc.screenshot_dir,
+            playwright=dict(verify_result.verification_evidence.get("playwright", {})),
+            artifact_paths=[Path(path) for path in screenshots],
+            required_artifacts=True,
+            attempt_sequence=attempt_sequence,
+        )
+
+    @staticmethod
+    def _worktree_head(worktree_path: Path) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(worktree_path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+
+    @staticmethod
+    def _with_visual_failure(
+        verify_result: VerifyResult, *, failure_id: str, error: str
+    ) -> VerifyResult:
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.PLAYWRIGHT_TEST,
+                    id=failure_id,
+                    error=error,
+                ),
+                *verify_result.failures,
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
+        )
+
+    def _cleanup_screenshot_staging(self) -> None:
+        staging = self._last_staging_dir
+        self._last_staging_dir = None
+        if staging is not None and staging.is_dir() and staging.parent.name == "staging":
+            shutil.rmtree(staging)
 
     # === Feedback ===
 

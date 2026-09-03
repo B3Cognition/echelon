@@ -28,6 +28,7 @@ from harness.verify_result import VerifyResult
 from harness.spec_frontmatter import read_frontmatter
 from harness.product_inventory import product_evidence_fingerprint
 from harness.verification_evidence import VerificationStage, write_verification_receipt
+from harness.visual_evidence import VisualEvidenceRef
 
 
 class MockProvider(SandboxProvider):
@@ -972,6 +973,15 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
         iterations=1,
         tokens_used=30,
         final_verify=None,
+        evidence=VisualEvidenceRef(
+            path=(tmp_path / "visual.json").resolve(),
+            receipt_sha256="receipt",
+            evidence_sha256="evidence",
+            candidate_commit="candidate",
+            candidate_fingerprint="fingerprint",
+            passed=True,
+            artifact_count=2,
+        ),
     )
 
     # Create strategy dir
@@ -1001,6 +1011,9 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     assert results[0].tokens_used == 80       # 50 (phase1) + 30 (phase2)
     assert results[0].inner_iterations == 0   # preserved from phase1
     assert results[0].pr_url is None          # preserved from phase1
+    state = StateStore(tmp_path / "runs" / "state", "001", "default").read()
+    assert state["visual_evidence"]["artifact_count"] == 2
+    assert state["last_completed_phase"] == "visual"
 
 
 def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_path):
