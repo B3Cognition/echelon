@@ -45,6 +45,10 @@ from harness.runnability_evidence import (
     load_runnability_evidence_ref,
     validate_runnability_report,
 )
+from harness.verification_evidence import (
+    VerificationEvidenceRef,
+    validate_verification_receipt,
+)
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.paths import find_stack_extension_root
 from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
@@ -1004,7 +1008,13 @@ def land(
         return True
 
     if pr_url:
-        if not _verify_before_land(spec_id, project_dir, gitops, options):
+        if not _verify_before_land(
+            spec_id,
+            project_dir,
+            gitops,
+            options,
+            harness_root=runtime_root,
+        ):
             return False
         merged = gitops.merge_pr(pr_url)
         if merged:
@@ -1025,7 +1035,13 @@ def land(
         )
         if prepare_result is None:
             return False
-        if not _verify_before_land(spec_id, project_dir, gitops, options):
+        if not _verify_before_land(
+            spec_id,
+            project_dir,
+            gitops,
+            options,
+            harness_root=runtime_root,
+        ):
             return False
         _banner(
             "LAND — ACTION NEEDED",
@@ -1060,7 +1076,13 @@ def land(
     )
     if prepare_result is None:
         return False
-    if not _verify_before_land(spec_id, project_dir, gitops, options):
+    if not _verify_before_land(
+        spec_id,
+        project_dir,
+        gitops,
+        options,
+        harness_root=runtime_root,
+    ):
         return False
     if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
         return False
@@ -1548,7 +1570,36 @@ def _verify_before_land(
     project_dir: Path,
     gitops: Any,
     options: LandOptions,
+    *,
+    harness_root: Path | None = None,
 ) -> bool:
+    evidence_valid, evidence_detail = _authoritative_delivery_verify_before_land(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+    )
+    if evidence_valid is True:
+        logger.info(
+            "land: reused authoritative delivery verification for %s: %s",
+            spec_id,
+            evidence_detail,
+        )
+        return True
+    if evidence_valid is False:
+        _banner(
+            "LAND — AUTHORITATIVE VERIFY STALE",
+            [
+                ("spec", spec_id),
+                ("problem", evidence_detail),
+                (
+                    "next step",
+                    f"rerun delivery verification, then: echelon delivery land {spec_id}",
+                ),
+            ],
+            subtitle="Echelon stopped before merging because the delivered product no longer matches its sandbox evidence.",
+        )
+        return False
+
     passed, output = _run_land_verify(project_dir, gitops)
     if passed:
         return True
@@ -1564,6 +1615,86 @@ def _verify_before_land(
         subtitle="Echelon stopped before merging or changing landing state.",
     )
     return False
+
+
+def _authoritative_delivery_verify_before_land(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path | None,
+) -> tuple[bool | None, str]:
+    """Validate and reuse the current delivery's immutable verification receipt.
+
+    ``None`` means this is a legacy/manual landing without delivery evidence, so
+    the caller may use its configured legacy verification command. Once a
+    current converged delivery publishes evidence, invalid or stale evidence is
+    authoritative and fails closed instead of silently rerunning on the host.
+    """
+    if harness_root is None:
+        return None, "no harness runtime root"
+
+    root = Path(harness_root)
+    markers = [
+        current_build_marker(root, alias)
+        for alias in spec_identity_aliases(spec_id)
+        if current_build_marker(root, alias).is_file()
+    ]
+    if not markers:
+        return None, "no current delivery build"
+    if len(markers) != 1:
+        return False, "multiple current delivery builds match the spec"
+
+    try:
+        build_id = markers[0].read_text(encoding="utf-8").strip()
+    except OSError:
+        return False, "current delivery build marker is unreadable"
+    if not build_id:
+        return False, "current delivery build marker has no build identity"
+
+    state_root = build_dir(root, build_id) / "state"
+    matching: list[dict[str, Any]] = []
+    try:
+        state_files = sorted(state_root.glob("*.json"))
+    except OSError:
+        return False, "current delivery state is unreadable"
+    for state_file in state_files:
+        try:
+            payload = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False, "current delivery state is unreadable or invalid"
+        if (
+            isinstance(payload, dict)
+            and payload.get("status") == "converged"
+            and _spec_id_matches(str(payload.get("spec_id") or ""), spec_id)
+        ):
+            matching.append(payload)
+    if len(matching) != 1:
+        return None, "current build has no single converged delivery receipt"
+
+    state = matching[0]
+    raw_evidence = state.get("verified_evidence")
+    expected_fingerprint = str(state.get("verified_product_fingerprint") or "")
+    if not isinstance(raw_evidence, dict) or not expected_fingerprint:
+        return None, "converged delivery predates authoritative verification receipts"
+
+    try:
+        ref = VerificationEvidenceRef.from_mapping(raw_evidence)
+        current_fingerprint = product_evidence_fingerprint(project_dir)
+    except (OSError, RuntimeError, ValueError):
+        return False, "could not validate the landing candidate product content fingerprint"
+    if expected_fingerprint != ref.candidate_fingerprint:
+        return False, "delivery state and verification receipt fingerprints disagree"
+    if current_fingerprint != expected_fingerprint:
+        return False, "landing candidate content fingerprint differs from the verified delivery"
+
+    validation = validate_verification_receipt(
+        ref,
+        candidate_commit=ref.candidate_commit,
+        candidate_fingerprint=current_fingerprint,
+    )
+    if not validation.valid:
+        return False, f"authoritative delivery receipt is invalid: {validation.reason}"
+    return True, f"verified product content from {ref.candidate_commit[:12]}"
 
 
 def _check_fulfillment_before_land(

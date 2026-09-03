@@ -22,6 +22,7 @@ from harness.land import (
     _land_status_warning,
     _run_land_verify,
     _runnability_warning,
+    _verify_before_land,
     find_pr_url,
     land,
     resolve_land_repo,
@@ -34,6 +35,7 @@ from harness.runnability_contract import (
     runnability_contract_sha256,
 )
 from harness.runnability_evidence import RunnabilityStage, write_runnability_report
+from harness.verification_evidence import VerificationStage, write_verification_receipt
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -1460,6 +1462,132 @@ class TestLand:
 
 @pytest.mark.unit
 class TestLandVerify:
+    def test_reuses_matching_authoritative_delivery_receipt(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        harness_root = tmp_path / "harness"
+        project.mkdir()
+        _init_repo(project)
+        commit = _commit(project, "src/app.py", "print('ok')\n", "verified product")
+        fingerprint = product_evidence_fingerprint(project)
+        evidence = write_verification_receipt(
+            evidence_dir=harness_root / "runs/build-test/evidence/default/verification",
+            spec_id="042-demo",
+            target_id="demo",
+            strategy_id="default",
+            build_id="build-test",
+            candidate_commit=commit,
+            fingerprint_before=fingerprint,
+            fingerprint_after=fingerprint,
+            verifier_source="delivery-target",
+            stages=(
+                VerificationStage(
+                    name="verify",
+                    command=("pnpm", "verify"),
+                    exit_code=0,
+                    duration_ms=1,
+                    stdout=b"passed",
+                    stderr=b"",
+                ),
+            ),
+            attempt_sequence=1,
+            sensitive_environment={},
+            execution_context={"mode": "sandbox", "provider": "docker"},
+        )
+        state_dir = harness_root / "runs/build-test/state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "default.json").write_text(
+            json.dumps(
+                {
+                    "spec_id": "042-demo",
+                    "status": "converged",
+                    "verified_evidence": evidence.as_mapping(),
+                    "verified_product_fingerprint": fingerprint,
+                }
+            ),
+            encoding="utf-8",
+        )
+        marker = harness_root / "runs/.current-build-042-demo"
+        marker.write_text("build-test", encoding="utf-8")
+        gitops = _make_gitops()
+        gitops._config = MagicMock(verify_command="must-not-run-on-host")
+
+        with patch("harness.land._run_land_verify") as host_verify:
+            assert _verify_before_land(
+                "042-demo",
+                project,
+                gitops,
+                LandOptions(),
+                harness_root=harness_root,
+            ) is True
+
+        host_verify.assert_not_called()
+
+    def test_stale_authoritative_delivery_receipt_blocks_without_host_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        harness_root = tmp_path / "harness"
+        project.mkdir()
+        _init_repo(project)
+        commit = _commit(project, "src/app.py", "print('ok')\n", "verified product")
+        fingerprint = product_evidence_fingerprint(project)
+        evidence = write_verification_receipt(
+            evidence_dir=harness_root / "runs/build-test/evidence/default/verification",
+            spec_id="042-demo",
+            target_id="demo",
+            strategy_id="default",
+            build_id="build-test",
+            candidate_commit=commit,
+            fingerprint_before=fingerprint,
+            fingerprint_after=fingerprint,
+            verifier_source="delivery-target",
+            stages=(
+                VerificationStage(
+                    name="verify",
+                    command=("pnpm", "verify"),
+                    exit_code=0,
+                    duration_ms=1,
+                    stdout=b"passed",
+                    stderr=b"",
+                ),
+            ),
+            attempt_sequence=1,
+            sensitive_environment={},
+            execution_context={"mode": "sandbox", "provider": "docker"},
+        )
+        _commit(project, "src/app.py", "print('changed')\n", "changed after verify")
+        state_dir = harness_root / "runs/build-test/state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "default.json").write_text(
+            json.dumps(
+                {
+                    "spec_id": "042-demo",
+                    "status": "converged",
+                    "verified_evidence": evidence.as_mapping(),
+                    "verified_product_fingerprint": fingerprint,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (harness_root / "runs/.current-build-042-demo").write_text(
+            "build-test", encoding="utf-8"
+        )
+
+        with (
+            patch("harness.land._run_land_verify") as host_verify,
+            patch("harness.land._banner") as banner,
+        ):
+            assert _verify_before_land(
+                "042-demo",
+                project,
+                _make_gitops(),
+                LandOptions(),
+                harness_root=harness_root,
+            ) is False
+
+        host_verify.assert_not_called()
+        assert "content fingerprint" in str(banner.call_args)
+
     def test_no_verify_command_is_success(self, tmp_path: Path) -> None:
         passed, output = _run_land_verify(tmp_path, _make_gitops())
         assert passed is True
@@ -2554,6 +2682,8 @@ def test_land_discards_generated_verify_drift_before_direct_merge(tmp_path: Path
         project_dir: Path,
         gitops_arg: MagicMock,
         options: LandOptions,
+        *,
+        harness_root: Path | None = None,
     ) -> bool:
         assert spec_id == "001"
         (project_dir / "docs/perf/perf-metrics.json").write_text(
@@ -2605,6 +2735,8 @@ def test_land_blocks_unknown_verify_drift_before_direct_merge(tmp_path: Path) ->
         project_dir: Path,
         gitops_arg: MagicMock,
         options: LandOptions,
+        *,
+        harness_root: Path | None = None,
     ) -> bool:
         (project_dir / "feature.txt").write_text("changed after verify\n", encoding="utf-8")
         return True
