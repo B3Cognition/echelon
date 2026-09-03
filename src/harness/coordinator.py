@@ -92,13 +92,15 @@ def _serialize_verify_result(result: Any) -> dict[str, Any] | None:
     failures = []
     for failure in getattr(result, "failures", ()):
         category = getattr(failure, "category", "")
-        failures.append(
-            {
-                "category": getattr(category, "value", str(category)),
-                "id": str(getattr(failure, "id", "")),
-                "error": str(getattr(failure, "error", "")),
-            }
-        )
+        serialized_failure = {
+            "category": getattr(category, "value", str(category)),
+            "id": str(getattr(failure, "id", "")),
+            "error": str(getattr(failure, "error", "")),
+        }
+        details = getattr(failure, "details", None)
+        if isinstance(details, dict) and details:
+            serialized_failure["details"] = dict(details)
+        failures.append(serialized_failure)
     serialized = {
         "passed": bool(getattr(result, "passed", False)),
         "failures": failures,
@@ -377,7 +379,7 @@ class StrategyCoordinator:
     def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
         """Snapshot the delivery phases selected for a new run."""
         phases = ["implementation"]
-        if self._config.visual_tests.enabled and llm_provider is None:
+        if self._config.visual_tests.enabled:
             phases.append("visual")
         if self._config.review_loop.enabled and self._config.pr_host != "none":
             phases.append("review")
@@ -682,6 +684,9 @@ class StrategyCoordinator:
     ) -> DeliveryResult:
         """Persist a recoverable phase failure with its exact restart point."""
         state = state_store.read()
+        effective_verify = (
+            final_verify if final_verify is not None else implementation.final_verify
+        )
         state_store.transition(
             "blocked",
             updates={
@@ -690,6 +695,7 @@ class StrategyCoordinator:
                 "pr_url": implementation.pr_url,
                 "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
                 "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
+                "last_verify_result": _serialize_verify_result(effective_verify),
             },
         )
         return DeliveryResult(
@@ -699,7 +705,7 @@ class StrategyCoordinator:
             inner_iterations=implementation.inner_iterations,
             pr_url=implementation.pr_url,
             tokens_used=tokens_used,
-            final_verify=final_verify if final_verify is not None else implementation.final_verify,
+            final_verify=effective_verify,
             blocked_phase=phase,  # type: ignore[arg-type]
             branch=implementation.branch,
         )
@@ -1256,10 +1262,8 @@ class StrategyCoordinator:
             visual_reentry_block: DeliveryResult | None = None
             visual_iterations = 0
             visual_tokens = 0
-            # Phase 2: visual loop — only when Phase 1 verified via Docker sandbox.
-            # Skipped when LLM provider ran Phase 1: the LLM already verified tests
-            # locally (including Playwright if present), and the Docker visual loop
-            # has no access to the LLM-managed worktree after it is committed.
+            # Phase 2 is harness-owned. A coding provider's self-reported browser
+            # checks never substitute for deterministic sandbox Playwright evidence.
             visual_controller = (
                 VisualRalphController(
                     provider=self._provider,

@@ -6233,6 +6233,26 @@ def _delivery_status_summary(
     runnability = _normalized_delivery_runnability(state.get("user_runnability"))
     if runnability is not None:
         summary["user_runnability"] = runnability
+    last_verify = state.get("last_verify_result")
+    if isinstance(last_verify, dict):
+        verification_evidence = last_verify.get("verification_evidence")
+        if isinstance(verification_evidence, dict):
+            raw_playwright = verification_evidence.get("playwright")
+            if isinstance(raw_playwright, dict):
+                summary["playwright"] = {
+                    key: max(0, int(raw_playwright.get(key) or 0))
+                    for key in ("total", "passed", "failed", "skipped")
+                }
+    visual_evidence = state.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        summary["visual_evidence"] = {
+            "path": str(visual_evidence.get("path") or ""),
+            "passed": visual_evidence.get("passed") is True,
+            "artifact_count": max(0, int(visual_evidence.get("artifact_count") or 0)),
+            "candidate_fingerprint": str(
+                visual_evidence.get("candidate_fingerprint") or ""
+            ),
+        }
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -6329,6 +6349,30 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
             fields.append(("publish stage", stage))
         if error:
             fields.append(("publish error", error))
+    playwright = summary.get("playwright")
+    if isinstance(playwright, dict):
+        fields.append(
+            (
+                "sandbox journey",
+                (
+                    f"{playwright.get('passed', 0)} passed, "
+                    f"{playwright.get('failed', 0)} failed, "
+                    f"{playwright.get('skipped', 0)} skipped"
+                ),
+            )
+        )
+    visual_evidence = summary.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        visual_status = "passed" if visual_evidence.get("passed") else "failed"
+        fields.append(
+            (
+                "visual artifacts",
+                f"{visual_evidence.get('artifact_count', 0)} retained ({visual_status})",
+            )
+        )
+        visual_path = str(visual_evidence.get("path") or "").strip()
+        if visual_path:
+            fields.append(("visual evidence", visual_path))
     escalation = summary.get("escalation")
     if isinstance(escalation, dict):
         question = str(escalation.get("question") or "").strip()
@@ -6402,6 +6446,7 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
                     "provision",
                     "readiness",
                     "prepare",
+                    "session",
                     "verify",
                     "start",
                     "open",
@@ -6416,6 +6461,15 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
                                 "; ".join(str(value) for value in values),
                             )
                         )
+            boundary_probes = local_journey.get("boundary_probes")
+            if isinstance(boundary_probes, list):
+                for probe in boundary_probes:
+                    if not isinstance(probe, dict):
+                        continue
+                    probe_id = str(probe.get("id") or "boundary").strip()
+                    command = str(probe.get("command") or "").strip()
+                    if command:
+                        fields.append(("local boundary", f"{probe_id}: {command}"))
         report = str(runnability.get("report") or "").strip()
         if report:
             fields.append(("evidence", report))
@@ -6482,10 +6536,31 @@ def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
                 if normalized:
                     local_commands[str(key)] = normalized
         if local_status:
+            boundary_probes: list[dict[str, str]] = []
+            raw_boundary_probes = raw_local_journey.get("boundary_probes")
+            if isinstance(raw_boundary_probes, list):
+                for raw_probe in raw_boundary_probes:
+                    if not isinstance(raw_probe, dict):
+                        continue
+                    command = str(raw_probe.get("command") or "").strip()
+                    if not command:
+                        continue
+                    boundary_probes.append(
+                        {
+                            "id": str(raw_probe.get("id") or "").strip(),
+                            "service": str(raw_probe.get("service") or "").strip(),
+                            "command": command,
+                        }
+                    )
             local_journey = {
                 "status": local_status,
                 "reason": str(raw_local_journey.get("reason") or "").strip(),
                 "commands": local_commands,
+                **(
+                    {"boundary_probes": boundary_probes}
+                    if boundary_probes
+                    else {}
+                ),
             }
     diagnostic = str(value.get("summary") or "").strip()
     if len(diagnostic) > 240:

@@ -272,6 +272,64 @@ def test_delivery_status_surfaces_separate_unverified_local_journey(
 
 
 @pytest.mark.unit
+def test_delivery_status_surfaces_execution_and_visual_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status distinguishes executable journey proof from local instructions."""
+    state_file = _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "summary": "Sandbox composition passed.",
+            "local_journey": {
+                "status": "unverified",
+                "reason": "Run these commands locally.",
+                "commands": {
+                    "session": ["pnpm session:local"],
+                    "start": ["pnpm start:local"],
+                },
+                "boundary_probes": [
+                    {
+                        "id": "postgres-host",
+                        "service": "postgres",
+                        "command": "pg_isready -h 127.0.0.1 -p 5432 -U game",
+                    }
+                ],
+            },
+        },
+    )
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["last_verify_result"] = {
+        "passed": True,
+        "verification_evidence": {
+            "playwright": {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
+        },
+    }
+    state["visual_evidence"] = {
+        "path": "/runs/visual/attempt-0001.json",
+        "passed": True,
+        "artifact_count": 3,
+        "candidate_fingerprint": "product-1",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    payload = json.loads(capsys.readouterr().out)["latest"]
+    assert payload["playwright"] == {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
+    assert payload["visual_evidence"]["artifact_count"] == 3
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "2 passed, 0 failed, 0 skipped" in output
+    assert "3 retained (passed)" in output
+    assert "pnpm session:local" in output
+    assert "postgres-host: pg_isready -h 127.0.0.1" in output
+
+
+@pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
 

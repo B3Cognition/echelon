@@ -6071,6 +6071,34 @@ class RalphController:
             "provider_note": note or "Provider did not return a completion note.",
             "primary_failure": primary_failure,
         }
+        verification_evidence = verify_result.verification_evidence
+        raw_playwright = (
+            verification_evidence.get("playwright")
+            if isinstance(verification_evidence, dict)
+            else None
+        )
+        if isinstance(raw_playwright, dict):
+            summary["playwright"] = {
+                key: max(0, _safe_int(raw_playwright.get(key)))
+                for key in ("total", "passed", "failed", "skipped")
+            }
+        evidence_gaps: list[str] = []
+        for failure in failures:
+            details = failure.details
+            raw_gaps = details.get("gaps") if isinstance(details, dict) else None
+            if not isinstance(raw_gaps, list):
+                continue
+            for gap in raw_gaps:
+                if not isinstance(gap, dict):
+                    continue
+                requirement_id = str(gap.get("requirement_id") or "").strip()
+                gap_status = str(gap.get("status") or "").strip()
+                if requirement_id:
+                    evidence_gaps.append(
+                        f"{requirement_id} [{gap_status or 'UNRESOLVED'}]"
+                    )
+        if evidence_gaps:
+            summary["evidence_gaps"] = evidence_gaps[:8]
         state = self._state_store.read()
         attempts = state.get("provider_attempts")
         if not isinstance(attempts, list):
@@ -6088,6 +6116,21 @@ class RalphController:
         ]
         if primary_failure:
             fields.append(("blocker", primary_failure))
+        playwright = summary.get("playwright")
+        if isinstance(playwright, dict):
+            fields.append(
+                (
+                    "playwright",
+                    (
+                        f"{playwright.get('total', 0)} total, "
+                        f"{playwright.get('passed', 0)} passed, "
+                        f"{playwright.get('failed', 0)} failed, "
+                        f"{playwright.get('skipped', 0)} skipped"
+                    ),
+                )
+            )
+        if evidence_gaps:
+            fields.append(("evidence gaps", ", ".join(evidence_gaps[:8])))
         banner(
             f"{provider.upper()} {'BUILD' if phase == 'build' else 'REPAIR'} {attempt}",
             fields,
@@ -7017,6 +7060,14 @@ def _compact_provider_note(value: object, *, limit: int = 360) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
+
+
+def _safe_int(value: object) -> int:
+    """Normalize an evidence counter without trusting provider-authored types."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _is_verify_owned_artifact(path: str) -> bool:

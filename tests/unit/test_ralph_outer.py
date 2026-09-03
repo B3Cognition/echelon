@@ -8529,6 +8529,51 @@ class TestPromptHelpers:
         assert "test-results/trace.zip" not in output
         assert controller._state_store.read()["provider_attempts"] == [summary]
 
+    def test_provider_attempt_summary_surfaces_evidence_integrity_counts(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Provider summaries identify skipped journeys and concrete coverage debt."""
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="fix",
+            attempt=1,
+            result={
+                "provider_invocation": {"provider": "codex"},
+                "stdout": "Added the persistence journey.",
+            },
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "Required coverage is not automated.",
+                    details={
+                        "gaps": [
+                            {"requirement_id": "FR-013", "status": "UNVERIFIED"}
+                        ]
+                    },
+                )],
+                verification_evidence={
+                    "playwright": {"total": 1, "passed": 0, "failed": 0, "skipped": 1}
+                },
+            ),
+            changed_files=["tests/journey.spec.ts"],
+        )
+
+        assert summary is not None
+        assert summary["playwright"] == {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 1,
+        }
+        assert summary["evidence_gaps"] == ["FR-013 [UNVERIFIED]"]
+        output = capsys.readouterr().err
+        assert "1 total, 0 passed, 0 failed, 1 skipped" in output
+        assert "FR-013 [UNVERIFIED]" in output
+
     def test_make_iter_prompt_iter0_returns_base(self, tmp_path: Path) -> None:
         controller, *_ = _make_controller(tmp_path)
         result = controller._make_iter_prompt("spec 001", outer_iter=0, last_failures="")

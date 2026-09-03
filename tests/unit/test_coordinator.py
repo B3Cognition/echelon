@@ -232,7 +232,23 @@ class TestSingleStrategy:
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition("blocked", updates={"blocked_phase": "visual"})
-        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+        from harness.verify_result import FailureCategory, FailureEntry
+
+        blocked_verify = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.OTHER,
+                "fulfillment-gaps",
+                "FR-013 lacks automated journey evidence",
+                details={"gaps": [{"requirement_id": "FR-013", "status": "UNVERIFIED"}]},
+            )],
+            verification_evidence={
+                "playwright": {"total": 1, "passed": 0, "failed": 0, "skipped": 1}
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, blocked_verify
+        )
 
         result = coord._persist_phase_block(
             store,
@@ -244,7 +260,13 @@ class TestSingleStrategy:
         )
 
         assert result.blocked_phase == "visual"
-        assert store.read()["termination_reason"] == "registered_worktree_missing"
+        persisted = store.read()
+        assert persisted["termination_reason"] == "registered_worktree_missing"
+        assert persisted["last_verify_result"]["verification_evidence"]["playwright"]["skipped"] == 1
+        assert persisted["last_verify_result"]["failures"][0]["details"]["gaps"][0] == {
+            "requirement_id": "FR-013",
+            "status": "UNVERIFIED",
+        }
 
     def test_finalization_blocks_conflicting_persisted_verification_commit(
         self, tmp_path: Path
@@ -497,6 +519,21 @@ class TestStatusAggregation:
 
 
 class TestDeliveryStateMigration:
+    def test_visual_phase_is_required_with_llm_coding_provider(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex implementation does not replace harness-owned browser evidence."""
+        from harness.config import VisualTestsConfig
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+
+        assert coordinator._enabled_phases(MagicMock()) == [
+            "implementation",
+            "visual",
+            "finalization",
+        ]
+
     def test_legacy_block_without_phase_migrates_to_implementation(
         self, tmp_path: Path
     ) -> None:
