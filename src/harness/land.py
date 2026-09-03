@@ -92,6 +92,12 @@ _LAND_GENERATED_DRIFT_EXACT = {
     "docs/perf/perf-metrics.json",
     "docs/perf/perf-metrics-pty.json",
 }
+_LAND_GENERATED_DRIFT_PREFIXES = (
+    "blob-report/",
+    "coverage/",
+    "playwright-report/",
+    "test-results/",
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +144,7 @@ def prepare_feature_branch(
             options=options,
         )
 
+    _discard_known_generated_land_drift(project_dir)
     dirty = _run_git(
         ["status", "--porcelain", "--untracked-files=no"],
         cwd=str(project_dir),
@@ -1205,7 +1212,10 @@ def _tracked_dirty_files(project_dir: Path) -> list[str]:
 
 
 def _is_known_land_generated_drift(path: str) -> bool:
-    return path in _LAND_GENERATED_DRIFT_EXACT
+    normalized = path.replace("\\", "/")
+    return normalized in _LAND_GENERATED_DRIFT_EXACT or normalized.startswith(
+        _LAND_GENERATED_DRIFT_PREFIXES
+    )
 
 
 def _default_branch_already_contains_feature(

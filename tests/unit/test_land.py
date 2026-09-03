@@ -2865,6 +2865,40 @@ def test_prepare_feature_branch_blocks_dirty_tracked_worktree_without_checkout(
 
 
 @pytest.mark.unit
+def test_prepare_feature_branch_discards_playwright_generated_drift(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, "test-results/.last-run.json", '{"status":"passed"}\n', "results")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    (repo / "test-results/.last-run.json").write_text(
+        '{"status":"failed"}\n', encoding="utf-8"
+    )
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert _git(repo, "diff", "--name-only", "HEAD", "--").stdout.strip() == ""
+    assert (repo / "test-results/.last-run.json").read_text(encoding="utf-8") == (
+        '{"status":"passed"}\n'
+    )
+
+
+@pytest.mark.unit
 def test_prepare_feature_branch_reports_merge_conflicts(tmp_path: Path) -> None:
     from harness.land import LandOptions, prepare_feature_branch
 
