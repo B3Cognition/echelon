@@ -501,7 +501,7 @@ class GitOpsManager:
                     )[0]
                     chosen = chosen_remote.split("/", 1)[1]
                     _run_git(
-                        ["branch", chosen, chosen_remote],
+                        ["branch", "--no-track", chosen, chosen_remote],
                         cwd=str(self._mirror_path),
                     )
                     logger.info(

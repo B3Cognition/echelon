@@ -82,6 +82,7 @@ def test_find_feature_branch_promotes_fetched_upstream_branch(tmp_path: Path) ->
 
     assert [
         "branch",
+        "--no-track",
         "003-create-browser-first-3d",
         "upstream/003-create-browser-first-3d",
     ] in commands
