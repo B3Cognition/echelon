@@ -314,6 +314,7 @@ def _make_controller(
     config: Optional[HarnessConfig] = None,
     fresh_delivery: bool = False,
     defer_target_merge: bool = False,
+    resume_worktree_path: str | None = None,
 ) -> tuple:
     config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
@@ -339,6 +340,7 @@ def _make_controller(
         fulfillment_runner=fulfillment_runner,
         fresh_delivery=fresh_delivery,
         defer_target_merge=defer_target_merge,
+        resume_worktree_path=resume_worktree_path,
     )
     return controller, provider, gitops, state_store
 
@@ -2938,6 +2940,22 @@ class TestOuterLoopConvergence:
         assert deferred["verified"] is True
         assert deferred["worktree_path"] == gitops.create_worktree.return_value
         assert deferred["verify_result"]["passed"] is True
+
+    def test_downstream_reentry_reuses_registered_repaired_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        """A dirty visual repair is not replaced by a new branch/worktree."""
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            resume_worktree_path=str(tmp_path),
+        )
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "verified"
+        gitops.create_worktree.assert_not_called()
+        assert gitops.commit.call_args.args[0] == str(tmp_path)
 
     @pytest.mark.integration
     def test_synthetic_run_lands_verified_work_on_target_main(

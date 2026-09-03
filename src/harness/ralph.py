@@ -298,6 +298,7 @@ class RalphController:
         fresh_delivery: bool = False,
         fresh_branch_base: Optional[str] = None,
         defer_target_merge: bool = False,
+        resume_worktree_path: Optional[str] = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -322,6 +323,7 @@ class RalphController:
         self._fresh_delivery = fresh_delivery
         self._fresh_branch_base = fresh_branch_base
         self._defer_target_merge = defer_target_merge
+        self._resume_worktree_path = resume_worktree_path
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -458,18 +460,40 @@ class RalphController:
 
             # Create worktree — use feature branch when available so spec artifacts
             # (spec.md, tasks.md, constitution.md) are present from the start.
-            worktree_path = self._gitops.create_worktree(
-                self._spec_id, self._strategy_id, outer_iter,
-                base_branch=feature_branch,
-                build_id=self._build_id,
-                prepare_codegraph=True,
-                fresh_branch=self._fresh_delivery and outer_iter == start_outer,
-                fresh_branch_base=(
-                    self._fresh_branch_base
-                    if self._fresh_delivery and outer_iter == start_outer
-                    else None
-                ),
-            )
+            if self._resume_worktree_path and outer_iter == start_outer:
+                worktree_path = self._resume_worktree_path
+                if not Path(worktree_path).is_dir():
+                    return self._finalize(
+                        status="blocked",
+                        reason="verified_provenance_unavailable",
+                        outer_iterations=outer_iter,
+                        inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
+                        tokens_used=tokens_used,
+                        final_verify=None,
+                    )
+                state = self._state_store.read()
+                reentry = state.get("downstream_reentry")
+                if isinstance(reentry, dict):
+                    state["downstream_reentry"] = {**reentry, "consumed": True}
+                    self._state_store.write(state)
+                logger.info(
+                    "Reusing registered worktree %s for downstream repair re-verification",
+                    worktree_path,
+                )
+            else:
+                worktree_path = self._gitops.create_worktree(
+                    self._spec_id, self._strategy_id, outer_iter,
+                    base_branch=feature_branch,
+                    build_id=self._build_id,
+                    prepare_codegraph=True,
+                    fresh_branch=self._fresh_delivery and outer_iter == start_outer,
+                    fresh_branch_base=(
+                        self._fresh_branch_base
+                        if self._fresh_delivery and outer_iter == start_outer
+                        else None
+                    ),
+                )
             preserve_worktree = False
 
             try:

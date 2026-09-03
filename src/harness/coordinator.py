@@ -1233,6 +1233,16 @@ class StrategyCoordinator:
             else:
                 build_prompt = arguments
 
+            controller_state = state_store.read()
+            downstream_reentry = controller_state.get("downstream_reentry")
+            resume_repaired_worktree = (
+                str(controller_state.get("registered_worktree") or "") or None
+                if isinstance(downstream_reentry, dict)
+                and downstream_reentry.get("reason")
+                == "candidate_changed_after_checkpoint"
+                and not downstream_reentry.get("consumed")
+                else None
+            )
             controller = RalphController(
                 provider=self._provider,
                 gitops=self._gitops,
@@ -1252,8 +1262,9 @@ class StrategyCoordinator:
                 fresh_branch_base=self._fresh_branch_bases.get(strategy_id),
                 defer_target_merge=any(
                     phase in {"visual", "review"}
-                    for phase in state_store.read().get("enabled_phases", [])
+                    for phase in controller_state.get("enabled_phases", [])
                 ),
+                resume_worktree_path=resume_repaired_worktree,
             )
 
             pending_reentry = _pending_review_reentry(
