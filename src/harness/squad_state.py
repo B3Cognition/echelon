@@ -3386,6 +3386,11 @@ class SquadStateStore:
 
     def _transition_status(self, state: dict, new_status: str) -> None:
         current = state.get("status", "running")
+        # A provider result may carry a blocking status while its sealed
+        # controller control effect carries the same status.  That is one
+        # idempotent transition, not an invalid lifecycle reversal.
+        if new_status == current:
+            return
         allowed = VALID_SQUAD_TRANSITIONS.get(current, set())
         if new_status not in allowed:
             logger.warning(

@@ -3830,6 +3830,25 @@ class TestStatusTransitions:
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "token_budget_exhausted"
 
+    def test_repeated_status_update_is_idempotent_without_warning(
+        self,
+        tmp_path,
+        caplog,
+    ):
+        """Provider and controller may carry the same sealed status effect."""
+        import logging
+
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        state = store.load()
+        state["status"] = "blocked"
+
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store._transition_status(state, "blocked")
+
+        assert "Invalid squad status transition" not in caplog.text
+        assert state["status"] == "blocked"
+
     def test_invalid_transition_logs_warning(self, tmp_path, caplog):
         import logging
         store = SquadStateStore(tmp_path / "squad/run-test")
