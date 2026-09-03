@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +20,10 @@ import yaml
 
 import harness.squad as squad_module
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.blocked_decision import (
+    build_blocked_decision_v2,
+    validate_blocked_decision,
+)
 from harness.config import HarnessConfig, LlmConfig
 from harness.human_input import (
     HumanInputOption,
@@ -24,13 +32,20 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     HumanInputResolution,
     ProportionalQualityRecommendationEvidence,
+    RecommendationEvidence,
     controller_safeguard_policies,
+    prepare_controller_checkpoint_assessment_decision,
+    prepare_controller_phase_dispatch_limit_decision,
     prepare_controller_proportional_quality_decision,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.prepared_phase_result import prepare_phase_result
-from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+from harness.recovery_instruction import (
+    RecoveryKind,
+    RecoveryInstruction,
+    validate_recovery_instruction,
+)
 from harness.squad import SquadController, _ProviderHumanInputAdvance
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore, StateAdvanceError
@@ -114,6 +129,8 @@ def _decision_result(
     *,
     selected_option_id: str | None = "approve",
     answer_text: str | None = None,
+    rationale: str = "This is the best allowed resolution.",
+    confidence: str = "high",
 ) -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
@@ -124,8 +141,8 @@ def _decision_result(
             "decision": {
                 "selected_option_id": selected_option_id,
                 "answer_text": answer_text,
-                "rationale": "This is the best allowed resolution.",
-                "confidence": "high",
+                "rationale": rationale,
+                "confidence": confidence,
             },
         },
         raw_output="",
@@ -208,6 +225,197 @@ def _workflow_gate_controller(
     return controller, store, provider
 
 
+def _seed_current_checkpoint_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    controller: SquadController,
+    store: SquadStateStore,
+) -> None:
+    state = store.load()
+    spec_dir = Path(str(state["spec_dir"]))
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# Certified specification\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality gates\n\nVerdict: PASS\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "issues.md").write_text(
+        "# Issues\n\nNo issues found.\n",
+        encoding="utf-8",
+    )
+    lexicon_report = spec_dir / "spec-lexicon-report.json"
+    lexicon_report.write_text(
+        json.dumps({"schema_version": 1, "ok": True}, sort_keys=True),
+        encoding="utf-8",
+    )
+    state.update(
+        {
+            "spec_quality_certificate": {
+                "schema_version": 2,
+                "status": "passed",
+                "source_path": "spec/spec.md",
+                "source_sha256": "1" * 64,
+                "understanding_evidence": "runs/spec-test/evidence.json",
+                "understanding_evidence_sha256": "2" * 64,
+                "sage_phase": "phase1-why2",
+                "sage_evidence": "spec/issues.md",
+                "sage_evidence_sha256": "3" * 64,
+                "sage_verdict": "PASS",
+            },
+            "lexicon_evaluation": "passed",
+            "lexicon_pass": True,
+            "lexicon_report": str(lexicon_report),
+        }
+    )
+    store.save(state)
+    controller._gate_config_cache = {
+        "lexicon_gate": {
+            "enabled": True,
+            "spec_enabled": True,
+            "artifacts": {"spec": {"enabled": True}},
+        }
+    }
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_phase1_quality_certificate",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "harness.spec_lexicon_gate.has_current_spec_lexicon_evidence",
+        lambda *_args, **_kwargs: True,
+    )
+
+
+def _seed_current_checkpoint_debt(
+    monkeypatch: pytest.MonkeyPatch,
+    store: SquadStateStore,
+) -> str:
+    state = store.load()
+    spec_dir = Path(str(state["spec_dir"]))
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# Debt-authorized specification\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality gates\n\nVerdict: FAIL\nOverall: 0.70 / 0.80\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "issues.md").write_text(
+        "# Issues\n\nResidual quality debt remains.\n",
+        encoding="utf-8",
+    )
+    state["spec_quality_debt_authorization"] = {
+        "schema_version": 1,
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "decision_id": "dec-quality-debt",
+        "debt_artifact": "spec/quality-debt.json",
+        "debt_artifact_sha256": "4" * 64,
+        "resolved_decision_sha256": "5" * 64,
+    }
+    store.save(state)
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_phase1_quality_certificate",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    return "user"
+
+
+def _prepare_real_v3_quality_debt(
+    tmp_path: Path,
+) -> tuple[SquadController, SquadStateStore]:
+    from tests.integration.test_squad_controller import (
+        _coordinate_prepared_result,
+        _make_proportional_assessment_numerically_passing,
+        _mark_constitution_complete,
+        _proportional_assessment_fixture,
+        _start_proportional_quality_loop,
+    )
+
+    controller, store = _start_proportional_quality_loop(
+        tmp_path,
+        automatic_consumed=3,
+        squad_dir=tmp_path / "runs" / "run-test",
+    )
+    (tmp_path / "runs" / ".current").write_text(
+        f"{store.squad_dir.name}\n",
+        encoding="utf-8",
+    )
+    _mark_constitution_complete(tmp_path, store)
+    updates, result = _proportional_assessment_fixture(
+        controller,
+        store,
+        0,
+    )
+    _make_proportional_assessment_numerically_passing(updates)
+    state = store.load()
+    state.update(updates)
+    store.save(state)
+
+    route = _coordinate_prepared_result(
+        controller,
+        controller._graph.get("phase1-why2"),
+        result,
+    )
+    assert route == "terminal-blocked"
+    assert store.load()["blocked_decision"]["schema_version"] == 3
+    return controller, store
+
+
+def _accept_real_v3_quality_debt(
+    tmp_path: Path,
+) -> tuple[SquadController, SquadStateStore]:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    assert controller.resume_with_human_input("continue_with_debt") is True
+    return controller, store
+
+
+def _advance_real_debt_fixture_to_checkpoint(
+    store: SquadStateStore,
+) -> None:
+    for index, to_phase in enumerate(
+        ("phase1-lexicon", "checkpoint-assess"),
+        start=1,
+    ):
+        state = store.load()
+        from_phase = str(state["phase"])
+        if from_phase == "checkpoint-assess":
+            return
+        if from_phase == "phase1-lexicon" and to_phase == "phase1-lexicon":
+            continue
+        prepared = prepare_phase_result(
+            PhaseNode(
+                id=from_phase,
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            ),
+            controller_updates={},
+        )
+        snapshot = store.capture_routing_snapshot(expected_phase=from_phase)
+        routing = store.prepare_routing_decision(
+            prepared,
+            snapshot=snapshot,
+            from_phase=from_phase,
+            to_phase=to_phase,
+            dispatch_id=f"{index:032x}",
+        )
+        store.advance(from_phase, to_phase, routing)
+
+
 def _request(
     controller: SquadController,
     store: SquadStateStore,
@@ -230,6 +438,22 @@ def _request(
         recommended_answer=recommended_answer,
         risk_level=risk_level,
         source_state_revision=store.load()["state_revision"],
+    )
+
+
+def _automatic_free_text_request(
+    controller: SquadController,
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+    *,
+    recommended_answer: str = "Use the sealed evidence.",
+):
+    return _request(
+        controller,
+        store,
+        policy,
+        recommended_answer=recommended_answer,
+        risk_level="low",
     )
 
 
@@ -372,22 +596,21 @@ def _seal_dispatch_cap_decision(
     *,
     initial_status: str = "awaiting_human",
     legacy: bool = False,
+    phase_id: str = "phase1-what",
 ) -> tuple[str, int]:
-    request = controller._human_input_registry.prepare(
+    option_contract = (
+        tuple(_dispatch_cap_option(item) for item in candidates)
+        if legacy
+        else controller._dispatch_cap_options(list(candidates))
+    )
+    request = controller._human_input_registry.prepare_controller(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
-        phase_id="phase1-what",
+        phase_id=phase_id,
         reason_code=policy.reason_code,
         question="Select one sealed evidence-backed issue resolution.",
         source_state_revision=store.load()["state_revision"],
-    )
-    request = replace(
-        request,
-        options=(
-            tuple(_dispatch_cap_option(item) for item in candidates)
-            if legacy
-            else controller._dispatch_cap_options(list(candidates))
-        ),
+        option_contract=option_contract,
     )
     store.set_human_input_decision(request, initial_status=initial_status)
     state = store.load()
@@ -405,6 +628,8 @@ def _legacy_workflow_controller(
     decision_status: str = "pending",
     recovery_kind: RecoveryKind = RecoveryKind.AWAIT_HUMAN_ANSWER,
     provider_result: SquadAgentResult | None = None,
+    recommended_answer: str | None = None,
+    risk_level: str | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     setup_policy = graph.human_input_policy_registry().lookup(
@@ -428,6 +653,8 @@ def _legacy_workflow_controller(
             "blocked_reason": reason_code,
             "escalation_question": "Which exact legacy decision should be applied?",
             "escalation_options": [] if options is None else options,
+            "escalation_recommended_answer": recommended_answer,
+            "escalation_risk_level": risk_level,
             "recovery_instruction": RecoveryInstruction(
                 kind=recovery_kind,
                 reason_code=reason_code,
@@ -486,7 +713,7 @@ def _provider_routing_decision(
 def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     tmp_path: Path,
 ) -> None:
-    answer = "Use the attested public contract."
+    answer = "Hello, World!"
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
@@ -503,7 +730,12 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
         ),
     )
     routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+    )
     sealed_ids: list[str] = []
 
     def advance(_node, decision, **kwargs):
@@ -537,10 +769,994 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     assert resolved["id"] == sealed_ids[0]
     assert resolved["status"] == "resolved"
     assert resolved["answer_text"] == answer
+    assert resolved["recommendation_followed"] is True
+    assert resolved["override_reason"] is None
     provider.exec_agent.assert_called_once()
 
 
-def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
+def test_commander_resolution_persists_low_confidence_follow_audit(
+    tmp_path: Path,
+) -> None:
+    rationale = "Debt is authorized by the sealed evidence."
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    decision = store.load()["blocked_decision"]
+    assert decision["schema_version"] == 3
+    assert decision["resolution_rationale"] == rationale
+    assert decision["resolution_confidence"] == "low"
+    assert decision["recommendation_followed"] is True
+    assert decision["override_reason"] is None
+    provider.exec_agent.assert_called_once()
+
+
+def test_commander_override_uses_its_rationale_as_the_durable_reason(
+    tmp_path: Path,
+) -> None:
+    rationale = "The sealed evidence exposes a blocking contradiction."
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(
+            selected_option_id="reject",
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert (
+        controller.handle_human_input(_request(controller, store, policy))
+        is False
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["selected_option_id"] == "reject"
+    assert decision["resolution_rationale"] == rationale
+    assert decision["resolution_confidence"] == "low"
+    assert decision["recommendation_followed"] is False
+    assert decision["override_reason"] == rationale
+    provider.exec_agent.assert_called_once()
+
+
+def test_semi_resolution_copies_the_sealed_recommendation_audit(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="semi",
+    )
+    policy = controller._graph.get("checkpoint-plan").human_input_policies[0]
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    decision = store.load()["blocked_decision"]
+    assert decision["resolved_by"] == "semi"
+    assert decision["resolution_rationale"] == decision[
+        "recommendation_rationale"
+    ]
+    assert decision["resolution_confidence"] == decision[
+        "recommendation_confidence"
+    ]
+    assert decision["recommendation_followed"] is True
+    assert decision["override_reason"] is None
+    provider.exec_agent.assert_not_called()
+
+
+def test_banzai_human_only_free_text_waits_and_accepts_user_answer(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _request(controller, store, policy)
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs["human_input_initial_status"],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    ) is False
+
+    waiting = store.load()["blocked_decision"]
+    assert waiting["schema_version"] == 3
+    assert waiting["status"] == "awaiting_human"
+    assert waiting["automatic_eligible"] is False
+    provider.exec_agent.assert_not_called()
+
+    assert controller.resume_with_human_input("Use the public boundary.")
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["status"] == "resolved"
+    assert resolved["answer_text"] == "Use the public boundary."
+    assert resolved["resolved_by"] == "user"
+    assert resolved["resolution_rationale"] is None
+    assert resolved["resolution_confidence"] is None
+    assert resolved["recommendation_followed"] is None
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_v2_awaiting_human_choice_without_recommendation_remains_v2(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    created_at = "2026-08-20T09:30:00+00:00"
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-awaiting-choice",
+        status="awaiting_human",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=True,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=controller._graph,
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    restarted._human_input_registry = HumanInputPolicyRegistry((policy,))
+
+    assert restarted.resume_with_human_input("approve")
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 2
+    assert resolved["id"] == "dec-legacy-awaiting-choice"
+    assert resolved["created_at"] == created_at
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["resolved_by"] == "user"
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_status", ("pending", "resolving"))
+def test_legacy_v2_semi_resolution_remains_v2_without_invented_audit(
+    tmp_path: Path,
+    initial_status: str,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="semi",
+        policy=policy,
+    )
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-legacy-semi-{initial_status}",
+        status=initial_status,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="semi",
+        source_state_revision=1,
+        attempts=1 if initial_status == "resolving" else 0,
+        now="2026-08-20T09:45:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input()
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 2
+    assert resolved["id"] == decision["id"]
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["resolved_by"] == "semi"
+    assert "resolution_rationale" not in resolved
+    assert "resolution_confidence" not in resolved
+    provider.exec_agent.assert_not_called()
+
+
+def test_unreconstructable_pending_v2_banzai_fails_without_provider_dispatch(
+    tmp_path: Path,
+) -> None:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="operational",
+        semi_policy="auto_if_recommended_low_risk",
+        resolution_handler="clarification_resume",
+        allow_free_text=False,
+        allowed_phase_ids=frozenset({"phase1-investigate"}),
+        allowed_target_phases=frozenset({"phase1-what"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    created_at = "2026-08-20T10:15:00+00:00"
+    options = [
+        {
+            "id": "approve",
+            "label": "Approve",
+            "description": "Continue with the retained provider choice.",
+            "recommended": False,
+            "risk_level": "low",
+            "next_phase": "phase1-what",
+            "outcome": None,
+        }
+    ]
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-migration-failure",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained provider option should be applied?",
+        options=options,
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        attempts=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is False
+
+    failed_state = store.load()
+    failed = failed_state["blocked_decision"]
+    assert failed["schema_version"] == 2
+    assert failed["id"] == decision["id"]
+    assert failed["status"] == "failed"
+    assert failed["failure_code"] == "decision_recommendation_unavailable"
+    for field in (
+        "id",
+        "schema_version",
+        "source_kind",
+        "producer_id",
+        "source_phase",
+        "reason_code",
+        "classification",
+        "question",
+        "options",
+        "recommended_answer",
+        "risk_level",
+        "resolution_handler",
+        "autonomy_mode",
+        "source_state_revision",
+        "attempts",
+        "created_at",
+        "resolved_at",
+    ):
+        assert failed[field] == decision[field]
+    assert failed_state["blocked_reason"] == (
+        "decision_recommendation_unavailable"
+    )
+    assert failed_state["recovery_instruction"] == RecoveryInstruction(
+        kind=RecoveryKind.MANUAL_DIAGNOSIS,
+        reason_code=str(decision["reason_code"]),
+        phase="",
+        requires_human_input=False,
+        schema_version=2,
+        decision_id=str(decision["id"]),
+    ).to_dict()
+    provider.exec_agent.assert_not_called()
+
+
+def test_eligible_v2_migration_failure_reconstructs_replay_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    state = store.load()
+    decision = build_blocked_decision_v2(
+        decision_id="dec-eligible-v2-migration-failure",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained product boundary should be applied?",
+        options=[],
+        recommended_answer="Use the sealed evidence.",
+        risk_level="low",
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=state["state_revision"],
+        now="2026-08-23T12:00:00+00:00",
+    )
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        controller,
+        "_v2_migration_preserves_decision_contract",
+        lambda *_args: False,
+    )
+
+    assert controller.resume_pending_human_input() is False
+
+    failed = store.load()
+    assert failed["blocked_decision"]["status"] == "failed"
+    assert failed["phase"] == "phase1-investigate"
+    assert controller._v2_decision_automatic_eligible(decision) is True
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("legacy_outcome", "migrates"),
+    [(None, True), ("approved", False)],
+    ids=("canonical-null-outcome", "owned-non-null-outcome"),
+)
+def test_pending_v2_banzai_provider_choice_migration_preserves_outcome_ownership(
+    tmp_path: Path,
+    legacy_outcome: str | None,
+    migrates: bool,
+) -> None:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="operational",
+        semi_policy="auto_if_recommended_low_risk",
+        resolution_handler="clarification_resume",
+        allow_free_text=False,
+        allowed_phase_ids=frozenset({"phase1-investigate"}),
+        allowed_target_phases=frozenset({"phase1-what"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    rationale = "The sealed provider choice remains the bounded recommendation."
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id="approve",
+            rationale=rationale,
+            confidence="low",
+        ),
+    )
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-provider-choice-{legacy_outcome or 'null'}",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained provider choice should be applied?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue with the retained provider choice.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase1-what",
+                "outcome": legacy_outcome,
+            }
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now="2026-08-20T10:45:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is migrates
+
+    persisted = store.load()["blocked_decision"]
+    assert persisted["id"] == decision["id"]
+    if migrates:
+        assert persisted["schema_version"] == 3
+        assert persisted["status"] == "resolved"
+        assert persisted["selected_option_id"] == "approve"
+        assert persisted["recommendation_followed"] is True
+        assert persisted["resolution_rationale"] == rationale
+        assert persisted["options"][0]["outcome"] is None
+        provider.exec_agent.assert_called_once()
+    else:
+        assert persisted["schema_version"] == 2
+        assert persisted["status"] == "failed"
+        assert persisted["failure_code"] == (
+            "decision_recommendation_unavailable"
+        )
+        assert persisted["options"][0]["outcome"] == legacy_outcome
+        provider.exec_agent.assert_not_called()
+
+
+def test_pending_v2_banzai_human_only_migrates_to_v3_human_resume(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-banzai-human-only",
+        status="pending",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which retained product boundary should be applied?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        now="2026-08-20T11:00:00+00:00",
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input() is False
+
+    waiting = store.load()["blocked_decision"]
+    assert waiting["schema_version"] == 3
+    assert waiting["id"] == decision["id"]
+    assert waiting["status"] == "awaiting_human"
+    assert waiting["automatic_eligible"] is False
+    provider.exec_agent.assert_not_called()
+
+    assert controller.resume_with_human_input("Use the retained public boundary.")
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["id"] == decision["id"]
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by"] == "user"
+    assert resolved["recommendation_followed"] is None
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("initial_status", ("pending", "resolving"))
+def test_pending_or_resolving_v2_banzai_recovers_then_migrates_before_dispatch(
+    tmp_path: Path,
+    initial_status: str,
+) -> None:
+    policy = _choice_policy()
+    rationale = "The current workflow recommendation remains authoritative."
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            rationale=rationale,
+            confidence="medium",
+        ),
+    )
+    created_at = "2026-08-20T11:45:00+00:00"
+    decision = build_blocked_decision_v2(
+        decision_id="dec-legacy-banzai-migration",
+        status=initial_status,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="checkpoint-plan",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Approve or reject the retained plan?",
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in policy.options
+        ],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=1,
+        attempts=1,
+        now=created_at,
+    )
+    raw = store.load()
+    raw.update(
+        {
+            "status": "blocked",
+            "blocked_reason": decision["reason_code"],
+            "escalation_question": decision["question"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=str(decision["reason_code"]),
+                phase=str(decision["source_phase"]),
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert controller.resume_pending_human_input()
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["schema_version"] == 3
+    assert resolved["id"] == decision["id"]
+    assert resolved["created_at"] == created_at
+    assert resolved["attempts"] == 2
+    assert resolved["status"] == "resolved"
+    assert resolved["selected_option_id"] == "approve"
+    assert resolved["recommendation_followed"] is True
+    assert resolved["resolution_rationale"] == rationale
+    assert resolved["resolution_confidence"] == "medium"
+    provider.exec_agent.assert_called_once()
+
+
+def _controller_migration_prepared(
+    controller: SquadController,
+    store: SquadStateStore,
+    producer_id: str,
+):
+    registry = controller._human_input_registry
+    revision = store.load()["state_revision"]
+    question = f"Retain the current {producer_id} controller decision?"
+    if producer_id == "checkpoint-assess":
+        return prepare_controller_checkpoint_assessment_decision(
+            registry,
+            reason_code="checkpoint_assess_decision_required",
+            phase_id="checkpoint-assess",
+            question=question,
+            source_state_revision=revision,
+            authority_kind="ordinary_pass",
+            authority_evidence=(
+                RecommendationEvidence(
+                    id="checkpoint-assess:quality",
+                    kind="phase1_quality_certificate",
+                    reference="state:spec_quality_certificate",
+                    digest="c" * 64,
+                ),
+            ),
+        )
+    if producer_id == "phase_dispatch_limit":
+        candidate = _dispatch_cap_candidate()
+        return prepare_controller_phase_dispatch_limit_decision(
+            registry,
+            reason_code="phase_dispatch_limit",
+            phase_id="phase1-what",
+            question=question,
+            source_state_revision=revision,
+            option_contract=controller._dispatch_cap_options([candidate]),
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        producer_id,
+        producer_id,
+    )
+    extension_exhausted = producer_id == (
+        "proportional_quality_extension_exhausted"
+    )
+    return prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code=producer_id,
+        phase_id="phase1-why2",
+        question=question,
+        source_state_revision=revision,
+        repair_state=_proportional_repair_state(
+            extension_authorized=1 if extension_exhausted else 0,
+            extension_consumed=1 if extension_exhausted else 0,
+        ),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
+    )
+
+
+def _seal_legacy_controller_migration(
+    store: SquadStateStore,
+    prepared,
+) -> dict[str, object]:
+    decision = build_blocked_decision_v2(
+        decision_id=f"dec-migrate-{prepared.producer_id}",
+        status="pending",
+        source_kind=prepared.source_kind,
+        producer_id=prepared.producer_id,
+        source_phase=prepared.phase_id,
+        reason_code=prepared.reason_code,
+        classification=prepared.classification,
+        question=prepared.question,
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": False,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in prepared.options
+        ],
+        recommended_answer=prepared.recommended_answer,
+        risk_level=prepared.risk_level,
+        resolution_handler=prepared.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=prepared.source_state_revision,
+        now="2026-08-23T12:00:00+00:00",
+    )
+    state = store.load()
+    state.update(
+        {
+            "status": "blocked",
+            "phase": prepared.phase_id,
+            "blocked_reason": prepared.reason_code,
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code=prepared.reason_code,
+                phase=prepared.phase_id,
+                requires_human_input=False,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    return decision
+
+
+@pytest.mark.parametrize(
+    "producer_id",
+    (
+        "checkpoint-assess",
+        "phase_dispatch_limit",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    ),
+)
+def test_v2_controller_decision_restart_uses_registered_dynamic_preparer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    producer_id: str,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    setup_policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=setup_policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    if producer_id == "checkpoint-assess":
+        _seed_current_checkpoint_pass(monkeypatch, controller, store)
+        question = "Retain the current checkpoint-assess controller decision?"
+        prepared = controller._prepare_checkpoint_assessment_decision(
+            store.load(),
+            question=question,
+            source_state_revision=store.load()["state_revision"],
+        )
+    else:
+        if producer_id == "phase_dispatch_limit":
+            spec_dir = Path(str(store.load()["spec_dir"]))
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            (spec_dir / "issues.md").write_text(
+                """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+                encoding="utf-8",
+            )
+        prepared = _controller_migration_prepared(controller, store, producer_id)
+    decision = _seal_legacy_controller_migration(store, prepared)
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    if producer_id == "checkpoint-assess":
+        dynamic = MagicMock(
+            wraps=restarted._prepare_checkpoint_assessment_decision
+        )
+        monkeypatch.setattr(
+            restarted,
+            "_prepare_checkpoint_assessment_decision",
+            dynamic,
+        )
+    elif producer_id == "phase_dispatch_limit":
+        candidates = MagicMock(
+            wraps=restarted._banzai_issue_resolution_candidates
+        )
+        monkeypatch.setattr(
+            restarted,
+            "_banzai_issue_resolution_candidates",
+            candidates,
+        )
+        dynamic = candidates
+    else:
+        dynamic = MagicMock(return_value=(prepared, {}))
+        monkeypatch.setattr(
+            restarted,
+            "_prepare_proportional_quality_decision",
+            dynamic,
+        )
+
+    migrated = restarted._migrate_pending_v2_banzai_decision(
+        store.load(),
+        decision,
+    )
+
+    assert migrated is not None
+    sealed = store.load()["blocked_decision"]
+    assert sealed["schema_version"] == 3
+    assert sealed["id"] == decision["id"]
+    assert sealed["producer_id"] == producer_id
+    assert sealed["recommended_option_id"] == prepared.recommended_option_id
+    dynamic.assert_called_once()
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "producer_id",
+    (
+        "checkpoint-assess",
+        "phase_dispatch_limit",
+        "proportional_quality_budget_exhausted",
+    ),
+)
+def test_v2_controller_migration_missing_or_stale_authority_fails_pre_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    producer_id: str,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    setup_policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=setup_policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    prepared = _controller_migration_prepared(controller, store, producer_id)
+    decision = _seal_legacy_controller_migration(store, prepared)
+    if producer_id == "checkpoint-assess":
+        dynamic = MagicMock(
+            wraps=controller._prepare_checkpoint_assessment_decision
+        )
+        monkeypatch.setattr(
+            controller,
+            "_prepare_checkpoint_assessment_decision",
+            dynamic,
+        )
+    elif producer_id == "phase_dispatch_limit":
+        dynamic = MagicMock(
+            wraps=controller._banzai_issue_resolution_candidates
+        )
+        monkeypatch.setattr(
+            controller,
+            "_banzai_issue_resolution_candidates",
+            dynamic,
+        )
+    else:
+        dynamic = MagicMock(
+            wraps=controller._prepare_proportional_quality_decision
+        )
+        monkeypatch.setattr(
+            controller,
+            "_prepare_proportional_quality_decision",
+            dynamic,
+        )
+
+    assert controller._migrate_pending_v2_banzai_decision(
+        store.load(),
+        decision,
+    ) is None
+
+    failed = store.load()["blocked_decision"]
+    assert failed["schema_version"] == 2
+    assert failed["status"] == "failed"
+    dynamic.assert_called_once()
+    provider.exec_agent.assert_not_called()
+
+
+def test_provider_v3_seal_survives_process_restart_with_same_decision_id(
     tmp_path: Path,
 ) -> None:
     answer = "Use the attested public contract."
@@ -556,7 +1772,12 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
         policy=policy,
     )
     routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+    )
     store.advance(
         policy.producer_id,
         policy.producer_id,
@@ -607,15 +1828,41 @@ def _cli_awaiting_human_controller(
         autonomy_mode="banzai",
         policy=policy,
     )
-    routing = _provider_routing_decision(store, policy)
-    request = _request(controller, store, policy)
-    store.advance(
-        policy.producer_id,
-        policy.producer_id,
-        routing,
-        human_input=request,
-        human_input_initial_status="awaiting_human",
+    state = store.load()
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-legacy-awaiting-human",
+        status="awaiting_human",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase=next(iter(policy.allowed_phase_ids)),
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which valid resolution should be applied?",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=int(state["state_revision"]),
     )
+    state.update(
+        {
+            "status": "blocked",
+            "blocked_reason": policy.reason_code,
+            "escalation_question": decision["question"],
+            "escalation_options": [],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code=policy.reason_code,
+                phase=str(decision["source_phase"]),
+                requires_human_input=True,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
     (tmp_path / ".git").mkdir(exist_ok=True)
     (tmp_path / "runs" / ".current").write_text(
         store.squad_dir.name,
@@ -651,7 +1898,11 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     assert decision_id in capsys.readouterr().out
     assert store.load()["blocked_decision"]["id"] == decision_id
 
-    answer = "Credentials are now available."
+    answer = (
+        "One static greeting; no auth, persistence, routing, backend, deployment, "
+        "or public hosting requirement; bootstrap is in scope; do not require "
+        "compliance scan, axe suite, or Playwright visual-regression work."
+    )
     _cmd_resume(
         [answer],
         project_root=tmp_path,
@@ -665,6 +1916,13 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     assert resumed["resolved_by"] == "user"
     clarification = Path(resumed_state["staging_dir"]) / "user-clarifications.md"
     assert answer in clarification.read_text(encoding="utf-8")
+    policy_path = Path(resumed_state["staging_dir"]) / "feature-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    assert policy["scope"]["deployment"] == "descoped"
+    assert policy["verification"]["accessibility_suite"] == "not_required"
+    assert resumed_state["feature_policy"] == policy
+    context = Path(resumed_state["context_dir"]) / "current-feature-context.md"
+    assert "Authoritative Feature Policy" in context.read_text(encoding="utf-8")
     provider.exec_agent.assert_not_called()
 
 
@@ -897,7 +2155,7 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     state = store.load()
     decision = state["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == producer_id
     assert decision["source_phase"] == phase_id
@@ -915,7 +2173,7 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     [
         ("guided", "awaiting_human", None, 0),
         ("semi", "awaiting_human", None, 0),
-        ("banzai", "resolved", "COMMANDER", 1),
+        ("banzai", "awaiting_human", None, 0),
     ],
 )
 def test_run_single_phase_adapts_active_exact_legacy_question_before_manual_mutation(
@@ -946,7 +2204,7 @@ def test_run_single_phase_adapts_active_exact_legacy_question_before_manual_muta
 
     state = store.load()
     decision = state["blocked_decision"]
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["status"] == expected_status
     assert decision["resolved_by"] == expected_resolver
@@ -1002,7 +2260,7 @@ def test_legacy_terminal_safeguard_adapts_from_exact_resume_phase(
 
     decision = store.load()["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == "why2_metric_stagnation"
     assert decision["source_phase"] == "phase1-why2"
@@ -1041,7 +2299,7 @@ def test_legacy_terminal_dispatch_cap_requires_exact_sealed_option(
 
     decision = store.load()["blocked_decision"]
     assert result.status == "blocked"
-    assert decision["schema_version"] == 2
+    assert decision["schema_version"] == 3
     assert decision["source_kind"] == "legacy_recovery"
     assert decision["producer_id"] == "phase_dispatch_limit"
     assert decision["source_phase"] == "phase1-what"
@@ -1298,7 +2556,7 @@ def test_legacy_adapter_leaves_re_schema_v1_state_untouched(
     provider.exec_agent.assert_not_called()
 
 
-def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
+def test_legacy_provider_restart_reuses_decision_id_after_v3_seal(
     tmp_path: Path,
 ) -> None:
     answer = "Use the public contract boundary."
@@ -1311,12 +2569,14 @@ def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
             selected_option_id=None,
             answer_text=answer,
         ),
+        recommended_answer=answer,
+        risk_level="low",
     )
     original_seal = store.set_human_input_decision
 
     def seal_then_crash(*args, **kwargs):
         original_seal(*args, **kwargs)
-        raise RuntimeError("simulated restart after v2 seal")
+        raise RuntimeError("simulated restart after v3 seal")
 
     store.set_human_input_decision = MagicMock(side_effect=seal_then_crash)
     with pytest.raises(RuntimeError, match="simulated restart"):
@@ -1641,12 +2901,13 @@ def test_task6_fix_round1_clarification_option_without_route_resumes_source(
     policy = replace(
         _free_text_policy(source_kind="legacy_recovery"),
         allow_free_text=False,
+        recommendation_mode="static",
         options=(
             HumanInputOption(
                 id="use-answer",
                 label="Use the supplied answer",
                 description="Resume from the sealed source phase.",
-                recommended=False,
+                recommended=True,
                 risk_level="low",
                 next_phase=None,
                 outcome=None,
@@ -1802,6 +3063,7 @@ def test_human_input_handler_gate_applies_declared_outcome(
 )
 def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     gate_id: str,
     mode: str,
     commander_option: str | None,
@@ -1820,6 +3082,8 @@ def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
         autonomy_mode=mode,
         provider_result=provider_result,
     )
+    if gate_id == "checkpoint-assess":
+        _seed_current_checkpoint_pass(monkeypatch, controller, store)
 
     controller._intercept_human_gate(controller._graph.get(gate_id))
 
@@ -1832,6 +3096,595 @@ def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
     assert provider.exec_agent.call_count == (
         1 if mode == "banzai" else 0
     )
+
+
+def test_checkpoint_assess_pass_and_lexicon_prepare_approve_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    _seed_current_checkpoint_pass(monkeypatch, controller, store)
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["recommended_option_id"] == "approve"
+    assert {evidence["kind"] for evidence in decision["recommendation_evidence"]} == {
+        "phase1_quality_certificate",
+        "spec_lexicon_pass",
+    }
+    assert decision["recommendation_authority"] == "controller_evidence"
+    provider.exec_agent.assert_called_once()
+
+
+def test_real_v3_debt_acceptance_persists_one_canonical_decision_postimage(
+    tmp_path: Path,
+) -> None:
+    _controller, store = _accept_real_v3_quality_debt(tmp_path)
+
+    state = store.load()
+    authorization = state["spec_quality_debt_authorization"]
+    debt_path = tmp_path / str(authorization["debt_artifact"])
+    debt = json.loads(debt_path.read_text(encoding="utf-8"))
+    resolved = state["blocked_decision"]
+    canonical = (
+        json.dumps(
+            resolved,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    assert resolved["schema_version"] == 3
+    assert resolved == authorization["resolved_decision"]
+    assert resolved == debt["resolved_decision"]
+    assert authorization["resolved_decision_sha256"] == hashlib.sha256(
+        canonical
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("tamper", ["embedded_decision", "completion"])
+def test_real_v3_debt_tampering_is_stale(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    _controller, store = _accept_real_v3_quality_debt(tmp_path)
+    state = store.load()
+    assert has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+    if tamper == "embedded_decision":
+        authorization = dict(state["spec_quality_debt_authorization"])
+        resolved = dict(authorization["resolved_decision"])
+        resolved["resolution_rationale"] = "Tampered audit rationale."
+        resolved["resolution_confidence"] = "low"
+        authorization["resolved_decision"] = resolved
+        state["spec_quality_debt_authorization"] = authorization
+    else:
+        completion = dict(state["last_human_input_completion"])
+        completion["receipts_sha256"] = "f" * 64
+        state["last_human_input_completion"] = completion
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_debt_acceptance_aborts_before_publication_on_postimage_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    before = store.load()
+    original_builder = squad_module.build_quality_debt_authorization
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        divergent = dict(authorization["resolved_decision"])
+        divergent.update(
+            {
+                "resolution_rationale": "Injected divergent audit.",
+                "resolution_confidence": "low",
+            }
+        )
+        divergent = validate_blocked_decision(divergent)
+        decision_bytes = (
+            json.dumps(
+                divergent,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        decision_digest = hashlib.sha256(decision_bytes).hexdigest()
+        for record in (authorization, debt):
+            record["resolved_decision"] = divergent
+            record["resolved_decision_sha256"] = decision_digest
+        debt_bytes = (
+            json.dumps(debt, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        authorization["debt_artifact_sha256"] = hashlib.sha256(
+            debt_bytes
+        ).hexdigest()
+        return replace(
+            prepared,
+            authorization=authorization,
+            debt=debt,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    state = store.load()
+    assert state == before
+    assert state["blocked_decision"]["status"] == "awaiting_human"
+    assert "spec_quality_debt_authorization" not in state
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+
+
+def test_debt_acceptance_aborts_on_completion_receipt_divergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    before = store.load()
+    original_builder = squad_module.build_quality_debt_authorization
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        for record in (authorization, debt):
+            binding = dict(record["resolution_completion"])
+            binding["completion_id"] = "f" * 32
+            record["resolution_completion"] = binding
+        debt_bytes = (
+            json.dumps(debt, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        authorization["debt_artifact_sha256"] = hashlib.sha256(
+            debt_bytes
+        ).hexdigest()
+        return replace(
+            prepared,
+            authorization=authorization,
+            debt=debt,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    state = store.load()
+    assert state == before
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not list((store.squad_dir / ".completion-outbox").iterdir())
+
+
+@pytest.mark.parametrize(
+    "divergence",
+    ["alternate_debt_path", "alternate_preimage", "extra_shared_field"],
+)
+def test_debt_acceptance_rejects_unbound_effect_postimage_before_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    divergence: str,
+) -> None:
+    controller, store = _prepare_real_v3_quality_debt(tmp_path)
+    state_path = store.squad_dir / "state.json"
+    before = state_path.read_bytes()
+    original_builder = squad_module.build_quality_debt_authorization
+    alternate_path = "specs/alternate/quality-debt.json"
+
+    def divergent_builder(*args, **kwargs):
+        prepared = original_builder(*args, **kwargs)
+        authorization = json.loads(json.dumps(prepared.authorization))
+        debt = json.loads(json.dumps(prepared.debt))
+        payload = json.loads(json.dumps(prepared.effect_payload()))
+        payload["authorization"] = authorization
+        payload["debt"] = debt
+        if divergence == "alternate_debt_path":
+            payload["debt_path"] = alternate_path
+        elif divergence == "alternate_preimage":
+            payload["previous_debt_artifact_sha256"] = "f" * 64
+        else:
+            authorization["injected_shared_field"] = "attacker-controlled"
+            debt["injected_shared_field"] = "attacker-controlled"
+            debt_bytes = (
+                json.dumps(debt, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            authorization["debt_artifact_sha256"] = hashlib.sha256(
+                debt_bytes
+            ).hexdigest()
+        return SimpleNamespace(
+            authorization=authorization,
+            debt=debt,
+            debt_path=prepared.debt_path,
+            effect_payload=lambda: payload,
+        )
+
+    monkeypatch.setattr(
+        squad_module,
+        "build_quality_debt_authorization",
+        divergent_builder,
+    )
+
+    with pytest.raises(StateAdvanceError, match="postimage"):
+        controller.resume_with_human_input("continue_with_debt")
+
+    assert state_path.read_bytes() == before
+    state = store.load()
+    assert "pending_controller_completion" not in state
+    assert not (Path(str(state["spec_dir"])) / "quality-debt.json").exists()
+    assert not (tmp_path / alternate_path).exists()
+    assert not list((store.squad_dir / ".completion-outbox").glob("*"))
+
+
+def test_real_debt_checkpoint_preparation_reuses_decision_slot_without_staling(
+    tmp_path: Path,
+) -> None:
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    controller, store = _accept_real_v3_quality_debt(tmp_path)
+    accepted = store.load()
+    debt_decision = accepted["blocked_decision"]
+    assert has_current_quality_debt_authorization(
+        accepted,
+        project_root=tmp_path,
+    )
+    _advance_real_debt_fixture_to_checkpoint(store)
+
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    checkpoint = store.load()
+    assert checkpoint["blocked_decision"]["id"] != debt_decision["id"]
+    assert checkpoint["blocked_decision"]["source_phase"] == (
+        "checkpoint-assess"
+    )
+    assert has_current_quality_debt_authorization(
+        checkpoint,
+        project_root=tmp_path,
+    )
+
+
+def test_real_debt_survives_checkpoint_reject_reset_and_fresh_approval(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_rewind, _cmd_status
+    from harness.phase_checkpoints import (
+        create_phase_checkpoint,
+        load_checkpoint_ledger,
+    )
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    controller, store = _accept_real_v3_quality_debt(tmp_path)
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+    _advance_real_debt_fixture_to_checkpoint(store)
+    checkpoint_state = store.load()
+    subprocess.run(
+        ["git", "branch", "-m", checkpoint_state["spec_id"]],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    active_spec_dir = Path(str(checkpoint_state["spec_dir"]))
+    if not active_spec_dir.is_absolute():
+        active_spec_dir = tmp_path / active_spec_dir
+    checkpoint = create_phase_checkpoint(
+        project_root=tmp_path,
+        spec_dir=active_spec_dir,
+        phase="phase1-lexicon",
+        next_phase="checkpoint-assess",
+        run_id=str(checkpoint_state["run_id"]),
+        spec_id=str(checkpoint_state["spec_id"]),
+        force_commit=True,
+    )
+    assert load_checkpoint_ledger(active_spec_dir).checkpoints[-1] == checkpoint
+
+    after_checkpoint = tmp_path / "after-checkpoint.txt"
+    after_checkpoint.write_text("must be removed by rewind\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", after_checkpoint.name],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "post-checkpoint evidence"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+    controller.resume_with_human_input("reject")
+    rejected = store.load()
+    assert rejected["phase"] == "terminal-blocked"
+    assert rejected["blocked_decision"]["selected_option_id"] == "reject"
+    assert has_current_quality_debt_authorization(
+        rejected,
+        project_root=tmp_path,
+    )
+
+    _cmd_status(tmp_path)
+    status_output = capsys.readouterr().out
+    command = next(
+        line.strip()
+        for line in status_output.splitlines()
+        if line.strip().startswith("echelon spec rewind ")
+    )
+    assert command == (
+        "echelon spec rewind phase1-lexicon "
+        "--next-phase checkpoint-assess --confirm"
+    )
+    _cmd_rewind(shlex.split(command)[3:], project_root=tmp_path)
+    rewind_output = capsys.readouterr().out
+    assert "REWIND COMPLETE" in rewind_output
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD^{commit}"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() == checkpoint.commit
+    assert not after_checkpoint.exists()
+    assert store.load()["phase"] == "phase1-lexicon"
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+
+    _advance_real_debt_fixture_to_checkpoint(store)
+    controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+    fresh = store.load()["blocked_decision"]
+    assert fresh["status"] == "awaiting_human"
+    assert fresh["selected_option_id"] is None
+    assert has_current_quality_debt_authorization(
+        store.load(),
+        project_root=tmp_path,
+    )
+
+    assert controller.resume_with_human_input("approve") is True
+    approved = store.load()
+    assert approved["phase"] == "phase2-decide"
+    assert approved["blocked_decision"]["selected_option_id"] == "approve"
+    assert has_current_quality_debt_authorization(
+        approved,
+        project_root=tmp_path,
+    )
+    assert controller._guard_phase1_quality_evidence("phase2-decide") == (
+        "phase2-decide"
+    )
+    assert store.load()["phase"] != "phase1-understanding"
+
+
+def test_checkpoint_assess_accepted_debt_keeps_fail_evidence_authorized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    resolver = _seed_current_checkpoint_debt(monkeypatch, store)
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert decision["recommended_option_id"] == "approve"
+    assert "accepted_with_debt" in decision["recommendation_rationale"]
+    assert resolver in decision["recommendation_rationale"]
+    assert any(
+        evidence["kind"] == "quality_gate_failure"
+        for evidence in decision["recommendation_evidence"]
+    )
+    prompt = provider.exec_agent.call_args.args[1]
+    assert prompt.index("## Authoritative Recommendation") < prompt.index(
+        "## Registered Context"
+    )
+    assert "authorized debt" in prompt
+    assert "quality_gate_failure" in prompt
+    assert "Verdict: FAIL" in prompt
+
+
+def test_checkpoint_assess_accepted_debt_reserves_raw_fail_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    _seed_current_checkpoint_debt(monkeypatch, store)
+    spec_dir = Path(str(store.load()["spec_dir"]))
+    (spec_dir / "spec.md").write_text(
+        "# Oversized specification\n" + ("x" * 1_000_000),
+        encoding="utf-8",
+    )
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    )
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert len(prompt.encode("utf-8")) <= (
+        squad_module.COMMANDER_DECISION_PROMPT_MAX_BYTES
+    )
+    assert "authorized debt" in prompt
+    assert "### File {spec_dir}/quality-gates.md" in prompt
+    assert "Verdict: FAIL" in prompt
+
+
+@pytest.mark.parametrize("authority_state", ("missing", "stale"))
+def test_checkpoint_assess_missing_or_stale_authority_blocks_before_provider(
+    tmp_path: Path,
+    authority_state: str,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-assess",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    if authority_state == "stale":
+        state = store.load()
+        state["completed_phases"] = ["phase1-why2"]
+        state["spec_quality_certificate"] = {
+            "schema_version": 2,
+            "status": "passed",
+            "source_path": "spec/spec.md",
+            "source_sha256": "0" * 64,
+            "sage_evidence": "spec/issues.md",
+            "sage_evidence_sha256": "0" * 64,
+            "sage_verdict": "PASS",
+        }
+        store.save(state)
+    before_revision = store.load()["state_revision"]
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    ) is False
+
+    state = store.load()
+    assert state["state_revision"] == before_revision + 1
+    assert state["status"] == "blocked"
+    assert state["phase"] == "checkpoint-assess"
+    assert state["blocked_reason"] == "decision_recommendation_unavailable"
+    assert state["recovery_instruction"] == RecoveryInstruction(
+        kind=RecoveryKind.RETRY_PHASE,
+        reason_code="decision_recommendation_unavailable",
+        phase="checkpoint-assess",
+        requires_human_input=False,
+    ).to_dict()
+    assert "blocked_decision" not in state
+    provider.exec_agent.assert_not_called()
+
+
+def test_checkpoint_assess_stale_debt_retires_resolved_authority_for_restart(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id="checkpoint-plan",
+        autonomy_mode="banzai",
+        provider_result=_decision_result(selected_option_id="approve"),
+    )
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-plan")
+    )
+    resolved = validate_blocked_decision(
+        store.load()["blocked_decision"]
+    )
+    assert resolved["schema_version"] == 3
+    assert resolved["status"] == "resolved"
+
+    state = store.load()
+    state["phase"] = "checkpoint-assess"
+    stale_authorization = {
+        "schema_version": 1,
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "decision_id": resolved["id"],
+        "debt_artifact": "spec/quality-debt.json",
+        "debt_artifact_sha256": "4" * 64,
+        "resolved_decision": resolved,
+        "resolved_decision_sha256": "5" * 64,
+    }
+    state["spec_quality_debt_authorization"] = stale_authorization
+    store.save(state)
+    provider.exec_agent.reset_mock()
+
+    assert controller._intercept_human_gate(
+        controller._graph.get("checkpoint-assess")
+    ) is False
+
+    persisted = store.load()
+    assert persisted["status"] == "blocked"
+    assert persisted["phase"] == "checkpoint-assess"
+    assert persisted["blocked_reason"] == (
+        "decision_recommendation_unavailable"
+    )
+    assert "blocked_decision" not in persisted
+    assert persisted["spec_quality_debt_authorization"] == (
+        stale_authorization
+    )
+    provider.exec_agent.assert_not_called()
+
+    restarted_store = SquadStateStore(store.squad_dir)
+    restarted_provider = MagicMock()
+    restarted = SquadController(
+        provider=restarted_provider,
+        state_store=restarted_store,
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+    restarted_state = restarted_store.load()
+    assert restarted_state == persisted
+    recovery = validate_recovery_instruction(
+        restarted_state["recovery_instruction"]
+    )
+    assert recovery.kind is RecoveryKind.RETRY_PHASE
+    assert recovery.phase == "checkpoint-assess"
+    assert restarted.resume_pending_human_input() is False
+    assert restarted_store.load() == persisted
+    restarted_provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -2062,6 +3915,88 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
 
 
+def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corridor(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase3-tasks-lexicon",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset(
+            {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+        ),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Coverage handoff is stale
+
+- **Responsible agent:** SENTINEL
+- **Action Required:** Amend coverage-map.md from the current task plan.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Align coverage evidence with T-009, T-012, and T-013.
+- **Evidence basis:** Current tasks.md and dependencies.md.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase"] = "phase3-tasks-lexicon"
+    state["phase_dispatch_counts"] = {
+        "phase1-tracker": 2,
+        "phase3-how": 4,
+        "phase3-sentinel": 5,
+        "phase3-plan": 6,
+        "phase3-tasks-lexicon": 6,
+        "phase3-understanding": 4,
+        "phase3-consensus": 4,
+        "phase3-consensus-tasks-lexicon": 4,
+    }
+    store.save(state)
+
+    candidates = controller._banzai_issue_resolution_candidates(store.load())
+    assert candidates[0]["repair_phase"] == "phase3-sentinel"
+    options = controller._dispatch_cap_options(candidates)
+    assert options[0].next_phase == "phase3-sentinel"
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        tuple(candidates),
+        phase_id="phase3-tasks-lexicon",
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    resolved = store.load()
+    assert resolved["phase"] == "phase3-sentinel"
+    assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 2}
+    assert resolved["issue_resolution_ledger"]["ISS-001"]["repair_phase"] == (
+        "phase3-sentinel"
+    )
+    assert resolved["issue_resolution_recovery"]["to_phase"] == "phase3-sentinel"
+    assert resolved["phase_dispatch_limit_recovery"]["phase"] == (
+        "phase3-tasks-lexicon"
+    )
+
+
 def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     tmp_path: Path,
 ) -> None:
@@ -2187,6 +4122,89 @@ def test_dispatch_cap_accepts_legacy_candidate_description(
         ),
     )
     assert store.load()["selected_issue_resolution"] == "ISS-001"
+
+
+def test_dispatch_cap_accepts_pending_schema1_reference_without_route_rewrite(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase3-tasks-lexicon",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset(
+            {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+        ),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+- **Responsible agent:** SENTINEL
+- **Action Required:** Repair the test handoff.
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase"] = "phase3-tasks-lexicon"
+    store.save(state)
+    candidate = _dispatch_cap_candidate()
+    legacy_reference = json.dumps(
+        {
+            "evidence_sha256": controller._dispatch_cap_candidate_digest(
+                candidate
+            ),
+            "issue_id": candidate["issue_id"],
+            "schema_version": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    option = HumanInputOption(
+        id=candidate["issue_id"],
+        label=f"{candidate['issue_id']}: {candidate['title']}",
+        description=legacy_reference,
+        recommended=False,
+        risk_level="medium",
+        next_phase="phase1-what",
+        outcome=None,
+    )
+    request = controller._human_input_registry.prepare_controller(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase3-tasks-lexicon",
+        reason_code=policy.reason_code,
+        question="Select one sealed evidence-backed issue resolution.",
+        source_state_revision=store.load()["state_revision"],
+        option_contract=(option,),
+    )
+    store.set_human_input_decision(request, initial_status="awaiting_human")
+    sealed = store.load()
+
+    assert controller.apply_human_input_resolution(
+        sealed["blocked_decision"]["id"],
+        expected_state_revision=sealed["state_revision"],
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    assert store.load()["phase"] == "phase1-what"
 
 
 def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
@@ -2341,12 +4359,13 @@ def test_human_input_handler_invalid_resolution_writes_nothing(
                     id="missing",
                     label="Missing",
                     description="Route outside the graph.",
-                    recommended=False,
+                    recommended=True,
                     risk_level="low",
                     next_phase="missing-phase",
                     outcome=None,
                 ),
             ),
+            recommendation_mode="static",
         )
     elif fault == "outcome":
         base = _choice_policy()
@@ -2464,9 +4483,11 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     assert request.reason_code == "phase_dispatch_limit"
     assert request.phase_id == "phase1-what"
     assert request.source_state_revision == store.load()["state_revision"]
-    assert request.options == controller._dispatch_cap_options([
-        _dispatch_cap_candidate(),
-    ])
+    assert request.recommended_option_id == "ISS-001"
+    assert [option.id for option in request.options if option.recommended] == [
+        "ISS-001"
+    ]
+    assert "first eligible entry" in request.recommendation_rationale
     assert call.kwargs == {}
     provider.exec_agent.assert_not_called()
 
@@ -2499,10 +4520,12 @@ def test_dispatch_cap_options_reference_large_evidence() -> None:
     assert set(reference) == {
         "evidence_sha256",
         "issue_id",
+        "repair_phase",
         "schema_version",
     }
-    assert reference["schema_version"] == 1
+    assert reference["schema_version"] == 2
     assert reference["issue_id"] == "ISS-001"
+    assert reference["repair_phase"] == "phase1-what"
     assert len(reference["evidence_sha256"]) == 64
 
 
@@ -3053,7 +5076,6 @@ def test_mode_matrix_routes_from_the_sealed_autonomy_mode(
         ("medium", "low", True, "auto_if_recommended_low_risk", "operational", False),
         ("low", "high", True, "auto_if_recommended_low_risk", "operational", True),
         (None, None, True, "auto_if_recommended_low_risk", "operational", False),
-        ("low", None, False, "auto_if_recommended_low_risk", "operational", False),
         ("low", "low", True, "require_human", "operational", False),
         ("low", "low", True, "auto_if_recommended_low_risk", "material", False),
     ],
@@ -3187,12 +5209,11 @@ def test_commander_context_contains_only_policy_declared_state_and_files(
     state = store.load()
     state["secret_state"] = "UNREGISTERED STATE"
     store.save(state)
-    request = _request(
+    request = _automatic_free_text_request(
         controller,
         store,
         policy,
         recommended_answer="Use the registered evidence.",
-        risk_level="medium",
     )
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
@@ -3225,7 +5246,7 @@ def test_commander_context_rejects_symlink_escape_from_declared_root(
     outside.write_text("OUTSIDE SECRET", encoding="utf-8")
     staging = Path(store.load()["staging_dir"])
     (staging / "escape.md").symlink_to(outside)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
 
@@ -3257,7 +5278,7 @@ def test_commander_context_rejects_parent_symlink_swap_during_open(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "evidence.md").write_text("OUTSIDE", encoding="utf-8")
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     original_open = squad_module.os.open
@@ -3316,7 +5337,7 @@ def test_commander_context_rejects_tampered_persisted_roots_before_claim(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
 
     failed = store.load()
@@ -3351,7 +5372,7 @@ def test_commander_context_rejects_mismatched_spec_identity_before_claim(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
 
     failed = store.load()
@@ -3383,7 +5404,7 @@ def test_commander_context_setup_failure_is_stable_across_restart(
     store.save(state)
 
     assert controller.handle_human_input(
-        _request(controller, store, policy)
+        _automatic_free_text_request(controller, store, policy)
     ) is False
     before_restart = store.load()
     restarted_provider = MagicMock()
@@ -3419,7 +5440,7 @@ def test_commander_context_reads_only_the_remaining_aggregate_file_budget(
     )
     staging = Path(store.load()["staging_dir"])
     (staging / "oversized.md").write_bytes(b"x" * 1_000_000)
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     original_read = squad_module.os.read
@@ -3455,7 +5476,7 @@ def test_commander_context_bounds_state_before_full_json_materialization(
         autonomy_mode="banzai",
         policy=policy,
     )
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
     huge_state_value = "s" * 1_000_000
@@ -3496,7 +5517,7 @@ def test_commander_context_bounds_the_complete_utf8_prompt(
     )
     staging = Path(store.load()["staging_dir"])
     (staging / "large.md").write_text("ž" * 40_000, encoding="utf-8")
-    request = _request(controller, store, policy)
+    request = _automatic_free_text_request(controller, store, policy)
     store.set_human_input_decision(request, initial_status="pending")
     state = store.load()
 
@@ -3540,6 +5561,40 @@ def test_commander_runtime_prompt_contains_the_complete_strict_contract(
     assert "exactly one of selected_option_id or answer_text" in prompt
     assert "Do not ask another question" in prompt
     assert "Do not write files or mutate state" in prompt
+
+
+def test_commander_free_text_prompt_requires_exact_recommendation_copy(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer="Hello, World!",
+    )
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+
+    prompt = controller._render_commander_decision_prompt(
+        state["blocked_decision"],
+        policy,
+        state,
+    )
+
+    assert (
+        "When following a free-text recommended_answer, copy its exact value "
+        "into answer_text, character for character."
+    ) in prompt
+    assert (
+        "Any different answer_text is an override; explain that difference "
+        "in rationale."
+    ) in prompt
 
 
 def test_commander_invalid_result_retries_once_after_a_fresh_claim(
@@ -3617,17 +5672,16 @@ def test_task6_fix_round1_commander_invalid_dispatch_cap_answer_consumes_attempt
     state = store.load()
     state["phase_dispatch_counts"] = {"phase1-what": 6}
     store.save(state)
-    request = controller._human_input_registry.prepare(
+    request = controller._human_input_registry.prepare_controller(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
         phase_id="phase1-what",
         reason_code=policy.reason_code,
         question="Select one sealed evidence-backed issue resolution.",
         source_state_revision=store.load()["state_revision"],
-    )
-    request = replace(
-        request,
-        options=(_dispatch_cap_option(_dispatch_cap_candidate()),),
+        option_contract=(
+            _dispatch_cap_option(_dispatch_cap_candidate()),
+        ),
     )
 
     assert controller.handle_human_input(request) is (not invalid_second_answer)
@@ -3662,17 +5716,18 @@ def test_task6_fix_round1_commander_semantic_apply_error_consumes_attempts(
         context_state_keys=("phase",),
         context_paths=(),
         options=(
-            HumanInputOption(
-                id="missing",
-                label="Missing route",
-                description="A strictly shaped but semantically invalid route.",
-                recommended=False,
-                risk_level="medium",
-                next_phase="missing-phase",
-                outcome=None,
+                HumanInputOption(
+                    id="missing",
+                    label="Missing route",
+                    description="A strictly shaped but semantically invalid route.",
+                    recommended=True,
+                    risk_level="low",
+                    next_phase="missing-phase",
+                    outcome=None,
+                ),
             ),
-        ),
-    )
+            recommendation_mode="static",
+        )
     first = _decision_result(selected_option_id="missing")
     first.token_usage = 3
     second = _decision_result(selected_option_id="missing")
@@ -3947,9 +6002,9 @@ def test_commander_resume_recovers_interrupted_resolution_before_claim(
     original_recover = store.recover_interrupted_human_input_decision
     original_claim = store.claim_human_input_decision
 
-    def recover():
+    def recover(**kwargs):
         events.append("recover")
-        return original_recover()
+        return original_recover(**kwargs)
 
     def claim(*args, **kwargs):
         events.append("claim")
@@ -4531,13 +6586,22 @@ def test_material_proportional_quality_decision_status_is_autonomy_bounded(
         reason_code,
         reason_code,
     )
-    request = registry.prepare(
+    extension_exhausted = (
+        reason_code == "proportional_quality_extension_exhausted"
+    )
+    request = registry.prepare_controller(
         source_kind="controller_safeguard",
         producer_id=policy.producer_id,
         phase_id="phase1-why2",
         reason_code=policy.reason_code,
         question="Choose how to resolve the exhausted proportional quality budget.",
         source_state_revision=12,
+        repair_state=_proportional_repair_state(
+            extension_authorized=1 if extension_exhausted else 0,
+            extension_consumed=1 if extension_exhausted else 0,
+        ),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
     )
 
     assert select_initial_decision_status(autonomy_mode, policy, request) == (

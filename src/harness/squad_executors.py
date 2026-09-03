@@ -35,6 +35,7 @@ from harness.agent_context import (
     write_context_budget_report,
 )
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.stack_contract import render_stack_contract
 from harness.state_transaction_namespace import store_owned_update_keys
 from harness.stacks.context import build_stack_context
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
@@ -546,6 +547,27 @@ def _render_product_input_context(state: dict) -> str:
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_controller_owned_prompt_context(state: dict) -> str:
+    """Render immutable run inputs shared by every provider dispatch."""
+    stack_context = render_stack_contract(state.get("stack_contract"))
+    staging_dir = state.get("staging_dir")
+    if not isinstance(staging_dir, str) or not staging_dir:
+        return stack_context
+    receipt_path = Path(staging_dir) / "user-clarifications.md"
+    try:
+        receipt = receipt_path.read_text(encoding="utf-8")
+    except OSError:
+        return stack_context
+    if not receipt.strip():
+        return stack_context
+    return (
+        stack_context
+        + "## Resolved Clarifications\n\n"
+        + receipt.strip()
+        + "\n\n"
+    )
 
 
 def _render_controller_repair_context(state: dict) -> str:
@@ -2590,6 +2612,94 @@ class StagedParallelExecutor(PhaseExecutor):
     that bypasses Stage 1.
     """
 
+    @staticmethod
+    def _why3_repair_phase_from_issues(issues_text: str) -> str:
+        """Choose the earliest phase capable of repairing WHY3-owned issues."""
+        phase_order = (
+            "phase1-what",
+            "phase3-how",
+            "phase3-sentinel",
+            "phase3-plan",
+        )
+        owner_phases = {
+            "DISCOVER": "phase1-what",
+            "WHAT": "phase1-what",
+            "CARTOGRAPHER": "phase1-what",
+            "HOW": "phase3-how",
+            "ARCHITECT": "phase3-how",
+            "SENTINEL": "phase3-sentinel",
+            "PLAN": "phase3-plan",
+            "ORCHESTRATOR": "phase3-plan",
+        }
+        responsible_agents = re.findall(
+            r"^- \*\*Responsible agent:\*\*[ \t]*(.*?)[ \t]*$",
+            issues_text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        normalized_agents = tuple(
+            agent.strip().upper() for agent in responsible_agents
+        )
+        if normalized_agents:
+            if any(agent not in owner_phases for agent in normalized_agents):
+                return "phase1-what"
+            responsible_phases = {
+                owner_phases[agent] for agent in normalized_agents
+            }
+            for phase in phase_order:
+                if phase in responsible_phases:
+                    return phase
+            return "phase1-what"
+
+        action_fields = re.findall(
+            r"^- \*\*Action Required:\*\*[ \t]*(.+?)\s*$",
+            issues_text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        action_text = "\n".join(action_fields).upper()
+        for phase, agents in (
+            ("phase1-what", ("CARTOGRAPHER",)),
+            ("phase3-how", ("ARCHITECT",)),
+            ("phase3-sentinel", ("SENTINEL",)),
+            ("phase3-plan", ("ORCHESTRATOR",)),
+        ):
+            if any(
+                re.search(rf"\b{re.escape(agent)}\b", action_text)
+                for agent in agents
+            ):
+                return phase
+        return "phase1-what"
+
+    @staticmethod
+    def _normalize_completed_assess2_rejection(
+        label: str,
+        result: "SquadAgentResult",
+    ) -> "SquadAgentResult":
+        """Keep a completed ASSESS2 rejection distinct from executor failure.
+
+        Legacy GATEKEEPER prompts can report ``BLOCKED`` for both an incomplete
+        invocation and a completed feasibility rejection.  The latter carries
+        the controller-owned negative decision and repair target, so normalize
+        it before generic blocked-result handling can discard that outcome.
+        """
+        if (
+            label.strip().upper() != "ASSESS2"
+            or result.exit_code != 0
+            or result.timed_out
+            or result.verdict != "BLOCKED"
+        ):
+            return result
+        updates = result.state_updates
+        if (
+            updates.get("gate_decision") != "REJECTED"
+            or updates.get("phase_recommendation") != "phase3-how"
+            or not isinstance(updates.get("implementability_metrics"), dict)
+        ):
+            return result
+        payload = dict(result.echelon_result or {})
+        payload["verdict"] = "REJECTED"
+        result.echelon_result = payload
+        return result
+
     def _build_agent_prompt(
         self,
         agent_entry: dict,
@@ -2797,9 +2907,13 @@ class StagedParallelExecutor(PhaseExecutor):
 
             for future in as_completed(futures):
                 label, result_contract = futures[future]
+                raw_result = self._normalize_completed_assess2_rejection(
+                    label,
+                    future.result(),
+                )
                 result = self._validate_result_state_updates(
                     node,
-                    future.result(),
+                    raw_result,
                     result_contract=result_contract,
                     direct_state_write=True,
                 )

@@ -455,7 +455,7 @@ def test_delivery_run_routes_to_harness_run(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.unit
-def test_delivery_does_not_construct_provider_when_postgres_provisioning_is_missing(
+def test_delivery_does_not_construct_provider_when_phase_a_inputs_are_missing(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -487,12 +487,10 @@ def test_delivery_does_not_construct_provider_when_postgres_provisioning_is_miss
             _cmd_harness_run(["001-postgres"])
 
     assert exc.value.code == 1
-    gitops.assert_not_called()
     provider.assert_not_called()
     run_harness.assert_not_called()
     err = capsys.readouterr().err
-    assert "STACK_PROVISIONING_MISSING" in err
-    assert f"echelon stack provision --target {target.resolve()}" in err
+    assert "Phase A build inputs are not ready" in err
 
 
 @pytest.mark.unit
@@ -548,7 +546,7 @@ def test_delivery_provisioning_allows_external_database_url_to_reach_harness_bou
 
 @pytest.mark.unit
 @pytest.mark.parametrize("command", ["continue", "resume"])
-def test_delivery_provisioning_gate_blocks_continue_and_resume_before_provider_construction(
+def test_delivery_continue_and_resume_report_missing_state_before_provider_construction(
     command: str,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -587,7 +585,7 @@ def test_delivery_provisioning_gate_blocks_continue_and_resume_before_provider_c
     gitops.assert_not_called()
     provider.assert_not_called()
     run_harness.assert_not_called()
-    assert "STACK_PROVISIONING_MISSING" in capsys.readouterr().err
+    assert "No harness state found" in capsys.readouterr().err
 
 
 @pytest.mark.unit

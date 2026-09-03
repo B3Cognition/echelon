@@ -1,4 +1,4 @@
-schema_version: "1.0"
+schema_version: "1.2"
 stack:
   id: browser-3d-game
   name: Browser 3D Game
@@ -20,6 +20,19 @@ implies: []
 requires:
   commands:
     - pnpm
+runnability:
+  classification: user_facing
+  policy: required
+  runner: linux_container
+  capabilities:
+    - install
+    - provision
+    - start
+    - readiness
+    - primary_journey
+    - stop
+  required_observations:
+    - browser_dom
 detection:
   positive:
     technologies:

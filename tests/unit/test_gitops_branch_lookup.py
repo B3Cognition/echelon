@@ -56,3 +56,33 @@ def test_find_feature_branch_falls_back_to_numeric_alias(tmp_path: Path) -> None
         patch("harness.gitops._run_git", side_effect=list_branches),
     ):
         assert manager.find_feature_branch("906-cli-output-styling") == "906"
+
+
+@pytest.mark.unit
+def test_find_feature_branch_promotes_fetched_upstream_branch(tmp_path: Path) -> None:
+    """A local target's fetched canonical branch must become the delivery base."""
+    manager = _manager_with_mirror(tmp_path)
+    commands: list[list[str]] = []
+
+    def git_result(args: list[str], **_kwargs: object) -> CompletedProcess[str]:
+        commands.append(args)
+        if args[:3] == ["branch", "--remotes", "--list"]:
+            output = "  upstream/003-create-browser-first-3d\n" if args[-1] == "*/003-create-browser-first-3d" else ""
+            return CompletedProcess(args, 0, stdout=output, stderr="")
+        return CompletedProcess(args, 0, stdout="", stderr="")
+
+    with (
+        patch.object(manager, "fetch_mirror"),
+        patch("harness.gitops._run_git", side_effect=git_result),
+    ):
+        assert (
+            manager.find_feature_branch("003-create-browser-first-3d")
+            == "003-create-browser-first-3d"
+        )
+
+    assert [
+        "branch",
+        "--no-track",
+        "003-create-browser-first-3d",
+        "upstream/003-create-browser-first-3d",
+    ] in commands

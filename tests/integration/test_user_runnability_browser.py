@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+HELPER = ROOT / "runtime" / "scripts" / "user-runnability-browser.mjs"
+
+
+def _node() -> str:
+    executable = shutil.which("node")
+    if executable is None:
+        pytest.skip("Node.js is unavailable")
+    return executable
+
+
+def _write_fake_playwright_test(root: Path) -> None:
+    package = root / "node_modules" / "@playwright" / "test"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(
+        json.dumps(
+            {"name": "@playwright/test", "type": "module", "exports": "./index.js"}
+        ),
+        encoding="utf-8",
+    )
+    (package / "index.js").write_text(
+        """\
+const calls = [];
+const handlers = {};
+const attached = new Set();
+const locator = selector => ({
+  count: async () => attached.has(selector) ? 1 : 0,
+  isVisible: async () => { throw new Error('one-shot visibility check is forbidden'); },
+  waitFor: async options => {
+    calls.push(`waitFor:${options.state}`);
+    if (selector === '[data-fail]') {
+      await handlers.response?.({
+        status: () => 403,
+        url: () => 'http://127.0.0.1:4173/api/v1/collections',
+        request: () => ({ method: () => 'POST' }),
+      });
+      throw new Error('timed out waiting for confirmed state');
+    }
+    attached.add(selector);
+  },
+  textContent: async () => 'saved',
+  innerText: async () => 'Collection rejected. Inventory unconfirmed.',
+  click: async () => calls.push('click'),
+  fill: async value => calls.push(`fill:${value}`),
+  press: async key => calls.push(`press:${key}`),
+});
+const page = {
+  goto: async url => calls.push(`goto:${url}`),
+  locator,
+  on: (event, handler) => { handlers[event] = handler; },
+};
+const context = {
+  addInitScript: async (fn, values) => calls.push(`session:${Object.keys(values).join(',')}`),
+  newPage: async () => page,
+  close: async () => calls.push('context-close'),
+};
+export const chromium = {
+  launch: async () => ({
+    newContext: async options => { calls.push(`serviceWorkers:${options.serviceWorkers}`); return context; },
+    close: async () => calls.push('browser-close'),
+  }),
+};
+""",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.integration
+def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path) -> None:
+    _write_fake_playwright_test(tmp_path)
+    helper = tmp_path / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [["session-token", "token-value"]],
+                "steps": [
+                    {"action": "goto", "path": "/"},
+                    {"action": "press", "key": "ArrowUp", "repeat": 2},
+                    {"action": "expect", "selector": "canvas", "state": "visible"},
+                ],
+                "observations": [
+                    {
+                        "id": "checkpoint-visible",
+                        "kind": "browser_dom",
+                        "selector": "[data-checkpoint-state=saved]",
+                        "expectation": "present",
+                    }
+                ],
+                "observation_ids": ["checkpoint-visible"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "status": "passed",
+        "observations": {
+            "checkpoint-visible": {"passed": True, "actual": "present"}
+        },
+    }
+
+
+@pytest.mark.integration
+def test_browser_helper_rejects_untyped_candidate_script_action(tmp_path: Path) -> None:
+    _write_fake_playwright_test(tmp_path)
+    helper = tmp_path / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [],
+                "steps": [{"action": "evaluate", "value": "fetch('/mock')"}],
+                "observations": [],
+                "observation_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "unsupported browser action" in result.stderr
+
+
+@pytest.mark.integration
+def test_browser_helper_reports_failed_http_and_visible_page_state(tmp_path: Path) -> None:
+    _write_fake_playwright_test(tmp_path)
+    helper = tmp_path / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [],
+                "steps": [
+                    {"action": "goto", "path": "/"},
+                    {"action": "expect", "selector": "[data-fail]", "state": "visible"},
+                ],
+                "observations": [],
+                "observation_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "HTTP 403 POST http://127.0.0.1:4173/api/v1/collections" in result.stderr
+    assert "Collection rejected. Inventory unconfirmed." in result.stderr

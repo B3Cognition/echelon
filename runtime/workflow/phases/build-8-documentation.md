@@ -27,7 +27,7 @@ Use the Agent tool:
 
   <instructions>
   You are TECH WRITER. Read subagents/echelon.tech-writer.md for your complete protocol.
-  Decide whether documentation updates are required. Give every Ralph-supplied delivery_change_id a version-2 documented_changes disposition backed by repository evidence. If docs-verification-report.md contains structured repair findings, address every blocking finding before returning DONE. If required, update repo-root README.md and CHANGELOG.md. Treat README.md as a first-run manual for a first-time local user: include install, minimal configuration, first dry run, first real run, expected output, troubleshooting, and development commands when evidence supports them. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
+  Decide whether documentation updates are required. Give every Ralph-supplied delivery_change_id a version-2 documented_changes disposition backed by repository evidence. If docs-verification-report.md contains structured repair findings, address every blocking finding before returning DONE. If current user-runnability evidence is supplied, document its exact sandbox sequence and every declared local prerequisite, provision, readiness, prepare, verify, start, session, open, stop, cleanup, and consumer-boundary probe instruction; preserve an `unverified` local-journey status and do not infer substitutes from prose. If required, update repo-root README.md and CHANGELOG.md. Treat README.md as a first-run manual for a first-time local user: include install, minimal configuration, first dry run, first real run, expected output, troubleshooting, and development commands when evidence supports them. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
   </instructions>
   ```
 
@@ -40,5 +40,9 @@ echelon.tech-writer (TECH WRITER) must:
 3. Make a newly created or substantially rewritten `README.md` a first-run local manual, not just a product overview.
 4. Use Keep a Changelog-style `[Unreleased]` entries when `CHANGELOG.md` is created or updated.
 5. Return `echelon_result.verdict: DONE`.
+6. Treat `.echelon/runnability.yml` as the candidate contract and the current
+   immutable user-runnability report as the authority for commands that actually
+   passed and for separately declared local commands and boundary probes that
+   remain unverified.
 
 After TECH WRITER returns DONE, route to `build-8-verify-docs`. If DOCS VERIFIER returns FAIL or BLOCKED, dispatch TECH WRITER again with `docs-verification-report.md` as mandatory repair context before finalization.

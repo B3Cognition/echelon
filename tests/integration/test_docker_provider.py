@@ -23,6 +23,7 @@ import pytest
 
 from harness.docker_provider import (
     DockerWorktreeProvider,
+    _loopback_proxy_bypass,
     _generate_squid_conf,
     _check_credential_leak,
     _run_docker,
@@ -113,6 +114,21 @@ def test_generated_proxy_policy_allows_registry_without_host_network() -> None:
 def test_podman_proxy_uses_podman_egress_network() -> None:
     provider = DockerWorktreeProvider(container_cli="podman")
     assert provider._container_cli == "podman"
+
+
+def test_loopback_proxy_bypass_preserves_owner_hosts() -> None:
+    upper, lower = _loopback_proxy_bypass(
+        {"NO_PROXY": "owner.internal,127.0.0.1", "no_proxy": "legacy.internal"}
+    )
+
+    assert upper == lower
+    assert upper.split(",") == [
+        "owner.internal",
+        "127.0.0.1",
+        "legacy.internal",
+        "localhost",
+        "::1",
+    ]
 
 
 @pytest.mark.integration
@@ -215,6 +231,7 @@ class TestVerificationSidecars:
         provider._containers[handle.session_id] = type("Info", (), {
             "sandbox_id": "sandbox-id", "proxy_id": None,
             "network_name": "internal-net", "service_ids": [],
+            "service_ids_by_name": {},
         })()
         service = SandboxServiceSpec(service_name="postgres", image="postgres:16.4-alpine")
 
@@ -250,6 +267,7 @@ class TestVerificationSidecars:
         provider._containers[handle.session_id] = type("Info", (), {
             "sandbox_id": "sandbox-id", "proxy_id": None,
             "network_name": "internal-net", "service_ids": [],
+            "service_ids_by_name": {},
         })()
         service = SandboxServiceSpec(
             service_name="postgres", image="postgres:16.4-alpine",
@@ -291,6 +309,22 @@ def test_real_verification_sidecar_and_dependency_volume_are_isolated(
     volume_name = provider._containers[handle.session_id].volume_names[0]
     try:
         provider.start_services(handle, (service,))
+        database_probe = provider.exec_service(
+            handle,
+            "postgres",
+            (
+                "psql",
+                "-U",
+                "echelon",
+                "-d",
+                "echelon_verify",
+                "-Atqc",
+                "SELECT 1",
+            ),
+            timeout_ms=30_000,
+        )
+        assert database_probe.exit_code == 0, database_probe.stderr
+        assert database_probe.stdout.strip() == "1"
         result = provider.exec(
             handle,
             "test ! -e /workspace/node_modules/host-marker "

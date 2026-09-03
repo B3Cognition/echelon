@@ -3327,9 +3327,11 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
     assert allowed == {
         f"Read(/{run_root}/**)",
         f"Read(/{canonical_root}/**)",
+        f"Read(/{write_path})",
         f"Write(/{write_path})",
         f"Edit(/{write_path})",
     }
+    assert f'(allow file-read* (literal "{write_path}"))' in profile
 
 
 def test_claude_boundary_is_prompt_only_without_sandbox_for_ordinary_dispatch(
@@ -4247,6 +4249,67 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
     assert f'{json.dumps(str(forbidden_root))}="deny"' in profile
     assert f'{json.dumps(str(run_root))}="read"' in profile
     assert f'{json.dumps(str(write_path))}="write"' in profile
+
+
+def test_codex_backend_allows_explicit_contract_inside_forbidden_control_root(
+    tmp_path,
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    control_root = (tmp_path / ".echelon").resolve()
+    control_root.mkdir()
+    protected_config = control_root / "config.yml"
+    protected_config.write_text("protected\n", encoding="utf-8")
+    contract = control_root / "runnability.yml"
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Write the candidate contract.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_write_paths": [str(contract)],
+                "tool_forbidden_roots": [str(control_root)],
+                "tool_operational_metadata_paths": [str(control_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    profile = next(
+        value
+        for index, value in enumerate(command)
+        if command[index - 1 : index] == ["-c"]
+        and value.startswith("permissions.echelon_product_plane=")
+    )
+    assert f'{json.dumps(str(control_root))}="read"' in profile
+    assert f'{json.dumps(str(protected_config))}="deny"' in profile
+    assert f'{json.dumps(str(contract))}="write"' in profile
 
 
 def test_codex_backend_uses_native_sandbox_for_isolated_non_git_root(

@@ -221,6 +221,11 @@ def test_cli_bypass_entrypoints_reject_unresolved_v2_decisions(
             raise AssertionError("unresolved decision must block before provider dispatch")
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     if entrypoint == "next_phase":
         with pytest.raises(SystemExit) as exc:
             _cmd_run(
@@ -290,6 +295,11 @@ def test_continue_resolves_eligible_v2_decisions_through_real_controller(
             )
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     with pytest.raises((SystemExit, StateAdvanceError)):
         _cmd_continue(
             [],
@@ -329,6 +339,11 @@ def test_direct_run_with_a_different_message_preserves_active_v2_decision_run(
             )
 
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     with pytest.raises((SystemExit, StateAdvanceError)):
         _cmd_run(
             ["a different task"],
@@ -621,14 +636,16 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
     state = json.loads((run_dir / current / "state.json").read_text(encoding="utf-8"))
 
     assert state["phase"] == "phase1-what"
-    assert state["spec_dir"] == "specs/001-demo"
+    assert state["spec_dir"] == f"runs/{current}/specs/001-demo"
     assert state["published_spec_dir"] == "specs/001-demo"
     assert state["last_dispatch"]["phase_id"] == "phase1-constitution"
     assert state["last_dispatch"]["manual_phase_run"] is True
     assert state["manual_phase_runs"][0]["phase_id"] == "phase1-constitution"
     assert "phase1-constitution" in state["completed_phases"]
     assert (spec_dir / "constitution.md").read_text(encoding="utf-8").startswith("# Constitution")
-    assert (spec_dir / "ARTIFACTS.md").exists()
+    # Manual Phase A replays operate on a private run-local copy and must not
+    # publish controller-owned artifact indexes into the visible spec.
+    assert not (spec_dir / "ARTIFACTS.md").exists()
 
 
 @pytest.mark.parametrize(

@@ -75,7 +75,157 @@ def build_stack_context(
     )
     stack_context = render_resolved_markdown(resolved)
     preflight = render_preflight_markdown(run_stack_preflight(resolved))
-    return f"{contract}{stack_context.rstrip()}\n\n{preflight}"
+    runnability_schema = _render_runnability_contract_schema(resolved.runnability)
+    return (
+        f"{contract}{stack_context.rstrip()}"
+        f"{runnability_schema}\n\n{preflight}"
+    )
+
+
+def _render_runnability_contract_schema(runnability: object) -> str:
+    """Render the exact candidate contract shape for required delivery agents."""
+    if getattr(runnability, "policy", None) != "required":
+        return ""
+    capabilities = set(getattr(runnability, "capabilities", ()))
+    observations = set(getattr(runnability, "required_observations", ()))
+    real_services = ["web"]
+    if "postgres_query" in observations:
+        real_services.extend(("api", "postgres"))
+    service_list = ", ".join(real_services)
+    observation_rows: list[str] = []
+    persistence = ""
+    local_journey = ""
+    if "browser_dom" in observations:
+        observation_rows.extend(
+            (
+                "    - id: primary-view-visible",
+                "      kind: browser_dom",
+                "      selector: '<stable product selector>'",
+                "      expectation: present",
+            )
+        )
+    if "postgres_query" in observations:
+        observation_rows.extend(
+            (
+                "    - id: api-boundary-ready",
+                "      kind: http",
+                "      url: '${ECHELON_BASE_URL}/<real API route>'",
+                "      method: GET",
+                "      expectation: status_200",
+            )
+        )
+        observation_rows.extend(
+            (
+                "    - id: durable-marker-present",
+                "      kind: postgres_query",
+                "      statement: SELECT marker FROM <table> WHERE marker = $1",
+                "      parameters: ['${ECHELON_MARKER}']",
+                "      expectation: one_row_exact",
+            )
+        )
+        persistence = """
+persistence_probe:
+  restart_commands:
+    - <command that restarts only the application boundary>
+  observations:
+    - primary-view-visible
+    - durable-marker-present
+"""
+    if "local_journey" in capabilities:
+        local_journey = """
+local_journey:
+  prerequisites:
+    - <local prerequisite with minimum version>
+  provision_commands:
+    - <command that provisions required local services>
+  readiness_commands:
+    - <command that proves local services are ready>
+  prepare_commands:
+    - <command that prepares disposable local verification state>
+  verify_commands:
+    - <project verification command using the provisioned local services>
+  start_commands:
+    - <local application start command>
+  open_urls:
+    - <local URL the user opens>
+  stop_commands:
+    - <local application stop command>
+  cleanup_commands:
+    - <command that removes disposable local services and state>
+"""
+    if not observation_rows:
+        observation_rows.extend(
+            (
+                "    - id: primary-result",
+                "      kind: exec",
+                "      command: <harness-observable assertion command>",
+                "      expectation: exit_zero",
+            )
+        )
+    observation_block = "\n".join(observation_rows)
+    return f"""
+
+## Candidate Runnability Contract Schema
+
+For this required stack, create `.echelon/runnability.yml` using exactly the
+schema below. Replace angle-bracket placeholders with candidate-owned commands,
+requirement IDs, selectors, and SQL. Omit optional `identity` and
+`persistence_probe` only when the selected stack does not need them. Do not
+invent aliases such as `runtime`, `provision`, `bootstrap`, `start`, `restart`,
+`observations`, or `stop`; they are not root keys. The only supported template
+variables are `${{ECHELON_PORT}}`, `${{ECHELON_BASE_URL}}`, `${{ECHELON_MARKER}}`,
+and `${{ECHELON_SESSION_TOKEN}}`. Echelon injects selected-stack service
+environment such as `DATABASE_URL` directly into every command.
+
+```yaml
+schema_version: 1
+enabled: true
+install_commands:
+  - <project install command>
+bootstrap_commands:
+  - <migration or bootstrap command>
+start_commands:
+  - <foreground application start command using ${{ECHELON_PORT}}>
+readiness:
+  url: http://127.0.0.1:${{ECHELON_PORT}}/<readiness path>
+  timeout_ms: 120000
+identity:  # optional; omit when the journey needs no session identity
+  command: <command printing one JSON object>
+  stdout_json:
+    token: ECHELON_SESSION_TOKEN
+primary_journey:
+  kind: browser
+  url: ${{ECHELON_BASE_URL}}
+  requirements: [<FR-ID>]
+  real_services_required: [{service_list}]
+  session_storage: {{}}
+  steps:
+    - action: goto
+      path: /
+    - action: expect
+      selector: '<stable product selector>'
+      state: visible
+  observations:
+{observation_block}
+{persistence.rstrip()}
+stop_commands:
+  - <application stop command>
+{local_journey.rstrip()}
+```
+
+Journey step rules are exact: `goto` requires `path`; `click` and `fill` require
+`selector` (`fill` also requires `value`); `press` requires `key`;
+`expect` requires `selector` plus `state`; and `exec` requires `command`. A browser DOM
+observation supports `present`, `absent`, `visible`, `hidden`, or
+`text:<exact text>`. HTTP observations support `status_<code>` or
+`contains:<text>`. Postgres observations support `one_row_exact`, `one_row`, or
+`zero_rows`. An application restart must stop the old application boundary
+before starting it again; Echelon keeps provisioned sidecars alive.
+When `local_journey` is present, Echelon validates and reports its exact local
+instructions separately from the sandbox journey. No compatible runner executes these local commands
+in the current delivery environment, so evidence and README must
+describe them as unverified rather than claiming a local pass.
+""".rstrip()
 
 
 def resolve_target_archetypes(

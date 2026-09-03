@@ -36,6 +36,16 @@ def resolved_to_dict(resolved: ResolvedStacks) -> dict:
             "commands": resolved.required_commands,
             "registries": resolved.required_registries,
         },
+        "runnability": {
+            "classification": resolved.runnability.classification,
+            "policy": resolved.runnability.policy,
+            "runner": resolved.runnability.runner,
+            "capabilities": list(resolved.runnability.capabilities),
+            "required_observations": list(
+                resolved.runnability.required_observations
+            ),
+            "sources": list(resolved.runnability.sources),
+        },
         "context_files": resolved.context_files,
     }
 
@@ -70,6 +80,26 @@ def render_resolved_markdown(resolved: ResolvedStacks) -> str:
     )
     for key, capability in sorted(resolved.capabilities.items()):
         lines.append(f"| {key} | {capability.value} | {', '.join(capability.sources)} |")
+
+    if resolved.runnability.sources:
+        lines.extend(
+            [
+                "",
+                "## User Runnability",
+                "",
+                f"- Classification: `{resolved.runnability.classification}`",
+                f"- Policy: `{resolved.runnability.policy}`",
+                f"- Runner: `{resolved.runnability.runner or 'none'}`",
+                "- Capabilities: "
+                + (", ".join(resolved.runnability.capabilities) or "none"),
+                "- Required observations: "
+                + (
+                    ", ".join(resolved.runnability.required_observations)
+                    or "none"
+                ),
+                f"- Sources: {', '.join(resolved.runnability.sources)}",
+            ]
+        )
 
     if resolved.tools:
         lines.extend(["", "## Available Stack Tools", ""])

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+import hashlib
+import json
 from typing import Iterable
 
 from harness.stacks.errors import StackConflictError, StackResolutionError
-from harness.stacks.schema import StackDefinition, StackProvisioner, StackTool
+from harness.stacks.schema import (
+    StackDefinition,
+    StackProvisioner,
+    StackRunnability,
+    StackTool,
+)
 from harness.verification_plan import SandboxServiceSpec
 
 
@@ -21,6 +28,16 @@ class ResolvedStackProvisioner:
 
 
 @dataclass(frozen=True)
+class ResolvedRunnability:
+    classification: str = "non_runnable"
+    policy: str = "not_applicable"
+    runner: str | None = None
+    capabilities: tuple[str, ...] = ()
+    required_observations: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ResolvedStacks:
     selected_ids: list[str]
     resolved_ids: list[str]
@@ -32,6 +49,7 @@ class ResolvedStacks:
     context_files: list[str]
     provisioners: list[ResolvedStackProvisioner] = field(default_factory=list)
     services: list[SandboxServiceSpec] = field(default_factory=list)
+    runnability: ResolvedRunnability = field(default_factory=ResolvedRunnability)
 
 
 def resolve_stacks(
@@ -51,6 +69,7 @@ def resolve_stacks(
             context_files=[],
             provisioners=[],
             services=[],
+            runnability=ResolvedRunnability(),
         )
 
     normalized_selected = _normalize_stack_ids(selected_ids)
@@ -109,9 +128,11 @@ def resolve_stacks(
     provisioners: list[ResolvedStackProvisioner] = []
     services: list[SandboxServiceSpec] = []
     provisioners_by_id: dict[str, StackProvisioner] = {}
+    runnability = ResolvedRunnability()
 
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
+        runnability = _merge_runnability(runnability, stack_id, stack.runnability)
         for capability, value in stack.provides.items():
             existing = capabilities.get(capability)
             if existing is None:
@@ -171,7 +192,12 @@ def resolve_stacks(
                     SandboxServiceSpec(
                         service_name="postgres",
                         image="postgres:16.4-alpine",
-                        environment_names=("TEST_DATABASE_URL",),
+                        environment_names=tuple(
+                            _append_unique(
+                                list(provisioner.required_environment),
+                                "TEST_DATABASE_URL",
+                            )
+                        ),
                         health_command=("pg_isready", "-U", "echelon", "-d", "echelon_verify"),
                     )
                 )
@@ -187,6 +213,107 @@ def resolve_stacks(
         context_files=context_files,
         provisioners=provisioners,
         services=services,
+        runnability=runnability,
+    )
+
+
+def resolved_stack_contract_sha256(resolved: ResolvedStacks) -> str:
+    """Return a selection-order-independent digest of resolved stack behavior."""
+    payload = {
+        "selected_ids": sorted(resolved.selected_ids),
+        "resolved_ids": sorted(resolved.resolved_ids),
+        "capabilities": {
+            key: {
+                "value": capability.value,
+                "sources": sorted(capability.sources),
+            }
+            for key, capability in sorted(resolved.capabilities.items())
+        },
+        "tools": {
+            key: asdict(tool) for key, tool in sorted(resolved.tools.items())
+        },
+        "required_commands": sorted(resolved.required_commands),
+        "required_registries": sorted(resolved.required_registries),
+        "context_files": sorted(resolved.context_files),
+        "provisioners": sorted(
+            (
+                {
+                    "owner_stack_id": item.owner_stack_id,
+                    "provisioner": asdict(item.provisioner),
+                }
+                for item in resolved.provisioners
+            ),
+            key=lambda item: (
+                item["owner_stack_id"],
+                item["provisioner"]["id"],
+            ),
+        ),
+        "services": sorted(
+            (asdict(service) for service in resolved.services),
+            key=lambda item: (item["service_name"], item["image"]),
+        ),
+        "runnability": {
+            "classification": resolved.runnability.classification,
+            "policy": resolved.runnability.policy,
+            "runner": resolved.runnability.runner,
+            "capabilities": sorted(resolved.runnability.capabilities),
+            "required_observations": sorted(
+                resolved.runnability.required_observations
+            ),
+            "sources": sorted(resolved.runnability.sources),
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+_RUNNABILITY_POLICY_RANK = {
+    "not_applicable": 0,
+    "advisory": 1,
+    "required": 2,
+}
+
+
+def _merge_runnability(
+    current: ResolvedRunnability,
+    stack_id: str,
+    declared: StackRunnability,
+) -> ResolvedRunnability:
+    if declared == StackRunnability():
+        return current
+
+    if current.runner and declared.runner and current.runner != declared.runner:
+        raise StackConflictError(
+            "Stack runnability runner conflict: "
+            f"{current.runner!r} conflicts with {declared.runner!r} from {stack_id}"
+        )
+    policy = current.policy
+    if _RUNNABILITY_POLICY_RANK[declared.policy] > _RUNNABILITY_POLICY_RANK[policy]:
+        policy = declared.policy
+    classification = (
+        "user_facing"
+        if "user_facing" in {current.classification, declared.classification}
+        else "non_runnable"
+    )
+    return ResolvedRunnability(
+        classification=classification,
+        policy=policy,
+        runner=current.runner or declared.runner,
+        capabilities=tuple(
+            _append_unique_many(current.capabilities, declared.capabilities)
+        ),
+        required_observations=tuple(
+            _append_unique_many(
+                current.required_observations,
+                declared.required_observations,
+            )
+        ),
+        sources=tuple(_append_unique_many(current.sources, (stack_id,))),
     )
 
 
@@ -210,6 +337,16 @@ def _append_unique(values: list[str], value: str) -> list[str]:
     if value in values:
         return values
     return [*values, value]
+
+
+def _append_unique_many(
+    values: Iterable[str], additions: Iterable[str]
+) -> list[str]:
+    result = list(values)
+    for value in additions:
+        if value not in result:
+            result.append(value)
+    return result
 
 
 def _validate_archetypes(

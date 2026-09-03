@@ -89,17 +89,19 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
 
 
 @pytest.mark.unit
-def test_why3_fail_routes_to_what_not_how():
+def test_why3_fail_routes_to_the_controller_owned_repair_phase():
     node = _consensus_node()
     why3 = [
         t for t in node["transitions"]
         if "why3-verdict = FAIL" in t.get("condition", "")
     ]
     assert why3, "no transition keyed on 'why3-verdict = FAIL'"
-    assert all(t["to"] == "phase1-what" for t in why3), (
-        "WHY3 FAIL (spec quality) must re-dispatch CARTOGRAPHER via phase1-what, "
-        f"got {[t['to'] for t in why3]}"
-    )
+    targets = {t["to"] for t in why3}
+    assert {"phase1-what", "phase3-how"}.issubset(targets), targets
+    owned = [t for t in why3 if "why3_repair_phase" in t["condition"]]
+    assert len(owned) == 4
+    fallback = [t for t in why3 if "why3_repair_phase" not in t["condition"]]
+    assert [t["to"] for t in fallback] == ["phase1-what"]
     # Bounded re-dispatch: increment + cap, like every other re-dispatch edge.
     assert all(t.get("action") == "increment_iteration" for t in why3)
     assert all("iteration < max_iterations" in t.get("condition", "") for t in why3)
@@ -119,15 +121,13 @@ def test_assess2_rejected_still_routes_to_how():
 
 
 @pytest.mark.unit
-def test_no_bare_why3_fail_routes_to_how():
-    # THE REGRESSION: the old single transition sent why3 FAIL to phase3-how.
+def test_why3_task_repair_routes_to_how_only_when_explicitly_owned():
     node = _consensus_node()
     for t in node["transitions"]:
         if t["to"] == "phase3-how":
-            assert "why3-verdict = FAIL" not in t.get("condition", ""), (
-                "WHY3 FAIL must not route to phase3-how — that is the spec-side "
-                "non-convergence loop this guard exists to prevent"
-            )
+            condition = t.get("condition", "")
+            if "why3-verdict = FAIL" in condition:
+                assert "why3_repair_phase = phase3-how" in condition
 
 
 @pytest.mark.unit

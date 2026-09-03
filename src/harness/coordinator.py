@@ -92,19 +92,25 @@ def _serialize_verify_result(result: Any) -> dict[str, Any] | None:
     failures = []
     for failure in getattr(result, "failures", ()):
         category = getattr(failure, "category", "")
-        failures.append(
-            {
-                "category": getattr(category, "value", str(category)),
-                "id": str(getattr(failure, "id", "")),
-                "error": str(getattr(failure, "error", "")),
-            }
-        )
-    return {
+        serialized_failure = {
+            "category": getattr(category, "value", str(category)),
+            "id": str(getattr(failure, "id", "")),
+            "error": str(getattr(failure, "error", "")),
+        }
+        details = getattr(failure, "details", None)
+        if isinstance(details, dict) and details:
+            serialized_failure["details"] = dict(details)
+        failures.append(serialized_failure)
+    serialized = {
         "passed": bool(getattr(result, "passed", False)),
         "failures": failures,
         "duration_s": float(getattr(result, "duration_s", 0.0)),
         "token_usage": int(getattr(result, "token_usage", 0)),
     }
+    evidence = getattr(result, "verification_evidence", None)
+    if isinstance(evidence, dict) and evidence:
+        serialized["verification_evidence"] = dict(evidence)
+    return serialized
 
 
 def _pending_review_reentry(value: object) -> dict[str, object] | None:
@@ -352,6 +358,8 @@ class StrategyCoordinator:
                 "salvage_verified": state.get("salvage_verified"),
                 "escalation_file": state.get("escalation_file"),
                 "fulfillment_refresh": state.get("fulfillment_refresh"),
+                "user_runnability": state.get("user_runnability"),
+                "publication_failure": state.get("publication_failure"),
             }
 
         # Summary
@@ -371,7 +379,13 @@ class StrategyCoordinator:
     def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
         """Snapshot the delivery phases selected for a new run."""
         phases = ["implementation"]
-        if self._config.visual_tests.enabled and llm_provider is None:
+        runnability = getattr(self._config, "resolved_runnability", None)
+        stack_requires_visual = (
+            str(getattr(runnability, "policy", "not_applicable")) == "required"
+            and "browser_dom"
+            in tuple(getattr(runnability, "required_observations", ()) or ())
+        )
+        if self._config.visual_tests.enabled or stack_requires_visual:
             phases.append("visual")
         if self._config.review_loop.enabled and self._config.pr_host != "none":
             phases.append("review")
@@ -470,6 +484,13 @@ class StrategyCoordinator:
     @staticmethod
     def _implementation_from_state(state: Dict[str, Any]) -> ImplementationResult:
         """Project durable common delivery evidence into a phase result."""
+        final_verify = None
+        persisted_verify = state.get("last_verify_result")
+        if isinstance(persisted_verify, dict):
+            try:
+                final_verify = VerifyResult.from_dict(persisted_verify)
+            except Exception:
+                final_verify = None
         return ImplementationResult(
             status="verified",
             termination_reason=str(state.get("termination_reason") or "verified"),
@@ -477,7 +498,7 @@ class StrategyCoordinator:
             inner_iterations=int(state.get("inner_iter") or 0),
             pr_url=state.get("pr_url"),
             tokens_used=int(state.get("tokens_used") or 0),
-            final_verify=None,
+            final_verify=final_verify,
             branch=state.get("branch") or state.get("branch_name"),
         )
 
@@ -493,6 +514,19 @@ class StrategyCoordinator:
         if not verified_commit or self._worktree_head(worktree_path) != verified_commit:
             return "verified_provenance_mismatch"
         return None
+
+    @staticmethod
+    def _downstream_candidate_changed(state: Dict[str, Any]) -> bool:
+        """Detect an uncommitted provider repair left at a downstream block."""
+        worktree_text = state.get("registered_worktree")
+        expected = str(state.get("verified_product_fingerprint") or "")
+        if not isinstance(worktree_text, str) or not worktree_text or not expected:
+            return False
+        try:
+            current = product_evidence_fingerprint(Path(worktree_text))
+        except (OSError, RuntimeError, ValueError):
+            return False
+        return current != expected
 
     @staticmethod
     def _git_commit_is_ancestor(
@@ -676,6 +710,9 @@ class StrategyCoordinator:
     ) -> DeliveryResult:
         """Persist a recoverable phase failure with its exact restart point."""
         state = state_store.read()
+        effective_verify = (
+            final_verify if final_verify is not None else implementation.final_verify
+        )
         state_store.transition(
             "blocked",
             updates={
@@ -684,6 +721,7 @@ class StrategyCoordinator:
                 "pr_url": implementation.pr_url,
                 "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
                 "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
+                "last_verify_result": _serialize_verify_result(effective_verify),
             },
         )
         return DeliveryResult(
@@ -693,9 +731,48 @@ class StrategyCoordinator:
             inner_iterations=implementation.inner_iterations,
             pr_url=implementation.pr_url,
             tokens_used=tokens_used,
-            final_verify=final_verify if final_verify is not None else implementation.final_verify,
+            final_verify=effective_verify,
             blocked_phase=phase,  # type: ignore[arg-type]
             branch=implementation.branch,
+        )
+
+    @staticmethod
+    def _publish_deferred_target(
+        state_store: StateStore,
+        implementation: ImplementationResult,
+        publication_controller: RalphController | None,
+    ) -> bool:
+        """Publish the Phase 1 branch only when a deferred merge is recorded."""
+        state = state_store.read()
+        target_merge = state.get("target_merge")
+        if not (
+            isinstance(target_merge, dict)
+            and target_merge.get("status") == "deferred"
+        ):
+            return True
+        worktree_text = state.get("registered_worktree")
+        deferred_branch = str(
+            implementation.branch or target_merge.get("branch") or ""
+        )
+        if (
+            publication_controller is None
+            or not isinstance(worktree_text, str)
+            or not worktree_text
+            or not deferred_branch
+        ):
+            return False
+        publish_verify = implementation.final_verify
+        if publish_verify is None or not publish_verify.passed:
+            persisted_verify = target_merge.get("verify_result")
+            if isinstance(persisted_verify, dict):
+                try:
+                    publish_verify = VerifyResult.from_dict(persisted_verify)
+                except Exception:
+                    publish_verify = None
+        return publication_controller.publish_verified_branch(
+            worktree_text,
+            deferred_branch,
+            publish_verify,
         )
 
     def _finalize_delivery(
@@ -708,11 +785,24 @@ class StrategyCoordinator:
         outer_iterations: int,
         tokens_used: int,
         final_verify: Any,
+        publication_controller: RalphController | None = None,
     ) -> DeliveryResult:
         """Own single-target lifecycle publication and terminal convergence."""
         state = state_store.read()
         if state.get("status") != "finalizing":
             state_store.transition("finalizing", updates={"blocked_phase": None})
+        if len(declared_targets) != 1 and not self._publish_deferred_target(
+            state_store, implementation, publication_controller
+        ):
+            return self._persist_phase_block(
+                state_store,
+                phase="finalization",
+                reason="target_merge_failed",
+                implementation=implementation,
+                outer_iterations=outer_iterations,
+                tokens_used=tokens_used,
+                final_verify=final_verify,
+            )
         if len(declared_targets) == 1:
             try:
                 state = state_store.read()
@@ -749,6 +839,18 @@ class StrategyCoordinator:
                         state_store,
                         phase="finalization",
                         reason="verified_provenance_mismatch",
+                        implementation=implementation,
+                        outer_iterations=outer_iterations,
+                        tokens_used=tokens_used,
+                        final_verify=final_verify,
+                    )
+                if not self._publish_deferred_target(
+                    state_store, implementation, publication_controller
+                ):
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="finalization",
+                        reason="target_merge_failed",
                         implementation=implementation,
                         outer_iterations=outer_iterations,
                         tokens_used=tokens_used,
@@ -986,6 +1088,7 @@ class StrategyCoordinator:
                     existing.get("outer_iter", 0),
                 )
                 resume_phase = self._resume_phase(existing)
+                resume_updates: dict[str, object] = {}
                 implementation = self._implementation_from_state(existing)
                 enabled_phases = existing.get("enabled_phases")
                 if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
@@ -1008,14 +1111,23 @@ class StrategyCoordinator:
                             outer_iterations=implementation.outer_iterations,
                             tokens_used=implementation.tokens_used,
                         )
+                    if self._downstream_candidate_changed(existing):
+                        resume_phase = "implementation"
+                        resume_updates["downstream_reentry"] = {
+                            "from_phase": self._resume_phase(existing),
+                            "reason": "candidate_changed_after_checkpoint",
+                        }
+                        existing = dict(existing)
+                        existing["status"] = "running"
+                        existing["blocked_phase"] = None
                 resume_status = {
                     "implementation": "running",
                     "visual": "validating",
                     "review": "reviewing",
                     "finalization": "finalizing",
                 }[resume_phase]
-                if existing_status != resume_status:
-                    state_store.transition(resume_status)
+                if existing_status != resume_status or resume_updates:
+                    state_store.transition(resume_status, updates=resume_updates)
             elif should_resume_blocked:
                 logger.info(
                     "[%s/%s] Resuming from blocked state (outer=%s)",
@@ -1023,6 +1135,8 @@ class StrategyCoordinator:
                     existing.get("outer_iter", 0),
                 )
                 resume_phase = self._resume_phase(existing)
+                resume_updates = {}
+                transitioned_for_reentry = False
                 implementation = self._implementation_from_state(existing)
                 enabled_phases = existing.get("enabled_phases")
                 if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
@@ -1045,12 +1159,34 @@ class StrategyCoordinator:
                             outer_iterations=implementation.outer_iterations,
                             tokens_used=implementation.tokens_used,
                         )
-                state_store.transition({
-                    "implementation": "running",
-                    "visual": "validating",
-                    "review": "reviewing",
-                    "finalization": "finalizing",
-                }[resume_phase])
+                    if self._downstream_candidate_changed(existing):
+                        downstream_phase = resume_phase
+                        resume_phase = "implementation"
+                        resume_updates["downstream_reentry"] = {
+                            "from_phase": downstream_phase,
+                            "reason": "candidate_changed_after_checkpoint",
+                        }
+                        state_store.transition(
+                            {
+                                "visual": "validating",
+                                "review": "reviewing",
+                            }[downstream_phase],
+                            updates=resume_updates,
+                        )
+                        state_store.transition(
+                            "running", updates={"blocked_phase": None}
+                        )
+                        transitioned_for_reentry = True
+                        existing = dict(existing)
+                        existing["status"] = "running"
+                        existing["blocked_phase"] = None
+                if not transitioned_for_reentry:
+                    state_store.transition({
+                        "implementation": "running",
+                        "visual": "validating",
+                        "review": "reviewing",
+                        "finalization": "finalizing",
+                    }[resume_phase], updates=resume_updates)
             elif not pending_effects_only_resume:
                 state_store.initialize(
                     run_id=run_id,
@@ -1097,6 +1233,16 @@ class StrategyCoordinator:
             else:
                 build_prompt = arguments
 
+            controller_state = state_store.read()
+            downstream_reentry = controller_state.get("downstream_reentry")
+            resume_repaired_worktree = (
+                str(controller_state.get("registered_worktree") or "") or None
+                if isinstance(downstream_reentry, dict)
+                and downstream_reentry.get("reason")
+                == "candidate_changed_after_checkpoint"
+                and not downstream_reentry.get("consumed")
+                else None
+            )
             controller = RalphController(
                 provider=self._provider,
                 gitops=self._gitops,
@@ -1114,6 +1260,11 @@ class StrategyCoordinator:
                     or pending_effects_only_resume
                 ),
                 fresh_branch_base=self._fresh_branch_bases.get(strategy_id),
+                defer_target_merge=any(
+                    phase in {"visual", "review"}
+                    for phase in controller_state.get("enabled_phases", [])
+                ),
+                resume_worktree_path=resume_repaired_worktree,
             )
 
             pending_reentry = _pending_review_reentry(
@@ -1250,10 +1401,8 @@ class StrategyCoordinator:
             visual_reentry_block: DeliveryResult | None = None
             visual_iterations = 0
             visual_tokens = 0
-            # Phase 2: visual loop — only when Phase 1 verified via Docker sandbox.
-            # Skipped when LLM provider ran Phase 1: the LLM already verified tests
-            # locally (including Playwright if present), and the Docker visual loop
-            # has no access to the LLM-managed worktree after it is committed.
+            # Phase 2 is harness-owned. A coding provider's self-reported browser
+            # checks never substitute for deterministic sandbox Playwright evidence.
             visual_controller = (
                 VisualRalphController(
                     provider=self._provider,
@@ -1261,6 +1410,22 @@ class StrategyCoordinator:
                     spec_id=intent.spec_id,
                     strategy_id=strategy_id,
                     base_dir=self._base_dir,
+                    build_id=self._build_id,
+                    sandbox_spec_factory=lambda worktree: controller._build_sandbox_spec(
+                        worktree, 0
+                    ),
+                    feedback_runner=lambda handle, worktree, verify, evidence_paths: (
+                        controller.run_downstream_feedback(
+                            handle=handle,
+                            worktree_path=worktree,
+                            verify_result=verify,
+                            build_command=spec.build_command,
+                            strategy_context=strategy_context,
+                            build_prompt=build_prompt,
+                            phase="visual",
+                            evidence_paths=tuple(evidence_paths),
+                        )
+                    ),
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])
                 else None
@@ -1318,6 +1483,7 @@ class StrategyCoordinator:
                     if current_visual_result.status != "fix_applied":
                         return current_visual_result
                     state_store.transition("running")
+                    controller.reuse_worktree_on_next_run(worktree_path)
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,
@@ -1350,6 +1516,13 @@ class StrategyCoordinator:
             )
             if visual_reentry_block is not None:
                 return visual_reentry_block
+            if visual_result is not None and visual_result.evidence is not None:
+                visual_updates: dict[str, object] = {
+                    "visual_evidence": visual_result.evidence.as_mapping(),
+                }
+                if visual_result.status == "passed":
+                    visual_updates["last_completed_phase"] = "visual"
+                state_store.transition("validating", updates=visual_updates)
             if visual_result is not None and visual_result.status == "blocked":
                 return self._persist_phase_block(
                     state_store,
@@ -1723,6 +1896,7 @@ class StrategyCoordinator:
                     outer_iterations=total_outer_iterations,
                     tokens_used=total_tokens,
                     final_verify=final_verify,
+                    publication_controller=controller,
                 )
             elif delivery_status == "blocked":
                 return self._persist_phase_block(

@@ -745,38 +745,23 @@ def _cmd_init(
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
-    local_cfg = project_dir / ".echelon" / "local.yml"
     try:
-        _assert_local_config_untracked(project_dir)
-        local_config = (
-            yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
-            if local_cfg.exists()
-            else {}
-        )
-        if not isinstance(local_config, dict):
-            raise ValueError(f"local config must be a mapping: {local_cfg}")
         selected_llm_cli = _apply_workspace_llm_selection(
-            local_config,
+            config,
             llm_cli=llm_cli,
             openai_base_url=openai_base_url,
             openai_model=openai_model,
             openai_api_key_file=openai_api_key_file,
             openai_api_key_env=openai_api_key_env,
         )
-        local_cfg.parent.mkdir(parents=True, exist_ok=True)
-        local_cfg.write_text(
-            yaml.dump(local_config, default_flow_style=False, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
-        _ensure_local_config_ignored(project_dir)
     except Exception as e:
-        print(f"✗ Cannot write local LLM provider: {e}", file=sys.stderr)
+        print(f"✗ Cannot configure LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
     echelon_cfg.write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"✓ local LLM provider configured: {selected_llm_cli}")
+    print(f"✓ LLM provider configured: {selected_llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
@@ -1217,6 +1202,8 @@ def _resolve_delivery_verification_services(
         target_archetypes={str(value) for value in archetypes} or None,
     )
     config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
 
 
 def _block_if_delivery_provisioning_incomplete(
@@ -2255,12 +2242,52 @@ def _cmd_harness_run(
         _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
         sys.exit(1)
 
+    # Validate authored build inputs before Phase A readiness.  A malformed
+    # published task/plan needs its migration guidance, while a well-formed but
+    # incomplete spec needs the Phase A recovery guidance.  Both checks happen
+    # before creating Git or sandbox resources.
+    from harness.skills.run_skill import _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError
+
+    try:
+        task_count = _count_tasks(spec_id, str(spec_search_root))
+    except TaskValidationError as e:
+        tasks_path = (
+            spec_dir / "tasks.md"
+            if spec_dir is not None
+            else Path("specs") / spec_id / "tasks.md"
+        )
+        print(
+            "✗ tasks.md is not in canonical format.\n"
+            f"  Error: {e}\n"
+            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
+            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
+            f"  Then rerun:        {rerun_command}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if spec_dir is not None and (spec_dir / "plan.md").exists():
+        try:
+            validate_plan_file(spec_dir / "plan.md")
+        except PlanValidationError as e:
+            plan_path = spec_dir / "plan.md"
+            print(
+                "✗ plan.md is not in canonical format.\n"
+                f"  Error: {e}\n"
+                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
+                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
+                f"  Then rerun:        {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if spec_dir is not None:
+        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run, _count_tasks
-    from harness.plan_validation import PlanValidationError, validate_plan_file
-    from harness.task_validation import TaskValidationError
+    from harness.skills.run_skill import run
 
     # Single-repo mode: require local Echelon harness config.
     echelon_yml = _project_echelon_config(config_root)
@@ -2289,6 +2316,12 @@ def _cmd_harness_run(
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
     if direct_target_path is not None:
         config.target_repo = str(direct_target_path.resolve())
         if not getattr(config, "target_default_branch", None):
@@ -2329,41 +2362,6 @@ def _cmd_harness_run(
         buffer_limit_bytes=config.buffer_limit_bytes,
         container_cli=_container_runtime_cli(config),
     )
-
-    try:
-        task_count = _count_tasks(spec_id, str(spec_search_root))
-    except TaskValidationError as e:
-        tasks_path = (
-            spec_dir / "tasks.md"
-            if spec_dir is not None
-            else Path("specs") / spec_id / "tasks.md"
-        )
-        print(
-            "✗ tasks.md is not in canonical format.\n"
-            f"  Error: {e}\n"
-            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
-            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
-            f"  Then rerun:        {rerun_command}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if spec_dir is not None and (spec_dir / "plan.md").exists():
-        try:
-            validate_plan_file(spec_dir / "plan.md")
-        except PlanValidationError as e:
-            plan_path = spec_dir / "plan.md"
-            print(
-                "✗ plan.md is not in canonical format.\n"
-                f"  Error: {e}\n"
-                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
-                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
-                f"  Then rerun:        {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-    if spec_dir is not None:
-        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
 
     assert spec_dir is not None
     delivery_build_id = _prepare_delivery_build_state(
@@ -2666,7 +2664,7 @@ def _status_path(status_line: str) -> str:
     line = status_line.strip()
     if not line:
         return ""
-    path = line[3:].strip() if len(status_line) >= 4 else line
+    path = status_line[3:].strip() if len(status_line) >= 4 else line
     if " -> " in path:
         path = path.split(" -> ", 1)[1]
     return path.strip('"').replace("\\", "/")
@@ -2721,6 +2719,14 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
 
 
+def _outer_cap_delivery_action(spec_id: str) -> tuple[str, str]:
+    """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    return (
+        f"echelon delivery run {spec_id}",
+        "Starts a fresh outer-loop budget from the latest durable checkpoint.",
+    )
+
+
 def _cmd_harness_resume(
     args: list[str],
     *,
@@ -2737,7 +2743,8 @@ def _cmd_harness_resume(
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
             "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
-            "and recovery from build_incomplete/publish_failed committed work.\n\n"
+            "downstream visual/review/finalization failures, and recovery from\n"
+            "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. Fix the blocker shown by the previous delivery output.\n"
             "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
@@ -2873,6 +2880,12 @@ def _cmd_harness_resume(
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
     if direct_target_path is not None:
         config.target_repo = str(direct_target_path.resolve())
         if not getattr(config, "target_default_branch", None):
@@ -2962,24 +2975,76 @@ def _cmd_harness_resume(
         "provider_session_limit",
         "target_merge_failed",
     }
+    downstream_continuation_reasons = {
+        "visual": {
+            "app_runtime_failed",
+            "missing_registered_worktree",
+            "verified_provenance_mismatch",
+            "visual_failed",
+            "visual_feedback_failed",
+        },
+        "review": {
+            "missing_pr_url",
+            "review_boundary_failed",
+            "review_provider_failed",
+            "review_reentry_checkpoint_failed",
+            "review_side_effects_pending",
+            "review_staging_failed",
+        },
+        "finalization": {
+            "finalization_write_failed",
+            "lifecycle_status_conflict",
+            "target_merge_failed",
+            "verified_provenance_mismatch",
+        },
+    }
+    blocked_phase = str(state.get("blocked_phase") or "")
+    if termination_reason in downstream_continuation_reasons.get(
+        blocked_phase, set()
+    ):
+        continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
     retryable_error_reasons = {"harness_error"}
 
-    if current_status != "blocked" and termination_reason not in recoverable_reasons:
+    resumable_statuses = {
+        "blocked",
+        "running",
+        "interrupted",
+        "verified",
+        "validating",
+        "reviewing",
+        "finalizing",
+    }
+    if (
+        current_status not in resumable_statuses
+        and termination_reason not in recoverable_reasons
+    ):
         print(
-            f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
-            "  Use 'echelon delivery run <spec_id>' to start or continue.",
+            f"✗ Spec {spec_id!r} has no resumable delivery checkpoint "
+            f"(status={current_status!r}).\n"
+            "  Use 'echelon delivery run <spec_id>' to start a new run.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if termination_reason not in {
+    if current_status == "blocked" and termination_reason not in {
         "verify_command_needed",
         *recoverable_reasons,
         *continuation_reasons,
         *retryable_error_reasons,
     }:
+        if termination_reason == "outer_cap":
+            next_command, next_explanation = _outer_cap_delivery_action(spec_id)
+            print(
+                f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
+                f"  Next: {next_command}\n"
+                f"  {next_explanation}\n"
+                "  Destructive alternative: "
+                f"echelon delivery run {spec_id} --reset discards the blocked delivery checkpoints.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if termination_reason == "build_blocked":
             build_reason = str(state.get("build_reason") or "the build agent reported a blocker")
             print(
@@ -3060,7 +3125,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3070,6 +3135,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3130,7 +3197,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3140,6 +3207,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3219,7 +3288,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3229,6 +3298,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3275,7 +3346,7 @@ def _cmd_harness_resume(
     )
     user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -3285,6 +3356,8 @@ def _cmd_harness_resume(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -6114,6 +6187,9 @@ def _delivery_status_next_step(
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
+        if termination_reason == "outer_cap":
+            command, explanation = _outer_cap_delivery_action(effective_spec)
+            return f"{command}  # {explanation}"
         if str(state.get("escalation_file") or ""):
             choices = escalation.get("choices") if escalation else None
             if isinstance(choices, list):
@@ -6132,9 +6208,14 @@ def _delivery_status_next_step(
             return f'echelon delivery resume {effective_spec} "<answer>"'
         if termination_reason == "verify_command_needed":
             return "set delivery.verify_command, then echelon delivery continue " + effective_spec
+        if termination_reason == "build_blocked":
+            return (
+                "resolve the reported blocker, then "
+                f"echelon delivery run {effective_spec}"
+            )
         return f"echelon delivery continue {effective_spec}"
     if status in {"initialized", "running", "interrupted"}:
-        return f"echelon delivery continue {effective_spec}"
+        return f"echelon delivery run {effective_spec}"
     if status in {"failed", "cancelled_by_coordinator"}:
         return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
     return f"echelon delivery run {effective_spec}"
@@ -6150,7 +6231,11 @@ def _delivery_status_summary(
     status = str(state.get("status") or "unknown")
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
-    escalation = _delivery_status_escalation(state, project_root)
+    escalation = (
+        None
+        if str(state.get("termination_reason") or "") == "outer_cap"
+        else _delivery_status_escalation(state, project_root)
+    )
     summary = {
         "spec_id": spec_id,
         "strategy": strategy,
@@ -6181,6 +6266,35 @@ def _delivery_status_summary(
     }
     if escalation is not None:
         summary["escalation"] = escalation
+    publication_failure = state.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        summary["publication_failure"] = {
+            "stage": str(publication_failure.get("stage") or ""),
+            "error": str(publication_failure.get("error") or ""),
+        }
+    runnability = _normalized_delivery_runnability(state.get("user_runnability"))
+    if runnability is not None:
+        summary["user_runnability"] = runnability
+    last_verify = state.get("last_verify_result")
+    if isinstance(last_verify, dict):
+        verification_evidence = last_verify.get("verification_evidence")
+        if isinstance(verification_evidence, dict):
+            raw_playwright = verification_evidence.get("playwright")
+            if isinstance(raw_playwright, dict):
+                summary["playwright"] = {
+                    key: max(0, int(raw_playwright.get(key) or 0))
+                    for key in ("total", "passed", "failed", "skipped")
+                }
+    visual_evidence = state.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        summary["visual_evidence"] = {
+            "path": str(visual_evidence.get("path") or ""),
+            "passed": visual_evidence.get("passed") is True,
+            "artifact_count": max(0, int(visual_evidence.get("artifact_count") or 0)),
+            "candidate_fingerprint": str(
+                visual_evidence.get("candidate_fingerprint") or ""
+            ),
+        }
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -6190,6 +6304,22 @@ def _delivery_status_summary(
             frontmatter = read_frontmatter(spec_dir)
             if frontmatter.get("status"):
                 summary["spec_status"] = str(frontmatter.get("status"))
+                if status == "converged" and summary["spec_status"] == "landed":
+                    summary["next"] = (
+                        "No action required; delivery is already landed."
+                    )
+            runnability = summary.get("user_runnability")
+            if isinstance(runnability, dict) and runnability.get("status") == "deferred":
+                try:
+                    from harness.runnability_disposition import read_runnability_disposition
+
+                    disposition = read_runnability_disposition(spec_dir)
+                    if disposition is not None and disposition.status == "deferred":
+                        runnability["proposal"] = str(
+                            spec_dir / disposition.follow_up_proposal
+                        )
+                except Exception:
+                    pass
             try:
                 from harness.harness_run_history import summarize_history
 
@@ -6253,6 +6383,38 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         value = str(summary.get(key) or "").strip()
         if value:
             fields.append((label, value[:12] if key.endswith("_commit") else value))
+    publication_failure = summary.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        stage = str(publication_failure.get("stage") or "").strip()
+        error = str(publication_failure.get("error") or "").strip()
+        if stage:
+            fields.append(("publish stage", stage))
+        if error:
+            fields.append(("publish error", error))
+    playwright = summary.get("playwright")
+    if isinstance(playwright, dict):
+        fields.append(
+            (
+                "sandbox journey",
+                (
+                    f"{playwright.get('passed', 0)} passed, "
+                    f"{playwright.get('failed', 0)} failed, "
+                    f"{playwright.get('skipped', 0)} skipped"
+                ),
+            )
+        )
+    visual_evidence = summary.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        visual_status = "passed" if visual_evidence.get("passed") else "failed"
+        fields.append(
+            (
+                "visual artifacts",
+                f"{visual_evidence.get('artifact_count', 0)} retained ({visual_status})",
+            )
+        )
+        visual_path = str(visual_evidence.get("path") or "").strip()
+        if visual_path:
+            fields.append(("visual evidence", visual_path))
     escalation = summary.get("escalation")
     if isinstance(escalation, dict):
         question = str(escalation.get("question") or "").strip()
@@ -6278,6 +6440,99 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         path = str(escalation.get("path") or "").strip()
         if path:
             fields.append(("escalation", path))
+    runnability = summary.get("user_runnability")
+    if isinstance(runnability, dict):
+        status = str(runnability.get("status") or "unknown")
+        label = {
+            "runnable": "passed",
+            "not_runnable": "failed",
+            "blocked": "blocked",
+            "deferred": "deferred",
+            "not_applicable": "not applicable",
+        }.get(status, status)
+        fields.append(("user runnable", label))
+        failed_stage = str(runnability.get("failed_stage") or "").strip()
+        if failed_stage:
+            fields.append(("stage", failed_stage.replace("_", " ")))
+        failure_class = str(runnability.get("failure_class") or "").strip()
+        if failure_class:
+            fields.append(("runnability reason", failure_class))
+        diagnostic = str(runnability.get("summary") or "").strip()
+        if diagnostic:
+            fields.append(("runnability summary", diagnostic))
+        commands = runnability.get("user_commands")
+        if isinstance(commands, dict):
+            for command_kind in (
+                "prerequisites",
+                "install",
+                "provision",
+                "bootstrap",
+                "start",
+                "open",
+                "stop",
+            ):
+                values = commands.get(command_kind)
+                if isinstance(values, list) and values:
+                    fields.append((command_kind, "; ".join(str(value) for value in values)))
+        local_journey = runnability.get("local_journey")
+        if isinstance(local_journey, dict):
+            local_status = str(local_journey.get("status") or "unknown").strip()
+            fields.append(("local journey", local_status))
+            local_reason = str(local_journey.get("reason") or "").strip()
+            if local_reason:
+                fields.append(("local reason", local_reason))
+            local_commands = local_journey.get("commands")
+            if isinstance(local_commands, dict):
+                for command_kind in (
+                    "prerequisites",
+                    "provision",
+                    "readiness",
+                    "prepare",
+                    "session",
+                    "verify",
+                    "start",
+                    "open",
+                    "stop",
+                    "cleanup",
+                ):
+                    values = local_commands.get(command_kind)
+                    if isinstance(values, list) and values:
+                        fields.append(
+                            (
+                                f"local {command_kind}",
+                                "; ".join(str(value) for value in values),
+                            )
+                        )
+            boundary_probes = local_journey.get("boundary_probes")
+            if isinstance(boundary_probes, list):
+                for probe in boundary_probes:
+                    if not isinstance(probe, dict):
+                        continue
+                    probe_id = str(probe.get("id") or "boundary").strip()
+                    command = str(probe.get("command") or "").strip()
+                    if command:
+                        fields.append(("local boundary", f"{probe_id}: {command}"))
+        report = str(runnability.get("report") or "").strip()
+        if report:
+            fields.append(("evidence", report))
+        if status == "not_runnable":
+            fields.append(
+                ("runnability next", "delivery will repair this current-spec product gap")
+            )
+        elif status == "blocked":
+            fields.append(
+                ("runnability next", "repair the Echelon sandbox prerequisite, then retry")
+            )
+        elif status == "deferred":
+            proposal = str(runnability.get("proposal") or "").strip()
+            fields.append(
+                (
+                    "runnability next",
+                    f"review the advisory follow-up proposal: {proposal}"
+                    if proposal
+                    else "review the owner-approved runnability deferral",
+                )
+            )
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
@@ -6288,6 +6543,87 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         fields.append(("state", str(summary["state_file"])))
     fields.append(("next", str(summary.get("next") or "")))
     return fields
+
+
+def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    status = str(value.get("status") or "").strip()
+    if not status:
+        return None
+    raw_commands = value.get("user_commands")
+    commands: dict[str, list[str]] = {}
+    if isinstance(raw_commands, dict):
+        for key, raw_values in raw_commands.items():
+            if not isinstance(raw_values, list):
+                continue
+            normalized = [str(item).strip() for item in raw_values if str(item).strip()]
+            if normalized:
+                commands[str(key)] = normalized
+    local_journey: dict[str, object] | None = None
+    raw_local_journey = value.get("local_journey")
+    if isinstance(raw_local_journey, dict):
+        local_status = str(raw_local_journey.get("status") or "").strip()
+        local_commands: dict[str, list[str]] = {}
+        raw_local_commands = raw_local_journey.get("commands")
+        if isinstance(raw_local_commands, dict):
+            for key, raw_values in raw_local_commands.items():
+                if not isinstance(raw_values, list):
+                    continue
+                normalized = [
+                    str(item).strip()
+                    for item in raw_values
+                    if str(item).strip()
+                ]
+                if normalized:
+                    local_commands[str(key)] = normalized
+        if local_status:
+            boundary_probes: list[dict[str, str]] = []
+            raw_boundary_probes = raw_local_journey.get("boundary_probes")
+            if isinstance(raw_boundary_probes, list):
+                for raw_probe in raw_boundary_probes:
+                    if not isinstance(raw_probe, dict):
+                        continue
+                    command = str(raw_probe.get("command") or "").strip()
+                    if not command:
+                        continue
+                    boundary_probes.append(
+                        {
+                            "id": str(raw_probe.get("id") or "").strip(),
+                            "service": str(raw_probe.get("service") or "").strip(),
+                            "command": command,
+                        }
+                    )
+            local_journey = {
+                "status": local_status,
+                "reason": str(raw_local_journey.get("reason") or "").strip(),
+                "commands": local_commands,
+                **(
+                    {"boundary_probes": boundary_probes}
+                    if boundary_probes
+                    else {}
+                ),
+            }
+    diagnostic = str(value.get("summary") or "").strip()
+    if len(diagnostic) > 240:
+        diagnostic = diagnostic[:237].rstrip() + "..."
+    return {
+        "status": status,
+        "failed_stage": str(value.get("failed_stage") or "").strip() or None,
+        "failure_class": str(value.get("failure_class") or "").strip(),
+        "summary": diagnostic,
+        "report": str(value.get("report") or "").strip(),
+        "candidate_fingerprint": str(value.get("candidate_fingerprint") or "").strip(),
+        "contract_hash": str(value.get("contract_hash") or "").strip(),
+        "stack_hash": str(value.get("stack_hash") or "").strip(),
+        "user_commands": commands,
+        **({"local_journey": local_journey} if local_journey is not None else {}),
+        **(
+            {"proposal": str(value.get("proposal") or "").strip()}
+            if value.get("proposal")
+            else {}
+        ),
+    }
 
 
 def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
@@ -16732,6 +17068,9 @@ def _cmd_spec(args: list[str]) -> None:
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
             "                                      Remove an unused target and re-plan tasks\n"
+            "  defer-runnability <spec_id> --reason <owner-approved reason>\n"
+            "                                      Defer failed runnability to advisory follow-up\n"
+            "  plan-runnability <spec_id>          Restore runnability to current-spec work\n"
             "  retarget <spec_id> --target <source-id-or-path>... [--confirm]\n"
             "                                      Destructively replace all implementation targets\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"

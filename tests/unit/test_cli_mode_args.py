@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -98,6 +99,11 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
     monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
@@ -168,6 +174,11 @@ def test_cmd_run_controller_exception_still_emits_one_squad_summary(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_a, **_k: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_a, **_k: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_a, **_k: None)
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_a, **_k: (squad_dir, True))
     monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_a, **_k: None)
@@ -283,6 +294,7 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
     monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
@@ -341,6 +353,11 @@ def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
+    monkeypatch.setattr("echelon.cli._fresh_stack_contract_or_exit", lambda *_args: {})
     monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
     monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
@@ -382,6 +399,10 @@ def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "echelon.cli._resolve_spec_run_implementation_targets",
+        lambda *_args, **_kwargs: ["."],
+    )
     monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: squad_dir)
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, False))
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
@@ -428,6 +449,19 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
         "workspace:\n  git_role: orchestration\nsources: []\n",
         encoding="utf-8",
     )
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Echelon Tests"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "add", ".echelon/config.yml"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial workspace"], cwd=tmp_path, check=True)
     squad_dir = tmp_path / "runs" / "spec-20260711-120000-000001"
     captured: dict[str, object] = {}
 

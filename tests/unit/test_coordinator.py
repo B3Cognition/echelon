@@ -24,10 +24,12 @@ from harness.delivery_results import DeliveryResult, ImplementationResult, Visua
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
 from harness.state import StateStore
+from harness.stacks.resolver import ResolvedRunnability
 from harness.verify_result import VerifyResult
 from harness.spec_frontmatter import read_frontmatter
 from harness.product_inventory import product_evidence_fingerprint
 from harness.verification_evidence import VerificationStage, write_verification_receipt
+from harness.visual_evidence import VisualEvidenceRef
 
 
 class MockProvider(SandboxProvider):
@@ -231,7 +233,23 @@ class TestSingleStrategy:
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition("blocked", updates={"blocked_phase": "visual"})
-        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+        from harness.verify_result import FailureCategory, FailureEntry
+
+        blocked_verify = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.OTHER,
+                "fulfillment-gaps",
+                "FR-013 lacks automated journey evidence",
+                details={"gaps": [{"requirement_id": "FR-013", "status": "UNVERIFIED"}]},
+            )],
+            verification_evidence={
+                "playwright": {"total": 1, "passed": 0, "failed": 0, "skipped": 1}
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, blocked_verify
+        )
 
         result = coord._persist_phase_block(
             store,
@@ -243,7 +261,13 @@ class TestSingleStrategy:
         )
 
         assert result.blocked_phase == "visual"
-        assert store.read()["termination_reason"] == "registered_worktree_missing"
+        persisted = store.read()
+        assert persisted["termination_reason"] == "registered_worktree_missing"
+        assert persisted["last_verify_result"]["verification_evidence"]["playwright"]["skipped"] == 1
+        assert persisted["last_verify_result"]["failures"][0]["details"]["gaps"][0] == {
+            "requirement_id": "FR-013",
+            "status": "UNVERIFIED",
+        }
 
     def test_finalization_blocks_conflicting_persisted_verification_commit(
         self, tmp_path: Path
@@ -360,6 +384,214 @@ class TestSingleStrategy:
         )
 
         assert result.status == "converged"
+
+    def test_finalization_publishes_deferred_target_only_after_downstream_gates(
+        self, tmp_path: Path
+    ) -> None:
+        """The coordinator owns publication after every enabled gate has passed."""
+        coord = _make_coordinator(tmp_path)
+        worktree = tmp_path
+        verified_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: in_progress\n---\n# Spec\n", encoding="utf-8"
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            f"---\nverified_commit: {verified_commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
+        )
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1",
+            "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(worktree),
+                "verified_commit": verified_commit,
+                "target_merge": {
+                    "status": "deferred",
+                    "branch": "harness/spec-001/default/iter-0",
+                    "verified": True,
+                },
+            },
+        )
+        store.transition("validating")
+        store.transition("finalizing", updates={"last_completed_phase": "visual"})
+        implementation = ImplementationResult(
+            "verified",
+            "verified",
+            1,
+            0,
+            None,
+            0,
+            VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = True
+
+        with (
+            patch.object(coord, "_worktree_head", return_value=verified_commit),
+            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch(
+                "harness.coordinator.read_fulfillment_metadata",
+                return_value={"verified_commit": verified_commit},
+            ),
+        ):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=2,
+                tokens_used=0,
+                final_verify=VerifyResult(passed=True),
+                publication_controller=publication_controller,
+            )
+
+        assert result.status == "converged"
+        publication_controller.publish_verified_branch.assert_called_once_with(
+            str(worktree),
+            "harness/spec-001/default/iter-0",
+            implementation.final_verify,
+        )
+
+    def test_finalization_blocks_when_deferred_target_publication_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """A downstream-gated delivery cannot converge without final publication."""
+        coord = _make_coordinator(tmp_path)
+        verified_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: in_progress\n---\n# Spec\n", encoding="utf-8"
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text("# Fulfillment\n", encoding="utf-8")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(tmp_path),
+                "verified_commit": verified_commit,
+                "target_merge": {"status": "deferred"},
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = False
+
+        with (
+            patch.object(coord, "_worktree_head", return_value=verified_commit),
+            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch(
+                "harness.coordinator.read_fulfillment_metadata",
+                return_value={"verified_commit": verified_commit},
+            ),
+        ):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=2,
+                tokens_used=0,
+                final_verify=VerifyResult(passed=True),
+                publication_controller=publication_controller,
+            )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "finalization"
+        assert result.termination_reason == "target_merge_failed"
+
+    def test_multi_target_finalization_publishes_its_deferred_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        """Per-target publication is not skipped for a polyrepo specification."""
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(tmp_path),
+                "target_merge": {
+                    "status": "deferred",
+                    "branch": "harness/spec-001/default/iter-0",
+                    "verify_result": {
+                        "passed": True,
+                        "failures": [],
+                        "duration_s": 1.0,
+                        "token_usage": 0,
+                    },
+                },
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, None,
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = True
+
+        result = coord._finalize_delivery(
+            store,
+            spec_dir=None,
+            declared_targets=["sources/api", "sources/web"],
+            implementation=implementation,
+            outer_iterations=2,
+            tokens_used=0,
+            final_verify=VerifyResult(passed=True),
+            publication_controller=publication_controller,
+        )
+
+        assert result.status == "converged"
+        publication_controller.publish_verified_branch.assert_called_once()
+        publish_args = publication_controller.publish_verified_branch.call_args.args
+        assert publish_args[:2] == (
+            str(tmp_path),
+            "harness/spec-001/default/iter-0",
+        )
+        assert publish_args[2].passed is True
+
+    def test_implementation_resume_restores_persisted_verification_result(
+        self, tmp_path: Path
+    ) -> None:
+        """Final publication can trust a Phase 1 result restored after restart."""
+        state = {
+            "termination_reason": "verified",
+            "last_verify_result": {
+                "passed": True,
+                "failures": [],
+                "duration_s": 1.25,
+                "token_usage": 7,
+            },
+        }
+
+        restored = _make_coordinator(tmp_path)._implementation_from_state(state)
+
+        assert restored.final_verify is not None
+        assert restored.final_verify.passed is True
+        assert restored.final_verify.duration_s == 1.25
 
     def test_finalization_blocks_when_fulfillment_discovery_raises(self, tmp_path: Path) -> None:
         """Fulfillment I/O failures are recoverable finalization blocks."""
@@ -496,6 +728,21 @@ class TestStatusAggregation:
 
 
 class TestDeliveryStateMigration:
+    def test_visual_phase_is_required_with_llm_coding_provider(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex implementation does not replace harness-owned browser evidence."""
+        from harness.config import VisualTestsConfig
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+
+        assert coordinator._enabled_phases(MagicMock()) == [
+            "implementation",
+            "visual",
+            "finalization",
+        ]
+
     def test_legacy_block_without_phase_migrates_to_implementation(
         self, tmp_path: Path
     ) -> None:
@@ -612,6 +859,80 @@ class TestDeliveryStateMigration:
         implementation.assert_not_called()
         visual.assert_called_once()
         assert result.status == "converged"
+
+    def test_changed_visual_checkpoint_reenters_implementation_before_visual(
+        self, tmp_path: Path
+    ) -> None:
+        """A provider repair left at a visual block is reverified on resume."""
+        from harness.config import VisualTestsConfig
+        from harness.ralph import RalphController
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1",
+            "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "last_completed_phase": "implementation",
+                "registered_worktree": str(tmp_path),
+                "verified_commit": "verified-head",
+                "verified_product_fingerprint": "before-repair",
+            },
+        )
+        store.transition("validating")
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "visual",
+                "termination_reason": "visual_feedback_failed",
+            },
+        )
+        reverified = ImplementationResult(
+            "verified",
+            "verified",
+            1,
+            0,
+            None,
+            0,
+            VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+
+        with (
+            patch.object(coordinator, "_worktree_head", return_value="verified-head"),
+            patch(
+                "harness.coordinator.product_evidence_fingerprint",
+                return_value="after-repair",
+            ),
+            patch.object(RalphController, "run_loop", return_value=reverified) as implementation,
+            patch.object(
+                VisualRalphController,
+                "run_loop",
+                return_value=VisualResult("passed", "converged", 1, 0, None),
+            ) as visual,
+        ):
+            result = coordinator.start(
+                RunIntent(
+                    spec_id="spec-001",
+                    max_outer=1,
+                    max_inner=1,
+                    resume=True,
+                )
+            )[0]
+
+        assert result.status == "converged"
+        implementation.assert_called_once()
+        visual.assert_called_once()
+        assert store.read()["downstream_reentry"]["reason"] == (
+            "candidate_changed_after_checkpoint"
+        )
 
     @pytest.mark.parametrize(
         ("registered", "head", "reason"),
@@ -972,6 +1293,15 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
         iterations=1,
         tokens_used=30,
         final_verify=None,
+        evidence=VisualEvidenceRef(
+            path=(tmp_path / "visual.json").resolve(),
+            receipt_sha256="receipt",
+            evidence_sha256="evidence",
+            candidate_commit="candidate",
+            candidate_fingerprint="fingerprint",
+            passed=True,
+            artifact_count=2,
+        ),
     )
 
     # Create strategy dir
@@ -1001,6 +1331,39 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     assert results[0].tokens_used == 80       # 50 (phase1) + 30 (phase2)
     assert results[0].inner_iterations == 0   # preserved from phase1
     assert results[0].pr_url is None          # preserved from phase1
+    state = StateStore(tmp_path / "runs" / "state", "001", "default").read()
+    assert state["visual_evidence"]["artifact_count"] == 2
+    assert state["last_completed_phase"] == "visual"
+
+
+def test_required_browser_stack_enables_visual_phase_even_when_config_omits_it(
+    tmp_path,
+):
+    config = HarnessConfig(
+        target_repo="git@example.com:t/r.git",
+        target_default_branch="main",
+        provider="docker",
+    )
+    config.resolved_runnability = ResolvedRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        required_observations=("browser_dom",),
+        sources=("browser-3d-game",),
+    )
+    coordinator = StrategyCoordinator(
+        provider=MockProvider(),
+        gitops=MagicMock(),
+        config=config,
+        base_dir=str(tmp_path),
+    )
+
+    assert config.visual_tests.enabled is False
+    assert coordinator._enabled_phases(None) == [
+        "implementation",
+        "visual",
+        "finalization",
+    ]
 
 
 def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_path):
@@ -1022,6 +1385,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
     latest_evidence = VisualResult("passed", "converged", 1, 3, None)
 
     with patch.object(RalphController, "run_loop", side_effect=[initial, reverified]) as phase1, \
+         patch.object(RalphController, "reuse_worktree_on_next_run") as reuse, \
          patch.object(VisualRalphController, "run_loop", side_effect=[applied, latest_evidence]) as visual:
         result = StrategyCoordinator(
             provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
@@ -1030,6 +1394,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
     assert result.status == "converged"
     assert phase1.call_count == 2
     assert visual.call_count == 2
+    reuse.assert_called_once_with(str(tmp_path / "worktree"))
     assert result.tokens_used == 26
 
 

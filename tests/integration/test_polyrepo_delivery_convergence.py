@@ -47,13 +47,21 @@ def _target_checkout(tmp_path: Path) -> tuple[Path, str]:
     return target, _git(target, "rev-parse", "HEAD")
 
 
-def _commit_worktree_changes(worktree_path: str, _message: str) -> str:
-    _git(Path(worktree_path), "add", "-A")
+def _commit_worktree_changes(
+    worktree_path: str,
+    _message: str,
+    *,
+    exclude_paths: tuple[str, ...] = (),
+) -> str:
+    worktree = Path(worktree_path)
+    _git(worktree, "add", "-A")
+    if exclude_paths:
+        _git(worktree, "reset", "--", *exclude_paths)
     if subprocess.run(
         ["git", "diff", "--cached", "--quiet"], cwd=worktree_path
     ).returncode != 0:
-        _git(Path(worktree_path), "commit", "-m", "checkpoint candidate")
-    return _git(Path(worktree_path), "rev-parse", "HEAD")
+        _git(worktree, "commit", "-m", "checkpoint candidate")
+    return _git(worktree, "rev-parse", "HEAD")
 
 
 def _real_ralph_for_target(

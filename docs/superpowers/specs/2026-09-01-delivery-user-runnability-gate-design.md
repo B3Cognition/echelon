@@ -401,6 +401,19 @@ No provisional documentation verdict can satisfy final convergence. The final
 documentation report must cite current runnability evidence whose three
 authoritative hashes still match the candidate.
 
+For browser stacks, the subsequent visual gate reuses the delivery sandbox
+specification, dependency bootstrap, resolved verification sidecars, and
+attempt-scoped service environment. It may start a fresh sandbox for isolation,
+but it must not fall back to an unprovisioned Playwright-only container. A
+passing visual gate requires at least one executed test and retained screenshot
+evidence; command/bootstrap failures retain bounded stderr in the phase result.
+
+Target-default publication is the final side effect. Phase 1 may commit and push
+its verified candidate branch, but when visual or review is enabled it records a
+deferred target merge. The coordinator performs that merge only after all
+persisted downstream gates pass and final provenance validation succeeds. A
+failed downstream gate therefore leaves the target default branch unchanged.
+
 ## Integration With Existing Components
 
 - Extend stack parsing and resolution with the optional `runnability` section.

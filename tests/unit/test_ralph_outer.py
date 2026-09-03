@@ -40,6 +40,10 @@ from harness import ralph
 from harness.build_result import BuildResult
 from harness.llm_tool_policy import LlmToolPolicy
 from harness.ralph import RalphController
+from harness.runnability_contract import LocalBoundaryProbe
+from harness.runnability_evidence import RunnabilityEvidenceRef
+from harness.runnability_runner import RunnabilityRunResult
+from harness.stacks.resolver import ResolvedRunnability
 from harness.state import StateStore
 
 
@@ -309,6 +313,8 @@ def _make_controller(
     fulfillment_runner: Optional[Any] = None,
     config: Optional[HarnessConfig] = None,
     fresh_delivery: bool = False,
+    defer_target_merge: bool = False,
+    resume_worktree_path: str | None = None,
 ) -> tuple:
     config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
@@ -333,6 +339,8 @@ def _make_controller(
         llm_build_runner=llm_build_runner,
         fulfillment_runner=fulfillment_runner,
         fresh_delivery=fresh_delivery,
+        defer_target_merge=defer_target_merge,
+        resume_worktree_path=resume_worktree_path,
     )
     return controller, provider, gitops, state_store
 
@@ -345,6 +353,326 @@ def test_sandbox_setup_error_is_a_typed_verification_failure(tmp_path: Path) -> 
 
     assert result.passed is False
     assert result.failures[0].id == "sandbox-verification-unavailable"
+
+
+def _required_browser_runnability() -> ResolvedRunnability:
+    return ResolvedRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        capabilities=("install", "start", "primary_journey", "stop"),
+        required_observations=("browser_dom",),
+        sources=("browser-game",),
+    )
+
+
+def _write_enabled_runnability_contract(worktree: Path) -> None:
+    contract = worktree / ".echelon" / "runnability.yml"
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    contract.write_text(
+        "schema_version: 1\n"
+        "enabled: true\n"
+        "install_commands: []\n"
+        "bootstrap_commands: []\n"
+        "start_commands: [make start]\n"
+        "readiness:\n"
+        "  url: http://127.0.0.1:${ECHELON_PORT}/health\n"
+        "  timeout_ms: 30000\n"
+        "primary_journey:\n"
+        "  kind: browser\n"
+        "  url: ${ECHELON_BASE_URL}\n"
+        "  requirements: [FR-001]\n"
+        "  real_services_required: [web]\n"
+        "  steps:\n"
+        "    - action: goto\n"
+        "      path: /\n"
+        "  observations:\n"
+        "    - id: canvas-visible\n"
+        "      kind: browser_dom\n"
+        "      selector: canvas\n"
+        "      expectation: present\n"
+        "stop_commands: [make stop]\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.unit
+def test_required_user_facing_stack_cannot_pass_gate_without_candidate_contract(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-contract-missing"
+    assert result.failures[0].details["contract"] == ".echelon/runnability.yml"
+
+
+@pytest.mark.unit
+def test_post_verify_gates_run_runnability_before_fulfillment_judgment(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    calls: list[str] = []
+
+    def passthrough(name: str):
+        def apply(result: VerifyResult, *_args, **_kwargs) -> VerifyResult:
+            calls.append(name)
+            return result
+
+        return apply
+
+    controller._apply_task_progress_gate = MagicMock(
+        side_effect=passthrough("tasks")
+    )
+    controller._apply_user_runnability_gate = MagicMock(
+        side_effect=passthrough("runnability")
+    )
+    controller._refresh_fulfillment_report = MagicMock(
+        side_effect=passthrough("refresh")
+    )
+    controller._apply_fulfillment_gate = MagicMock(
+        side_effect=passthrough("fulfillment")
+    )
+    controller._apply_documentation_gate = MagicMock(
+        side_effect=passthrough("documentation")
+    )
+
+    result = controller._apply_post_verify_gates(
+        VerifyResult(passed=True), str(tmp_path)
+    )
+
+    assert result.passed is True
+    assert calls == [
+        "tasks",
+        "runnability",
+        "refresh",
+        "fulfillment",
+        "documentation",
+        "tasks",
+    ]
+
+
+@pytest.mark.unit
+def test_required_user_facing_stack_cannot_converge_without_candidate_contract(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_runnability = _required_browser_runnability()
+    controller, _provider, gitops, _state = _make_controller(
+        tmp_path,
+        verify_results=[{"passed": True, "failures": []}],
+        config=config,
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    gitops.create_worktree.return_value = str(worktree)
+
+    result = controller.run_loop(max_outer=1, max_inner=0)
+
+    assert result.status != "verified"
+    assert result.final_verify is not None
+    assert result.final_verify.failures[0].id == "user-runnability-contract-missing"
+
+
+@pytest.mark.unit
+def test_candidate_disabled_contract_cannot_downgrade_required_stack(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    worktree = tmp_path / "worktree"
+    contract = worktree / ".echelon" / "runnability.yml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("schema_version: 1\nenabled: false\n", encoding="utf-8")
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-contract-disabled"
+
+
+@pytest.mark.unit
+def test_non_runnable_stack_without_contract_preserves_existing_gate_result(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = ResolvedRunnability()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    original = VerifyResult(passed=True)
+
+    result = controller._apply_user_runnability_gate(
+        original,
+        str(worktree),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence" / "user-runnability",
+    )
+
+    assert result is original
+
+
+@pytest.mark.unit
+def test_runnability_failure_persists_compact_state_and_actionable_report_context(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    controller._config.resolved_stacks = object()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _write_enabled_runnability_contract(worktree)
+    evidence_dir = tmp_path / "evidence" / "user-runnability"
+    evidence_dir.mkdir(parents=True)
+    report = evidence_dir / "attempt-0001-a.md"
+    evidence = RunnabilityEvidenceRef(
+        path=evidence_dir / "attempt-0001-a.json",
+        markdown_path=report,
+        receipt_sha256="receipt",
+        evidence_sha256="evidence",
+        candidate_commit="a" * 40,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        status="not_runnable",
+    )
+    run_result = RunnabilityRunResult(
+        status="not_runnable",
+        failed_stage="primary_journey",
+        failure_class="primary_journey_failed",
+        summary="The canvas never became interactive.",
+        stages=(),
+        evidence=evidence,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        user_commands={"start": ("make start",)},
+        local_journey_status="unverified",
+        local_journey_reason="No compatible local runner executed these commands.",
+        local_user_commands={
+            "provision": ("docker compose up -d postgres",),
+            "verify": ("make verify-local",),
+            "cleanup": ("docker compose down -v",),
+        },
+        local_boundary_probes=(
+            LocalBoundaryProbe(
+                id="postgres-from-app",
+                service="postgres",
+                command="make probe-local-db",
+            ),
+        ),
+    )
+
+    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+        runner_type.return_value.run.return_value = run_result
+        result = controller._apply_user_runnability_gate(
+            VerifyResult(passed=True),
+            str(worktree),
+            candidate_commit="a" * 40,
+            evidence_dir=evidence_dir,
+        )
+
+    assert result.passed is False
+    assert result.failures[0].id == "user-runnability-primary-journey-failed"
+    assert result.failures[0].details["report"] == str(report)
+    assert result.failures[0].details["required_repair"].startswith("Repair the candidate")
+    prompt = controller._make_feedback_prompt("Continue delivery.", result, 1)
+    assert "primary_journey_failed" in prompt
+    assert str(report) in prompt
+    state = controller._state_store.read()["user_runnability"]
+    assert state == {
+        "status": "not_runnable",
+        "failed_stage": "primary_journey",
+        "failure_class": "primary_journey_failed",
+        "summary": "The canvas never became interactive.",
+        "report": str(report),
+        "candidate_fingerprint": "product-1",
+        "contract_hash": "contract-1",
+        "stack_hash": "stack-1",
+        "user_commands": {"start": ["make start"]},
+        "local_journey": {
+            "status": "unverified",
+            "reason": "No compatible local runner executed these commands.",
+            "commands": {
+                "provision": ["docker compose up -d postgres"],
+                "verify": ["make verify-local"],
+                "cleanup": ["docker compose down -v"],
+            },
+            "boundary_probes": [
+                {
+                    "id": "postgres-from-app",
+                    "service": "postgres",
+                    "command": "make probe-local-db",
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.unit
+def test_passing_runnability_is_attached_to_downstream_verification_evidence(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    controller._config.resolved_stacks = object()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _write_enabled_runnability_contract(worktree)
+    evidence = RunnabilityEvidenceRef(
+        path=(tmp_path / "attempt.json").resolve(),
+        markdown_path=(tmp_path / "attempt.md").resolve(),
+        receipt_sha256="receipt",
+        evidence_sha256="evidence",
+        candidate_commit="a" * 40,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        status="runnable",
+    )
+    run_result = RunnabilityRunResult(
+        status="runnable",
+        failed_stage=None,
+        failure_class="",
+        summary="Composed journey passed.",
+        stages=(),
+        evidence=evidence,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        user_commands={},
+    )
+    original = VerifyResult(
+        passed=True,
+        verification_evidence={"path": "/tmp/host-receipt.json"},
+    )
+
+    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+        runner_type.return_value.run.return_value = run_result
+        result = controller._apply_user_runnability_gate(
+            original,
+            str(worktree),
+            candidate_commit="a" * 40,
+            evidence_dir=tmp_path / "evidence" / "user-runnability",
+        )
+
+    assert result.passed is True
+    assert result.verification_evidence["path"] == "/tmp/host-receipt.json"
+    assert result.verification_evidence["runnability_evidence"] == evidence.as_mapping()
 
 
 def _init_git_repo(path: Path) -> None:
@@ -2214,7 +2542,14 @@ class TestOuterLoopConvergence:
         verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
         seen: dict[str, object] = {}
 
-        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+        def fake_gate(
+            worktree_path: Path,
+            resolved_spec_dir: Path,
+            *,
+            changed_files=None,
+            runnability_report=None,
+            runnability_required=False,
+        ):
             seen["worktree_path"] = worktree_path
             seen["spec_dir"] = resolved_spec_dir
             seen["changed_files"] = changed_files
@@ -2253,7 +2588,14 @@ class TestOuterLoopConvergence:
         spec_dir.mkdir(parents=True)
         seen: dict[str, object] = {}
 
-        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+        def fake_gate(
+            worktree_path: Path,
+            resolved_spec_dir: Path,
+            *,
+            changed_files=None,
+            runnability_report=None,
+            runnability_required=False,
+        ):
             seen["changed_files"] = changed_files
             return DocumentationGateResult(passed=True)
 
@@ -2576,6 +2918,44 @@ class TestOuterLoopConvergence:
         final_state = state_store.read()
         assert final_state["status"] == "running"
         assert final_state["target_merge"]["error"] == "merge conflict"
+
+    def test_downstream_gates_defer_target_merge_after_phase1(
+        self, tmp_path: Path
+    ) -> None:
+        """A verified candidate is not published before visual/review gates pass."""
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            defer_target_merge=True,
+        )
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "verified"
+        gitops.local_merge.assert_not_called()
+        deferred = state_store.read()["target_merge"]
+        assert deferred["status"] == "deferred"
+        assert deferred["branch"] == result.branch
+        assert deferred["default_branch"] == "main"
+        assert deferred["verified"] is True
+        assert deferred["worktree_path"] == gitops.create_worktree.return_value
+        assert deferred["verify_result"]["passed"] is True
+
+    def test_downstream_reentry_reuses_registered_repaired_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        """A dirty visual repair is not replaced by a new branch/worktree."""
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            resume_worktree_path=str(tmp_path),
+        )
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "verified"
+        gitops.create_worktree.assert_not_called()
+        assert gitops.commit.call_args.args[0] == str(tmp_path)
 
     @pytest.mark.integration
     def test_synthetic_run_lands_verified_work_on_target_main(
@@ -3354,6 +3734,33 @@ class TestOuterLoopConvergence:
         assert decision["action"] == "full"
         assert decision["reason"] == "single target convergence boundary reached"
 
+    def test_resumed_single_target_uses_canonical_tasks_for_full_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """Resume must not lose convergence when transient build counters are absent."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "game"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-game"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            "- [x] T-002 complexity=standard phase=build req=FR-002 depends=T-001\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["implementation_target"] = "sources/game"
+        state["declared_targets"] = ["sources/game"]
+        state["target_task_ids"] = ["T-001", "T-002"]
+        state["spec_dir"] = str(spec_dir)
+        state.pop("build", None)
+        state_store.write(state)
+
+        decision = controller._fulfillment_refresh_decision(str(worktree))
+
+        assert decision["action"] == "full"
+        assert decision["reason"] == "single target convergence boundary reached"
+
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path
     ) -> None:
@@ -3680,6 +4087,12 @@ class TestOuterLoopConvergence:
         assert state["branch"] == "harness/spec-001-default-iter-0"
         assert state["verified_publish_checkpoint"]["stage"] == "push"
         assert state["verified_publish_checkpoint"]["commit"] == "verified-head"
+        assert state["publication_failure"] == {
+            "stage": "push",
+            "error": "Push failed: network error",
+            "branch": "harness/spec-001-default-iter-0",
+            "worktree_path": state["verified_publish_checkpoint"]["worktree_path"],
+        }
 
     def test_verified_publish_resume_retries_effects_without_provider_build(
         self, tmp_path: Path
@@ -3705,6 +4118,10 @@ class TestOuterLoopConvergence:
                     "commit": "verified-head",
                     "product_evidence_fingerprint": "product-fingerprint",
                 },
+                "publication_failure": {
+                    "stage": "push",
+                    "error": "old network failure",
+                },
             }
         )
         state_store.write(state)
@@ -3726,6 +4143,7 @@ class TestOuterLoopConvergence:
         assert provider._exec_count == 0
         recovered_state = state_store.read()
         assert "verified_publish_checkpoint" not in recovered_state
+        assert "publication_failure" not in recovered_state
         assert recovered_state["verified_publish_recovery"]["status"] == "completed"
 
     def test_verified_publish_resume_invalidates_changed_product_before_build(
@@ -4684,6 +5102,35 @@ class TestOuterLoopConvergence:
         assert "documentation-impact-report.md" not in "\n".join(
             violation["changed_status"]
         )
+
+    def test_containment_allows_modified_tracked_documentation_report(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "project"
+        spec_dir = project / "specs" / "906-cli-output-styling"
+        spec_dir.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=project,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=project,
+            check=True,
+        )
+        report = spec_dir / "documentation-impact-report.md"
+        report.write_text("before\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=project, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=project, check=True)
+        worktree = project / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        before = ralph._snapshot_project_status(project, str(worktree))
+
+        report.write_text("after\n", encoding="utf-8")
+
+        assert ralph._detect_containment_violation(before, project, str(worktree)) is None
 
     def test_llm_build_blocks_when_transcript_touches_forbidden_source_root(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -8085,9 +8532,44 @@ class TestLlmProviderDispatch:
         prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
         assert prompt_metadata["tool_read_roots"] == [str(spec_dir)]
         assert prompt_metadata["tool_write_paths"] == [
+            str(worktree / ".echelon" / "runnability.yml"),
             str(spec_dir / "documentation-impact-report.md"),
             str(spec_dir / "docs-verification-report.md"),
         ]
+
+    def test_exec_build_authorizes_candidate_runnability_contract_for_single_repo(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+        controller, _, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+
+        controller._exec_build(
+            handle=MagicMock(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            prompt="build this",
+        )
+
+        prompt_metadata = build_runner.exec_build.call_args.kwargs["prompt_metadata"]
+        assert prompt_metadata == {
+            "tool_write_paths": [
+                str(worktree / ".echelon" / "runnability.yml")
+            ]
+        }
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""
@@ -8140,6 +8622,53 @@ class TestLlmProviderDispatch:
         assert policy_file.exists()
         assert result["passed"] is True
         assert result["impasse"] is False
+
+    def test_downstream_visual_feedback_uses_provider_and_clears_stale_marker(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.build_result import BUILD_STATUS_FILENAME, BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_feedback.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="fixed",
+            stderr="",
+            duration_ms=100,
+        )
+        controller, _, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        marker = tmp_path / BUILD_STATUS_FILENAME
+        marker.write_text('{"status":"blocked"}\n', encoding="utf-8")
+        failure = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.PLAYWRIGHT_TEST,
+                "visual_artifacts_missing",
+                "no retained screenshot",
+            )],
+        )
+
+        result = controller.run_downstream_feedback(
+            handle=MagicMock(),
+            worktree_path=str(tmp_path),
+            verify_result=failure,
+            build_command="echelon build",
+            strategy_context="",
+            build_prompt="Implement spec 001",
+            phase="visual",
+            evidence_paths=("/tmp/visual-attempt.json",),
+        )
+
+        assert result["passed"] is True
+        assert not marker.exists()
+        prompt = build_runner.exec_feedback.call_args.args[1]
+        assert "visual_artifacts_missing" in prompt
+        assert "downstream visual" in prompt
+        assert "/tmp/visual-attempt.json" in prompt
 
     def test_exec_build_falls_back_when_prompt_empty(self, tmp_path: Path) -> None:
         """When prompt is empty, _exec_build falls back to sandbox even if build runner set."""
@@ -8200,6 +8729,51 @@ class TestPromptHelpers:
         assert "CODEX REPAIR 2" in output
         assert "test-results/trace.zip" not in output
         assert controller._state_store.read()["provider_attempts"] == [summary]
+
+    def test_provider_attempt_summary_surfaces_evidence_integrity_counts(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Provider summaries identify skipped journeys and concrete coverage debt."""
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="fix",
+            attempt=1,
+            result={
+                "provider_invocation": {"provider": "codex"},
+                "stdout": "Added the persistence journey.",
+            },
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "Required coverage is not automated.",
+                    details={
+                        "gaps": [
+                            {"requirement_id": "FR-013", "status": "UNVERIFIED"}
+                        ]
+                    },
+                )],
+                verification_evidence={
+                    "playwright": {"total": 1, "passed": 0, "failed": 0, "skipped": 1}
+                },
+            ),
+            changed_files=["tests/journey.spec.ts"],
+        )
+
+        assert summary is not None
+        assert summary["playwright"] == {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 1,
+        }
+        assert summary["evidence_gaps"] == ["FR-013 [UNVERIFIED]"]
+        output = capsys.readouterr().err
+        assert "1 total, 0 passed, 0 failed, 1 skipped" in output
+        assert "FR-013 [UNVERIFIED]" in output
 
     def test_make_iter_prompt_iter0_returns_base(self, tmp_path: Path) -> None:
         controller, *_ = _make_controller(tmp_path)

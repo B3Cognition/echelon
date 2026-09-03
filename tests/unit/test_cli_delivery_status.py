@@ -8,13 +8,16 @@ from pathlib import Path
 import pytest
 
 
-def _write_delivery_state(project_root: Path, *, strategy: str = "default") -> Path:
+def _write_delivery_state(
+    project_root: Path,
+    *,
+    strategy: str = "default",
+    user_runnability: dict | None = None,
+) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / f"{strategy}.json"
-    state_file.write_text(
-        json.dumps(
-            {
+    payload = {
                 "spec_id": "001",
                 "strategy_id": strategy,
                 "status": "blocked",
@@ -30,9 +33,11 @@ def _write_delivery_state(project_root: Path, *, strategy: str = "default") -> P
                 "salvage_branch": "harness/001-salvage",
                 "checkpoint_commits": [{"commit": "1234567890abcdef", "phase": "build"}],
                 "escalation_file": "runs/build-20260710-101500-000000/escalation.md",
-            },
-            indent=2,
-        ),
+            }
+    if user_runnability is not None:
+        payload["user_runnability"] = user_runnability
+    state_file.write_text(
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
     return state_file
@@ -114,6 +119,217 @@ def _write_escalation(project_root: Path) -> Path:
 
 
 @pytest.mark.unit
+def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step(
+        {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "build_reason": "candidate contract path was denied",
+        },
+        "001",
+    )
+
+    assert next_step == "resolve the reported blocker, then echelon delivery run 001"
+    assert "continue" not in next_step
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ["initialized", "running", "interrupted"])
+def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step({"status": status}, "001")
+
+    assert next_step == "echelon delivery run 001"
+
+
+@pytest.mark.unit
+def test_delivery_status_shows_failed_runnability_action(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "not_runnable",
+            "failed_stage": "primary_journey",
+            "failure_class": "missing_local_auth_bootstrap",
+            "summary": "No local player session could be created.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": {},
+        },
+    )
+
+    _cmd_delivery_status([], project_root=tmp_path)
+
+    output = capsys.readouterr().out
+    assert "user runnable" in output
+    assert "primary journey" in output
+    assert "missing_local_auth_bootstrap" in output
+    assert "/runs/report.md" in output
+    assert "delivery will repair this current-spec product gap" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_runnability_shows_passing_local_run_commands(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    commands = {
+        "prerequisites": ["Docker 27", "pnpm 10"],
+        "provision": ["echelon stack provision --target browser-game"],
+        "start": ["pnpm start:local"],
+        "open": ["http://127.0.0.1:5173"],
+        "stop": ["pnpm stop:local", "docker compose down"],
+    }
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "failed_stage": None,
+            "failure_class": "",
+            "summary": "The composed journey passed.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": commands,
+        },
+    )
+
+    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    json_payload = json.loads(capsys.readouterr().out)
+    assert json_payload["latest"]["user_runnability"]["user_commands"] == commands
+
+    _cmd_delivery_status([], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "pnpm start:local" in output
+    assert "echelon stack provision --target browser-game" in output
+    assert "http://127.0.0.1:5173" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_surfaces_separate_unverified_local_journey(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    local_journey = {
+        "status": "unverified",
+        "reason": "No compatible local runner executed these commands.",
+        "commands": {
+            "prerequisites": ["Docker with Compose v2"],
+            "provision": ["docker compose up -d postgres"],
+            "readiness": ["docker compose exec -T postgres pg_isready"],
+            "prepare": ["pnpm db:prepare-local-test"],
+            "verify": ["pnpm verify:local"],
+            "start": ["pnpm start"],
+            "open": ["http://127.0.0.1:3000"],
+            "stop": ["pnpm stop"],
+            "cleanup": ["docker compose down -v"],
+        },
+    }
+    _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "failed_stage": None,
+            "failure_class": "",
+            "summary": "The sandbox journey passed.",
+            "report": "/runs/report.md",
+            "candidate_fingerprint": "product-1",
+            "contract_hash": "contract-1",
+            "stack_hash": "stack-1",
+            "user_commands": {"start": ["pnpm start:sandbox"]},
+            "local_journey": local_journey,
+        },
+    )
+
+    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    json_payload = json.loads(capsys.readouterr().out)
+    assert json_payload["latest"]["user_runnability"]["local_journey"] == local_journey
+
+    _cmd_delivery_status([], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "local journey" in output
+    assert "unverified" in output
+    assert "local provision" in output
+    assert "docker compose up -d postgres" in output
+    assert "local verify" in output
+    assert "pnpm verify:local" in output
+    assert "local cleanup" in output
+    assert "docker compose down -v" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_surfaces_execution_and_visual_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Status distinguishes executable journey proof from local instructions."""
+    state_file = _write_delivery_state(
+        tmp_path,
+        user_runnability={
+            "status": "runnable",
+            "summary": "Sandbox composition passed.",
+            "local_journey": {
+                "status": "unverified",
+                "reason": "Run these commands locally.",
+                "commands": {
+                    "session": ["pnpm session:local"],
+                    "start": ["pnpm start:local"],
+                },
+                "boundary_probes": [
+                    {
+                        "id": "postgres-host",
+                        "service": "postgres",
+                        "command": "pg_isready -h 127.0.0.1 -p 5432 -U game",
+                    }
+                ],
+            },
+        },
+    )
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["last_verify_result"] = {
+        "passed": True,
+        "verification_evidence": {
+            "playwright": {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
+        },
+    }
+    state["visual_evidence"] = {
+        "path": "/runs/visual/attempt-0001.json",
+        "passed": True,
+        "artifact_count": 3,
+        "candidate_fingerprint": "product-1",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    payload = json.loads(capsys.readouterr().out)["latest"]
+    assert payload["playwright"] == {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
+    assert payload["visual_evidence"]["artifact_count"] == 3
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "2 passed, 0 failed, 0 skipped" in output
+    assert "3 retained (passed)" in output
+    assert "pnpm session:local" in output
+    assert "postgres-host: pg_isready -h 127.0.0.1" in output
+
+
+@pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from echelon.cli import _cmd_delivery_status
 
@@ -131,6 +347,56 @@ def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.Capt
     assert "ready_to_land" in out
     assert "echelon delivery resume 001" in out
     assert str(state_file) in out
+
+
+@pytest.mark.unit
+def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "converged"
+    state["termination_reason"] = "converged"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    spec_dir = _write_spec(tmp_path)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest"]["spec_status"] == "landed"
+    assert payload["latest"]["next"] == "No action required; delivery is already landed."
+
+
+@pytest.mark.unit
+def test_delivery_status_prints_publication_failure_cause(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "publish_failed"
+    state["publication_failure"] = {
+        "stage": "dirty_adjudication",
+        "error": "Dirty worktree adjudication blocked commit",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "publish stage" in out
+    assert "dirty_adjudication" in out
+    assert "publish error" in out
+    assert "Dirty worktree adjudication blocked commit" in out
 
 
 @pytest.mark.unit
@@ -201,3 +467,32 @@ def test_delivery_status_renders_escalation_question_and_recommended_command(
     assert "Continue with the isolated verification database." in out
     assert str(escalation_path) in out
     assert "echelon delivery resume 001 'Continue with the isolated verification database.'" in out
+
+
+@pytest.mark.unit
+def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budget(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An exhausted loop cannot advertise an answer-based resume it rejects."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "outer_cap"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    _write_escalation(tmp_path)
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "echelon delivery run 001" in out
+    assert "fresh outer-loop budget" in out
+    assert "echelon delivery resume 001" not in out
+    assert "Which database should verification use?" not in out
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest"]["next"].startswith("echelon delivery run 001")
+    assert "escalation" not in payload["latest"]

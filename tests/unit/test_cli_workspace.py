@@ -342,7 +342,17 @@ def test_phase_runtime_guard_accepts_complete_prosaic_workspace(tmp_path: Path) 
     workflow.mkdir(parents=True)
     subagents.mkdir(parents=True)
     (tmp_path / ".specify/extensions/echelon").mkdir(parents=True)
-    (workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    (workflow / "definition.yaml").write_text(
+        "controller_runtime_compatibility_version: 3\n"
+        "phases:\n"
+        "  - id: complete\n"
+        "    type: terminal\n"
+        "    checkpoint: none\n"
+        "    rewind: none\n"
+        "    allowed_state_updates: []\n"
+        "    transitions: []\n",
+        encoding="utf-8",
+    )
 
     assert _installed_phase_runtime_or_exit(tmp_path) == workflow.parent
 

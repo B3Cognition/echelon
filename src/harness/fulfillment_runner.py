@@ -68,7 +68,7 @@ MEASURED_EVIDENCE_INPUT_DIRS = (
     "test-results",
 )
 
-FULFILLMENT_VERIFIER_VERSION = "verified-ledger-v2-codegraph-candidates"
+FULFILLMENT_VERIFIER_VERSION = "verified-ledger-v3-coverage-evidence"
 
 IMPLEMENTATION_INPUT_FILES = (
     "pyproject.toml",

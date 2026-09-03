@@ -25,7 +25,19 @@ _CONTROL_PLANE_PATHS = (
     "opencode.jsonc",
 )
 
-_PRODUCT_PLANE_CONTRACT = f"""{PRODUCT_PLANE_BOUNDARY_HEADING}
+_CANDIDATE_RUNNABILITY_CONTRACT = Path(".echelon/runnability.yml")
+
+
+def _product_plane_contract(*, runnability_contract_authorized: bool) -> str:
+    contract_exception = ""
+    if runnability_contract_authorized:
+        contract_exception = """
+- The sole candidate-owned control-plane exception authorized for this
+  invocation is `.echelon/runnability.yml`. You may inspect, create, or modify
+  that exact file as part of product delivery. This exception does not grant
+  access to any sibling or other `.echelon` content.
+"""
+    return f"""{PRODUCT_PLANE_BOUNDARY_HEADING}
 
 Echelon has already embedded all selected instructions and companion material in
 this prompt. Work only with product artifacts needed for the requested task.
@@ -38,6 +50,7 @@ this prompt. Work only with product artifacts needed for the requested task.
 - Do not run workspace-wide `find`, `grep`, or `rg` to discover instructions.
 - Treat inaccessible control-plane files as intentional. Do not retry or broaden
   the search when a control-plane read is rejected.
+{contract_exception.rstrip()}
 - You may execute explicitly named Echelon runtime helpers under
   `.echelon/runtime/scripts` only when this prompt provides the exact command.
   Never inspect or search those helper files, and never execute an unreferenced
@@ -62,6 +75,11 @@ def apply_product_plane_boundary(
         root,
         prompt_metadata.get("tool_forbidden_roots"),
     )
+    write_paths = _normalized_paths(root, prompt_metadata.get("tool_write_paths"))
+    runnability_contract = str(
+        (root / _CANDIDATE_RUNNABILITY_CONTRACT).resolve(strict=False)
+    )
+    runnability_contract_authorized = runnability_contract in write_paths
     defaults = tuple(
         str((root / relative).resolve(strict=False))
         for relative in _CONTROL_PLANE_PATHS
@@ -83,7 +101,10 @@ def apply_product_plane_boundary(
     metadata["prompt_metadata"] = prompt_metadata
 
     if PRODUCT_PLANE_BOUNDARY_HEADING not in prompt:
-        prompt = f"{_PRODUCT_PLANE_CONTRACT}\n{prompt}"
+        boundary = _product_plane_contract(
+            runnability_contract_authorized=runnability_contract_authorized
+        )
+        prompt = f"{boundary}\n{prompt}"
     return prompt, metadata
 
 

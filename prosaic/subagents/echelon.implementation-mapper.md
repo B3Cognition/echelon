@@ -52,6 +52,12 @@ NEVER treat weak CodeGraph rows as disposable; do not dismiss CodeGraph evidence
 ALWAYS keep manual inspection corrections separate: manual source/test citations belong in Verified Implementation Evidence and Verified Test Evidence cells, while deterministic leads stay in CodeGraph Candidates with Candidate Disposition `accepted`, `candidate_only`, `contradicted`, `unrelated`, or `none`.
 NEVER replace, delete, silently downgrade, or copy deterministic CodeGraph Candidates into verified evidence cells unless direct source/test inspection confirms them.
 
+### Rule 6b - Coverage Evidence Authority
+ALWAYS treat `{verify_run_dir}/coverage-evidence.json` as controller-owned test
+coverage truth when present.
+NEVER assign strong verified test evidence to a requirement whose coverage
+status is deferred, escalated, missing, or contradictory.
+
 ### Rule 7 - Canonical Inventory Boundary
 ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.
 NEVER add extra implementation-map rows for non-inventory IDs; record them separately as `unmapped_candidate`.

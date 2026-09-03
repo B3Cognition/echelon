@@ -26,15 +26,22 @@ from harness.stacks.provisioning import (
 )
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
 from harness.stacks.resolver import (
+    ResolvedRunnability,
     ResolvedStackProvisioner,
     ResolvedStacks,
+    resolved_stack_contract_sha256,
     resolve_stacks,
 )
-from harness.stacks.schema import StackProvisioner, StackProvisionerSatisfier
+from harness.stacks.schema import (
+    StackProvisioner,
+    StackProvisionerSatisfier,
+    StackRunnability,
+)
 
 __all__ = [
     "DetectedStack",
     "ResolvedStacks",
+    "ResolvedRunnability",
     "ResolvedStackProvisioner",
     "StackDecision",
     "StackDetectionReport",
@@ -42,6 +49,7 @@ __all__ = [
     "StackPreflightResult",
     "StackProvisioner",
     "StackProvisionerSatisfier",
+    "StackRunnability",
     "ProvisioningError",
     "ProvisioningStatus",
     "detect_stacks",
@@ -53,6 +61,7 @@ __all__ = [
     "render_detection_markdown",
     "render_preflight_markdown",
     "render_resolved_markdown",
+    "resolved_stack_contract_sha256",
     "resolve_stacks",
     "render_provisioner",
     "resolved_to_dict",

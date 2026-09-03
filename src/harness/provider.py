@@ -155,6 +155,20 @@ class SandboxProvider(abc.ABC):
         """Return monetary cost. Returns None for local providers."""
         return None
 
+    def start_services(self, handle: SandboxHandle, services: tuple[Any, ...]) -> tuple[str, ...]:
+        """Start attempt-scoped sidecars when supported by the provider."""
+        raise NotSupportedError("verification services not supported by this provider")
+
+    def exec_service(
+        self,
+        handle: SandboxHandle,
+        service_name: str,
+        argv: tuple[str, ...],
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        """Execute argv directly inside an attempt-owned named sidecar."""
+        raise NotSupportedError("service execution not supported by this provider")
+
 
 # --- Provider registration ---
 
