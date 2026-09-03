@@ -270,6 +270,31 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    def test_continue_reattaches_to_interrupted_active_build(
+        self, tmp_path: Path
+    ) -> None:
+        """A SIGINT-left running state must not require a destructive new run."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "running",
+            "termination_reason": "visual_feedback_failed",
+            "downstream_reentry": {
+                "from_phase": "visual",
+                "reason": "candidate_changed_after_checkpoint",
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
     def test_non_docs_containment_violation_stays_unsupported(
         self,
         tmp_path: Path,

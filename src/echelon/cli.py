@@ -3007,15 +3007,28 @@ def _cmd_harness_resume(
         continuation_reasons.add("containment_violation")
     retryable_error_reasons = {"harness_error"}
 
-    if current_status != "blocked" and termination_reason not in recoverable_reasons:
+    resumable_statuses = {
+        "blocked",
+        "running",
+        "interrupted",
+        "verified",
+        "validating",
+        "reviewing",
+        "finalizing",
+    }
+    if (
+        current_status not in resumable_statuses
+        and termination_reason not in recoverable_reasons
+    ):
         print(
-            f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
-            "  Use 'echelon delivery run <spec_id>' to start or continue.",
+            f"✗ Spec {spec_id!r} has no resumable delivery checkpoint "
+            f"(status={current_status!r}).\n"
+            "  Use 'echelon delivery run <spec_id>' to start a new run.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if termination_reason not in {
+    if current_status == "blocked" and termination_reason not in {
         "verify_command_needed",
         *recoverable_reasons,
         *continuation_reasons,
