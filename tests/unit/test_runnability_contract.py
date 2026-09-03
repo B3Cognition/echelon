@@ -81,8 +81,20 @@ local_journey:
     - TEST_DATABASE_URL=postgresql://game:local-development-only@127.0.0.1:5432/browser_3d_game_test pnpm verify
   start_commands:
     - pnpm start
+  session_commands:
+    - pnpm local:session
   open_urls:
     - http://127.0.0.1:3000
+  boundary_probes:
+    - id: postgres-from-app
+      service: postgres
+      command: pnpm db:probe-local
+    - id: web-from-browser
+      service: web
+      command: curl -fsS http://127.0.0.1:3000/health
+    - id: api-from-browser
+      service: api
+      command: curl -fsS http://127.0.0.1:3000/api/health
   stop_commands:
     - pnpm stop
   cleanup_commands:
@@ -142,7 +154,15 @@ def test_loads_complete_local_user_journey_as_immutable_contract(
         "TEST_DATABASE_URL=postgresql://game:local-development-only@127.0.0.1:5432/browser_3d_game_test pnpm verify",
     )
     assert contract.local_journey.start_commands == ("pnpm start",)
+    assert contract.local_journey.session_commands == ("pnpm local:session",)
     assert contract.local_journey.open_urls == ("http://127.0.0.1:3000",)
+    assert [probe.id for probe in contract.local_journey.boundary_probes] == [
+        "postgres-from-app",
+        "web-from-browser",
+        "api-from-browser",
+    ]
+    assert contract.local_journey.boundary_probes[0].service == "postgres"
+    assert contract.local_journey.boundary_probes[0].command == "pnpm db:probe-local"
     assert contract.local_journey.stop_commands == ("pnpm stop",)
     assert contract.local_journey.cleanup_commands == ("docker compose down -v",)
 
@@ -171,6 +191,7 @@ def test_local_user_journey_rejects_unknown_fields(tmp_path: Path) -> None:
         "prepare_commands",
         "verify_commands",
         "start_commands",
+        "session_commands",
         "open_urls",
         "stop_commands",
         "cleanup_commands",
@@ -191,6 +212,66 @@ def test_local_user_journey_requires_every_lifecycle_field(
     with pytest.raises(
         RunnabilityContractError,
         match=rf"local_journey\.{field} must not be empty",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
+def test_identity_backed_local_journey_requires_session_commands(tmp_path: Path) -> None:
+    text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
+        "  session_commands:\n    - pnpm local:session\n",
+        "",
+    )
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match=r"local_journey\.session_commands must not be empty",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
+def test_local_journey_requires_consumer_probe_for_each_real_service(
+    tmp_path: Path,
+) -> None:
+    text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
+        "    - id: postgres-from-app\n"
+        "      service: postgres\n"
+        "      command: pnpm db:probe-local\n",
+        "",
+    )
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match="local_journey.boundary_probes is missing real service: postgres",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
+def test_local_journey_rejects_duplicate_probe_ids(tmp_path: Path) -> None:
+    text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
+        "    - id: web-from-browser\n",
+        "    - id: postgres-from-app\n",
+    )
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match="duplicate local boundary probe id: postgres-from-app",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
+def test_local_journey_rejects_unknown_probe_service(tmp_path: Path) -> None:
+    text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
+        "      service: web\n",
+        "      service: redis\n",
+    )
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match="unsupported local boundary probe service: redis",
     ):
         load_runnability_contract(_write_contract(tmp_path, text))
 

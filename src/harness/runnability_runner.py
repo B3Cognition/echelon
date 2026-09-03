@@ -15,6 +15,7 @@ from harness.exec_result import ExecResult
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.runnability_contract import (
+    LocalBoundaryProbe,
     Observation,
     RunnabilityContract,
     runnability_contract_sha256,
@@ -52,6 +53,7 @@ class RunnabilityRunResult:
     local_journey_status: str = "not_required"
     local_journey_reason: str = ""
     local_user_commands: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    local_boundary_probes: tuple[LocalBoundaryProbe, ...] = ()
 
 
 class RunnabilityRunner:
@@ -90,6 +92,11 @@ class RunnabilityRunner:
         stack_hash = resolved_stack_contract_sha256(resolved)
         user_commands = _user_commands(contract)
         local_user_commands = _local_user_commands(contract)
+        local_boundary_probes = (
+            contract.local_journey.boundary_probes
+            if contract.local_journey is not None
+            else ()
+        )
         local_journey_status = (
             "unverified" if contract.local_journey is not None else "not_required"
         )
@@ -133,6 +140,7 @@ class RunnabilityRunner:
                 local_journey_status="missing",
                 local_journey_reason=summary,
                 local_user_commands=local_user_commands,
+                local_boundary_probes=local_boundary_probes,
             )
         missing_required = _missing_stack_observation(contract, resolved)
         if missing_required:
@@ -164,6 +172,7 @@ class RunnabilityRunner:
                 local_journey_status=local_journey_status,
                 local_journey_reason=local_journey_reason,
                 local_user_commands=local_user_commands,
+                local_boundary_probes=local_boundary_probes,
             )
         missing_boundary = _missing_service_boundary(contract)
         if missing_boundary:
@@ -194,6 +203,7 @@ class RunnabilityRunner:
                 local_journey_status=local_journey_status,
                 local_journey_reason=local_journey_reason,
                 local_user_commands=local_user_commands,
+                local_boundary_probes=local_boundary_probes,
             )
 
         variables = {
@@ -484,6 +494,7 @@ class RunnabilityRunner:
             local_journey_status=local_journey_status,
             local_journey_reason=local_journey_reason,
             local_user_commands=local_user_commands,
+            local_boundary_probes=local_boundary_probes,
         )
 
     def _run_commands(
@@ -904,6 +915,7 @@ class RunnabilityRunner:
         local_journey_status: str,
         local_journey_reason: str,
         local_user_commands: dict[str, tuple[str, ...]],
+        local_boundary_probes: tuple[LocalBoundaryProbe, ...],
     ) -> RunnabilityRunResult:
         evidence = write_runnability_report(
             evidence_dir=evidence_dir,
@@ -926,6 +938,14 @@ class RunnabilityRunner:
             local_journey_status=local_journey_status,
             local_journey_reason=local_journey_reason,
             local_user_commands=local_user_commands,
+            local_boundary_probes=tuple(
+                {
+                    "id": probe.id,
+                    "service": probe.service,
+                    "command": probe.command,
+                }
+                for probe in local_boundary_probes
+            ),
         )
         return RunnabilityRunResult(
             status=status,
@@ -941,6 +961,7 @@ class RunnabilityRunner:
             local_journey_status=local_journey_status,
             local_journey_reason=local_journey_reason,
             local_user_commands=local_user_commands,
+            local_boundary_probes=local_boundary_probes,
         )
 
 
@@ -1097,6 +1118,7 @@ def _local_user_commands(
         "prepare": journey.prepare_commands,
         "verify": journey.verify_commands,
         "start": journey.start_commands,
+        "session": journey.session_commands,
         "open": journey.open_urls,
         "stop": journey.stop_commands,
         "cleanup": journey.cleanup_commands,

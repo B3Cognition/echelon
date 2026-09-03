@@ -16,6 +16,7 @@ from harness.provider import (
 )
 from harness.runnability_contract import (
     JourneyStep,
+    LocalBoundaryProbe,
     LocalUserJourney,
     Observation,
     PersistenceProbe,
@@ -230,7 +231,20 @@ def _local_journey() -> LocalUserJourney:
         prepare_commands=("pnpm db:prepare-local-test",),
         verify_commands=("pnpm verify:local",),
         start_commands=("pnpm start",),
+        session_commands=("pnpm local:session",),
         open_urls=("http://127.0.0.1:3000",),
+        boundary_probes=(
+            LocalBoundaryProbe(
+                id="postgres-from-app",
+                service="postgres",
+                command="pnpm db:probe-local",
+            ),
+            LocalBoundaryProbe(
+                id="web-from-browser",
+                service="web",
+                command="curl -fsS http://127.0.0.1:3000/health",
+            ),
+        ),
         stop_commands=("pnpm stop",),
         cleanup_commands=("docker compose down -v",),
     )
@@ -530,6 +544,21 @@ def test_runner_reports_declared_local_journey_as_unverified_without_host_execut
     assert payload["local_journey"]["status"] == "unverified"
     assert payload["local_journey"]["commands"]["cleanup"] == [
         "docker compose down -v"
+    ]
+    assert payload["local_journey"]["commands"]["session"] == [
+        "pnpm local:session"
+    ]
+    assert payload["local_journey"]["boundary_probes"] == [
+        {
+            "command": "pnpm db:probe-local",
+            "id": "postgres-from-app",
+            "service": "postgres",
+        },
+        {
+            "command": "curl -fsS http://127.0.0.1:3000/health",
+            "id": "web-from-browser",
+            "service": "web",
+        },
     ]
     assert "docker compose up -d postgres" not in provider.commands
 

@@ -132,6 +132,7 @@ def write_runnability_report(
     local_journey_status: str = "not_required",
     local_journey_reason: str = "",
     local_user_commands: Mapping[str, Sequence[str]] | None = None,
+    local_boundary_probes: Sequence[Mapping[str, str]] = (),
 ) -> RunnabilityEvidenceRef:
     """Write one immutable attempt and update bounded human-facing pointers."""
     if status not in VALID_STATUSES:
@@ -202,6 +203,20 @@ def write_runnability_report(
             },
         },
     }
+    if local_boundary_probes:
+        local_payload = payload["local_journey"]
+        assert isinstance(local_payload, dict)
+        local_payload["boundary_probes"] = [
+            {
+                "id": str(probe.get("id") or ""),
+                "service": str(probe.get("service") or ""),
+                "command": redact_verification_text(
+                    str(probe.get("command") or ""),
+                    sensitive_environment,
+                ),
+            }
+            for probe in local_boundary_probes
+        ]
     evidence_sha256 = _stable_evidence_sha256(payload)
     payload["evidence_sha256"] = evidence_sha256
     receipt_sha256 = _sha256_json(payload)
@@ -412,6 +427,16 @@ def _render_markdown(payload: Mapping[str, object]) -> str:
                 lines.append("")
                 lines.extend(f"- `{value}`" for value in values)
                 lines.append("")
+        probes = local_journey.get("boundary_probes")
+        if isinstance(probes, list) and probes:
+            lines.extend(["", "## Local Boundary Probes", ""])
+            for probe in probes:
+                if not isinstance(probe, Mapping):
+                    continue
+                lines.append(
+                    f"- `{probe.get('id')}` ({probe.get('service')}): "
+                    f"`{probe.get('command')}`"
+                )
     lines.extend(
         [
             "",

@@ -112,6 +112,13 @@ class PersistenceProbe:
 
 
 @dataclass(frozen=True)
+class LocalBoundaryProbe:
+    id: str
+    service: str
+    command: str
+
+
+@dataclass(frozen=True)
 class LocalUserJourney:
     prerequisites: tuple[str, ...]
     provision_commands: tuple[str, ...]
@@ -119,7 +126,9 @@ class LocalUserJourney:
     prepare_commands: tuple[str, ...]
     verify_commands: tuple[str, ...]
     start_commands: tuple[str, ...]
+    session_commands: tuple[str, ...]
     open_urls: tuple[str, ...]
+    boundary_probes: tuple[LocalBoundaryProbe, ...]
     stop_commands: tuple[str, ...]
     cleanup_commands: tuple[str, ...]
 
@@ -183,10 +192,13 @@ _LOCAL_JOURNEY_FIELDS = {
     "prepare_commands",
     "verify_commands",
     "start_commands",
+    "session_commands",
     "open_urls",
+    "boundary_probes",
     "stop_commands",
     "cleanup_commands",
 }
+_LOCAL_BOUNDARY_PROBE_FIELDS = {"id", "service", "command"}
 _VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -248,6 +260,11 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
         observation_ids={item.id for item in journey.observations},
     )
     local_journey = _parse_local_journey(root_raw.get("local_journey"))
+    _validate_local_journey_obligations(
+        local_journey,
+        identity=identity,
+        journey=journey,
+    )
     start_commands = _commands(root_raw.get("start_commands"), "start_commands")
     stop_commands = _commands(root_raw.get("stop_commands"), "stop_commands")
     if enabled and not start_commands:
@@ -524,6 +541,13 @@ def _parse_local_journey(value: Any) -> LocalUserJourney | None:
                 f"local_journey.{field} must not be empty"
             )
         commands[field] = parsed
+    session_commands = _commands(
+        raw.get("session_commands", []),
+        "local_journey.session_commands",
+    )
+    boundary_probes = _parse_local_boundary_probes(
+        raw.get("boundary_probes", [])
+    )
     return LocalUserJourney(
         prerequisites=prerequisites,
         provision_commands=commands["provision_commands"],
@@ -531,10 +555,63 @@ def _parse_local_journey(value: Any) -> LocalUserJourney | None:
         prepare_commands=commands["prepare_commands"],
         verify_commands=commands["verify_commands"],
         start_commands=commands["start_commands"],
+        session_commands=session_commands,
         open_urls=open_urls,
+        boundary_probes=boundary_probes,
         stop_commands=commands["stop_commands"],
         cleanup_commands=commands["cleanup_commands"],
     )
+
+
+def _parse_local_boundary_probes(value: Any) -> tuple[LocalBoundaryProbe, ...]:
+    rows = _list(value, "local_journey.boundary_probes")
+    probes: list[LocalBoundaryProbe] = []
+    seen_ids: set[str] = set()
+    for index, value in enumerate(rows):
+        field = f"local_journey.boundary_probes[{index}]"
+        raw = _mapping(value, field)
+        _reject_unknown(raw, _LOCAL_BOUNDARY_PROBE_FIELDS, field)
+        probe_id = _string(raw.get("id"), f"{field}.id")
+        if probe_id in seen_ids:
+            raise RunnabilityContractError(
+                f"duplicate local boundary probe id: {probe_id}"
+            )
+        seen_ids.add(probe_id)
+        service = _string(raw.get("service"), f"{field}.service")
+        if service not in SUPPORTED_SERVICES:
+            raise RunnabilityContractError(
+                f"unsupported local boundary probe service: {service}"
+            )
+        probes.append(
+            LocalBoundaryProbe(
+                id=probe_id,
+                service=service,
+                command=_command(raw.get("command"), f"{field}.command"),
+            )
+        )
+    return tuple(probes)
+
+
+def _validate_local_journey_obligations(
+    local_journey: LocalUserJourney | None,
+    *,
+    identity: RunnabilityIdentity | None,
+    journey: PrimaryJourney,
+) -> None:
+    if local_journey is None:
+        return
+    if (
+        identity is not None or journey.session_storage
+    ) and not local_journey.session_commands:
+        raise RunnabilityContractError(
+            "local_journey.session_commands must not be empty when the primary journey requires identity"
+        )
+    probed_services = {probe.service for probe in local_journey.boundary_probes}
+    for service in journey.real_services_required:
+        if service not in probed_services:
+            raise RunnabilityContractError(
+                f"local_journey.boundary_probes is missing real service: {service}"
+            )
 
 
 def _validate_variables(value: Any) -> None:
