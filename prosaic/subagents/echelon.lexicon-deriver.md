@@ -57,6 +57,41 @@ provider-free `phase1-lexicon` node.
 - If the source cannot be translated without changing its meaning, return
   `FAIL` and describe the exact source location. Do not modify the source.
 
+## Controlled Block Shapes
+
+The output is parsed literally. Use only these block shapes; do not infer extra
+labels from the rich Markdown source:
+
+```text
+# SOURCE: <source filename>
+# SOURCE_SHA256: <exact SHA-256 of source bytes>
+ARTIFACT: SPEC
+TITLE: <source-grounded title>
+
+REQ: <requirement-id>
+GIVEN: <condition>
+WHEN: <trigger>
+THEN: <one normative result>
+OUTPUT: <observable result>
+CONSTRAINT: <optional source-grounded constraint>
+DEPENDS: <optional source requirement>
+EXAMPLE: <source AC-id>
+
+AC: <AC-id>
+GIVEN: <condition>
+WHEN: <trigger>
+THEN: <observable result>
+CONSTRAINT: <optional source-grounded constraint>
+```
+
+The metadata lines must begin with literal `#` characters, and the header must
+appear before the first block. Every `REQ:` block in a SPEC artifact MUST contain
+`OUTPUT:`. AC blocks MUST NOT contain `OUTPUT:`, `EXAMPLE:`, or `DEPENDS:`;
+their observable result belongs in `THEN:`. Do not invent snake_case or
+CamelCase metric identifiers in `OUTPUT:` or `CONSTRAINT:` unless the exact
+identifier is an approved glossary term. Prefer source-grounded prose when no
+approved identifier is available.
+
 ## Result Contract
 
 Return exactly one derived output:

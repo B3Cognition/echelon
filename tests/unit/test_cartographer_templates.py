@@ -200,6 +200,12 @@ class TestCartographerTemplates:
         assert "Never edit" in deriver_text
         assert "spec.md" in deriver_text
         assert "Never declare specification quality" in deriver_text
+        assert "AC blocks MUST NOT contain `OUTPUT:`" in deriver_text
+        assert "AC: <AC-id>" in derive_phase_text
+        assert "# SOURCE: <source filename>" in deriver_text
+        assert "# SOURCE_SHA256: <exact SHA-256 of source bytes>" in deriver_text
+        assert "Every `REQ:` block in a SPEC artifact MUST contain" in deriver_text
+        assert "`OUTPUT:`. AC blocks MUST NOT contain" in deriver_text
 
     def test_workflow_definition_lists_cartographer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")

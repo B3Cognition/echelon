@@ -150,9 +150,14 @@ def validate(
                 typer.echo(f"  {spec}:{f.line}  [{f.code}] {f.message}")
         raise typer.Exit(code=0 if report.ok else 1)
 
+    approved_terms = _load_glossary(glossary)
+    if source_ref is not None:
+        from .source_contract import source_approved_terms
+
+        approved_terms |= source_approved_terms(source_ref)
     report = _validate(
         text,
-        glossary=_load_glossary(glossary),
+        glossary=approved_terms,
         artifact_type=artifact_type.upper() if artifact_type else None,
     )
     if source_ref is not None:
