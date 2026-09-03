@@ -8262,6 +8262,9 @@ def _cmd_run(
     if existing_state.get("spec_authoring_mode") != spec_authoring_mode:
         existing_state["spec_authoring_mode"] = spec_authoring_mode
         state_store.save(existing_state)
+        # save() advances the optimistic state revision. Reload before any
+        # further migration write in this invocation.
+        existing_state = state_store.load()
     run_message = message
     if not is_fresh:
         existing_message = str(existing_state.get("user_message") or "").strip()
