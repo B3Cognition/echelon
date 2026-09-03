@@ -463,6 +463,45 @@ def test_run_loop_retains_success_screenshot_as_candidate_evidence(
     ).valid
 
 
+def test_retrieve_screenshots_falls_back_to_playwright_test_results(
+    tmp_path: Path,
+) -> None:
+    """Playwright attachments are collected from its standard output directory."""
+    from harness.visual_ralph import VisualRalphController
+
+    controller = VisualRalphController(
+        provider=MagicMock(),
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+    handle = SandboxHandle(id="ctr1", session_id="s1")
+
+    def copy_from_container(command, **_kwargs):
+        source = command[2]
+        destination = Path(command[3])
+        if source.endswith(":/workspace/playwright-report"):
+            return SimpleNamespace(returncode=1, stderr=b"path not found")
+        assert source.endswith(":/workspace/test-results")
+        destination.mkdir(parents=True)
+        (destination / "journey.png").write_bytes(b"visual-proof")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    with patch(
+        "harness.visual_ralph.subprocess.run", side_effect=copy_from_container
+    ) as run:
+        screenshots = controller._retrieve_screenshots(handle, attempt_sequence=1)
+
+    assert len(screenshots) == 1
+    assert Path(screenshots[0]).read_bytes() == b"visual-proof"
+    assert [call.args[0][2] for call in run.call_args_list] == [
+        "ctr1:/workspace/playwright-report",
+        "ctr1:/workspace/test-results",
+    ]
+
+
 def test_run_loop_rejects_success_without_required_screenshot(tmp_path: Path) -> None:
     """Executed tests alone cannot satisfy the browser visual artifact gate."""
     from harness.visual_ralph import VisualRalphController

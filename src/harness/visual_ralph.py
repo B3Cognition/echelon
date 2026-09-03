@@ -430,35 +430,50 @@ class VisualRalphController:
     def _retrieve_screenshots(
         self, handle: SandboxHandle, attempt_sequence: int | None = None
     ) -> List[str]:
-        """Pull screenshot files from the container via the configured CLI."""
-        container_src = f"/workspace/{self._vc.screenshot_dir}"
+        """Pull retained screenshots from configured and standard Playwright outputs."""
 
         try:
             sequence = attempt_sequence or self._next_visual_attempt_sequence()
             staging_root = self._visual_evidence_dir() / "staging"
             staging_root.mkdir(parents=True, exist_ok=True)
-            dest = staging_root / f"attempt-{sequence:04d}"
-            if dest.exists() or dest.is_symlink():
-                raise FileExistsError(f"visual staging path already exists: {dest}")
-            proc = subprocess.run(
-                [self._config.container_cli, "cp", f"{handle.id}:{container_src}", str(dest)],
-                capture_output=True,
-                timeout=30,
-            )
-            if proc.returncode != 0:
-                logger.debug(
-                    "%s cp failed for screenshots (%s): %s",
-                    self._config.container_cli,
-                    self._vc.screenshot_dir,
-                    proc.stderr.decode(errors="replace").strip(),
+            attempt_root = staging_root / f"attempt-{sequence:04d}"
+            if attempt_root.exists() or attempt_root.is_symlink():
+                raise FileExistsError(
+                    f"visual staging path already exists: {attempt_root}"
                 )
-                return []
+            attempt_root.mkdir()
+            self._last_staging_dir = attempt_root
 
-            self._last_staging_dir = dest
+            screenshot_dirs = [self._vc.screenshot_dir]
+            if self._vc.screenshot_dir.rstrip("/") != "test-results":
+                screenshot_dirs.append("test-results")
+
+            for index, screenshot_dir in enumerate(screenshot_dirs):
+                container_src = f"/workspace/{screenshot_dir.lstrip('/')}"
+                leaf = Path(screenshot_dir.rstrip("/")).name or "screenshots"
+                dest = attempt_root / f"{index:02d}-{leaf}"
+                proc = subprocess.run(
+                    [
+                        self._config.container_cli,
+                        "cp",
+                        f"{handle.id}:{container_src}",
+                        str(dest),
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if proc.returncode != 0:
+                    logger.debug(
+                        "%s cp failed for screenshots (%s): %s",
+                        self._config.container_cli,
+                        screenshot_dir,
+                        proc.stderr.decode(errors="replace").strip(),
+                    )
+
             screenshots = (
-                list(dest.glob("**/*.png"))
-                + list(dest.glob("**/*.jpg"))
-                + list(dest.glob("**/*.jpeg"))
+                list(attempt_root.glob("**/*.png"))
+                + list(attempt_root.glob("**/*.jpg"))
+                + list(attempt_root.glob("**/*.jpeg"))
             )
             logger.info("Retrieved %d screenshots from container", len(screenshots))
             return [str(p) for p in screenshots]
