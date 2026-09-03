@@ -151,6 +151,7 @@ class VisualRalphController:
                         evidence=evidence,
                     )
 
+                fingerprint_before_fix = _safe_product_fingerprint(worktree_path)
                 fix_result = self._exec_visual_feedback(
                     handle,
                     worktree_path,
@@ -160,13 +161,21 @@ class VisualRalphController:
                 reported_fix_tokens = fix_result.get("tokens")
                 if isinstance(reported_fix_tokens, int) and reported_fix_tokens > 0:
                     tokens_used += reported_fix_tokens
-                if not fix_result["passed"]:
+                fingerprint_after_fix = _safe_product_fingerprint(worktree_path)
+                verification_deferred = (
+                    fix_result.get("completion_marker_explicit") is True
+                    and fix_result.get("build_status") == "blocked"
+                    and fix_result.get("blocker_kind") == "verification_environment"
+                    and bool(fingerprint_before_fix)
+                    and fingerprint_after_fix != fingerprint_before_fix
+                )
+                if not fix_result["passed"] and not verification_deferred:
                     verify_result = self._with_visual_failure(
                         verify_result,
                         failure_id="visual_feedback_command_failed",
                         error=str(
-                            fix_result.get("diagnostic")
-                            or fix_result.get("build_reason")
+                            fix_result.get("build_reason")
+                            or fix_result.get("diagnostic")
                             or "The configured delivery provider could not apply the visual repair."
                         ),
                         prepend=False,
@@ -656,6 +665,13 @@ class VisualRalphController:
 
 
 # === Helpers ===
+
+def _safe_product_fingerprint(worktree_path: str) -> str:
+    try:
+        return product_evidence_fingerprint(Path(worktree_path))
+    except (OSError, RuntimeError, ValueError):
+        return ""
+
 
 def _estimate_tokens(result: ExecResult) -> int:
     """Rough token estimate from stdout/stderr byte length."""

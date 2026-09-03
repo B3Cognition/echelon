@@ -696,6 +696,52 @@ def test_visual_feedback_uses_configured_provider_repair_runner(
     )
 
 
+def test_changed_visual_repair_can_defer_host_browser_verification(
+    tmp_path: Path,
+) -> None:
+    """A changed candidate proceeds to authoritative sandbox re-verification."""
+    from harness.visual_ralph import VisualRalphController
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "playwright.config.ts").write_text("screenshot: 'off'\n")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(
+        stdout=PLAYWRIGHT_PASS_JSON,
+        exit_code=0,
+    )
+
+    def defer_after_change(*_args):
+        (worktree / "playwright.config.ts").write_text("screenshot: 'on'\n")
+        return {
+            "exit_code": 0,
+            "passed": False,
+            "build_status": "blocked",
+            "blocker_kind": "verification_environment",
+            "completion_marker_explicit": True,
+            "build_reason": "host Chromium unavailable",
+            "duration_s": 2.0,
+            "tokens": 42,
+            "stdout": "",
+            "stderr": "",
+        }
+
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        feedback_runner=defer_after_change,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "fix_applied"
+    assert (worktree / "playwright.config.ts").read_text() == "screenshot: 'on'\n"
+
+
 def test_run_loop_blocks_when_visual_feedback_fails():
     """A failed feedback command cannot be reported as an applied visual fix."""
     from harness.visual_ralph import VisualRalphController

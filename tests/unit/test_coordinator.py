@@ -860,6 +860,80 @@ class TestDeliveryStateMigration:
         visual.assert_called_once()
         assert result.status == "converged"
 
+    def test_changed_visual_checkpoint_reenters_implementation_before_visual(
+        self, tmp_path: Path
+    ) -> None:
+        """A provider repair left at a visual block is reverified on resume."""
+        from harness.config import VisualTestsConfig
+        from harness.ralph import RalphController
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1",
+            "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "last_completed_phase": "implementation",
+                "registered_worktree": str(tmp_path),
+                "verified_commit": "verified-head",
+                "verified_product_fingerprint": "before-repair",
+            },
+        )
+        store.transition("validating")
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "visual",
+                "termination_reason": "visual_feedback_failed",
+            },
+        )
+        reverified = ImplementationResult(
+            "verified",
+            "verified",
+            1,
+            0,
+            None,
+            0,
+            VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+
+        with (
+            patch.object(coordinator, "_worktree_head", return_value="verified-head"),
+            patch(
+                "harness.coordinator.product_evidence_fingerprint",
+                return_value="after-repair",
+            ),
+            patch.object(RalphController, "run_loop", return_value=reverified) as implementation,
+            patch.object(
+                VisualRalphController,
+                "run_loop",
+                return_value=VisualResult("passed", "converged", 1, 0, None),
+            ) as visual,
+        ):
+            result = coordinator.start(
+                RunIntent(
+                    spec_id="spec-001",
+                    max_outer=1,
+                    max_inner=1,
+                    resume=True,
+                )
+            )[0]
+
+        assert result.status == "converged"
+        implementation.assert_called_once()
+        visual.assert_called_once()
+        assert store.read()["downstream_reentry"]["reason"] == (
+            "candidate_changed_after_checkpoint"
+        )
+
     @pytest.mark.parametrize(
         ("registered", "head", "reason"),
         [

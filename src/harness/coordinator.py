@@ -516,6 +516,19 @@ class StrategyCoordinator:
         return None
 
     @staticmethod
+    def _downstream_candidate_changed(state: Dict[str, Any]) -> bool:
+        """Detect an uncommitted provider repair left at a downstream block."""
+        worktree_text = state.get("registered_worktree")
+        expected = str(state.get("verified_product_fingerprint") or "")
+        if not isinstance(worktree_text, str) or not worktree_text or not expected:
+            return False
+        try:
+            current = product_evidence_fingerprint(Path(worktree_text))
+        except (OSError, RuntimeError, ValueError):
+            return False
+        return current != expected
+
+    @staticmethod
     def _git_commit_is_ancestor(
         worktree_path: Path, ancestor: str, descendant: str
     ) -> bool:
@@ -1075,6 +1088,7 @@ class StrategyCoordinator:
                     existing.get("outer_iter", 0),
                 )
                 resume_phase = self._resume_phase(existing)
+                resume_updates: dict[str, object] = {}
                 implementation = self._implementation_from_state(existing)
                 enabled_phases = existing.get("enabled_phases")
                 if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
@@ -1097,14 +1111,23 @@ class StrategyCoordinator:
                             outer_iterations=implementation.outer_iterations,
                             tokens_used=implementation.tokens_used,
                         )
+                    if self._downstream_candidate_changed(existing):
+                        resume_phase = "implementation"
+                        resume_updates["downstream_reentry"] = {
+                            "from_phase": self._resume_phase(existing),
+                            "reason": "candidate_changed_after_checkpoint",
+                        }
+                        existing = dict(existing)
+                        existing["status"] = "running"
+                        existing["blocked_phase"] = None
                 resume_status = {
                     "implementation": "running",
                     "visual": "validating",
                     "review": "reviewing",
                     "finalization": "finalizing",
                 }[resume_phase]
-                if existing_status != resume_status:
-                    state_store.transition(resume_status)
+                if existing_status != resume_status or resume_updates:
+                    state_store.transition(resume_status, updates=resume_updates)
             elif should_resume_blocked:
                 logger.info(
                     "[%s/%s] Resuming from blocked state (outer=%s)",
@@ -1112,6 +1135,8 @@ class StrategyCoordinator:
                     existing.get("outer_iter", 0),
                 )
                 resume_phase = self._resume_phase(existing)
+                resume_updates = {}
+                transitioned_for_reentry = False
                 implementation = self._implementation_from_state(existing)
                 enabled_phases = existing.get("enabled_phases")
                 if not isinstance(enabled_phases, list) or resume_phase not in enabled_phases:
@@ -1134,12 +1159,34 @@ class StrategyCoordinator:
                             outer_iterations=implementation.outer_iterations,
                             tokens_used=implementation.tokens_used,
                         )
-                state_store.transition({
-                    "implementation": "running",
-                    "visual": "validating",
-                    "review": "reviewing",
-                    "finalization": "finalizing",
-                }[resume_phase])
+                    if self._downstream_candidate_changed(existing):
+                        downstream_phase = resume_phase
+                        resume_phase = "implementation"
+                        resume_updates["downstream_reentry"] = {
+                            "from_phase": downstream_phase,
+                            "reason": "candidate_changed_after_checkpoint",
+                        }
+                        state_store.transition(
+                            {
+                                "visual": "validating",
+                                "review": "reviewing",
+                            }[downstream_phase],
+                            updates=resume_updates,
+                        )
+                        state_store.transition(
+                            "running", updates={"blocked_phase": None}
+                        )
+                        transitioned_for_reentry = True
+                        existing = dict(existing)
+                        existing["status"] = "running"
+                        existing["blocked_phase"] = None
+                if not transitioned_for_reentry:
+                    state_store.transition({
+                        "implementation": "running",
+                        "visual": "validating",
+                        "review": "reviewing",
+                        "finalization": "finalizing",
+                    }[resume_phase], updates=resume_updates)
             elif not pending_effects_only_resume:
                 state_store.initialize(
                     run_id=run_id,
