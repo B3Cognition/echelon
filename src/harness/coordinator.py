@@ -1483,6 +1483,7 @@ class StrategyCoordinator:
                     if current_visual_result.status != "fix_applied":
                         return current_visual_result
                     state_store.transition("running")
+                    controller.reuse_worktree_on_next_run(worktree_path)
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,

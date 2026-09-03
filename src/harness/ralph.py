@@ -331,6 +331,10 @@ class RalphController:
 
     # === Main entry point ===
 
+    def reuse_worktree_on_next_run(self, worktree_path: str) -> None:
+        """Carry a downstream repair into the next Phase 1 verification run."""
+        self._resume_worktree_path = worktree_path
+
     def run_loop(
         self,
         max_outer: int = 5,
@@ -462,6 +466,7 @@ class RalphController:
             # (spec.md, tasks.md, constitution.md) are present from the start.
             if self._resume_worktree_path and outer_iter == start_outer:
                 worktree_path = self._resume_worktree_path
+                self._resume_worktree_path = None
                 if not Path(worktree_path).is_dir():
                     return self._finalize(
                         status="blocked",

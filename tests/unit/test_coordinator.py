@@ -1385,6 +1385,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
     latest_evidence = VisualResult("passed", "converged", 1, 3, None)
 
     with patch.object(RalphController, "run_loop", side_effect=[initial, reverified]) as phase1, \
+         patch.object(RalphController, "reuse_worktree_on_next_run") as reuse, \
          patch.object(VisualRalphController, "run_loop", side_effect=[applied, latest_evidence]) as visual:
         result = StrategyCoordinator(
             provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
@@ -1393,6 +1394,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
     assert result.status == "converged"
     assert phase1.call_count == 2
     assert visual.call_count == 2
+    reuse.assert_called_once_with(str(tmp_path / "worktree"))
     assert result.tokens_used == 26
 
 
