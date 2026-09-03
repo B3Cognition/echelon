@@ -6813,6 +6813,39 @@ def _phase_a_buildable(result_status: str, blockers: list) -> bool:
     return not blockers and result_status not in ("blocked", "interrupted")
 
 
+def _canonical_landed_spec(project_root: Path) -> tuple[str, Path] | None:
+    """Return the canonical landed spec associated with the current/latest run."""
+    import json as _json
+
+    run_dir = _find_current_run_dir(project_root)
+    state: dict = {}
+    if run_dir is not None and (run_dir / "state.json").is_file():
+        try:
+            loaded = _json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            state = loaded
+
+    spec_id = str(state.get("spec_id") or "").strip()
+    candidate = _published_continue_spec_dir(project_root, state)
+    if candidate is None and not spec_id:
+        candidate = _single_project_spec_dir(project_root)
+        spec_id = candidate.name if candidate is not None else ""
+    if candidate is None:
+        return None
+
+    try:
+        from harness.spec_frontmatter import read_frontmatter
+
+        status = str(read_frontmatter(candidate).get("status") or "").strip()
+    except (OSError, ValueError, TypeError):
+        return None
+    if status != "landed":
+        return None
+    return spec_id or candidate.name, candidate
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -6824,6 +6857,21 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     import re as _re
 
     if result_status not in ("done", "blocked", "interrupted"):
+        return
+
+    landed = _canonical_landed_spec(project_root)
+    if landed is not None:
+        spec_id, spec_dir = landed
+        _banner(
+            "NEXT STEP",
+            [
+                ("spec", spec_id),
+                ("status", "landed"),
+                ("spec directory", str(spec_dir)),
+                ("next", "No action required; delivery is already landed."),
+            ],
+            subtitle="LANDED",
+        )
         return
 
     # ── Latest harness build owns next-step guidance when present ───────────

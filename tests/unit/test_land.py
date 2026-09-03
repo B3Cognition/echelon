@@ -36,6 +36,7 @@ from harness.runnability_contract import (
 )
 from harness.runnability_evidence import RunnabilityStage, write_runnability_report
 from harness.verification_evidence import VerificationStage, write_verification_receipt
+from harness.workspace_landing import WorkspaceLandingResult
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -848,6 +849,8 @@ class TestLand:
         gitops.ensure_on_default_branch.assert_called_once_with(str(tmp_path))
 
     def test_writes_landed_status_to_spec_frontmatter(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
         spec_dir = tmp_path / "specs" / "042-my-feature"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -863,7 +866,12 @@ class TestLand:
         gitops = _make_gitops()
         with patch("harness.land.prepare_feature_branch") as prepare:
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
-            land("042", project_dir=tmp_path, gitops=gitops)
+            land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(allow_fulfillment_gaps=True),
+            )
         from harness.spec_frontmatter import read_frontmatter
         assert read_frontmatter(spec_dir)["status"] == "landed"
 
@@ -1813,13 +1821,17 @@ def test_polyrepo_land_uses_target_harness_pr_state_and_cleans_its_worktree(
         lambda path, *, keep_branch: path.rmdir()
     )
 
-    result = land(
-        "042",
-        project_dir=workspace,
-        harness_root=harness_root,
-        gitops=gitops,
-        options=LandOptions(allow_fulfillment_gaps=True),
-    )
+    with patch(
+        "harness.land._finalize_workspace_landing_if_present",
+        return_value=WorkspaceLandingResult(ok=True),
+    ):
+        result = land(
+            "042",
+            project_dir=workspace,
+            harness_root=harness_root,
+            gitops=gitops,
+            options=LandOptions(allow_fulfillment_gaps=True),
+        )
 
     assert result is True
     gitops.merge_pr.assert_called_once_with(pr_url)
@@ -1868,12 +1880,16 @@ def test_polyrepo_branchless_cleanup_uses_target_harness_root(tmp_path: Path) ->
         lambda path, *, keep_branch: path.rmdir()
     )
 
-    result = land(
-        "043",
-        project_dir=workspace,
-        harness_root=harness_root,
-        gitops=gitops,
-    )
+    with patch(
+        "harness.land._finalize_workspace_landing_if_present",
+        return_value=WorkspaceLandingResult(ok=True),
+    ):
+        result = land(
+            "043",
+            project_dir=workspace,
+            harness_root=harness_root,
+            gitops=gitops,
+        )
 
     assert result is True
     gitops.merge_pr.assert_not_called()
@@ -1986,12 +2002,16 @@ def test_finish_landing_runs_one_topology_hook_after_checkout_and_status(
     from harness.land import _finish_landing
     from harness.spec_frontmatter import read_frontmatter
 
+    _init_repo(tmp_path)
+    _commit(tmp_path, "README.md", "base\n", "base")
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: ready_to_land\n---\n# Spec\n",
         encoding="utf-8",
     )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "ready")
     gitops = _make_gitops()
 
     def assert_post_land(spec_id: str, workspace_root: Path, target_root: Path) -> None:
@@ -2023,17 +2043,106 @@ def test_finish_landing_runs_one_topology_hook_after_checkout_and_status(
 
 
 @pytest.mark.unit
+def test_finish_landing_stops_before_pointer_clear_when_workspace_finalize_fails(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_landing
+    from harness.workspace_landing import WorkspaceLandingResult
+
+    gitops = _make_gitops()
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._delete_local_branch"),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+        patch(
+            "harness.land._finalize_workspace_landing_if_present",
+            return_value=WorkspaceLandingResult(
+                ok=False,
+                reason="workspace_dirty",
+                detail="workspace has unrelated changes",
+                paths=("?? notes.txt",),
+            ),
+        ) as finalize,
+        patch("harness.land._clear_landed_active_authoring_pointer") as clear,
+        patch("harness.land._post_land_topology_reconciliation") as reconcile,
+    ):
+        result = _finish_landing(
+            "001-demo",
+            "001-feature",
+            tmp_path / "target",
+            gitops,
+            spec_project_dir=tmp_path / "workspace",
+        )
+
+    assert result is False
+    finalize.assert_called_once_with(
+        "001-demo",
+        workspace_root=tmp_path / "workspace",
+        target_root=tmp_path / "target",
+    )
+    clear.assert_not_called()
+    reconcile.assert_not_called()
+
+
+@pytest.mark.unit
+def test_finish_landing_clears_pointer_only_after_workspace_finalize_succeeds(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_landing
+    from harness.workspace_landing import WorkspaceLandingResult
+
+    gitops = _make_gitops()
+    order: list[str] = []
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._delete_local_branch"),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+        patch(
+            "harness.land._finalize_workspace_landing_if_present",
+            side_effect=lambda *args, **kwargs: (
+                order.append("finalize")
+                or WorkspaceLandingResult(ok=True)
+            ),
+        ),
+        patch(
+            "harness.land._clear_landed_active_authoring_pointer",
+            side_effect=lambda *args: order.append("clear"),
+        ),
+        patch(
+            "harness.land._post_land_topology_reconciliation",
+            side_effect=lambda *args: order.append("topology"),
+        ),
+    ):
+        result = _finish_landing(
+            "001-demo",
+            "001-feature",
+            tmp_path / "target",
+            gitops,
+            spec_project_dir=tmp_path / "workspace",
+        )
+
+    assert result is True
+    assert order == ["finalize", "clear", "topology"]
+
+
+@pytest.mark.unit
 def test_branchless_idempotent_land_runs_same_post_land_topology_hook(
     tmp_path: Path,
 ) -> None:
     from harness.land import _finish_branchless_landing
 
+    _init_repo(tmp_path)
+    _commit(tmp_path, "README.md", "base\n", "base")
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: landed\n---\n# Spec\n",
         encoding="utf-8",
     )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "landed")
     gitops = _make_gitops(feature_branch=None)
     order: list[str] = []
     gitops.ensure_on_default_branch.side_effect = lambda path: order.append("checkout")
@@ -2811,6 +2920,7 @@ def test_land_clears_active_authoring_pointer_for_landed_spec(
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, ".gitignore", "/runs/\n", "ignore runtime state")
     _git(repo, "checkout", "-b", "001-feature")
     _commit(repo, "feature.txt", "feature\n", "feature")
     _git(repo, "checkout", "main")
@@ -2993,6 +3103,39 @@ def test_prepare_feature_branch_blocks_dirty_tracked_worktree_without_checkout(
     assert result.branch == "001-feature"
     assert "tracked changes" in result.message
     assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    gitops.get_default_branch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_blocks_untracked_output_without_deleting_it(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    output = repo / "test-results/result.json"
+    output.parent.mkdir()
+    output.write_text("{}\n", encoding="utf-8")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "blocked"
+    assert "untracked" in result.message
+    assert output.read_text(encoding="utf-8") == "{}\n"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
     gitops.get_default_branch.assert_not_called()
 
 
@@ -3483,6 +3626,7 @@ class TestLandIntegration:
         sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.com"], check=True, capture_output=True)
         sp.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], check=True, capture_output=True)
         (tmp_path / "README.md").write_text("hi")
+        (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
         sp.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
         sp.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True)
         verified_commit = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()

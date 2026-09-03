@@ -52,6 +52,10 @@ from harness.verification_evidence import (
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.paths import find_stack_extension_root
 from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
+from harness.workspace_landing import (
+    WorkspaceLandingResult,
+    finalize_workspace_landing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,15 +154,22 @@ def prepare_feature_branch(
 
     _discard_known_generated_land_drift(project_dir)
     dirty = _run_git(
-        ["status", "--porcelain", "--untracked-files=no"],
+        ["status", "--porcelain", "--untracked-files=all"],
         cwd=str(project_dir),
         check=False,
     )
     if dirty.stdout.strip():
+        has_untracked = any(
+            line.startswith("?? ") for line in dirty.stdout.splitlines()
+        )
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
-            message="working tree has tracked changes",
+            message=(
+                "working tree has untracked changes"
+                if has_untracked
+                else "working tree has tracked changes"
+            ),
         )
 
     default_branch = gitops.get_default_branch()
@@ -669,6 +680,18 @@ def _finish_branchless_landing(
 
     if status == "landed" and not verified_commit:
         gitops.ensure_on_default_branch(str(project_dir))
+        finalization = _finalize_workspace_landing_if_present(
+            spec_id,
+            workspace_root=wrapper_project_dir,
+            target_root=project_dir,
+        )
+        if not _workspace_landing_succeeded(spec_id, finalization):
+            return False
+        _clear_landed_active_authoring_pointer(
+            wrapper_project_dir,
+            spec_id,
+            "",
+        )
         _post_land_topology_reconciliation(
             spec_id,
             wrapper_project_dir,
@@ -762,14 +785,19 @@ def _finish_branchless_landing(
             )
             for alias in spec_identity_aliases(spec_id):
                 _delete_harness_branches(alias, project_dir)
-            if spec_dir is not None and status != "landed":
-                write_status(spec_dir, "landed")
+            gitops.ensure_on_default_branch(str(project_dir))
+            finalization = _finalize_workspace_landing_if_present(
+                spec_id,
+                workspace_root=wrapper_project_dir,
+                target_root=project_dir,
+            )
+            if not _workspace_landing_succeeded(spec_id, finalization):
+                return False
             _clear_landed_active_authoring_pointer(
                 wrapper_project_dir,
                 spec_id,
                 "",
             )
-            gitops.ensure_on_default_branch(str(project_dir))
             _post_land_topology_reconciliation(
                 spec_id,
                 wrapper_project_dir,
@@ -2116,9 +2144,13 @@ def _finish_landing(
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
 
-    spec_dir = find_spec_dir(spec_id, spec_project_dir)
-    if spec_dir:
-        write_status(spec_dir, "landed")
+    finalization = _finalize_workspace_landing_if_present(
+        spec_id,
+        workspace_root=spec_project_dir,
+        target_root=project_dir,
+    )
+    if not _workspace_landing_succeeded(spec_id, finalization):
+        return False
     _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
     _post_land_topology_reconciliation(
         spec_id,
@@ -2128,6 +2160,53 @@ def _finish_landing(
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _finalize_workspace_landing_if_present(
+    spec_id: str,
+    *,
+    workspace_root: Path,
+    target_root: Path,
+) -> WorkspaceLandingResult:
+    """Retain legacy state-only landing while finalizing every canonical spec."""
+    if find_spec_dir(spec_id, workspace_root) is None:
+        logger.info(
+            "land: %s has no canonical spec directory; skipping workspace publication",
+            spec_id,
+        )
+        return WorkspaceLandingResult(ok=True, reason="legacy_spec_absent")
+    return finalize_workspace_landing(
+        spec_id,
+        workspace_root=workspace_root,
+        target_root=target_root,
+    )
+
+
+def _workspace_landing_succeeded(
+    spec_id: str,
+    result: WorkspaceLandingResult,
+) -> bool:
+    if result.ok:
+        return True
+
+    fields = [
+        ("spec", spec_id),
+        ("problem", result.detail or result.reason or "workspace finalization failed"),
+    ]
+    if result.paths:
+        fields.append(("files", "\n".join(result.paths)))
+    fields.extend(
+        [
+            ("state", "implementation may already be merged; lifecycle finalization is pending"),
+            ("next step", f"echelon delivery land {spec_id}"),
+        ]
+    )
+    _banner(
+        "LAND — WORKSPACE FINALIZATION BLOCKED",
+        fields,
+        subtitle="Echelon did not claim a complete landing with dirty or unpublished state.",
+    )
+    return False
 
 
 def _post_land_topology_reconciliation(

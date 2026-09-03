@@ -150,6 +150,43 @@ def _proportional_quality_decision() -> dict[str, object]:
     )
 
 
+def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs/spec-complete"
+    run_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Demo\n\n**Status**: landed\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "done",
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+                "completed_phases": ["phase1-constitution"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "LANDED" in output
+    assert "No action required; delivery is already landed." in output
+    assert "READY TO BUILD" not in output
+    assert "echelon delivery run" not in output
+
+
 def test_status_shows_current_authorized_quality_debt_without_calling_it_passed(
     tmp_path: Path,
     capsys,
