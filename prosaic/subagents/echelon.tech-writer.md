@@ -47,7 +47,7 @@ ALWAYS give every harness-supplied `delivery_change_id` exactly one `documented_
 NEVER omit a delivered change, invent an evidence path, or use `not_applicable` without a concrete reason.
 
 ### Rule 7 - Sandbox and Local User-Runnability Facts
-ALWAYS copy sandbox instructions and every declared local prerequisite, provision, readiness, prepare, verify, start, open, stop, and cleanup instruction exactly from the current passing user-runnability evidence when the selected stack requires it; preserve the recorded local-journey status.
+ALWAYS copy sandbox instructions and every declared local prerequisite, provision, readiness, prepare, verify, start, session, open, stop, cleanup, and consumer-boundary probe instruction exactly from the current passing user-runnability evidence when the selected stack requires it; preserve the recorded local-journey status.
 NEVER invent, simplify, or substitute commands from `.echelon/runnability.yml`, README prose, package scripts, or a provisional report when current harness evidence differs or is absent, and never describe an `unverified` local journey as passed.
 
 ## Inputs
@@ -99,7 +99,7 @@ Cover these sections when supported by implementation evidence:
 
 For a required runnable stack, the current passing user-runnability report is
 the authority for the first-run operation sequence. Preserve sandbox commands,
-declared local commands, URLs, and the local-journey status exactly. The
+declared local commands, consumer-boundary probes, URLs, and the local-journey status exactly. The
 candidate contract explains intent, but an `unverified` local journey does not
 prove those instructions worked on the user's machine.
 

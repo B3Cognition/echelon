@@ -127,10 +127,19 @@ COMPLETE_LOCAL_USER_COMMANDS = {
     "prepare": ("pnpm db:prepare-local-test",),
     "verify": ("pnpm verify:local",),
     "start": ("pnpm start",),
+    "session": ("pnpm local:session",),
     "open": ("http://127.0.0.1:3000",),
     "stop": ("pnpm stop",),
     "cleanup": ("docker compose down -v",),
 }
+
+COMPLETE_LOCAL_BOUNDARY_PROBES = (
+    {
+        "id": "postgres-from-app",
+        "service": "postgres",
+        "command": "pnpm db:probe-local",
+    },
+)
 
 
 def _combined_user_commands(
@@ -149,6 +158,7 @@ def _passing_runnability_report(
     user_commands=COMPLETE_USER_COMMANDS,
     local_journey_status: str = "not_required",
     local_user_commands=None,
+    local_boundary_probes=(),
 ):
     return write_runnability_report(
         evidence_dir=tmp_path / "evidence" / "user-runnability",
@@ -175,6 +185,7 @@ def _passing_runnability_report(
             else ""
         ),
         local_user_commands=local_user_commands,
+        local_boundary_probes=local_boundary_probes,
     )
 
 
@@ -311,6 +322,58 @@ def test_docs_runnability_gate_accepts_complete_truthful_local_journey(
         tmp_path,
         local_journey_status="unverified",
         local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+        local_boundary_probes=COMPLETE_LOCAL_BOUNDARY_PROBES,
+    )
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(
+            {
+                **COMPLETE_LOCAL_USER_COMMANDS,
+                "boundary_probe": ("pnpm db:probe-local",),
+            }
+        ),
+        extra_readme="\nThe local journey is unverified on the user's machine.\n",
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "PASS"
+
+
+def test_docs_runnability_gate_rejects_missing_local_session_command(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+    )
+    incomplete = dict(COMPLETE_LOCAL_USER_COMMANDS)
+    incomplete.pop("session")
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(incomplete),
+        extra_readme="\nThe local journey is unverified on the user's machine.\n",
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "FAIL"
+    assert any(
+        finding.section == "Local User Journey"
+        and "pnpm local:session" in finding.required_repair
+        for finding in result.findings
+    )
+
+
+def test_docs_runnability_gate_rejects_missing_consumer_boundary_probe(
+    tmp_path: Path,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+        local_boundary_probes=COMPLETE_LOCAL_BOUNDARY_PROBES,
     )
     spec_dir = _write_runnability_docs_project(
         tmp_path,
@@ -320,7 +383,12 @@ def test_docs_runnability_gate_accepts_complete_truthful_local_journey(
 
     result = verify_docs(tmp_path, spec_dir, runnability_report=report)
 
-    assert result.verdict == "PASS"
+    assert result.verdict == "FAIL"
+    assert any(
+        finding.section == "Local User Journey"
+        and "pnpm db:probe-local" in finding.required_repair
+        for finding in result.findings
+    )
 
 
 def test_docs_runnability_gate_rejects_provisional_verdict_without_current_evidence(

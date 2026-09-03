@@ -299,6 +299,22 @@ def verify_docs(
                             f"Document the exact local {section} instruction: {command}",
                         )
                     )
+                missing_probes = _missing_local_boundary_probe_claims(
+                    readme_text,
+                    local_journey.get("boundary_probes"),
+                )
+                for probe_id, command in missing_probes:
+                    readme_first_run_manual = False
+                    findings.append(
+                        _finding(
+                            _next_id(findings),
+                            "README.md",
+                            "Local User Journey",
+                            f"README.md omits consumer-boundary probe {probe_id}",
+                            command,
+                            f"Document the exact local boundary probe: {command}",
+                        )
+                    )
                 if (
                     str(local_journey.get("status") or "") == "unverified"
                     and not re.search(r"\bunverified\b", readme_text, re.IGNORECASE)
@@ -761,6 +777,7 @@ def _missing_local_journey_readme_claims(
         "prepare",
         "verify",
         "start",
+        "session",
         "open",
         "stop",
         "cleanup",
@@ -772,6 +789,24 @@ def _missing_local_journey_readme_claims(
             command = str(value).strip()
             if command and _normalize_command_claim(command) not in normalized_readme:
                 missing.append((section, command))
+    return missing
+
+
+def _missing_local_boundary_probe_claims(
+    readme_text: str,
+    raw_probes: object,
+) -> list[tuple[str, str]]:
+    if not isinstance(raw_probes, list):
+        return []
+    normalized_readme = _normalize_command_claim(readme_text)
+    missing: list[tuple[str, str]] = []
+    for raw_probe in raw_probes:
+        if not isinstance(raw_probe, Mapping):
+            continue
+        probe_id = str(raw_probe.get("id") or "").strip()
+        command = str(raw_probe.get("command") or "").strip()
+        if command and _normalize_command_claim(command) not in normalized_readme:
+            missing.append((probe_id or "unnamed", command))
     return missing
 
 
