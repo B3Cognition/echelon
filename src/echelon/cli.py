@@ -3457,7 +3457,7 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
         run_id = current_file.read_text().strip()
         if run_id:
             run_dir = base_dir / run_id
-            if run_dir.exists():
+            if _is_squad_run_dir(run_dir, require_state=False):
                 return run_dir
     # No .current pointer — fall back to newest run dir that has state.json
     all_runs = _iter_run_dirs(project_root)
@@ -5996,10 +5996,22 @@ def _iter_run_dirs(project_root: Path) -> list[Path]:
     base = project_root / "runs"
     if base.exists():
         for d in base.iterdir():
-            if d.is_dir() and not d.name.startswith(".") and (d / "state.json").exists():
+            if _is_squad_run_dir(d):
                 dirs.append(d)
     dirs.sort(key=lambda d: d.name, reverse=True)
     return dirs
+
+
+def _is_squad_run_dir(path: Path, *, require_state: bool = True) -> bool:
+    """Whether ``path`` is a resumable Phase-A squad run.
+
+    Verify-spec audits also persist a ``state.json`` under ``runs/``.  Their
+    lifecycle is intentionally bounded and read-only, so they must never be
+    selected by generic planning commands such as ``echelon spec continue``.
+    """
+    if not path.is_dir() or (require_state and not (path / "state.json").is_file()):
+        return False
+    return not path.name.startswith("verify-spec-")
 
 
 def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:

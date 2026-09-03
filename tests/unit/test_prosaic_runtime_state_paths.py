@@ -154,6 +154,20 @@ def test_active_run_lookup_ignores_top_level_squad_storage(tmp_path: Path) -> No
     assert _find_current_run_dir(tmp_path) is None
 
 
+def test_active_run_lookup_ignores_timestamped_verify_spec_runs(tmp_path: Path) -> None:
+    """A bounded fulfillment audit must never become a resumable spec run."""
+    from echelon.cli import _find_current_run_dir
+
+    verify_run = tmp_path / "runs" / "verify-spec-001-demo-20260903-120000"
+    verify_run.mkdir(parents=True)
+    (verify_run / "state.json").write_text(
+        '{"status": "in_progress", "verify_scope": "full"}\n',
+        encoding="utf-8",
+    )
+
+    assert _find_current_run_dir(tmp_path) is None
+
+
 def test_container_runtime_uses_echelon_owned_labels() -> None:
     modules = (
         ROOT / "src" / "harness" / "docker_provider.py",
