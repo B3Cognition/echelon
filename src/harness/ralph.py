@@ -2490,7 +2490,7 @@ class RalphController:
             result.local_journey_status != "not_required"
             or result.local_user_commands
         ):
-            summary["local_journey"] = {
+            local_journey: dict[str, object] = {
                 "status": result.local_journey_status,
                 "reason": result.local_journey_reason,
                 "commands": {
@@ -2498,6 +2498,16 @@ class RalphController:
                     for key, commands in result.local_user_commands.items()
                 },
             }
+            if result.local_boundary_probes:
+                local_journey["boundary_probes"] = [
+                    {
+                        "id": probe.id,
+                        "service": probe.service,
+                        "command": probe.command,
+                    }
+                    for probe in result.local_boundary_probes
+                ]
+            summary["local_journey"] = local_journey
         self._record_user_runnability_state(summary)
 
     def _record_user_runnability_state(self, summary: dict[str, object]) -> None:

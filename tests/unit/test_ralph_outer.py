@@ -40,6 +40,7 @@ from harness import ralph
 from harness.build_result import BuildResult
 from harness.llm_tool_policy import LlmToolPolicy
 from harness.ralph import RalphController
+from harness.runnability_contract import LocalBoundaryProbe
 from harness.runnability_evidence import RunnabilityEvidenceRef
 from harness.runnability_runner import RunnabilityRunResult
 from harness.stacks.resolver import ResolvedRunnability
@@ -563,6 +564,13 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
             "verify": ("make verify-local",),
             "cleanup": ("docker compose down -v",),
         },
+        local_boundary_probes=(
+            LocalBoundaryProbe(
+                id="postgres-from-app",
+                service="postgres",
+                command="make probe-local-db",
+            ),
+        ),
     )
 
     with patch("harness.ralph.RunnabilityRunner") as runner_type:
@@ -600,6 +608,13 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
                 "verify": ["make verify-local"],
                 "cleanup": ["docker compose down -v"],
             },
+            "boundary_probes": [
+                {
+                    "id": "postgres-from-app",
+                    "service": "postgres",
+                    "command": "make probe-local-db",
+                }
+            ],
         },
     }
 

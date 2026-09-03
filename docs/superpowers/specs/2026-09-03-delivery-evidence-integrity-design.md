@@ -93,6 +93,12 @@ against README instructions. It also rejects a local journey that needs an
 identity but gives the user no session-establishment step, or that declares a
 real service without a consumer-boundary probe.
 
+Immutable evidence continues to redact URL userinfo. Command parity therefore
+normalizes both the receipt claim and README text through the same redaction
+function before comparison. A real runnable credential-bearing command can
+match its redacted receipt without requiring README to contain a literal,
+non-runnable `[REDACTED:url-userinfo]` placeholder.
+
 ## Coverage and task evidence integrity
 
 ### Coverage-map pre-pass

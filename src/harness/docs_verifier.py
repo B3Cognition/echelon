@@ -15,6 +15,7 @@ from harness.runnability_evidence import (
     RunnabilityEvidenceRef,
     validate_runnability_report,
 )
+from harness.verification_evidence import redact_verification_text
 
 
 REPORT_NAME = "documentation-impact-report.md"
@@ -811,4 +812,8 @@ def _missing_local_boundary_probe_claims(
 
 
 def _normalize_command_claim(value: str) -> str:
-    return " ".join(value.split())
+    # Runnability receipts redact URL userinfo before persistence. Apply the
+    # identical secret-insensitive representation to README content so an exact
+    # real command can satisfy parity without asking users to document a
+    # non-runnable ``[REDACTED:url-userinfo]`` placeholder.
+    return " ".join(redact_verification_text(value, {}).split())

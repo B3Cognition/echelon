@@ -340,6 +340,39 @@ def test_docs_runnability_gate_accepts_complete_truthful_local_journey(
     assert result.verdict == "PASS"
 
 
+def test_docs_runnability_gate_matches_redacted_receipt_url_to_real_readme_command(
+    tmp_path: Path,
+) -> None:
+    database_command = (
+        "DATABASE_URL=postgresql://game:local-password@127.0.0.1:5432/game "
+        "pnpm migrate"
+    )
+    local_commands = {
+        **COMPLETE_LOCAL_USER_COMMANDS,
+        "prepare": (database_command,),
+    }
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=local_commands,
+        local_boundary_probes=COMPLETE_LOCAL_BOUNDARY_PROBES,
+    )
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(
+            {
+                **local_commands,
+                "boundary_probe": ("pnpm db:probe-local",),
+            }
+        ),
+        extra_readme="\nThe local journey is unverified on the user's machine.\n",
+    )
+
+    result = verify_docs(tmp_path, spec_dir, runnability_report=report)
+
+    assert result.verdict == "PASS"
+
+
 def test_docs_runnability_gate_rejects_missing_local_session_command(
     tmp_path: Path,
 ) -> None:
