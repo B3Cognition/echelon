@@ -70,6 +70,25 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     assert result is None
 
 
+def test_destroy_worktree_reports_git_failure_when_given_path(tmp_path, caplog):
+    """A failed cleanup with a Path preserves Git's diagnostic instead of raising TypeError."""
+    gitops = _make_gitops(tmp_path)
+    orphaned_worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    failure = subprocess.CalledProcessError(
+        128,
+        ["git", "worktree", "remove"],
+        stderr="fatal: not a working tree\n",
+    )
+
+    with patch("harness.gitops.subprocess.run", side_effect=failure), caplog.at_level(
+        "WARNING", logger="harness.gitops"
+    ):
+        gitops.destroy_worktree(orphaned_worktree)
+
+    assert "Could not remove worktree" in caplog.text
+    assert "fatal: not a working tree" in caplog.text
+
+
 def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     """Harness worktrees get the local Echelon extension even when it is untracked."""
     source = tmp_path / ".echelon" / "runtime"

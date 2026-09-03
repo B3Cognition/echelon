@@ -272,7 +272,7 @@ def _run_git(
     Raises:
         GitOpsError: If the git command fails.
     """
-    cmd = ["git"] + args
+    cmd = ["git", *(str(arg) for arg in args)]
     try:
         return subprocess.run(
             cmd,
