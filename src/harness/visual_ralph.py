@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from harness.config import HarnessConfig
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
+from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
@@ -147,20 +148,54 @@ class VisualRalphController:
             timeout_ms=self._vc.timeout_ms,
         )
 
-        if result.exit_code == 0:
+        try:
+            evidence = parse_playwright_json(result.stdout)
+        except PlaywrightEvidenceError as exc:
             return VerifyResult(
-                passed=True,
-                failures=[],
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.PLAYWRIGHT_TEST,
+                    id="playwright_parse_error",
+                    error=f"{exc}: {result.stdout[:500]}",
+                )],
                 duration_s=result.duration_ms / 1000.0,
                 token_usage=_estimate_tokens(result),
             )
 
-        failures = _parse_playwright_json(result.stdout)
+        failures: list[FailureEntry] = []
+        if evidence.total == 0:
+            failures.append(FailureEntry(
+                category=FailureCategory.PLAYWRIGHT_TEST,
+                id="playwright_no_tests",
+                error="Playwright exited without executing any tests.",
+            ))
+        for test in evidence.tests:
+            if test.status == "failed":
+                failures.append(FailureEntry(
+                    category=FailureCategory.PLAYWRIGHT_TEST,
+                    id=test.title,
+                    error=test.error,
+                    details={"test_id": test.id, "file": test.file, "project": test.project},
+                ))
+            elif test.status == "skipped":
+                failures.append(FailureEntry(
+                    category=FailureCategory.PLAYWRIGHT_TEST,
+                    id=f"playwright_skipped::{test.title}",
+                    error=test.error,
+                    details={"test_id": test.id, "file": test.file, "project": test.project},
+                ))
+        if result.exit_code != 0 and not failures:
+            failures.append(FailureEntry(
+                category=FailureCategory.PLAYWRIGHT_TEST,
+                id="playwright_command_failed",
+                error=(result.stderr or result.stdout or "Playwright command failed")[:1000],
+            ))
         return VerifyResult(
-            passed=False,
+            passed=not failures and result.exit_code == 0,
             failures=failures,
             duration_s=result.duration_ms / 1000.0,
             token_usage=_estimate_tokens(result),
+            verification_evidence={"playwright": evidence.to_dict()},
         )
 
     # === App runtime ===
@@ -363,43 +398,3 @@ def _estimate_tokens(result: ExecResult) -> int:
     """Rough token estimate from stdout/stderr byte length."""
     total_bytes = len(result.stdout.encode()) + len(result.stderr.encode())
     return max(1, total_bytes // 4)
-
-
-def _parse_playwright_json(stdout: str) -> List[FailureEntry]:
-    """Parse Playwright JSON reporter output into FailureEntry list."""
-    if not stdout.strip():
-        return []
-
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError:
-        return [FailureEntry(
-            category=FailureCategory.PLAYWRIGHT_TEST,
-            id="playwright_parse_error",
-            error=stdout[:500],
-        )]
-
-    failures: List[FailureEntry] = []
-
-    def _walk_suites(suites: list) -> None:
-        for suite in suites:
-            for spec in suite.get("specs", []):
-                title = spec.get("title", "unknown")
-                for test in spec.get("tests", []):
-                    for test_result in test.get("results", []):
-                        if test_result.get("status") not in ("passed", "skipped"):
-                            error_obj = test_result.get("error", {})
-                            error_msg = (
-                                error_obj.get("message", "")
-                                if isinstance(error_obj, dict)
-                                else str(error_obj)
-                            )
-                            failures.append(FailureEntry(
-                                category=FailureCategory.PLAYWRIGHT_TEST,
-                                id=title,
-                                error=error_msg[:1000],
-                            ))
-            _walk_suites(suite.get("suites", []))
-
-    _walk_suites(data.get("suites", []))
-    return failures

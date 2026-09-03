@@ -36,7 +36,20 @@ class RecordingProvider:
     def exec(self, handle, cmd, cwd=None, env=None, timeout_ms=1_200_000):
         self.commands.append(cmd)
         if "playwright" in cmd:
-            return _ok(json.dumps({"suites": [], "errors": []}))
+            return _ok(json.dumps({
+                "suites": [{
+                    "specs": [{
+                        "title": "journey",
+                        "file": "tests/journey.spec.ts",
+                        "tests": [{
+                            "projectName": "chromium",
+                            "expectedStatus": "passed",
+                            "results": [{"status": "passed"}],
+                        }],
+                    }],
+                }],
+                "errors": [],
+            }))
         return _ok("ready")
 
     def write_file(self, handle, path, content):

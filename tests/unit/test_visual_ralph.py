@@ -62,8 +62,18 @@ def _exec_result(stdout="", stderr="", exit_code=0, duration_ms=1000) -> ExecRes
 
 
 PLAYWRIGHT_PASS_JSON = json.dumps({
-    "stats": {"expected": 3, "unexpected": 0, "skipped": 0, "flaky": 0},
-    "suites": [],
+    "stats": {"expected": 1, "unexpected": 0, "skipped": 0, "flaky": 0},
+    "suites": [{
+        "specs": [{
+            "title": "persistent journey",
+            "file": "tests/journey.spec.ts",
+            "tests": [{
+                "projectName": "chromium",
+                "expectedStatus": "passed",
+                "results": [{"status": "passed"}],
+            }],
+        }],
+    }],
     "errors": [],
 })
 
@@ -105,6 +115,60 @@ def test_exec_visual_verify_pass():
 
     assert result.passed is True
     assert result.failures == []
+    assert result.verification_evidence["playwright"]["passed"] == 1
+
+
+def test_exec_visual_verify_rejects_zero_test_success() -> None:
+    """Exit zero is not sufficient when Playwright executed no tests."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(
+        stdout=json.dumps({"suites": [], "errors": []}), exit_code=0
+    )
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_config(),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
+
+    assert result.passed is False
+    assert result.failures[0].id == "playwright_no_tests"
+
+
+def test_exec_visual_verify_rejects_skipped_required_test() -> None:
+    """A discovered but skipped required journey cannot satisfy the visual gate."""
+    from harness.visual_ralph import VisualRalphController
+
+    report = json.dumps({
+        "suites": [{
+            "specs": [{
+                "title": "persistent journey",
+                "file": "tests/journey.spec.ts",
+                "tests": [{
+                    "projectName": "chromium",
+                    "expectedStatus": "skipped",
+                    "results": [{"status": "skipped"}],
+                }],
+            }],
+        }],
+    })
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(stdout=report, exit_code=0)
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_config(),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    result = ctrl._exec_visual_verify(SandboxHandle(id="abc123", session_id="s1"))
+
+    assert result.passed is False
+    assert result.failures[0].id.startswith("playwright_skipped::")
 
 
 def test_exec_visual_verify_fail_parses_failures():
