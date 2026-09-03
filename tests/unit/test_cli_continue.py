@@ -192,6 +192,36 @@ def test_declined_quality_debt_cannot_be_reopened_by_ordinary_continue(
     assert "echelon spec continue" not in output
 
 
+def test_continue_does_not_revive_a_historical_run_without_current_pointer(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only runs named by runs/.current are safe to continue."""
+    _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "done",
+            "phase": "done",
+            "user_message": "prepare the release",
+        },
+    )
+    (tmp_path / "runs" / ".current").unlink()
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda *_args, **_kwargs: pytest.fail("historical run must not dispatch"),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert "No active spec run found" in capsys.readouterr().out
+
+
 def test_terminal_summary_keeps_quality_debt_and_provider_limit_independent(
     tmp_path: Path,
     capsys,

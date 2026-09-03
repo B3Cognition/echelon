@@ -9510,14 +9510,18 @@ def _cmd_continue_impl(
         else:
             i += 1
 
-    squad_dir = _find_current_run_dir(project_root)
+    # ``continue`` is a mutating operation.  Unlike status/reporting paths it
+    # must never infer an active run from historical directories: a workspace
+    # can retain many completed specs and bounded verify-spec audits.
+    current_pointer = project_root / "runs" / ".current"
+    squad_dir = _find_current_run_dir(project_root) if current_pointer.is_file() else None
     if not squad_dir or not (squad_dir / "state.json").exists():
         _workspace_git_preflight(
             project_root,
             command_name=_command_display("echelon spec continue", args),
         )
         print(
-            "No prior run found in this project.\n"
+            "No active spec run found in this project.\n"
             "Start a new run:  echelon spec run \"<task description>\"",
             flush=True,
         )
