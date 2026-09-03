@@ -910,7 +910,7 @@ def _resolve_product_inputs_to(
                 "size_bytes": len(content),
                 "media_type": media_type,
             })
-            if resource.suffix.lower() == ".pdf" and declaration.role == "requirement":
+            if media_type == "application/pdf" and declaration.role == "requirement":
                 catalog_units.extend(_unitize_requirement_pdf(
                     resource,
                     declaration_id,
@@ -1686,6 +1686,8 @@ def _classify(path: Path) -> tuple[str, str]:
         return "excluded", "secret-like filename"
     if suffix in _TEXT_SUFFIXES or suffix in _ASSET_SUFFIXES:
         return "accepted", ""
+    if not suffix and _content_asset_media_type(path) is not None:
+        return "accepted", ""
     return "blocking", "unsupported file type"
 
 
@@ -1791,7 +1793,25 @@ def _media_type(path: Path) -> str:
     if path.suffix.lower() == ".svg":
         return "image/svg+xml"
     guessed, _ = mimetypes.guess_type(path.name)
-    return guessed or "text/plain"
+    return guessed or _content_asset_media_type(path) or "text/plain"
+
+
+def _content_asset_media_type(path: Path) -> str | None:
+    """Recognize common binary product assets whose filename lacks an extension."""
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(16)
+    except OSError:
+        return None
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith(b"%PDF-"):
+        return "application/pdf"
+    return None
 
 
 def _unitize(role: str, declaration_id: str, locator: str, snapshot: str, digest: str, media_type: str, text: str | None) -> list[dict[str, object]]:
