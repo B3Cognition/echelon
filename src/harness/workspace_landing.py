@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
+import subprocess
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.git_helpers import GitHelperError, run_git
@@ -14,8 +17,18 @@ from echelon.spec_publish import (
     resolve_publication_sources,
 )
 from harness.config import get_full_resolved_config
+from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES, _spec_input_hash
 from harness.secret_scan import scan_git_staged
-from harness.spec_frontmatter import find_spec_dir, write_status
+from harness.spec_frontmatter import (
+    find_spec_dir,
+    read_frontmatter,
+    spec_content_ignoring_status,
+    write_status,
+    write_text_atomic,
+)
+
+
+LANDING_TRANSITION_FILENAME = "landing-transition.json"
 
 
 @dataclass(frozen=True)
@@ -29,6 +42,88 @@ class WorkspaceLandingResult:
     source_commit: str | None = None
     published_commit: str | None = None
     default_branch: str | None = None
+
+
+def landing_transition_covers_hashes(
+    spec_dir: Path,
+    *,
+    recorded_hash: object,
+    current_hash: object,
+) -> bool:
+    """Return whether a sealed terminal transition explains a hash change."""
+    if not isinstance(recorded_hash, str) or not recorded_hash:
+        return False
+    if not isinstance(current_hash, str) or not current_hash:
+        return False
+    path = spec_dir / LANDING_TRANSITION_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 1
+        and payload.get("spec_id") == spec_dir.name
+        and payload.get("pre_land_spec_input_hash") == recorded_hash
+        and payload.get("landed_spec_input_hash") == current_hash
+    )
+
+
+def landing_transition_allows_retry(
+    spec_dir: Path,
+    *,
+    workspace_root: Path,
+    recorded_hash: object,
+    current_hash: object,
+) -> bool:
+    """Accept a seal or recover a terminal status write interrupted before sealing."""
+    if landing_transition_covers_hashes(
+        spec_dir,
+        recorded_hash=recorded_hash,
+        current_hash=current_hash,
+    ):
+        return True
+    if not isinstance(recorded_hash, str) or not recorded_hash:
+        return False
+    if not isinstance(current_hash, str) or not current_hash:
+        return False
+    transition = spec_dir / LANDING_TRANSITION_FILENAME
+    if transition.exists() or transition.is_symlink():
+        return False
+    try:
+        if str(read_frontmatter(spec_dir).get("status") or "") != "landed":
+            return False
+        spec_relpath = spec_dir.relative_to(workspace_root).as_posix()
+    except (OSError, ValueError, TypeError):
+        return False
+    recovered_hash = _head_spec_input_hash_for_status_only_transition(
+        workspace_root,
+        spec_dir,
+        spec_relpath,
+    )
+    return recovered_hash == recorded_hash
+
+
+def _sealed_transition_pre_hash(
+    spec_dir: Path,
+    *,
+    current_hash: str,
+) -> str | None:
+    path = spec_dir / LANDING_TRANSITION_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    pre_hash = payload.get("pre_land_spec_input_hash") if isinstance(payload, dict) else None
+    if (
+        not isinstance(pre_hash, str)
+        or not pre_hash
+        or payload.get("schema_version") != 1
+        or payload.get("spec_id") != spec_dir.name
+        or payload.get("landed_spec_input_hash") != current_hash
+    ):
+        return None
+    return pre_hash
 
 
 def _default_branch(project_root: Path) -> tuple[str, str]:
@@ -68,6 +163,104 @@ def _outside_spec_status(
         for line in status
         if _status_path(line) != spec_relpath
         and not _status_path(line).startswith(prefix)
+    )
+
+
+def _git_file_at_head(workspace_root: Path, relpath: str) -> bytes | None:
+    result = subprocess.run(
+        ["git", "show", f"HEAD:{relpath}"],
+        cwd=workspace_root,
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _head_spec_input_hash_for_status_only_transition(
+    workspace_root: Path,
+    spec_dir: Path,
+    spec_relpath: str,
+) -> str | None:
+    """Recover the verified pre-land hash from a status-only working change."""
+    current_spec = spec_dir / "spec.md"
+    head_spec = _git_file_at_head(workspace_root, f"{spec_relpath}/spec.md")
+    if head_spec is None or not current_spec.is_file():
+        return None
+    try:
+        head_content = spec_content_ignoring_status(head_spec.decode("utf-8"))
+        current_content = spec_content_ignoring_status(
+            current_spec.read_text(encoding="utf-8")
+        )
+        if head_content is None or current_content is None or head_content != current_content:
+            return None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    digest = hashlib.sha256()
+    for filename in SCOPE_INPUT_FILENAMES:
+        path = spec_dir / filename
+        head_content = _git_file_at_head(
+            workspace_root,
+            f"{spec_relpath}/{filename}",
+        )
+        if filename != "spec.md":
+            current_content = path.read_bytes() if path.is_file() else None
+            if current_content != head_content:
+                return None
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+        if head_content is None:
+            digest.update(b"0\0")
+        else:
+            digest.update(b"1\0")
+            digest.update(head_content)
+    return digest.hexdigest()
+
+
+def _record_landing_transition(
+    spec_dir: Path,
+    *,
+    pre_land_hash: str,
+    landed_hash: str,
+) -> None:
+    path = spec_dir / LANDING_TRANSITION_FILENAME
+    if landing_transition_covers_hashes(
+        spec_dir,
+        recorded_hash=pre_land_hash,
+        current_hash=landed_hash,
+    ):
+        return
+    payload = {
+        "schema_version": 1,
+        "spec_id": spec_dir.name,
+        "pre_land_spec_input_hash": pre_land_hash,
+        "landed_spec_input_hash": landed_hash,
+    }
+    write_text_atomic(
+        path,
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _is_recognized_landing_transition(spec_dir: Path) -> bool:
+    path = spec_dir / LANDING_TRANSITION_FILENAME
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 1
+        and payload.get("spec_id") == spec_dir.name
+        and isinstance(payload.get("pre_land_spec_input_hash"), str)
+        and payload.get("pre_land_spec_input_hash")
+        and isinstance(payload.get("landed_spec_input_hash"), str)
+        and payload.get("landed_spec_input_hash")
     )
 
 
@@ -178,15 +371,25 @@ def finalize_workspace_landing(
                 detail=f"canonical spec directory for {spec_id} was not found",
                 default_branch=default_branch,
             )
-        try:
-            spec_relpath = spec_dir.resolve().relative_to(workspace).as_posix()
-        except ValueError:
+        specs_root = workspace / "specs"
+        expected_spec_dir = specs_root / spec_dir.name
+        spec_md = spec_dir / "spec.md"
+        if (
+            spec_dir.absolute() != expected_spec_dir.absolute()
+            or specs_root.is_symlink()
+            or spec_dir.is_symlink()
+            or spec_md.is_symlink()
+        ):
             return WorkspaceLandingResult(
                 ok=False,
-                reason="spec_outside_workspace",
-                detail=f"spec directory {spec_dir} is outside {workspace}",
+                reason="unsafe_spec_path",
+                detail=(
+                    f"canonical spec path must be a non-symlinked child of "
+                    f"{specs_root}"
+                ),
                 default_branch=default_branch,
             )
+        spec_relpath = f"specs/{spec_dir.name}"
 
         unrelated = _outside_spec_status(_status_lines(workspace), spec_relpath)
         if unrelated:
@@ -198,7 +401,64 @@ def finalize_workspace_landing(
                 default_branch=default_branch,
             )
 
+        pre_land_hash = _spec_input_hash(spec_dir)
+        if pre_land_hash is None:
+            return WorkspaceLandingResult(
+                ok=False,
+                reason="spec_hash_unavailable",
+                detail="could not hash canonical spec inputs before landing",
+                default_branch=default_branch,
+            )
+        existing_status = str(read_frontmatter(spec_dir).get("status") or "")
+        existing_transition = spec_dir / LANDING_TRANSITION_FILENAME
+        if (
+            existing_transition.exists() or existing_transition.is_symlink()
+        ) and not _is_recognized_landing_transition(spec_dir):
+            return WorkspaceLandingResult(
+                ok=False,
+                reason="workspace_file_collision",
+                detail=(
+                    "refusing to replace an unrecognized landing transition: "
+                    f"{existing_transition}"
+                ),
+                paths=(str(existing_transition),),
+                default_branch=default_branch,
+            )
+        if existing_status == "landed":
+            sealed_pre_hash = _sealed_transition_pre_hash(
+                spec_dir,
+                current_hash=pre_land_hash,
+            )
+            if sealed_pre_hash is not None:
+                pre_land_hash = sealed_pre_hash
+            elif not existing_transition.is_file():
+                recovered_hash = _head_spec_input_hash_for_status_only_transition(
+                    workspace,
+                    spec_dir,
+                    spec_relpath,
+                )
+                if recovered_hash is not None:
+                    pre_land_hash = recovered_hash
+
         write_status(spec_dir, "landed")
+        landed_hash = _spec_input_hash(spec_dir)
+        if landed_hash is None:
+            return WorkspaceLandingResult(
+                ok=False,
+                reason="spec_hash_unavailable",
+                detail="could not hash canonical spec inputs after landing",
+                default_branch=default_branch,
+            )
+        if not landing_transition_covers_hashes(
+            spec_dir,
+            recorded_hash=pre_land_hash,
+            current_hash=landed_hash,
+        ):
+            _record_landing_transition(
+                spec_dir,
+                pre_land_hash=pre_land_hash,
+                landed_hash=landed_hash,
+            )
         source_commit = _commit_terminal_spec(
             workspace,
             spec_relpath,

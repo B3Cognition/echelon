@@ -69,6 +69,8 @@ def test_find_feature_branch_promotes_fetched_upstream_branch(tmp_path: Path) ->
         if args[:3] == ["branch", "--remotes", "--list"]:
             output = "  upstream/003-create-browser-first-3d\n" if args[-1] == "*/003-create-browser-first-3d" else ""
             return CompletedProcess(args, 0, stdout=output, stderr="")
+        if args[:3] == ["show-ref", "--verify", "--quiet"]:
+            return CompletedProcess(args, 1, stdout="", stderr="")
         return CompletedProcess(args, 0, stdout="", stderr="")
 
     with (
@@ -86,3 +88,29 @@ def test_find_feature_branch_promotes_fetched_upstream_branch(tmp_path: Path) ->
         "003-create-browser-first-3d",
         "upstream/003-create-browser-first-3d",
     ] in commands
+
+
+@pytest.mark.unit
+def test_find_feature_branch_ignores_nested_remote_harness_candidate(
+    tmp_path: Path,
+) -> None:
+    manager = _manager_with_mirror(tmp_path)
+    commands: list[list[str]] = []
+    branch = "harness/003-create-browser-first-3d/default/iter-2"
+
+    def git_result(args: list[str], **_kwargs: object) -> CompletedProcess[str]:
+        commands.append(args)
+        if args[:3] == ["branch", "--remotes", "--list"]:
+            output = f"  upstream/{branch}\n" if args[-1].endswith("003-*") else ""
+            return CompletedProcess(args, 0, stdout=output, stderr="")
+        if args[:3] == ["show-ref", "--verify", "--quiet"]:
+            raise AssertionError("nested harness branch must not be promoted")
+        if args[:2] == ["branch", "--no-track"]:
+            raise AssertionError("nested harness branch must not be recreated")
+        return CompletedProcess(args, 0, stdout="", stderr="")
+
+    with (
+        patch.object(manager, "fetch_mirror"),
+        patch("harness.gitops._run_git", side_effect=git_result),
+    ):
+        assert manager.find_feature_branch("003-create-browser-first-3d") is None

@@ -19,7 +19,13 @@ from echelon.ui import banner as _banner
 from harness.errors import GitOpsError
 from harness.gitops import _run_git
 from harness.paths import build_dir, current_build_marker, runs_dir
-from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets, write_status
+from harness.spec_frontmatter import (
+    find_spec_dir,
+    read_frontmatter,
+    read_targets,
+    spec_content_ignoring_status,
+    write_status,
+)
 from kernel.fulfillment import (
     blocking_statuses,
     fulfillment_report_is_current,
@@ -55,6 +61,7 @@ from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha2
 from harness.workspace_landing import (
     WorkspaceLandingResult,
     finalize_workspace_landing,
+    landing_transition_allows_retry,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,7 +102,6 @@ _IMPLEMENTATION_INPUT_FILES = {
     "build.gradle.kts",
     "Makefile",
 }
-_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
 _LAND_GENERATED_DRIFT_EXACT = {
     "docs/perf/perf-metrics.json",
     "docs/perf/perf-metrics-pty.json",
@@ -550,6 +556,31 @@ def _validate_harness_branch_provenance(
         raise RuntimeError("verified fulfillment commit is not on the selected harness branch")
 
 
+def _verified_commit_is_on_default(
+    spec_dir: Path | None,
+    project_dir: Path,
+    gitops: Any,
+) -> bool:
+    """Return whether recorded fulfillment already belongs to the default tree."""
+    if spec_dir is None:
+        return False
+    try:
+        report = latest_fulfillment_report(spec_dir)
+        metadata = read_fulfillment_metadata(report) if report is not None else {}
+    except OSError:
+        return False
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        return False
+    default_branch = _land_default_branch(gitops)
+    ancestor = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, default_branch],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return ancestor.returncode == 0
+
+
 def _find_current_build_harness_branch(
     spec_id: str,
     project_dir: Path,
@@ -745,7 +776,16 @@ def _finish_branchless_landing(
                 subtitle="Branchless status advancement requires complete provenance.",
             )
             return False
-        if recorded_spec_hash and recorded_spec_hash != current_spec_hash:
+        if (
+            recorded_spec_hash
+            and recorded_spec_hash != current_spec_hash
+            and not landing_transition_allows_retry(
+                spec_dir,
+                workspace_root=wrapper_project_dir,
+                recorded_hash=recorded_spec_hash,
+                current_hash=current_spec_hash,
+            )
+        ):
             problem = "fulfillment report spec input hash is stale"
             _banner(
                 "LAND - BRANCH NOT LANDED",
@@ -934,7 +974,13 @@ def land(
         )
         return False
 
-    if feature_branch is None:
+    already_on_default = feature_branch is None and _verified_commit_is_on_default(
+        spec_dir,
+        project_dir,
+        gitops,
+    )
+
+    if feature_branch is None and not already_on_default:
         try:
             feature_branch = _find_current_build_harness_branch(
                 spec_id,
@@ -2013,12 +2059,13 @@ def _spec_change_is_status_only(
     new = _show_ref_file(project_dir, new_ref, relpath)
     if old is None or new is None:
         return False
-    return _without_spec_status(old) == _without_spec_status(new)
+    old_content = _without_spec_status(old)
+    new_content = _without_spec_status(new)
+    return old_content is not None and new_content is not None and old_content == new_content
 
 
-def _without_spec_status(text: str) -> str:
-    text = _FRONTMATTER_RE.sub("", text, count=1)
-    return re.sub(r"^\*\*Status\*\*:\s*.*(?:\n|$)", "", text, count=1, flags=re.MULTILINE)
+def _without_spec_status(text: str) -> tuple[dict[str, Any], str] | None:
+    return spec_content_ignoring_status(text)
 
 
 def _current_git_commit(project_dir: Path) -> str | None:

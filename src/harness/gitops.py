@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -477,11 +478,20 @@ class GitOpsManager:
                 ["branch", "--remotes", "--list", f"*/{pattern}"],
                 cwd=str(self._mirror_path),
             )
-            return [
-                _clean_branch_listing(branch)
-                for branch in result.stdout.splitlines()
-                if branch.strip() and " -> " not in branch
-            ]
+            branches: list[str] = []
+            for raw in result.stdout.splitlines():
+                if not raw.strip() or " -> " in raw:
+                    continue
+                remote_ref = _clean_branch_listing(raw)
+                if "/" not in remote_ref:
+                    continue
+                branch_name = remote_ref.split("/", 1)[1]
+                # Git's wildcard can cross slash boundaries. Feature lookup
+                # owns only top-level canonical branches; nested harness refs
+                # are resolved from current-build provenance.
+                if "/" not in branch_name and fnmatchcase(branch_name, pattern):
+                    branches.append(remote_ref)
+            return branches
 
         for alias in spec_identity_aliases(spec_id):
             for pattern in (alias, f"{alias}-*"):
@@ -500,6 +510,23 @@ class GitOpsManager:
                         ),
                     )[0]
                     chosen = chosen_remote.split("/", 1)[1]
+                    existing = _run_git(
+                        [
+                            "show-ref",
+                            "--verify",
+                            "--quiet",
+                            f"refs/heads/{chosen}",
+                        ],
+                        cwd=str(self._mirror_path),
+                        check=False,
+                    )
+                    if existing.returncode == 0:
+                        logger.info(
+                            "Reused existing local mirror branch %s for fetched %s",
+                            chosen,
+                            chosen_remote,
+                        )
+                        return chosen
                     _run_git(
                         ["branch", "--no-track", chosen, chosen_remote],
                         cwd=str(self._mirror_path),

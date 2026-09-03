@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +14,28 @@ from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_
 from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr or result.stdout)
+    return result.stdout.strip()
+
+
+def _init_status_repo(repo: Path) -> None:
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Echelon Test")
+    _git(repo, "config", "user.email", "echelon@example.test")
+    (repo / "README.md").write_text("# Workspace\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "initial")
 
 
 def _write_build_state(
@@ -154,8 +177,7 @@ def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
     tmp_path: Path,
     capsys,
 ) -> None:
-    run_dir = tmp_path / "runs/spec-complete"
-    run_dir.mkdir(parents=True)
+    _init_status_repo(tmp_path)
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
@@ -163,6 +185,10 @@ def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
         encoding="utf-8",
     )
     (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    _git(tmp_path, "add", "specs/001-demo")
+    _git(tmp_path, "commit", "-m", "publish landed spec")
+    run_dir = tmp_path / "runs/spec-complete"
+    run_dir.mkdir(parents=True)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
@@ -185,6 +211,122 @@ def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
     assert "No action required; delivery is already landed." in output
     assert "READY TO BUILD" not in output
     assert "echelon delivery run" not in output
+
+
+def test_unpublished_landed_authoring_branch_is_not_reported_as_landed(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_status_repo(tmp_path)
+    _git(tmp_path, "switch", "-c", "001-demo")
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Pending publication\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    _git(tmp_path, "add", "specs/001-demo")
+    _git(tmp_path, "commit", "-m", "finalize source only")
+    run_dir = tmp_path / "runs/spec-complete"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "done",
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "No action required; delivery is already landed." not in output
+
+
+def test_blocked_reopened_run_is_not_hidden_by_older_landed_snapshot(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs/spec-reopened"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Previously landed snapshot\n",
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "spec_id": "001-demo",
+                "published_spec_dir": "specs/001-demo",
+                "blocked_reason": "provider_failure",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "RUN BLOCKED" in output
+
+
+def test_completed_reopened_run_is_not_hidden_by_older_landed_snapshot(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_status_repo(tmp_path)
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Previously landed snapshot\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "publish landed spec")
+    _git(tmp_path, "switch", "-c", "001-demo")
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: In Progress\n---\n# Reopened scope\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "reopen landed spec")
+    run_dir = tmp_path / "runs/spec-reopened"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "done",
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "No action required; delivery is already landed." not in output
 
 
 def test_status_shows_current_authorized_quality_debt_without_calling_it_passed(

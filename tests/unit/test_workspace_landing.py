@@ -8,7 +8,12 @@ import pytest
 
 import harness.workspace_landing as workspace_landing
 from echelon.spec_publish import SpecPublishError
-from harness.workspace_landing import finalize_workspace_landing
+from harness.fulfillment_runner import _spec_input_hash
+from harness.spec_frontmatter import read_frontmatter
+from harness.workspace_landing import (
+    finalize_workspace_landing,
+    landing_transition_covers_hashes,
+)
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> str:
@@ -219,7 +224,8 @@ def test_publication_failure_leaves_clean_landed_source_for_safe_retry(
     target = tmp_path / "target"
     _init_repo(workspace)
     _init_repo(target)
-    _create_spec_branch(workspace)
+    spec_dir = _create_spec_branch(workspace)
+    recorded_hash = _spec_input_hash(spec_dir)
 
     def fail_publish(*args: object, **kwargs: object) -> object:
         raise SpecPublishError("injected publication failure")
@@ -238,4 +244,138 @@ def test_publication_failure_leaves_clean_landed_source_for_safe_retry(
     assert "status: landed" in _git(
         workspace, "show", "001-demo:specs/001-demo/spec.md"
     )
+    assert landing_transition_covers_hashes(
+        spec_dir,
+        recorded_hash=recorded_hash,
+        current_hash=_spec_input_hash(spec_dir),
+    )
     assert _git(workspace, "ls-tree", "--name-only", "main", "specs/001-demo") == ""
+
+    with (spec_dir / "spec.md").open("a", encoding="utf-8") as handle:
+        handle.write("\nUnverified scope change.\n")
+    assert not landing_transition_covers_hashes(
+        spec_dir,
+        recorded_hash=recorded_hash,
+        current_hash=_spec_input_hash(spec_dir),
+    )
+
+
+@pytest.mark.unit
+def test_transition_write_failure_is_recoverable_without_overwriting_unknown_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    target = tmp_path / "target"
+    _init_repo(workspace)
+    _init_repo(target)
+    spec_dir = _create_spec_branch(workspace)
+    recorded_hash = _spec_input_hash(spec_dir)
+
+    def fail_transition(*args: object, **kwargs: object) -> None:
+        raise OSError("injected transition write failure")
+
+    monkeypatch.setattr(workspace_landing, "_record_landing_transition", fail_transition)
+    first = finalize_workspace_landing(
+        "001-demo", workspace_root=workspace, target_root=target
+    )
+
+    assert first.ok is False
+    assert first.reason == "workspace_finalize_failed"
+    assert "injected transition write failure" in first.detail
+    assert read_frontmatter(spec_dir)["status"] == "landed"
+    assert not (spec_dir / "landing-transition.json").exists()
+
+    monkeypatch.undo()
+    second = finalize_workspace_landing(
+        "001-demo", workspace_root=workspace, target_root=target
+    )
+
+    assert second.ok is True
+    assert landing_transition_covers_hashes(
+        spec_dir,
+        recorded_hash=recorded_hash,
+        current_hash=_spec_input_hash(spec_dir),
+    )
+
+
+@pytest.mark.unit
+def test_status_only_recovery_rejects_other_frontmatter_changes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    spec_dir = _create_spec_branch(workspace)
+    spec_path = spec_dir / "spec.md"
+    original = spec_path.read_text(encoding="utf-8").replace(
+        "status: ready_to_land",
+        "status: ready_to_land\ntitle: Original",
+        1,
+    )
+    spec_path.write_text(original, encoding="utf-8")
+    _git(workspace, "add", "specs/001-demo/spec.md")
+    _git(workspace, "commit", "-m", "add verified metadata")
+    recorded_hash = _spec_input_hash(spec_dir)
+    spec_path.write_text(
+        original.replace("status: ready_to_land", "status: landed", 1).replace(
+            "title: Original",
+            "title: Changed after verification",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    assert not workspace_landing.landing_transition_allows_retry(
+        spec_dir,
+        workspace_root=workspace,
+        recorded_hash=recorded_hash,
+        current_hash=_spec_input_hash(spec_dir),
+    )
+
+
+@pytest.mark.unit
+def test_finalization_preserves_unknown_transition_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    target = tmp_path / "target"
+    _init_repo(workspace)
+    _init_repo(target)
+    spec_dir = _create_spec_branch(workspace)
+    collision = spec_dir / "landing-transition.json"
+    collision.write_text("user-owned content\n", encoding="utf-8")
+
+    result = finalize_workspace_landing(
+        "001-demo", workspace_root=workspace, target_root=target
+    )
+
+    assert result.ok is False
+    assert result.reason == "workspace_file_collision"
+    assert str(collision) in result.detail
+    assert collision.read_text(encoding="utf-8") == "user-owned content\n"
+    assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+
+
+@pytest.mark.unit
+def test_finalization_rejects_symlinked_spec_directory_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    notes = repo / "notes"
+    notes.mkdir()
+    note_spec = notes / "spec.md"
+    note_spec.write_text(
+        "---\nstatus: ready_to_land\n---\n# Notes\n",
+        encoding="utf-8",
+    )
+    specs = repo / "specs"
+    specs.mkdir()
+    (specs / "001-demo").symlink_to("../notes", target_is_directory=True)
+    _git(repo, "add", "notes/spec.md", "specs/001-demo")
+    _git(repo, "commit", "-m", "symlink fixture")
+
+    result = finalize_workspace_landing(
+        "001-demo", workspace_root=repo, target_root=repo
+    )
+
+    assert result.ok is False
+    assert result.reason == "unsafe_spec_path"
+    assert "status: ready_to_land" in note_spec.read_text(encoding="utf-8")
+    assert _git(repo, "status", "--porcelain") == ""

@@ -6813,8 +6813,10 @@ def _phase_a_buildable(result_status: str, blockers: list) -> bool:
     return not blockers and result_status not in ("blocked", "interrupted")
 
 
-def _canonical_landed_spec(project_root: Path) -> tuple[str, Path] | None:
-    """Return the canonical landed spec associated with the current/latest run."""
+def _canonical_delivery_lifecycle(
+    project_root: Path,
+) -> tuple[str, str, Path] | None:
+    """Resolve terminal lifecycle state from the published default-branch tree."""
     import json as _json
 
     run_dir = _find_current_run_dir(project_root)
@@ -6827,6 +6829,9 @@ def _canonical_landed_spec(project_root: Path) -> tuple[str, Path] | None:
         if isinstance(loaded, dict):
             state = loaded
 
+    if state and str(state.get("status") or "") != "done":
+        return None
+
     spec_id = str(state.get("spec_id") or "").strip()
     candidate = _published_continue_spec_dir(project_root, state)
     if candidate is None and not spec_id:
@@ -6838,12 +6843,80 @@ def _canonical_landed_spec(project_root: Path) -> tuple[str, Path] | None:
     try:
         from harness.spec_frontmatter import read_frontmatter
 
-        status = str(read_frontmatter(candidate).get("status") or "").strip()
+        working_status = str(read_frontmatter(candidate).get("status") or "").strip()
     except (OSError, ValueError, TypeError):
         return None
-    if status != "landed":
-        return None
-    return spec_id or candidate.name, candidate
+
+    try:
+        import yaml as _yaml
+        from echelon.phase_a_git import resolve_phase_a_default_branch
+        from harness.config import get_full_resolved_config
+
+        resolved = get_full_resolved_config(project_root)
+        configured = resolved.get("target_default_branch", "")
+        if not configured and isinstance(resolved.get("harness"), dict):
+            configured = resolved["harness"].get("target_default_branch", "")
+        default_branch, _default_commit = resolve_phase_a_default_branch(
+            project_root,
+            str(configured or ""),
+        )
+        relpath = f"specs/{candidate.name}/spec.md"
+        published = subprocess.run(
+            ["git", "show", f"{default_branch}:{relpath}"],
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        published_status = ""
+        if published.returncode == 0:
+            match = re.match(
+                r"^---\n(.*?)\n---(?:\n|$)",
+                published.stdout,
+                re.DOTALL,
+            )
+            metadata = _yaml.safe_load(match.group(1)) if match else {}
+            if isinstance(metadata, dict):
+                published_status = str(metadata.get("status") or "").strip()
+    except Exception:
+        published_status = ""
+
+    if published_status == "landed" and working_status == "landed":
+        return "landed", spec_id or candidate.name, candidate
+    if working_status == "landed":
+        return "pending_publication", spec_id or candidate.name, candidate
+    return None
+
+
+def _print_terminal_delivery_lifecycle(project_root: Path) -> bool:
+    lifecycle = _canonical_delivery_lifecycle(project_root)
+    if lifecycle is None:
+        return False
+    status, spec_id, spec_dir = lifecycle
+    if status == "landed":
+        _banner(
+            "NEXT STEP",
+            [
+                ("spec", spec_id),
+                ("status", "landed"),
+                ("spec directory", str(spec_dir)),
+                ("next", "No action required; delivery is already landed."),
+            ],
+            subtitle="LANDED",
+        )
+    else:
+        _banner(
+            "NEXT STEP",
+            [
+                ("spec", spec_id),
+                ("status", "landing finalization pending"),
+                ("spec directory", str(spec_dir)),
+                ("next", f"echelon delivery land {spec_id}"),
+            ],
+            subtitle="FINALIZATION PENDING",
+        )
+    return True
 
 
 def _print_next_steps(project_root: Path, result_status: str) -> None:
@@ -6859,19 +6932,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if result_status not in ("done", "blocked", "interrupted"):
         return
 
-    landed = _canonical_landed_spec(project_root)
-    if landed is not None:
-        spec_id, spec_dir = landed
-        _banner(
-            "NEXT STEP",
-            [
-                ("spec", spec_id),
-                ("status", "landed"),
-                ("spec directory", str(spec_dir)),
-                ("next", "No action required; delivery is already landed."),
-            ],
-            subtitle="LANDED",
-        )
+    if _print_terminal_delivery_lifecycle(project_root):
         return
 
     # ── Latest harness build owns next-step guidance when present ───────────
