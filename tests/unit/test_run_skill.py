@@ -16,7 +16,11 @@ import pytest
 from harness.harness_run_history import history_path
 from harness.delivery_results import DeliveryResult
 from harness.run_intent import RunIntent
-from harness.skills.run_skill import RunContextError, _resolve_run_roots
+from harness.skills.run_skill import (
+    RunContextError,
+    _fresh_delivery_baselines,
+    _resolve_run_roots,
+)
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
@@ -109,6 +113,63 @@ def test_resolve_run_roots_rejects_missing_explicit_workspace(tmp_path: Path) ->
         match=f"orchestration root is not a directory: {missing.resolve()}",
     ):
         _resolve_run_roots(tmp_path, missing)
+
+
+def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
+    tmp_path: Path,
+) -> None:
+    """A stale run must not replay a checkpoint already included in main."""
+    candidate = "a" * 40
+    state_dir = tmp_path / "runs" / "build-stale" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "checkpoint_commits": [{"commit": candidate}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.return_value = True
+
+    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+
+    assert baselines == {}
+    gitops.commit_is_ancestor_of_default.assert_called_once_with(candidate)
+
+
+def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
+    tmp_path: Path,
+) -> None:
+    """A landed latest checkpoint closes recovery instead of reviving old work."""
+    landed = "a" * 40
+    abandoned = "b" * 40
+    for build_id, checkpoint in (
+        ("build-20260903-120000-000001", landed),
+        ("build-20260901-120000-000001", abandoned),
+    ):
+        state_dir = tmp_path / "runs" / build_id / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "default.json").write_text(
+            json.dumps(
+                {
+                    "status": "running",
+                    "checkpoint_commits": [{"commit": checkpoint}],
+                }
+            ),
+            encoding="utf-8",
+        )
+    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.side_effect = lambda commit: commit == landed
+
+    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+
+    assert baselines == {}
+    gitops.commit_is_ancestor_of_default.assert_called_once_with(landed)
 
 
 @pytest.mark.unit

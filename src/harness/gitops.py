@@ -1668,6 +1668,23 @@ class GitOpsManager:
         except GitOpsError:
             return self._config.target_default_branch
 
+    def commit_is_ancestor_of_default(self, commit: str) -> bool:
+        """Return whether ``commit`` is already contained in the target default branch.
+
+        Delivery recovery uses this to avoid replaying a stale checkpoint that was
+        successfully landed before the prior process died.  An unavailable mirror
+        or an unknown commit is deliberately treated as not landed so recovery is
+        conservative and does not discard unfinished work.
+        """
+        if not self._mirror_path.exists():
+            return False
+        result = _run_git(
+            ["merge-base", "--is-ancestor", commit, self.get_default_branch()],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        return result.returncode == 0
+
     def local_merge(
         self, push_branch: str, spec_id: str, spec_name: str = ""
     ) -> dict[str, Any]:

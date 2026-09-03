@@ -95,7 +95,11 @@ def _resolve_run_roots(
     return harness_root, workspace_root
 
 
-def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]:
+def _fresh_delivery_baselines(
+    harness_root: Path,
+    intent: Any,
+    gitops: Any | None = None,
+) -> dict[str, str]:
     """Return checkpoint commits a new delivery budget may safely retain.
 
     A normal fresh delivery intentionally restarts from the target default branch.
@@ -157,11 +161,36 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
                     continue
                 commit = checkpoint.get("commit")
                 if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
+                    if _checkpoint_is_landed(gitops, commit):
+                        logger.info(
+                            "Latest checkpoint %s for %s is already contained in "
+                            "the target default branch; starting fresh",
+                            commit[:12],
+                            strategy_id,
+                        )
+                        # A newer durable checkpoint supersedes every older run.
+                        # Once it has landed, an old abandoned candidate must not
+                        # be revived merely because its state still says running.
+                        return baselines
                     baselines[strategy_id] = commit
                     break
             if strategy_id in baselines:
                 break
     return baselines
+
+
+def _checkpoint_is_landed(gitops: Any | None, commit: str) -> bool:
+    """Return whether a prior delivery checkpoint is already on target main."""
+    if gitops is None:
+        return False
+    checker = getattr(gitops, "commit_is_ancestor_of_default", None)
+    if not callable(checker):
+        return False
+    try:
+        return checker(commit) is True
+    except Exception as error:  # pragma: no cover - defensive: stale recovery must remain available
+        logger.warning("Could not inspect stale checkpoint %s: %s", commit[:12], error)
+        return False
 
 
 def _state_lock_owner_is_alive(state_path: Path) -> bool:
@@ -834,7 +863,9 @@ def _execute_delivery_run(
     # that ID here.  A build ID therefore does not itself mean "resume"; intent
     # is the authority for whether a prior checkpoint must be retained.
     fresh_branch_bases = (
-        {} if getattr(intent, "resume", False) else _fresh_delivery_baselines(harness_root, intent)
+        {}
+        if getattr(intent, "resume", False)
+        else _fresh_delivery_baselines(harness_root, intent, gitops)
     )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)

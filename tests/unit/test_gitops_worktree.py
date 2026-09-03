@@ -70,6 +70,25 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     assert result is None
 
 
+def test_commit_is_ancestor_of_default_checks_the_mirror_default_branch(tmp_path):
+    """Stale-checkpoint recovery must query the target mirror, not a worktree."""
+    gitops = _make_gitops(tmp_path)
+    gitops._mirror_path.mkdir(parents=True)
+    commit = "a" * 40
+
+    with patch.object(gitops, "get_default_branch", return_value="main"), patch(
+        "harness.gitops._run_git",
+        return_value=SimpleNamespace(returncode=0),
+    ) as run_git:
+        assert gitops.commit_is_ancestor_of_default(commit) is True
+
+    run_git.assert_called_once_with(
+        ["merge-base", "--is-ancestor", commit, "main"],
+        cwd=str(gitops._mirror_path),
+        check=False,
+    )
+
+
 def test_destroy_worktree_reports_git_failure_when_given_path(tmp_path, caplog):
     """A failed cleanup with a Path preserves Git's diagnostic instead of raising TypeError."""
     gitops = _make_gitops(tmp_path)
