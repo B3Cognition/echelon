@@ -1139,11 +1139,7 @@ class TestLand:
             )
 
         assert result is True
-        assert landing_transition_covers_hashes(
-            spec_dir,
-            recorded_hash=spec_hash,
-            current_hash=_spec_input_hash(spec_dir),
-        )
+        assert _spec_input_hash(spec_dir) == spec_hash
 
     def test_numeric_selector_uses_canonical_identity_for_branch_lookup(
         self, tmp_path: Path

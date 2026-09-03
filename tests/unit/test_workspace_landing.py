@@ -58,6 +58,25 @@ def _create_spec_branch(workspace: Path, spec_id: str = "001-demo") -> Path:
 
 
 @pytest.mark.unit
+def test_fulfillment_spec_hash_ignores_lifecycle_status(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "001-demo"
+    spec_dir.mkdir()
+    spec_file = spec_dir / "spec.md"
+    spec_file.write_text(
+        "---\nstatus: in_progress\n---\n# Demo\n\n**Status**: in_progress\n",
+        encoding="utf-8",
+    )
+    before = _spec_input_hash(spec_dir)
+
+    spec_file.write_text(
+        "---\nstatus: ready_to_land\n---\n# Demo\n\n**Status**: ready_to_land\n",
+        encoding="utf-8",
+    )
+
+    assert _spec_input_hash(spec_dir) == before
+
+
+@pytest.mark.unit
 def test_polyrepo_finalization_commits_publishes_and_returns_to_clean_main(
     tmp_path: Path,
 ) -> None:
@@ -292,11 +311,7 @@ def test_transition_write_failure_is_recoverable_without_overwriting_unknown_fil
     )
 
     assert second.ok is True
-    assert landing_transition_covers_hashes(
-        spec_dir,
-        recorded_hash=recorded_hash,
-        current_hash=_spec_input_hash(spec_dir),
-    )
+    assert _spec_input_hash(spec_dir) == recorded_hash
 
 
 @pytest.mark.unit

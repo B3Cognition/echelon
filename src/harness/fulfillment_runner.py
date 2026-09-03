@@ -976,10 +976,30 @@ def _spec_input_hash(spec_dir: Path | None) -> str | None:
         digest.update(b"\0")
         if path.is_file():
             digest.update(b"1\0")
-            digest.update(path.read_bytes())
+            digest.update(_normalized_scope_input_bytes(filename, path))
         else:
             digest.update(b"0\0")
     return digest.hexdigest()
+
+
+def _normalized_scope_input_bytes(filename: str, path: Path) -> bytes:
+    """Exclude lifecycle-only status transitions from fulfillment provenance."""
+    content = path.read_text(encoding="utf-8")
+    if filename == "spec.md":
+        content = re.sub(
+            r"\A(---\n.*?^status:\s*)[^\n]*(\n---)",
+            r"\1<lifecycle>\2",
+            content,
+            count=1,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        content = re.sub(
+            r"(?m)^\*\*Status\*\*:\s*[^\n]*$",
+            "**Status**: <lifecycle>",
+            content,
+            count=1,
+        )
+    return content.encode("utf-8")
 
 
 def _implementation_input_hash(worktree: Path) -> str:
