@@ -385,6 +385,214 @@ class TestSingleStrategy:
 
         assert result.status == "converged"
 
+    def test_finalization_publishes_deferred_target_only_after_downstream_gates(
+        self, tmp_path: Path
+    ) -> None:
+        """The coordinator owns publication after every enabled gate has passed."""
+        coord = _make_coordinator(tmp_path)
+        worktree = tmp_path
+        verified_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=worktree, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: in_progress\n---\n# Spec\n", encoding="utf-8"
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            f"---\nverified_commit: {verified_commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
+        )
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1",
+            "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(worktree),
+                "verified_commit": verified_commit,
+                "target_merge": {
+                    "status": "deferred",
+                    "branch": "harness/spec-001/default/iter-0",
+                    "verified": True,
+                },
+            },
+        )
+        store.transition("validating")
+        store.transition("finalizing", updates={"last_completed_phase": "visual"})
+        implementation = ImplementationResult(
+            "verified",
+            "verified",
+            1,
+            0,
+            None,
+            0,
+            VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = True
+
+        with (
+            patch.object(coord, "_worktree_head", return_value=verified_commit),
+            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch(
+                "harness.coordinator.read_fulfillment_metadata",
+                return_value={"verified_commit": verified_commit},
+            ),
+        ):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=2,
+                tokens_used=0,
+                final_verify=VerifyResult(passed=True),
+                publication_controller=publication_controller,
+            )
+
+        assert result.status == "converged"
+        publication_controller.publish_verified_branch.assert_called_once_with(
+            str(worktree),
+            "harness/spec-001/default/iter-0",
+            implementation.final_verify,
+        )
+
+    def test_finalization_blocks_when_deferred_target_publication_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """A downstream-gated delivery cannot converge without final publication."""
+        coord = _make_coordinator(tmp_path)
+        verified_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: in_progress\n---\n# Spec\n", encoding="utf-8"
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text("# Fulfillment\n", encoding="utf-8")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(tmp_path),
+                "verified_commit": verified_commit,
+                "target_merge": {"status": "deferred"},
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, VerifyResult(passed=True),
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = False
+
+        with (
+            patch.object(coord, "_worktree_head", return_value=verified_commit),
+            patch("harness.coordinator.latest_fulfillment_report", return_value=report),
+            patch(
+                "harness.coordinator.read_fulfillment_metadata",
+                return_value={"verified_commit": verified_commit},
+            ),
+        ):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=2,
+                tokens_used=0,
+                final_verify=VerifyResult(passed=True),
+                publication_controller=publication_controller,
+            )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "finalization"
+        assert result.termination_reason == "target_merge_failed"
+
+    def test_multi_target_finalization_publishes_its_deferred_candidate(
+        self, tmp_path: Path
+    ) -> None:
+        """Per-target publication is not skipped for a polyrepo specification."""
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(tmp_path),
+                "target_merge": {
+                    "status": "deferred",
+                    "branch": "harness/spec-001/default/iter-0",
+                    "verify_result": {
+                        "passed": True,
+                        "failures": [],
+                        "duration_s": 1.0,
+                        "token_usage": 0,
+                    },
+                },
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 0, None,
+            branch="harness/spec-001/default/iter-0",
+        )
+        publication_controller = MagicMock()
+        publication_controller.publish_verified_branch.return_value = True
+
+        result = coord._finalize_delivery(
+            store,
+            spec_dir=None,
+            declared_targets=["sources/api", "sources/web"],
+            implementation=implementation,
+            outer_iterations=2,
+            tokens_used=0,
+            final_verify=VerifyResult(passed=True),
+            publication_controller=publication_controller,
+        )
+
+        assert result.status == "converged"
+        publication_controller.publish_verified_branch.assert_called_once()
+        publish_args = publication_controller.publish_verified_branch.call_args.args
+        assert publish_args[:2] == (
+            str(tmp_path),
+            "harness/spec-001/default/iter-0",
+        )
+        assert publish_args[2].passed is True
+
+    def test_implementation_resume_restores_persisted_verification_result(
+        self, tmp_path: Path
+    ) -> None:
+        """Final publication can trust a Phase 1 result restored after restart."""
+        state = {
+            "termination_reason": "verified",
+            "last_verify_result": {
+                "passed": True,
+                "failures": [],
+                "duration_s": 1.25,
+                "token_usage": 7,
+            },
+        }
+
+        restored = _make_coordinator(tmp_path)._implementation_from_state(state)
+
+        assert restored.final_verify is not None
+        assert restored.final_verify.passed is True
+        assert restored.final_verify.duration_s == 1.25
+
     def test_finalization_blocks_when_fulfillment_discovery_raises(self, tmp_path: Path) -> None:
         """Fulfillment I/O failures are recoverable finalization blocks."""
         coord = _make_coordinator(tmp_path)

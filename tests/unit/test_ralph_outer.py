@@ -313,6 +313,7 @@ def _make_controller(
     fulfillment_runner: Optional[Any] = None,
     config: Optional[HarnessConfig] = None,
     fresh_delivery: bool = False,
+    defer_target_merge: bool = False,
 ) -> tuple:
     config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
@@ -337,6 +338,7 @@ def _make_controller(
         llm_build_runner=llm_build_runner,
         fulfillment_runner=fulfillment_runner,
         fresh_delivery=fresh_delivery,
+        defer_target_merge=defer_target_merge,
     )
     return controller, provider, gitops, state_store
 
@@ -2914,6 +2916,28 @@ class TestOuterLoopConvergence:
         final_state = state_store.read()
         assert final_state["status"] == "running"
         assert final_state["target_merge"]["error"] == "merge conflict"
+
+    def test_downstream_gates_defer_target_merge_after_phase1(
+        self, tmp_path: Path
+    ) -> None:
+        """A verified candidate is not published before visual/review gates pass."""
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            defer_target_merge=True,
+        )
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "verified"
+        gitops.local_merge.assert_not_called()
+        deferred = state_store.read()["target_merge"]
+        assert deferred["status"] == "deferred"
+        assert deferred["branch"] == result.branch
+        assert deferred["default_branch"] == "main"
+        assert deferred["verified"] is True
+        assert deferred["worktree_path"] == gitops.create_worktree.return_value
+        assert deferred["verify_result"]["passed"] is True
 
     @pytest.mark.integration
     def test_synthetic_run_lands_verified_work_on_target_main(

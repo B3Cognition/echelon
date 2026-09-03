@@ -6,13 +6,14 @@ them as evidence to echelon build --fix.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 import shlex
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from harness.config import HarnessConfig
 from harness.exec_result import ExecResult
@@ -21,6 +22,8 @@ from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwrigh
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from harness.verification_plan import build_verification_plan, materialize_services
+from harness.verification_evidence import redact_verification_text
 from harness.visual_evidence import VisualEvidenceRef, write_visual_receipt
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,7 @@ class VisualRalphController:
         strategy_id: str,
         base_dir: str = ".",
         build_id: str = "",
+        sandbox_spec_factory: Callable[[str], SandboxSpec] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -50,6 +54,8 @@ class VisualRalphController:
         self._build_id = build_id or "unscoped"
         self._vc = config.visual_tests
         self._last_staging_dir: Path | None = None
+        self._sandbox_spec_factory = sandbox_spec_factory
+        self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
 
@@ -73,6 +79,7 @@ class VisualRalphController:
 
             try:
                 try:
+                    self._prepare_verification_runtime(handle, worktree_path)
                     self._setup_app_runtime(handle)
                     self._start_app_runtime(handle)
                     self._wait_for_app_runtime(handle)
@@ -183,18 +190,21 @@ class VisualRalphController:
         result = self._provider.exec(
             handle,
             self._vc.test_command,
+            cwd="/workspace",
+            env=dict(self._runtime_env),
             timeout_ms=self._vc.timeout_ms,
         )
 
         try:
             evidence = parse_playwright_json(result.stdout)
         except PlaywrightEvidenceError as exc:
+            diagnostic = self._command_diagnostic(result)
             return VerifyResult(
                 passed=False,
                 failures=[FailureEntry(
                     category=FailureCategory.PLAYWRIGHT_TEST,
                     id="playwright_parse_error",
-                    error=f"{exc}: {result.stdout[:500]}",
+                    error=f"{exc}: {diagnostic[-1000:]}",
                 )],
                 duration_s=result.duration_ms / 1000.0,
                 token_usage=_estimate_tokens(result),
@@ -202,10 +212,14 @@ class VisualRalphController:
 
         failures: list[FailureEntry] = []
         if evidence.total == 0:
+            diagnostic = self._command_diagnostic(result)
             failures.append(FailureEntry(
                 category=FailureCategory.PLAYWRIGHT_TEST,
                 id="playwright_no_tests",
-                error="Playwright exited without executing any tests.",
+                error=(
+                    "Playwright exited without executing any tests."
+                    + (f" Command output: {diagnostic[-1000:]}" if diagnostic else "")
+                ),
             ))
         for test in evidence.tests:
             if test.status == "failed":
@@ -238,6 +252,42 @@ class VisualRalphController:
 
     # === App runtime ===
 
+    def _prepare_verification_runtime(
+        self, handle: SandboxHandle, worktree_path: str
+    ) -> None:
+        """Install dependencies and start the ordinary verifier's sidecars."""
+        self._runtime_env = {}
+        try:
+            verification_plan = build_verification_plan(
+                Path(worktree_path),
+                self._config,
+                services=tuple(self._config.verification_services),
+            )
+            materialized = materialize_services(
+                verification_plan.services,
+                session_id=handle.session_id,
+            )
+            if materialized.services:
+                self._provider.start_services(handle, materialized.services)
+            self._runtime_env.update(materialized.verifier_environment)
+            for command in verification_plan.bootstrap_commands:
+                result = self._provider.exec(
+                    handle,
+                    command,
+                    cwd="/workspace",
+                    env=dict(self._runtime_env),
+                    timeout_ms=1_200_000,
+                )
+                if result.exit_code != 0:
+                    raise RuntimeError(
+                        "visual verification dependency bootstrap failed: "
+                        f"{command}\n{self._command_diagnostic(result)}"
+                    )
+        except Exception as exc:
+            raise RuntimeError(
+                f"visual verification runtime could not be prepared: {exc}"
+            ) from exc
+
     def _setup_app_runtime(self, handle: SandboxHandle) -> None:
         """Run configured foreground setup commands inside the visual sandbox."""
         app = self._config.app
@@ -251,11 +301,13 @@ class VisualRalphController:
                 handle,
                 command,
                 cwd="/workspace",
+                env=dict(self._runtime_env),
                 timeout_ms=app.readiness_timeout_ms,
             )
             if result.exit_code != 0:
                 raise RuntimeError(
-                    f"harness.app setup command failed: {command}\n{result.stderr or result.stdout}"
+                    "harness.app setup command failed: "
+                    f"{command}\n{self._command_diagnostic(result)}"
                 )
 
     def _start_app_runtime(self, handle: SandboxHandle) -> None:
@@ -277,11 +329,13 @@ class VisualRalphController:
                 handle,
                 background_cmd,
                 cwd="/workspace",
+                env=dict(self._runtime_env),
                 timeout_ms=30_000,
             )
             if result.exit_code != 0:
                 raise RuntimeError(
-                    f"harness.app start command failed: {command}\n{result.stderr or result.stdout}"
+                    "harness.app start command failed: "
+                    f"{command}\n{self._command_diagnostic(result)}"
                 )
 
     def _wait_for_app_runtime(self, handle: SandboxHandle) -> None:
@@ -305,11 +359,13 @@ class VisualRalphController:
             handle,
             wait_cmd,
             cwd="/workspace",
+            env=dict(self._runtime_env),
             timeout_ms=app.readiness_timeout_ms + 5_000,
         )
         if result.exit_code != 0:
             raise RuntimeError(
-                f"harness.app URL did not become ready: {app.url}\n{result.stderr or result.stdout}"
+                "harness.app URL did not become ready: "
+                f"{app.url}\n{self._command_diagnostic(result)}"
             )
 
     def _stop_app_runtime(self, handle: SandboxHandle) -> None:
@@ -325,6 +381,7 @@ class VisualRalphController:
                 handle,
                 command,
                 cwd="/workspace",
+                env=dict(self._runtime_env),
                 timeout_ms=30_000,
             )
 
@@ -334,6 +391,7 @@ class VisualRalphController:
                 handle,
                 f"sh -lc 'test ! -f /tmp/echelon-app-{index}.pid || kill $(cat /tmp/echelon-app-{index}.pid) 2>/dev/null || true'",
                 cwd="/workspace",
+                env=dict(self._runtime_env),
                 timeout_ms=30_000,
             )
 
@@ -479,7 +537,13 @@ class VisualRalphController:
             f"echelon build --fix --failures '{failures_json}' --context 'visual'"
         )
 
-        result = self._provider.exec(handle, cmd, timeout_ms=1_200_000)
+        result = self._provider.exec(
+            handle,
+            cmd,
+            cwd="/workspace",
+            env=dict(self._runtime_env),
+            timeout_ms=1_200_000,
+        )
         return {
             "exit_code": result.exit_code,
             "passed": result.exit_code == 0,
@@ -492,6 +556,18 @@ class VisualRalphController:
     def _build_sandbox_spec(self, worktree_path: str) -> SandboxSpec:
         """Build sandbox spec using Playwright image."""
         from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
+
+        if self._sandbox_spec_factory is not None:
+            spec = self._sandbox_spec_factory(worktree_path)
+            return replace(
+                spec,
+                labels={
+                    **dict(spec.labels),
+                    "phase": "visual",
+                    "spec_id": self._spec_id,
+                    "strategy_id": self._strategy_id,
+                },
+            )
 
         return SandboxSpec(
             image=self._config.base_image or "mcr.microsoft.com/playwright:v1.42.0-jammy",
@@ -518,6 +594,11 @@ class VisualRalphController:
                 "strategy_id": self._strategy_id,
             },
         )
+
+    def _command_diagnostic(self, result: ExecResult, limit: int = 1000) -> str:
+        """Return bounded command diagnostics without attempt-scoped secrets."""
+        raw = (result.stderr or result.stdout).strip()
+        return redact_verification_text(raw, self._runtime_env)[-limit:]
 
 
 # === Helpers ===

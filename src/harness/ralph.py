@@ -297,6 +297,7 @@ class RalphController:
         build_id: str = "",
         fresh_delivery: bool = False,
         fresh_branch_base: Optional[str] = None,
+        defer_target_merge: bool = False,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -320,6 +321,7 @@ class RalphController:
         self._build_id = build_id
         self._fresh_delivery = fresh_delivery
         self._fresh_branch_base = fresh_branch_base
+        self._defer_target_merge = defer_target_merge
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -5774,10 +5776,38 @@ class RalphController:
         worktree_path: str,
         branch: str,
         verify_result: Optional[VerifyResult],
+        *,
+        force: bool = False,
     ) -> bool:
         """Merge a verified delivery branch into the target default branch."""
         if verify_result is None or not verify_result.passed:
             return False
+
+        if self._defer_target_merge and not force:
+            try:
+                state = self._state_store.read()
+                state["target_merge"] = {
+                    "status": "deferred",
+                    "branch": branch,
+                    "default_branch": self._gitops.get_default_branch(),
+                    "verified": True,
+                    "worktree_path": worktree_path,
+                    "verify_result": _verify_to_dict(verify_result),
+                }
+                self._state_store.write(state)
+                logger.info(
+                    "Deferred verified delivery branch merge for %s until "
+                    "downstream delivery gates pass",
+                    self._spec_id,
+                )
+                return True
+            except Exception as exc:
+                logger.warning(
+                    "Could not persist deferred target merge for %s: %s",
+                    self._spec_id,
+                    exc,
+                )
+                return False
 
         default_branch = None
         try:
@@ -5825,6 +5855,20 @@ class RalphController:
             except Exception as state_exc:
                 logger.warning("Could not persist target merge failure: %s", state_exc)
             return False
+
+    def publish_verified_branch(
+        self,
+        worktree_path: str,
+        branch: str,
+        verify_result: Optional[VerifyResult],
+    ) -> bool:
+        """Publish a deferred Phase 1 candidate after downstream gates pass."""
+        return self._merge_verified_branch(
+            worktree_path,
+            branch,
+            verify_result,
+            force=True,
+        )
 
     def _commit_orchestration_spec_artifacts(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +18,8 @@ from harness.config import (
 )
 from harness.exec_result import ExecResult, ResourceStats
 from harness.delivery_results import VisualResult
-from harness.provider import SandboxHandle
+from harness.provider import NetworkPolicy, ResourceLimits as SandboxResourceLimits
+from harness.provider import SandboxHandle, SandboxSpec
 from harness.verify_result import FailureCategory, VerifyResult
 
 
@@ -250,6 +252,178 @@ def test_run_loop_converges_on_first_pass(tmp_path: Path):
     assert result.termination_reason == "converged"
     assert result.iterations == 1
     provider.destroy.assert_called_once()
+
+
+def test_visual_loop_reuses_delivery_sandbox_and_starts_verification_services(
+    tmp_path: Path,
+) -> None:
+    """Visual verification gets dependencies and the same service environment."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(
+        stdout=PLAYWRIGHT_PASS_JSON, exit_code=0
+    )
+    sandbox = SandboxSpec(
+        image="delivery-image",
+        image_source="config_override",
+        worktree_mount=str(tmp_path),
+        container_mount="/workspace",
+        resource_limits=SandboxResourceLimits(),
+        network_policy=NetworkPolicy(),
+        env={},
+        secrets_env={},
+        post_create_command=None,
+        forward_ports=[],
+    )
+    sandbox_factory = MagicMock(return_value=sandbox)
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
+    materialized = SimpleNamespace(
+        services=(object(),),
+        verifier_environment={"TEST_DATABASE_URL": "postgresql://fixture"},
+    )
+    config = _make_config(max_iterations=1)
+    config.verification_services = [object()]
+    controller = VisualRalphController(
+        provider=provider,
+        config=config,
+        spec_id="001",
+        strategy_id="default",
+        base_dir=str(tmp_path),
+        build_id="build-1",
+        sandbox_spec_factory=sandbox_factory,
+    )
+
+    with (
+        patch("harness.visual_ralph.materialize_services", return_value=materialized),
+        patch.object(
+            controller, "_retrieve_screenshots", return_value=[str(screenshot)]
+        ),
+    ):
+        result = controller.run_loop(worktree_path=str(tmp_path))
+
+    assert result.status == "passed"
+    sandbox_factory.assert_called_once_with(str(tmp_path))
+    provider.start_services.assert_called_once_with(
+        provider.create.return_value, materialized.services
+    )
+    bootstrap_call = next(
+        call for call in provider.exec.call_args_list if "pnpm install" in call.args[1]
+    )
+    assert bootstrap_call.kwargs["cwd"] == "/workspace"
+    assert bootstrap_call.kwargs["env"] == materialized.verifier_environment
+    playwright_call = next(
+        call for call in provider.exec.call_args_list if "playwright" in call.args[1]
+    )
+    assert playwright_call.kwargs["env"] == materialized.verifier_environment
+
+
+def test_zero_test_failure_reports_command_stderr() -> None:
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(
+        stdout=json.dumps({"suites": [], "errors": []}),
+        stderr="sh: playwright: command not found",
+        exit_code=127,
+    )
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    result = controller._exec_visual_verify(
+        SandboxHandle(id="abc123", session_id="s1")
+    )
+
+    assert result.failures[0].id == "playwright_no_tests"
+    assert "command not found" in result.failures[0].error
+
+
+def test_playwright_parse_failure_reports_command_stderr() -> None:
+    """An empty/non-JSON command failure retains its actionable stderr."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(
+        stdout="",
+        stderr="pnpm: command not found",
+        exit_code=127,
+    )
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    result = controller._exec_visual_verify(
+        SandboxHandle(id="abc123", session_id="s1")
+    )
+
+    assert result.failures[0].id == "playwright_parse_error"
+    assert "pnpm: command not found" in result.failures[0].error
+
+
+def test_visual_command_diagnostics_redact_runtime_credentials() -> None:
+    from harness.visual_ralph import VisualRalphController
+
+    secret_url = "postgresql://generated:secret@postgres:5432/echelon_verify"
+    provider = MagicMock()
+    provider.exec.return_value = _exec_result(
+        stdout="",
+        stderr=f"could not connect to {secret_url}",
+        exit_code=1,
+    )
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(),
+        spec_id="001",
+        strategy_id="default",
+    )
+    controller._runtime_env = {"TEST_DATABASE_URL": secret_url}
+
+    result = controller._exec_visual_verify(
+        SandboxHandle(id="abc123", session_id="s1")
+    )
+
+    assert secret_url not in result.failures[0].error
+    assert "[REDACTED:environment]" in result.failures[0].error
+
+
+def test_visual_dependency_bootstrap_failure_is_actionable(
+    tmp_path: Path,
+) -> None:
+    """Visual setup failures report the command output and stop before tests."""
+    from harness.visual_ralph import VisualRalphController
+
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(
+        stdout="",
+        stderr="ERR_PNPM_FETCH_403 registry denied",
+        exit_code=1,
+    )
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    result = controller.run_loop(worktree_path=str(tmp_path))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "app_runtime_failed"
+    assert "pnpm install" in result.final_verify.failures[0].error
+    assert "ERR_PNPM_FETCH_403" in result.final_verify.failures[0].error
+    provider.destroy.assert_called_once_with(provider.create.return_value)
 
 
 def test_run_loop_retains_success_screenshot_as_candidate_evidence(

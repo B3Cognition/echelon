@@ -484,6 +484,13 @@ class StrategyCoordinator:
     @staticmethod
     def _implementation_from_state(state: Dict[str, Any]) -> ImplementationResult:
         """Project durable common delivery evidence into a phase result."""
+        final_verify = None
+        persisted_verify = state.get("last_verify_result")
+        if isinstance(persisted_verify, dict):
+            try:
+                final_verify = VerifyResult.from_dict(persisted_verify)
+            except Exception:
+                final_verify = None
         return ImplementationResult(
             status="verified",
             termination_reason=str(state.get("termination_reason") or "verified"),
@@ -491,7 +498,7 @@ class StrategyCoordinator:
             inner_iterations=int(state.get("inner_iter") or 0),
             pr_url=state.get("pr_url"),
             tokens_used=int(state.get("tokens_used") or 0),
-            final_verify=None,
+            final_verify=final_verify,
             branch=state.get("branch") or state.get("branch_name"),
         )
 
@@ -716,6 +723,45 @@ class StrategyCoordinator:
             branch=implementation.branch,
         )
 
+    @staticmethod
+    def _publish_deferred_target(
+        state_store: StateStore,
+        implementation: ImplementationResult,
+        publication_controller: RalphController | None,
+    ) -> bool:
+        """Publish the Phase 1 branch only when a deferred merge is recorded."""
+        state = state_store.read()
+        target_merge = state.get("target_merge")
+        if not (
+            isinstance(target_merge, dict)
+            and target_merge.get("status") == "deferred"
+        ):
+            return True
+        worktree_text = state.get("registered_worktree")
+        deferred_branch = str(
+            implementation.branch or target_merge.get("branch") or ""
+        )
+        if (
+            publication_controller is None
+            or not isinstance(worktree_text, str)
+            or not worktree_text
+            or not deferred_branch
+        ):
+            return False
+        publish_verify = implementation.final_verify
+        if publish_verify is None or not publish_verify.passed:
+            persisted_verify = target_merge.get("verify_result")
+            if isinstance(persisted_verify, dict):
+                try:
+                    publish_verify = VerifyResult.from_dict(persisted_verify)
+                except Exception:
+                    publish_verify = None
+        return publication_controller.publish_verified_branch(
+            worktree_text,
+            deferred_branch,
+            publish_verify,
+        )
+
     def _finalize_delivery(
         self,
         state_store: StateStore,
@@ -726,11 +772,24 @@ class StrategyCoordinator:
         outer_iterations: int,
         tokens_used: int,
         final_verify: Any,
+        publication_controller: RalphController | None = None,
     ) -> DeliveryResult:
         """Own single-target lifecycle publication and terminal convergence."""
         state = state_store.read()
         if state.get("status") != "finalizing":
             state_store.transition("finalizing", updates={"blocked_phase": None})
+        if len(declared_targets) != 1 and not self._publish_deferred_target(
+            state_store, implementation, publication_controller
+        ):
+            return self._persist_phase_block(
+                state_store,
+                phase="finalization",
+                reason="target_merge_failed",
+                implementation=implementation,
+                outer_iterations=outer_iterations,
+                tokens_used=tokens_used,
+                final_verify=final_verify,
+            )
         if len(declared_targets) == 1:
             try:
                 state = state_store.read()
@@ -767,6 +826,18 @@ class StrategyCoordinator:
                         state_store,
                         phase="finalization",
                         reason="verified_provenance_mismatch",
+                        implementation=implementation,
+                        outer_iterations=outer_iterations,
+                        tokens_used=tokens_used,
+                        final_verify=final_verify,
+                    )
+                if not self._publish_deferred_target(
+                    state_store, implementation, publication_controller
+                ):
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="finalization",
+                        reason="target_merge_failed",
                         implementation=implementation,
                         outer_iterations=outer_iterations,
                         tokens_used=tokens_used,
@@ -1132,6 +1203,10 @@ class StrategyCoordinator:
                     or pending_effects_only_resume
                 ),
                 fresh_branch_base=self._fresh_branch_bases.get(strategy_id),
+                defer_target_merge=any(
+                    phase in {"visual", "review"}
+                    for phase in state_store.read().get("enabled_phases", [])
+                ),
             )
 
             pending_reentry = _pending_review_reentry(
@@ -1278,6 +1353,9 @@ class StrategyCoordinator:
                     strategy_id=strategy_id,
                     base_dir=self._base_dir,
                     build_id=self._build_id,
+                    sandbox_spec_factory=lambda worktree: controller._build_sandbox_spec(
+                        worktree, 0
+                    ),
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])
                 else None
@@ -1747,6 +1825,7 @@ class StrategyCoordinator:
                     outer_iterations=total_outer_iterations,
                     tokens_used=total_tokens,
                     final_verify=final_verify,
+                    publication_controller=controller,
                 )
             elif delivery_status == "blocked":
                 return self._persist_phase_block(
