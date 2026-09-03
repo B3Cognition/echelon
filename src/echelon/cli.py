@@ -8250,6 +8250,14 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
+    if not is_fresh and not isinstance(existing_state.get("phase"), str):
+        # Older interrupted verify-spec runs can predate routing-state
+        # persistence. They have no trustworthy partial phase to resume, so
+        # restart them at the deterministic no-op init node.
+        existing_state["phase"] = "init"
+        state_store.save(existing_state)
+        existing_state = state_store.load()
+        print("[squad] restored missing routing phase to init", flush=True)
     try:
         spec_authoring_mode = resolve_spec_authoring_mode(
             existing_state,
