@@ -16,7 +16,9 @@ protocol from `chief.md` exactly.
 
 ## Expected Output
 
-- `.echelon/constitution.md` — filled, verified, no unfilled placeholders
+- `${SQUAD_DIR}/constitution.draft.md` — filled, verified, no unfilled
+  placeholders. The controller alone validates and publishes this run-local
+  draft to the canonical workspace constitution.
 
 ## State Contract
 
@@ -34,15 +36,15 @@ state_updates:
 echelon_result:
   verdict: DONE
   output_files:
-    - .echelon/constitution.md
+    - ${SQUAD_DIR}/constitution.draft.md
   state_updates:
     constitution_status: "exists"
 ```
 
 ## Mode-Specific Notes
 
-- If `.echelon/constitution.md` already exists with real content (no
-  `[PROJECT_NAME]` marker), the constitution was previously created. Emit
-  `verdict: DONE` immediately without re-invoking the skill.
+- If `${SQUAD_DIR}/constitution.draft.md` already exists with real content (no
+  `[PROJECT_NAME]` marker), the draft was previously created. Emit `verdict:
+  DONE` immediately without re-invoking the skill.
 - `constitution_status: "exists"` in state.json skips this phase on subsequent
   runs — the harness will not re-dispatch CHIEF for creation.
