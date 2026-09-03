@@ -3886,6 +3886,40 @@ class RalphController:
             duration_s=duration_s,
         )
 
+    def run_downstream_feedback(
+        self,
+        *,
+        handle: SandboxHandle,
+        worktree_path: str,
+        verify_result: VerifyResult,
+        build_command: str,
+        strategy_context: str,
+        build_prompt: str,
+        phase: str,
+        evidence_paths: tuple[str, ...] = (),
+    ) -> Dict[str, Any]:
+        """Apply a downstream-gate repair through the configured build provider."""
+        _clear_build_status(worktree_path)
+        prompt = self._make_feedback_prompt(build_prompt, verify_result, 0)
+        prompt += (
+            f"\n\nThis repair was requested by the downstream {phase} gate. "
+            "Repair the product or its executable acceptance test; do not weaken, "
+            "skip, or remove the gate. The harness will rerun Phase 1 and the "
+            f"{phase} gate after this invocation."
+        )
+        if evidence_paths:
+            prompt += "\nEvidence paths available for inspection:\n" + "\n".join(
+                f"- {path}" for path in evidence_paths
+            )
+        return self._exec_feedback(
+            handle,
+            verify_result,
+            build_command,
+            strategy_context,
+            worktree_path=worktree_path,
+            prompt=prompt,
+        )
+
     def _exec_feedback(
         self,
         handle: SandboxHandle,

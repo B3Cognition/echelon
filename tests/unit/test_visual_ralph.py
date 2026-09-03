@@ -655,6 +655,47 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
     assert provider.destroy.call_count == 1
 
 
+def test_visual_feedback_uses_configured_provider_repair_runner(
+    tmp_path: Path,
+) -> None:
+    """Visual repair delegates to Codex/Claude instead of a sandbox CLI binary."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.return_value = _exec_result(
+        stdout=PLAYWRIGHT_PASS_JSON,
+        exit_code=0,
+    )
+    repair_runner = MagicMock(return_value={
+        "exit_code": 0,
+        "passed": True,
+        "duration_s": 2.0,
+        "tokens": 42,
+        "stdout": "repair complete",
+        "stderr": "",
+    })
+    controller = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+        feedback_runner=repair_runner,
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[]):
+        result = controller.run_loop(worktree_path=str(tmp_path))
+
+    assert result.status == "fix_applied"
+    assert result.tokens_used >= 42
+    repair_runner.assert_called_once()
+    assert repair_runner.call_args.args[1] == str(tmp_path)
+    assert not any(
+        "echelon build --fix" in call.args[1]
+        for call in provider.exec.call_args_list
+    )
+
+
 def test_run_loop_blocks_when_visual_feedback_fails():
     """A failed feedback command cannot be reported as an applied visual fix."""
     from harness.visual_ralph import VisualRalphController
@@ -677,3 +718,9 @@ def test_run_loop_blocks_when_visual_feedback_fails():
 
     assert result.status == "blocked"
     assert result.termination_reason == "visual_feedback_failed"
+    feedback_failure = next(
+        failure
+        for failure in result.final_verify.failures
+        if failure.id == "visual_feedback_command_failed"
+    )
+    assert "build fix failed" in feedback_failure.error

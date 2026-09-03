@@ -1356,6 +1356,18 @@ class StrategyCoordinator:
                     sandbox_spec_factory=lambda worktree: controller._build_sandbox_spec(
                         worktree, 0
                     ),
+                    feedback_runner=lambda handle, worktree, verify, evidence_paths: (
+                        controller.run_downstream_feedback(
+                            handle=handle,
+                            worktree_path=worktree,
+                            verify_result=verify,
+                            build_command=spec.build_command,
+                            strategy_context=strategy_context,
+                            build_prompt=build_prompt,
+                            phase="visual",
+                            evidence_paths=tuple(evidence_paths),
+                        )
+                    ),
                 )
                 if "visual" in state_store.read().get("enabled_phases", [])
                 else None

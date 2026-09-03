@@ -45,6 +45,10 @@ class VisualRalphController:
         base_dir: str = ".",
         build_id: str = "",
         sandbox_spec_factory: Callable[[str], SandboxSpec] | None = None,
+        feedback_runner: (
+            Callable[[SandboxHandle, str, VerifyResult, List[str]], Dict[str, Any]]
+            | None
+        ) = None,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -55,6 +59,7 @@ class VisualRalphController:
         self._vc = config.visual_tests
         self._last_staging_dir: Path | None = None
         self._sandbox_spec_factory = sandbox_spec_factory
+        self._feedback_runner = feedback_runner
         self._runtime_env: dict[str, str] = {}
 
     # === Public entry point ===
@@ -123,8 +128,6 @@ class VisualRalphController:
                         failure_id="visual_evidence_unavailable",
                         error=str(exc),
                     )
-                finally:
-                    self._cleanup_screenshot_staging()
 
                 if evidence is not None:
                     verify_result.verification_evidence["visual"] = evidence.as_mapping()
@@ -148,9 +151,26 @@ class VisualRalphController:
                         evidence=evidence,
                     )
 
-                fix_result = self._exec_visual_feedback(handle, verify_result, screenshots)
-                tokens_used += fix_result.get("tokens", 0)
+                fix_result = self._exec_visual_feedback(
+                    handle,
+                    worktree_path,
+                    verify_result,
+                    screenshots,
+                )
+                reported_fix_tokens = fix_result.get("tokens")
+                if isinstance(reported_fix_tokens, int) and reported_fix_tokens > 0:
+                    tokens_used += reported_fix_tokens
                 if not fix_result["passed"]:
+                    verify_result = self._with_visual_failure(
+                        verify_result,
+                        failure_id="visual_feedback_command_failed",
+                        error=str(
+                            fix_result.get("diagnostic")
+                            or fix_result.get("build_reason")
+                            or "The configured delivery provider could not apply the visual repair."
+                        ),
+                        prepend=False,
+                    )
                     return VisualResult(
                         status="blocked",
                         termination_reason="visual_feedback_failed",
@@ -169,6 +189,7 @@ class VisualRalphController:
                 )
 
             finally:
+                self._cleanup_screenshot_staging()
                 self._stop_app_runtime(handle)
                 self._provider.destroy(handle)
 
@@ -491,18 +512,24 @@ class VisualRalphController:
 
     @staticmethod
     def _with_visual_failure(
-        verify_result: VerifyResult, *, failure_id: str, error: str
+        verify_result: VerifyResult,
+        *,
+        failure_id: str,
+        error: str,
+        prepend: bool = True,
     ) -> VerifyResult:
+        added = FailureEntry(
+            category=FailureCategory.PLAYWRIGHT_TEST,
+            id=failure_id,
+            error=error,
+        )
         return VerifyResult(
             passed=False,
-            failures=[
-                FailureEntry(
-                    category=FailureCategory.PLAYWRIGHT_TEST,
-                    id=failure_id,
-                    error=error,
-                ),
-                *verify_result.failures,
-            ],
+            failures=(
+                [added, *verify_result.failures]
+                if prepend
+                else [*verify_result.failures, added]
+            ),
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
             verification_evidence=dict(verify_result.verification_evidence),
@@ -519,10 +546,36 @@ class VisualRalphController:
     def _exec_visual_feedback(
         self,
         handle: SandboxHandle,
+        worktree_path: str,
         verify_result: VerifyResult,
         screenshots: List[str],
     ) -> Dict[str, Any]:
         """Run echelon build --fix with visual failure context."""
+        if self._feedback_runner is not None:
+            try:
+                result = dict(
+                    self._feedback_runner(
+                        handle,
+                        worktree_path,
+                        verify_result,
+                        screenshots,
+                    )
+                )
+            except Exception as exc:
+                return {
+                    "exit_code": 1,
+                    "passed": False,
+                    "duration_s": 0.0,
+                    "tokens": 0,
+                    "diagnostic": str(exc),
+                }
+            diagnostic = str(result.get("stderr") or result.get("stdout") or "")
+            result["diagnostic"] = redact_verification_text(
+                diagnostic,
+                self._runtime_env,
+            )[-1000:]
+            return result
+
         failures_json = json.dumps([
             {"category": f.category.value, "id": f.id, "error": f.error}
             for f in verify_result.failures
@@ -549,6 +602,7 @@ class VisualRalphController:
             "passed": result.exit_code == 0,
             "duration_s": result.duration_ms / 1000.0,
             "tokens": _estimate_tokens(result),
+            "diagnostic": self._command_diagnostic(result),
         }
 
     # === Sandbox spec ===

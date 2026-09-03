@@ -8605,6 +8605,53 @@ class TestLlmProviderDispatch:
         assert result["passed"] is True
         assert result["impasse"] is False
 
+    def test_downstream_visual_feedback_uses_provider_and_clears_stale_marker(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.build_result import BUILD_STATUS_FILENAME, BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_feedback.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="fixed",
+            stderr="",
+            duration_ms=100,
+        )
+        controller, _, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        marker = tmp_path / BUILD_STATUS_FILENAME
+        marker.write_text('{"status":"blocked"}\n', encoding="utf-8")
+        failure = VerifyResult(
+            passed=False,
+            failures=[FailureEntry(
+                FailureCategory.PLAYWRIGHT_TEST,
+                "visual_artifacts_missing",
+                "no retained screenshot",
+            )],
+        )
+
+        result = controller.run_downstream_feedback(
+            handle=MagicMock(),
+            worktree_path=str(tmp_path),
+            verify_result=failure,
+            build_command="echelon build",
+            strategy_context="",
+            build_prompt="Implement spec 001",
+            phase="visual",
+            evidence_paths=("/tmp/visual-attempt.json",),
+        )
+
+        assert result["passed"] is True
+        assert not marker.exists()
+        prompt = build_runner.exec_feedback.call_args.args[1]
+        assert "visual_artifacts_missing" in prompt
+        assert "downstream visual" in prompt
+        assert "/tmp/visual-attempt.json" in prompt
+
     def test_exec_build_falls_back_when_prompt_empty(self, tmp_path: Path) -> None:
         """When prompt is empty, _exec_build falls back to sandbox even if build runner set."""
         from harness.llm_build_runner import LlmBuildRunner
