@@ -1044,11 +1044,12 @@ class GitOpsManager:
         # traces must remain available locally without entering product commits.
         exclusions = [str(path).strip() for path in exclude_paths if str(path).strip()]
         if exclusions:
+            # `git add . :(exclude)test-results/**` fails when test-results is
+            # ignored, even if its tracked files only need to stay unstaged.
+            # Stage normally first (which safely ignores untracked ignored
+            # files), then unstage the caller-owned generated paths.
+            _run_git(["add", "-A"], cwd=worktree_path)
             _run_git(["reset", "--", *exclusions], cwd=worktree_path, check=False)
-            _run_git(
-                ["add", "-A", "--", ".", *[f":(exclude){path}" for path in exclusions]],
-                cwd=worktree_path,
-            )
         else:
             _run_git(["add", "-A"], cwd=worktree_path)
         secret_scan = scan_git_staged(worktree_path)
