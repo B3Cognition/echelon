@@ -71,11 +71,11 @@ for repo in repo-a repo-b; do
   git -C "$tmpdir/$repo" init -q  # polyrepo targets must be git repos (validate_targets)
 done
 
-# ── Stub: echelon binary that echoes and exits 0 ──────────────────────────────
+# ── Stub: canonical delivery child that echoes and exits 0 ───────────────────
 mkdir -p "$tmpdir/bin"
 cat > "$tmpdir/bin/echelon" <<'STUB'
 #!/usr/bin/env bash
-if [[ "$1" == "harness" && "$2" == "run" ]]; then
+if [[ "$1" == "delivery" && "$2" == "run" ]]; then
     echo "hello from $(basename "$(pwd)")"
     exit 0
 fi
@@ -87,7 +87,7 @@ run_orchestrator() {
   # Rewrite stub exit for repo-b
   cat > "$tmpdir/bin/echelon" <<STUB
 #!/usr/bin/env bash
-if [[ "\$1" == "harness" && "\$2" == "run" ]]; then
+if [[ "\$1" == "delivery" && "\$2" == "run" ]]; then
     repo="\$(basename "\$(pwd)")"
     echo "output from \$repo"
     if [[ "\$repo" == "repo-b" && "$stub_exit" != "0" ]]; then exit 1; fi
