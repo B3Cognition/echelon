@@ -6841,7 +6841,11 @@ def _canonical_delivery_lifecycle(
         if isinstance(loaded, dict):
             state = loaded
 
-    if state and str(state.get("status") or "") != "done":
+    if (
+        state
+        and str(state.get("status") or "") != "done"
+        and (project_root / "runs" / ".current").is_file()
+    ):
         return None
 
     spec_id = str(state.get("spec_id") or "").strip()
@@ -9345,6 +9349,19 @@ def _cmd_status(project_root: Path) -> None:
             state = _json.loads((run_dir / "state.json").read_text())
         except Exception:
             pass
+
+    # Landing clears the authoring pointer. A historical fallback must not
+    # revive its old blocked/running guidance over a published terminal spec.
+    if (
+        not (project_root / "runs" / ".current").is_file()
+        and _canonical_delivery_lifecycle(project_root) is not None
+    ):
+        fields = [("Status", "No active run found")]
+        if run_dir is not None:
+            fields.append(("Prior run", str(run_dir)))
+        _banner("RUN STATE", fields)
+        _print_terminal_delivery_lifecycle(project_root)
+        return
 
     if not run_dir or not state:
         _banner("RUN STATE", [

@@ -173,9 +173,11 @@ def _proportional_quality_decision() -> dict[str, object]:
     )
 
 
+@pytest.mark.parametrize("historical_status", ["done", "blocked", "interrupted", "in_progress"])
 def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
     tmp_path: Path,
     capsys,
+    historical_status: str,
 ) -> None:
     _init_status_repo(tmp_path)
     spec_dir = tmp_path / "specs/001-demo"
@@ -193,7 +195,7 @@ def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
         json.dumps(
             {
                 "run_id": run_dir.name,
-                "status": "done",
+                "status": historical_status,
                 "phase": "done",
                 "spec_id": "001-demo",
                 "spec_dir": "specs/001-demo",
@@ -211,6 +213,9 @@ def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
     assert "No action required; delivery is already landed." in output
     assert "READY TO BUILD" not in output
     assert "echelon delivery run" not in output
+    assert "echelon spec continue" not in output
+    assert "RUN BLOCKED" not in output
+    assert "No active run found" in output
 
 
 def test_unpublished_landed_authoring_branch_is_not_reported_as_landed(
