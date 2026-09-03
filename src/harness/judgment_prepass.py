@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from harness.deferred_scope import active_entries
+from harness.coverage_evidence import write_coverage_evidence
 
 
 FULFILLMENT_STATUSES = {
@@ -98,8 +99,24 @@ def build_judgment_prepass(
     *, spec_dir: Path, verify_run_dir: Path
 ) -> list[JudgmentRow]:
     inventory_ids = _inventory_ids(verify_run_dir / "canonical-requirements.json")
+    if (spec_dir / "coverage-map.md").is_file():
+        deferred_ids = {
+            item_id
+            for entry in active_entries(spec_dir)
+            for item_id in entry.selected_ids
+            if not item_id.startswith("T-")
+        }
+        write_coverage_evidence(
+            spec_dir=spec_dir,
+            verify_run_dir=verify_run_dir,
+            canonical_ids=inventory_ids,
+            deferred_ids=deferred_ids,
+        )
     implementation_rows = _implementation_rows(verify_run_dir / "implementation-map.md")
     by_id = {row.id: row for row in implementation_rows}
+    coverage_by_id = _coverage_evidence_rows(
+        verify_run_dir / "coverage-evidence.json"
+    )
     deferred_entries_by_id = {
         item_id: entry
         for entry in active_entries(spec_dir)
@@ -119,6 +136,19 @@ def build_judgment_prepass(
                     evidence=(
                         f"defer:{deferred_entry.entry_id}: {deferred_entry.reason}"
                     ),
+                )
+            )
+            continue
+        coverage = coverage_by_id.get(item_id)
+        if coverage is not None and coverage["status"] != "automated":
+            coverage_status = coverage["status"]
+            proposed = "MISSING" if coverage_status == "missing" else "UNVERIFIED"
+            results.append(
+                JudgmentRow.mechanical_row(
+                    item_id,
+                    proposed,
+                    f"coverage_{coverage_status}",
+                    evidence=coverage["reason"],
                 )
             )
             continue
@@ -318,6 +348,36 @@ def _inventory_ids(path: Path) -> list[str]:
         if isinstance(row, dict) and str(row.get("id", "")).strip()
     ]
     return ids
+
+
+def _coverage_evidence_rows(path: Path) -> dict[str, dict[str, str]]:
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        raise ValueError("coverage-evidence.json uses unsupported schema")
+    raw_requirements = data.get("requirements")
+    if not isinstance(raw_requirements, dict):
+        raise ValueError("coverage-evidence.json requirements must be an object")
+    result: dict[str, dict[str, str]] = {}
+    for item_id, raw in raw_requirements.items():
+        if not isinstance(item_id, str) or not isinstance(raw, dict):
+            raise ValueError("coverage-evidence.json contains a malformed row")
+        status = str(raw.get("status") or "").strip()
+        if status not in {
+            "automated",
+            "deferred",
+            "escalated",
+            "missing",
+            "contradictory",
+            "owner_deferred",
+        }:
+            raise ValueError(f"unsupported coverage evidence status: {status}")
+        result[item_id] = {
+            "status": status,
+            "reason": str(raw.get("reason") or status).strip(),
+        }
+    return result
 
 
 def _judgment_rows(path: Path) -> list[JudgmentRow]:

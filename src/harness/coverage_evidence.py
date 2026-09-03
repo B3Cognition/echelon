@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 from typing import Iterable
 
+from kernel.task_contract import parse_task_rows
+
 
 _REQUIRED_HEADERS = (
     "Requirement ID",
@@ -50,8 +52,17 @@ class RequirementCoverageEvidence:
 class CoverageEvidenceResult:
     by_requirement: dict[str, RequirementCoverageEvidence]
     rows: tuple[CoverageEvidenceRow, ...]
+    task_integrity_gaps: tuple["CoverageTaskIntegrityGap", ...] = ()
     json_path: Path | None = None
     markdown_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class CoverageTaskIntegrityGap:
+    task_id: str
+    requirement_ids: tuple[str, ...]
+    statuses: tuple[str, ...]
+    test_case_ids: tuple[str, ...]
 
 
 def build_coverage_evidence(
@@ -81,7 +92,12 @@ def build_coverage_evidence(
         )
         for requirement_id in by_id
     }
-    return CoverageEvidenceResult(by_requirement=classified, rows=rows)
+    task_gaps = _task_integrity_gaps(Path(spec_dir), classified)
+    return CoverageEvidenceResult(
+        by_requirement=classified,
+        rows=rows,
+        task_integrity_gaps=task_gaps,
+    )
 
 
 def write_coverage_evidence(
@@ -106,6 +122,9 @@ def write_coverage_evidence(
             item_id: asdict(row)
             for item_id, row in sorted(result.by_requirement.items())
         },
+        "task_integrity_gaps": [
+            asdict(gap) for gap in result.task_integrity_gaps
+        ],
     }
     json_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -115,6 +134,7 @@ def write_coverage_evidence(
     return CoverageEvidenceResult(
         by_requirement=result.by_requirement,
         rows=result.rows,
+        task_integrity_gaps=result.task_integrity_gaps,
         json_path=json_path,
         markdown_path=markdown_path,
     )
@@ -252,6 +272,51 @@ def _classify_requirement(
     )
 
 
+def _task_integrity_gaps(
+    spec_dir: Path,
+    by_requirement: dict[str, RequirementCoverageEvidence],
+) -> tuple[CoverageTaskIntegrityGap, ...]:
+    tasks_path = spec_dir / "tasks.md"
+    if not tasks_path.is_file():
+        return ()
+    gaps: list[CoverageTaskIntegrityGap] = []
+    tasks = parse_task_rows(
+        tasks_path.read_text(encoding="utf-8", errors="replace")
+    )
+    for task in tasks:
+        if task.status.strip().lower() != "x":
+            continue
+        requirement_ids = tuple(
+            requirement_id
+            for requirement_id in task.requirements
+            if requirement_id in by_requirement
+            and by_requirement[requirement_id].status
+            not in {"automated", "owner_deferred"}
+        )
+        if not requirement_ids:
+            continue
+        gaps.append(
+            CoverageTaskIntegrityGap(
+                task_id=task.task_id,
+                requirement_ids=requirement_ids,
+                statuses=tuple(
+                    f"{requirement_id}={by_requirement[requirement_id].status}"
+                    for requirement_id in requirement_ids
+                ),
+                test_case_ids=tuple(
+                    dict.fromkeys(
+                        test_case_id
+                        for requirement_id in requirement_ids
+                        for test_case_id in by_requirement[
+                            requirement_id
+                        ].test_case_ids
+                    )
+                ),
+            )
+        )
+    return tuple(gaps)
+
+
 def _render_markdown(result: CoverageEvidenceResult) -> str:
     lines = [
         "# Coverage Evidence",
@@ -264,4 +329,13 @@ def _render_markdown(result: CoverageEvidenceResult) -> str:
             f"| {requirement_id} | {row.status} | "
             f"{', '.join(row.test_case_ids)} | {row.reason} |"
         )
+    lines.extend(["", "## Completed Task Integrity Gaps", ""])
+    if not result.task_integrity_gaps:
+        lines.append("None.")
+    else:
+        for gap in result.task_integrity_gaps:
+            lines.append(
+                f"- {gap.task_id}: {', '.join(gap.statuses)}; tests: "
+                f"{', '.join(gap.test_case_ids) or 'none declared'}"
+            )
     return "\n".join(lines) + "\n"

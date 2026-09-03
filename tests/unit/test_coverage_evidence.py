@@ -143,6 +143,67 @@ def test_write_coverage_evidence_emits_deterministic_json_and_markdown(
 
 
 @pytest.mark.unit
+def test_completed_task_with_deferred_coverage_is_an_integrity_gap(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "003-browser"
+    verify_dir = tmp_path / "runs" / "verify"
+    _write_map(
+        spec_dir,
+        "| FR-001 | E-SMOKE-001 | e2e | deferred-automation | deferred-automation | planned | implement before merge |\n",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [x] T-013 complexity=standard phase=verification req=FR-001 depends=none target=sources/game\n"
+        "  **Status:** DONE\n",
+        encoding="utf-8",
+    )
+
+    result = write_coverage_evidence(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_dir,
+        canonical_ids=("FR-001",),
+        deferred_ids=set(),
+    )
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+
+    assert payload["task_integrity_gaps"] == [
+        {
+            "requirement_ids": ["FR-001"],
+            "statuses": ["FR-001=deferred"],
+            "task_id": "T-013",
+            "test_case_ids": ["E-SMOKE-001"],
+        }
+    ]
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "T-013" in markdown
+    assert "E-SMOKE-001" in markdown
+
+
+@pytest.mark.unit
+def test_completed_task_with_owner_deferred_requirement_has_no_integrity_gap(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "003-browser"
+    _write_map(
+        spec_dir,
+        "| FR-001 | E-SMOKE-001 | e2e | deferred-automation | deferred-automation | planned | owner deferred |\n",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [x] T-013 complexity=standard phase=verification req=FR-001 depends=none target=sources/game\n"
+        "  **Status:** DEFERRED\n",
+        encoding="utf-8",
+    )
+
+    result = build_coverage_evidence(
+        spec_dir=spec_dir,
+        canonical_ids=("FR-001",),
+        deferred_ids={"FR-001"},
+    )
+
+    assert result.task_integrity_gaps == ()
+
+
+@pytest.mark.unit
 def test_write_coverage_evidence_cli_uses_canonical_inventory(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs" / "001-demo"
     verify_dir = tmp_path / "runs" / "verify"

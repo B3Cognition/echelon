@@ -103,7 +103,7 @@ def _write_passing_fulfillment_receipt(
 @pytest.mark.unit
 class TestFulfillmentRunner:
     def test_verifier_version_invalidates_pre_split_ledgers(self):
-        assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v2-codegraph-candidates"
+        assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v3-coverage-evidence"
 
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
         _write_verify_skill(tmp_path)

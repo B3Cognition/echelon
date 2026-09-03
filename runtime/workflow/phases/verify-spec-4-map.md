@@ -19,12 +19,17 @@ Provide IMPLEMENTATION-MAPPER with:
 - `{verify_run_dir}/perlgraph-analysis.json`
 - `{verify_run_dir}/codegraph-evidence-map.json`
 - `{verify_run_dir}/codegraph-evidence-map.md`
+- `{verify_run_dir}/coverage-evidence.json`
+- `{verify_run_dir}/coverage-evidence.md`
 
 ## Deterministic Pre-map
 
 Before dispatching IMPLEMENTATION-MAPPER, run:
 
 ```bash
+python -m harness write-coverage-evidence \
+  "{spec_dir}" \
+  "{verify_run_dir}"
 python -m harness write-codegraph-evidence-map \
   "{verify_run_dir}/requirement-audit.md" \
   "{verify_run_dir}/codegraph-analysis.json" \
@@ -33,6 +38,12 @@ python -m harness write-codegraph-evidence-map \
   "{verify_run_dir}/codegraph-evidence-map.md" \
   "{spec_dir}/coverage-map.md"
 ```
+
+The coverage-evidence command is Python-owned reconciliation of the current
+coverage map, canonical inventory, task progress, and owner-controlled
+deferrals. If it exits non-zero, hard stop with BLOCKED. A candidate declaration
+of `strong` test evidence cannot override its deferred, escalated, missing, or
+contradictory rows.
 
 If `{spec_dir}/coverage-map.md` is absent, rerun the same command without the
 final coverage-map argument.
@@ -113,6 +124,11 @@ implementation evidence by themselves.
 Distinguish source evidence from executable test evidence and measured
 CI/runtime artifacts. Do not rewrite assertion-gate functions or synthetic
 fixture tests as measured runtime evidence.
+
+Read `coverage-evidence.json` before assigning verified test evidence. Never
+label a requirement's evidence strong when its deterministic coverage status is
+not `automated` or `owner_deferred`. Record the contradiction in Notes so the
+judgment pre-pass can route repair.
 
 ## Expected Output
 
