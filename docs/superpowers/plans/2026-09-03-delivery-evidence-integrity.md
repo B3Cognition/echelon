@@ -103,7 +103,7 @@
 - Produces: pre-pass reason codes `coverage_deferred`, `coverage_escalated`, `coverage_missing`, and `coverage_contradictory`
 - Produces: actionable completed-task evidence-integrity gaps
 
-- [ ] Write a judgment test where `source_and_test` plus `strong/high` conflicts with `deferred-automation`; expect non-`IMPLEMENTED` output.
+- [x] Write judgment tests proving planning-time `deferred-automation` becomes `IMPLEMENTED` only with strong/high source-and-test evidence, while weak/runtime-threshold evidence remains `UNVERIFIED`.
 - [ ] Run the judgment test and confirm it fails with `source_and_test_strong`.
 - [ ] Make the judgment pre-pass consult deterministic coverage evidence before implementation-map labels.
 - [ ] Run judgment tests and confirm they pass.
@@ -197,5 +197,6 @@
 - [ ] Install the verified Echelon build using the repository's existing installation path.
 - [ ] Start or resume a demo delivery without hand-editing its product/spec artifacts.
 - [ ] Confirm the first run rejects the known deferred/skipped/missing-session state with concrete autonomous repair feedback.
+- [x] Require stack-owned user runnability before fulfillment refresh and force visual validation for required browser-DOM stacks.
 - [ ] Let Echelon repair and rerun until it either converges with bound evidence or reports a genuine external blocker.
 - [ ] From the landed demo checkout, execute the documented local user journey and confirm the authenticated Three.js scene and PostgreSQL persistence path from the user's boundary.

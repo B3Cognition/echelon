@@ -140,7 +140,10 @@ def build_judgment_prepass(
             )
             continue
         coverage = coverage_by_id.get(item_id)
-        if coverage is not None and coverage["status"] != "automated":
+        if coverage is not None and coverage["status"] not in {
+            "automated",
+            "deferred",
+        }:
             coverage_status = coverage["status"]
             proposed = "MISSING" if coverage_status == "missing" else "UNVERIFIED"
             results.append(
@@ -154,9 +157,34 @@ def build_judgment_prepass(
             continue
         row = by_id.get(item_id)
         if row is None:
+            if coverage is not None and coverage["status"] == "deferred":
+                results.append(
+                    JudgmentRow.mechanical_row(
+                        item_id,
+                        "UNVERIFIED",
+                        "coverage_deferred",
+                        evidence=coverage["reason"],
+                    )
+                )
+                continue
             results.append(JudgmentRow.fallback_row(item_id, "missing_implementation_map_row"))
             continue
-        results.append(_classify_row(row))
+        classified = _classify_row(row)
+        if (
+            coverage is not None
+            and coverage["status"] == "deferred"
+            and classified.proposed_status == "IMPLEMENTED"
+        ):
+            classified = JudgmentRow.mechanical_row(
+                item_id,
+                "IMPLEMENTED",
+                "deferred_automation_satisfied",
+                evidence=(
+                    f"{row.verified_implementation_evidence}; "
+                    f"{row.verified_test_evidence}"
+                ),
+            )
+        results.append(classified)
     return results
 
 

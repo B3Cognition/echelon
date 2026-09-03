@@ -379,7 +379,13 @@ class StrategyCoordinator:
     def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
         """Snapshot the delivery phases selected for a new run."""
         phases = ["implementation"]
-        if self._config.visual_tests.enabled:
+        runnability = getattr(self._config, "resolved_runnability", None)
+        stack_requires_visual = (
+            str(getattr(runnability, "policy", "not_applicable")) == "required"
+            and "browser_dom"
+            in tuple(getattr(runnability, "required_observations", ()) or ())
+        )
+        if self._config.visual_tests.enabled or stack_requires_visual:
             phases.append("visual")
         if self._config.review_loop.enabled and self._config.pr_host != "none":
             phases.append("review")

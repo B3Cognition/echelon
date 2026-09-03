@@ -900,31 +900,11 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
-                    verify_result = self._apply_task_progress_gate(
-                        verify_result, worktree_path, require_completion=False
-                    )
-                    verify_result = self._refresh_fulfillment_report(
+                    verify_result = self._apply_post_verify_gates(
                         verify_result,
                         worktree_path,
                         completed_task_ids=scoped_completed_task_ids,
                         changed_files=scoped_changed_files,
-                    )
-                    verify_result = self._apply_fulfillment_gate(
-                        verify_result, worktree_path
-                    )
-                    verify_result = self._apply_user_runnability_gate(
-                        verify_result,
-                        worktree_path,
-                        candidate_commit=_current_git_commit(Path(worktree_path)) or "",
-                        evidence_dir=self._runnability_evidence_dir(),
-                    )
-                    verify_result = self._apply_documentation_gate(
-                        verify_result,
-                        worktree_path,
-                        changed_files=scoped_changed_files,
-                    )
-                    verify_result = self._apply_task_progress_gate(
-                        verify_result, worktree_path, require_completion=True
                     )
                     tokens_used += verify_result.token_usage
                     self._record_provider_attempt_summary(
@@ -1722,31 +1702,11 @@ class RalphController:
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
             inner_changed_files = self._changed_files_since_head(worktree_path)
-            current_verify = self._apply_task_progress_gate(
-                current_verify, worktree_path, require_completion=False
-            )
-            current_verify = self._refresh_fulfillment_report(
+            current_verify = self._apply_post_verify_gates(
                 current_verify,
                 worktree_path,
                 completed_task_ids=scoped_completed_task_ids,
                 changed_files=inner_changed_files,
-            )
-            current_verify = self._apply_fulfillment_gate(
-                current_verify, worktree_path
-            )
-            current_verify = self._apply_user_runnability_gate(
-                current_verify,
-                worktree_path,
-                candidate_commit=_current_git_commit(Path(worktree_path)) or "",
-                evidence_dir=self._runnability_evidence_dir(),
-            )
-            current_verify = self._apply_documentation_gate(
-                current_verify,
-                worktree_path,
-                changed_files=inner_changed_files,
-            )
-            current_verify = self._apply_task_progress_gate(
-                current_verify, worktree_path, require_completion=True
             )
             tokens_used += current_verify.token_usage
 
@@ -2279,6 +2239,45 @@ class RalphController:
             verification_evidence=dict(verify_result.verification_evidence),
         )
 
+    def _apply_post_verify_gates(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+        *,
+        completed_task_ids: Optional[List[str]] = None,
+        changed_files: Optional[List[str]] = None,
+    ) -> VerifyResult:
+        """Apply candidate gates in evidence-production order.
+
+        User runnability executes before fulfillment refresh because its
+        harness-owned composition evidence is an input to requirement judgment,
+        not a consequence of that judgment.
+        """
+        verify_result = self._apply_task_progress_gate(
+            verify_result, worktree_path, require_completion=False
+        )
+        verify_result = self._apply_user_runnability_gate(
+            verify_result,
+            worktree_path,
+            candidate_commit=_current_git_commit(Path(worktree_path)) or "",
+            evidence_dir=self._runnability_evidence_dir(),
+        )
+        verify_result = self._refresh_fulfillment_report(
+            verify_result,
+            worktree_path,
+            completed_task_ids=completed_task_ids,
+            changed_files=changed_files,
+        )
+        verify_result = self._apply_fulfillment_gate(verify_result, worktree_path)
+        verify_result = self._apply_documentation_gate(
+            verify_result,
+            worktree_path,
+            changed_files=changed_files,
+        )
+        return self._apply_task_progress_gate(
+            verify_result, worktree_path, require_completion=True
+        )
+
     def _apply_user_runnability_gate(
         self,
         verify_result: VerifyResult,
@@ -2408,7 +2407,15 @@ class RalphController:
         )
         self._record_user_runnability_result(result)
         if result.status == "runnable":
-            return verify_result
+            evidence = dict(verify_result.verification_evidence)
+            evidence["runnability_evidence"] = result.evidence.as_mapping()
+            return VerifyResult(
+                passed=True,
+                failures=list(verify_result.failures),
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+                verification_evidence=evidence,
+            )
 
         report_path = str(result.evidence.markdown_path)
         failure_id = (

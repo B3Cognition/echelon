@@ -142,7 +142,9 @@ def test_write_judgment_prepass_uses_verified_evidence_not_candidates(
     assert by_id["FR-002"]["fallback_reason"] == "confidence_or_semantics_require_judgment"
 
 
-def test_deferred_coverage_overrides_strong_source_and_test_claims(tmp_path: Path):
+def test_planning_deferred_coverage_is_satisfied_by_strong_delivery_evidence(
+    tmp_path: Path,
+):
     spec_dir = tmp_path / "specs" / "003-browser"
     verify_run_dir = tmp_path / "runs" / "verify-spec-003-browser-1"
     spec_dir.mkdir(parents=True)
@@ -170,9 +172,42 @@ def test_deferred_coverage_overrides_strong_source_and_test_claims(tmp_path: Pat
 
     row = payload["rows"][0]
     assert row["mechanical"] is True
-    assert row["proposed_status"] == "UNVERIFIED"
-    assert row["reason_code"] == "coverage_deferred"
+    assert row["proposed_status"] == "IMPLEMENTED"
+    assert row["reason_code"] == "deferred_automation_satisfied"
     assert (verify_run_dir / "coverage-evidence.json").is_file()
+
+
+def test_planning_deferred_coverage_remains_unverified_without_strong_evidence(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "003-browser"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-003-browser-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "NFR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| NFR-001 | apps/web/game.ts:start | tests/e2e/game.spec.ts::journey | | none | assertion_only | weak | true | high | runtime proof required |\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "# Coverage Map\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| NFR-001 | E-RUNTIME-001 | e2e | deferred-automation | deferred-automation | planned | implement before merge |\n",
+        encoding="utf-8",
+    )
+
+    result = write_judgment_prepass(spec_dir=spec_dir, verify_run_dir=verify_run_dir)
+    row = json.loads(result.json_path.read_text(encoding="utf-8"))["rows"][0]
+
+    assert row["mechanical"] is True
+    assert row["proposed_status"] == "UNVERIFIED"
+    assert row["reason_code"] == "threshold_assertion_only"
 
 
 def test_prepass_excludes_active_deferred_scope_from_llm_fallback(tmp_path: Path):

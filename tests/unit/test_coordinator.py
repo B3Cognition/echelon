@@ -24,6 +24,7 @@ from harness.delivery_results import DeliveryResult, ImplementationResult, Visua
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
 from harness.state import StateStore
+from harness.stacks.resolver import ResolvedRunnability
 from harness.verify_result import VerifyResult
 from harness.spec_frontmatter import read_frontmatter
 from harness.product_inventory import product_evidence_fingerprint
@@ -1051,6 +1052,36 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     state = StateStore(tmp_path / "runs" / "state", "001", "default").read()
     assert state["visual_evidence"]["artifact_count"] == 2
     assert state["last_completed_phase"] == "visual"
+
+
+def test_required_browser_stack_enables_visual_phase_even_when_config_omits_it(
+    tmp_path,
+):
+    config = HarnessConfig(
+        target_repo="git@example.com:t/r.git",
+        target_default_branch="main",
+        provider="docker",
+    )
+    config.resolved_runnability = ResolvedRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        required_observations=("browser_dom",),
+        sources=("browser-3d-game",),
+    )
+    coordinator = StrategyCoordinator(
+        provider=MockProvider(),
+        gitops=MagicMock(),
+        config=config,
+        base_dir=str(tmp_path),
+    )
+
+    assert config.visual_tests.enabled is False
+    assert coordinator._enabled_phases(None) == [
+        "implementation",
+        "visual",
+        "finalization",
+    ]
 
 
 def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_path):

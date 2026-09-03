@@ -413,6 +413,51 @@ def test_required_user_facing_stack_cannot_pass_gate_without_candidate_contract(
 
 
 @pytest.mark.unit
+def test_post_verify_gates_run_runnability_before_fulfillment_judgment(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    calls: list[str] = []
+
+    def passthrough(name: str):
+        def apply(result: VerifyResult, *_args, **_kwargs) -> VerifyResult:
+            calls.append(name)
+            return result
+
+        return apply
+
+    controller._apply_task_progress_gate = MagicMock(
+        side_effect=passthrough("tasks")
+    )
+    controller._apply_user_runnability_gate = MagicMock(
+        side_effect=passthrough("runnability")
+    )
+    controller._refresh_fulfillment_report = MagicMock(
+        side_effect=passthrough("refresh")
+    )
+    controller._apply_fulfillment_gate = MagicMock(
+        side_effect=passthrough("fulfillment")
+    )
+    controller._apply_documentation_gate = MagicMock(
+        side_effect=passthrough("documentation")
+    )
+
+    result = controller._apply_post_verify_gates(
+        VerifyResult(passed=True), str(tmp_path)
+    )
+
+    assert result.passed is True
+    assert calls == [
+        "tasks",
+        "runnability",
+        "refresh",
+        "fulfillment",
+        "documentation",
+        "tasks",
+    ]
+
+
+@pytest.mark.unit
 def test_required_user_facing_stack_cannot_converge_without_candidate_contract(
     tmp_path: Path,
 ) -> None:
@@ -557,6 +602,58 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
             },
         },
     }
+
+
+@pytest.mark.unit
+def test_passing_runnability_is_attached_to_downstream_verification_evidence(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    controller._config.resolved_runnability = _required_browser_runnability()
+    controller._config.resolved_stacks = object()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _write_enabled_runnability_contract(worktree)
+    evidence = RunnabilityEvidenceRef(
+        path=(tmp_path / "attempt.json").resolve(),
+        markdown_path=(tmp_path / "attempt.md").resolve(),
+        receipt_sha256="receipt",
+        evidence_sha256="evidence",
+        candidate_commit="a" * 40,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        status="runnable",
+    )
+    run_result = RunnabilityRunResult(
+        status="runnable",
+        failed_stage=None,
+        failure_class="",
+        summary="Composed journey passed.",
+        stages=(),
+        evidence=evidence,
+        candidate_fingerprint="product-1",
+        contract_hash="contract-1",
+        stack_hash="stack-1",
+        user_commands={},
+    )
+    original = VerifyResult(
+        passed=True,
+        verification_evidence={"path": "/tmp/host-receipt.json"},
+    )
+
+    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+        runner_type.return_value.run.return_value = run_result
+        result = controller._apply_user_runnability_gate(
+            original,
+            str(worktree),
+            candidate_commit="a" * 40,
+            evidence_dir=tmp_path / "evidence" / "user-runnability",
+        )
+
+    assert result.passed is True
+    assert result.verification_evidence["path"] == "/tmp/host-receipt.json"
+    assert result.verification_evidence["runnability_evidence"] == evidence.as_mapping()
 
 
 def _init_git_repo(path: Path) -> None:

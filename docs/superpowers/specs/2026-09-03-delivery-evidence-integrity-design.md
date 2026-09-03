@@ -111,9 +111,12 @@ coverage is:
 - missing; or
 - malformed/contradictory.
 
-`deferred-automation`, `escalate`, missing, or malformed required coverage can
-never yield a mechanical `IMPLEMENTED` decision. Active owner-controlled
-deferred-scope ledger entries remain the only automatic deferral authority.
+`deferred-automation` is a planning-time obligation, not a permanent delivery
+veto. It may yield mechanical `IMPLEMENTED` only after the implementation map
+contains strong, high-confidence source-and-test evidence with no unresolved
+runtime threshold. `escalate`, missing, or malformed required coverage remains
+blocking. Active owner-controlled deferred-scope ledger entries remain the
+only authority that can remove an obligation from the current delivery.
 
 The task-progress integrity check also maps completed task `req=` metadata to
 coverage rows. A task marked `DONE`, `DONE_WITH_CONCERNS`, or `DEGRADED` while
@@ -162,7 +165,11 @@ visual validator also produced a passing result.
 ## Fulfillment integration
 
 Extend the existing judgment pre-pass rather than creating another fulfillment
-system. It consumes:
+system. The post-verification gates run in evidence-production order:
+candidate checks, user runnability, fulfillment refresh and judgment,
+documentation, then final task completeness. This prevents fulfillment from
+blocking the run before the harness can produce the composition evidence that
+the judgment needs. The judgment consumes:
 
 - the implementation map;
 - normalized coverage evidence;
@@ -199,7 +206,10 @@ enough evidence to identify and repair it itself.
 
 ## Compatibility and rollout
 
-- Browser 3D and browser WASM stacks use the new browser evidence gates.
+- Browser 3D and browser WASM stacks use the new browser evidence gates. A
+  required stack observation of `browser_dom` activates visual validation even
+  when a project configuration omits the optional `visual_tests.enabled` flag;
+  candidate configuration cannot weaken a stack-required gate.
 - PostgreSQL persistence requires local session setup when identity is used and
   a PostgreSQL consumer-boundary probe.
 - Non-browser stacks retain their current verification behavior.
@@ -226,7 +236,8 @@ Tests must cover:
 - Playwright exit zero with required skipped tests;
 - passing executed tests with no required screenshot artifacts;
 - retained screenshot hashes and product-fingerprint provenance;
-- deferred coverage contradicting an implemented requirement;
+- planning-deferred coverage satisfied by strong delivery evidence, while weak
+  or runtime-threshold evidence remains unresolved;
 - a completed task contradicting deferred or missing coverage;
 - active owner-controlled deferral behavior; and
 - backward compatibility for unaffected stacks and contracts.
