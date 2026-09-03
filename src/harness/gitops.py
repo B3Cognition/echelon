@@ -472,12 +472,43 @@ class GitOpsManager:
                 if branch.strip()
             ]
 
+        def _list_remote_branches(pattern: str) -> list[str]:
+            result = _run_git(
+                ["branch", "--remotes", "--list", f"*/{pattern}"],
+                cwd=str(self._mirror_path),
+            )
+            return [
+                _clean_branch_listing(branch)
+                for branch in result.stdout.splitlines()
+                if branch.strip() and " -> " not in branch
+            ]
+
         for alias in spec_identity_aliases(spec_id):
             for pattern in (alias, f"{alias}-*"):
                 branches = _list_branches(pattern)
                 if branches:
                     chosen = branches[0]
                     logger.info("Found feature branch for spec %s: %s", spec_id, chosen)
+                    return chosen
+                remote_branches = _list_remote_branches(pattern)
+                if remote_branches:
+                    chosen_remote = sorted(
+                        remote_branches,
+                        key=lambda branch: (
+                            0 if branch.startswith("upstream/") else 1,
+                            branch,
+                        ),
+                    )[0]
+                    chosen = chosen_remote.split("/", 1)[1]
+                    _run_git(
+                        ["branch", chosen, chosen_remote],
+                        cwd=str(self._mirror_path),
+                    )
+                    logger.info(
+                        "Promoted fetched feature branch %s to local mirror branch %s",
+                        chosen_remote,
+                        chosen,
+                    )
                     return chosen
 
         return None
