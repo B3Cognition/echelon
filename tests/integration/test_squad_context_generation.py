@@ -233,6 +233,41 @@ def test_assemble_prompt_resolves_context_dir_context_pack_entries(tmp_path: Pat
     assert "Known feature history." in prompt
 
 
+def test_assemble_prompt_includes_resolved_clarifications(tmp_path: Path) -> None:
+    """A resumed phase must see the controller-owned answer that unblocked it."""
+    squad_dir = tmp_path / "runs" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "user-clarifications.md").write_text(
+        "## Decision dec-1\n\n"
+        "**Question:** Which objects vary?\n\n"
+        "**Answer:** Only decorative trees vary; the collectible remains fixed.\n",
+        encoding="utf-8",
+    )
+
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider=MagicMock(),
+        phase_graph=graph,
+        ext_dir=tmp_path / "extension",
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+
+    prompt = executor._assemble_prompt(
+        PhaseNode(id="phase1-tracker", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(staging_dir),
+        },
+    )
+
+    assert "## Resolved Clarifications" in prompt
+    assert "Only decorative trees vary; the collectible remains fixed." in prompt
+
+
 def test_assemble_prompt_ignores_retired_golddigger_cache_state(tmp_path: Path) -> None:
     squad_dir = tmp_path / "runs" / "run-test"
     cache_dir = squad_dir / "golddigger-cache"

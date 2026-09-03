@@ -1908,6 +1908,7 @@ class PhaseExecutor(ABC):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
             f"{self._stack_context(spec_dir_ref)}"
+            f"{_render_controller_owned_prompt_context(state)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
