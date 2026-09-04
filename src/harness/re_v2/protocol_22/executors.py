@@ -49,7 +49,8 @@ _CREDENTIAL_HEADER_MARKERS = (
 _CREDENTIAL_HEADER_NAMES = frozenset(
     {"authorization", "cookie", "proxy-authorization", "set-cookie"}
 )
-_MAX_BILLABLE_TOKENS_PER_DISPATCH = 262_144
+_DEFAULT_BILLABLE_TOKENS_PER_DISPATCH = 262_144
+_MAX_BILLABLE_TOKENS_PER_DISPATCH = 1_048_576
 _IN_PROCESS_ACTIVE_MS = 300_000
 
 IN_PROCESS_ADAPTER_ID = "re-v2-in-process-v1"
@@ -1198,7 +1199,7 @@ def _bounded_api_entry(
             max_completion_tokens_per_call=completion_tokens,
             max_tool_rounds=0,
             max_tool_result_bytes_per_round=0,
-            max_billable_tokens_per_dispatch=_MAX_BILLABLE_TOKENS_PER_DISPATCH,
+            max_billable_tokens_per_dispatch=_DEFAULT_BILLABLE_TOKENS_PER_DISPATCH,
             max_active_ms_per_dispatch=llm.timeout_ms,
         ),
     )
@@ -1281,7 +1282,7 @@ def _shared_cli_entry(
             max_completion_tokens_per_call=0,
             max_tool_rounds=0,
             max_tool_result_bytes_per_round=0,
-            max_billable_tokens_per_dispatch=_MAX_BILLABLE_TOKENS_PER_DISPATCH,
+            max_billable_tokens_per_dispatch=_DEFAULT_BILLABLE_TOKENS_PER_DISPATCH,
             max_active_ms_per_dispatch=llm.timeout_ms,
         ),
     )

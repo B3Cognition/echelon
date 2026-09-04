@@ -448,6 +448,105 @@ def test_resolution_recheck_guard_receipts_and_progress_are_ordered(
         state.consume(event)
     assert state.rounds_by_target == {TARGET_A: 1, TARGET_B: 1}
     assert state.unresolved_by_target == {TARGET_A: frozenset(), TARGET_B: frozenset()}
+    assert state.resolution_overlays_by_target_round == {
+        TARGET_A: {1: digest("overlay:cycle-1:a")},
+        TARGET_B: {1: digest("overlay:cycle-1:b")},
+    }
+
+
+@pytest.mark.unit
+def test_successor_adopts_only_durable_parent_progress_boundary(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _freeze(store)
+    unresolved = digest("finding:still-open")
+
+    _append(
+        store,
+        "semantic_progress_adopted",
+        {
+            "audit_target_id": TARGET_A,
+            "no_reduction_rounds": 1,
+            "semantic_round": 2,
+            "unresolved_finding_ids": [unresolved],
+        },
+    )
+    overlays = (digest("overlay:round-1"), digest("overlay:round-2"))
+    _append(
+        store,
+        "semantic_progress_lineage_adopted",
+        {
+            "audit_target_id": TARGET_A,
+            "overlay_chain": [
+                {
+                    "resolution_overlay_id": overlay_id,
+                    "semantic_round": round_index,
+                }
+                for round_index, overlay_id in enumerate(overlays, start=1)
+            ],
+        },
+    )
+
+    state = PROTOCOL_25_EVENTS.new_state()
+    assert isinstance(state, Protocol25ReplayState)
+    for event in store.replay():
+        state.consume(event)
+    assert state.rounds_by_target == {TARGET_A: 2}
+    assert state.no_reduction_rounds_by_target == {TARGET_A: 1}
+    assert state.unresolved_by_target == {TARGET_A: frozenset({unresolved})}
+    assert state.resolution_overlays_by_target_round == {
+        TARGET_A: {1: overlays[0], 2: overlays[1]}
+    }
+
+    with pytest.raises(ReV2EventError, match="once per target"):
+        _append(
+            store,
+            "semantic_progress_adopted",
+            {
+                "audit_target_id": TARGET_A,
+                "no_reduction_rounds": 1,
+                "semantic_round": 2,
+                "unresolved_finding_ids": [unresolved],
+            },
+        )
+
+
+@pytest.mark.unit
+def test_resolution_projection_failure_is_a_durable_zero_dispatch_terminal(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _run(store)
+    _freeze(store, (TARGET_A,))
+    _append(
+        store,
+        "semantic_context_projection_failed",
+        {
+            "max_canonical_json_bytes": 196_608,
+            "measured_canonical_json_bytes": None,
+            "operation": "semantic-resolution",
+            "participating_target_ids": [TARGET_A],
+            "provider_dispatch_count": 0,
+            "reason_code": "semantic_context_projection_invalid",
+            "semantic_round": 1,
+            "source_cycle_id": "cycle-1",
+            "source_id": SOURCE,
+        },
+    )
+    _append(store, "run_failed", {"reason": "semantic context projection failed"})
+
+    replay = PROTOCOL_25_EVENTS.new_state()
+    for event in store.replay():
+        replay.consume(event)
+
+    assert isinstance(replay, Protocol25ReplayState)
+    assert replay.semantic_context_projection_failure is not None
+    assert replay.semantic_context_projection_failure["operation"] == (
+        "semantic-resolution"
+    )
+    assert replay.shared.shared.terminal is True
 
 
 @pytest.mark.unit

@@ -178,6 +178,13 @@ def test_l3_progress_total_includes_domain_and_source_audit_targets() -> None:
             "preflight": {"selected_target_count": 81},
         }
     ) == (7, 81)
+    assert _accepted_total(
+        {
+            "selection": {"selected_domains": 74},
+            "artifact_counts": {"generated_l3": 109, "adopted": 581},
+            "preflight": {"selected_target_count": 81},
+        }
+    ) == (81, 81)
 
 
 @pytest.mark.unit
@@ -211,6 +218,11 @@ def test_re_progress_tracker_reports_dispatch_acceptance_and_pause() -> None:
     )
     assert l4.consume({"type": "accepted_slice_recorded", "payload": {}}) == (
         "[re] L4 · 1/2 accepted"
+    )
+
+    complete = ReProgressTracker(layer="L3", total=81, accepted=81)
+    assert complete.consume({"type": "artifact_accepted", "payload": {}}) == (
+        "[re] L3 · 81/81 accepted"
     )
 
 

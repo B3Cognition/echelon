@@ -15,7 +15,10 @@ from harness.re_v2.protocol_22.graph import (
 )
 from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.budget import evaluate_budget_v22
-from harness.re_v2.protocol_22.execution import ProviderExecutionDependenciesV1
+from harness.re_v2.protocol_22.execution import (
+    Protocol22ExecutionError,
+    ProviderExecutionDependenciesV1,
+)
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.recovery import (
     Protocol22RecoveryResult,
@@ -29,7 +32,7 @@ from harness.re_v2.protocol_26.authority import (
 )
 from harness.re_v2.protocol_26.events import Protocol26ReplayState
 
-from .artifacts import AuditCandidateV1, AuditEpochV1
+from .artifacts import AuditCandidateV1, AuditEpochV1, SemanticResolutionOverlayV1
 from .budget import evaluate_semantic_budget
 from .controller import (
     Protocol25Controller,
@@ -40,6 +43,7 @@ from .controller import (
     plan_next_protocol_25,
 )
 from .events import Protocol25ReplayState
+from .findings import SemanticFindingV1
 from .graph import Protocol25Graph, Protocol25GraphError
 from .inputs import ValidatedProtocol25Inputs
 from .ledger import Protocol25LedgerView
@@ -915,30 +919,19 @@ def build_resolution_dispatch_authority(
     )
     if candidate.audit_target.scope.source_id != action.source_id:
         raise Protocol25RecoveryError("resolution action source differs from target")
-    unresolved = tuple(
-        finding
-        for finding in candidate.findings
-        if finding.finding_key_id not in ledger.latest_finding_closures
-        or ledger.latest_finding_closures[finding.finding_key_id].verdict != "closed"
-    )
+    unresolved = _effective_unresolved_findings(context, candidate)
     if not unresolved:
         raise Protocol25RecoveryError("resolution action has no unresolved findings")
 
-    prior: list[SemanticResolutionOverlayV1] = []
-    for acceptance in ledger.accepted_artifacts.values():
-        if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
-            continue
-        overlay = load_canonical_object(
-            context.object_store.read_blob(acceptance.artifact_hash),
-            SemanticResolutionOverlayV1.from_json_dict,
-        )
-        if overlay.audit_epoch_id == epoch.identity and overlay.audit_target_id == action.audit_target_id:
-            prior.append(overlay)
-    prior.sort(key=lambda item: (item.semantic_round, item.identity))
-    if tuple(item.semantic_round for item in prior) != tuple(range(1, action.semantic_round)):
-        raise Protocol25RecoveryError(
-            "resolution prior overlay chain is not consecutive"
-        )
+    replay = _replay_protocol_25_events(context)
+    prior = _committed_prior_resolution_overlays(
+        context,
+        ledger,
+        replay,
+        epoch_id=epoch.identity,
+        audit_target_id=action.audit_target_id,
+        next_semantic_round=action.semantic_round,
+    )
     prior_hashes = tuple(item.identity for item in prior)
 
     audit_item, base_context = build_audit_dispatch_authority(
@@ -996,6 +989,56 @@ def build_resolution_dispatch_authority(
     )
 
 
+def _committed_prior_resolution_overlays(
+    context: Protocol25RunContext,
+    ledger: Protocol25LedgerView,
+    replay: Protocol25ReplayState,
+    *,
+    epoch_id: str,
+    audit_target_id: str,
+    next_semantic_round: int,
+) -> tuple[SemanticResolutionOverlayV1, ...]:
+    """Select one replay-committed predecessor per round, ignoring retry debris."""
+    lineage = replay.resolution_overlays_by_target_round.get(
+        audit_target_id,
+        {},
+    )
+    expected_rounds = tuple(range(1, next_semantic_round))
+    if tuple(sorted(lineage)) != expected_rounds:
+        raise Protocol25RecoveryError(
+            "resolution has no complete committed prior overlay lineage"
+        )
+    accepted_by_hash = {
+        acceptance.artifact_hash: acceptance
+        for acceptance in ledger.accepted_artifacts.values()
+        if acceptance.artifact_key.artifact_kind == "semantic-resolution-overlay"
+    }
+    prior: list[SemanticResolutionOverlayV1] = []
+    for round_index in expected_rounds:
+        overlay_id = lineage[round_index]
+        if overlay_id not in accepted_by_hash:
+            raise Protocol25RecoveryError(
+                "committed prior overlay lacks accepted artifact authority"
+            )
+        overlay = load_canonical_object(
+            context.object_store.read_blob(overlay_id),
+            SemanticResolutionOverlayV1.from_json_dict,
+        )
+        expected_prior = tuple(sorted(item.identity for item in prior))
+        if (
+            overlay.identity != overlay_id
+            or overlay.audit_epoch_id != epoch_id
+            or overlay.audit_target_id != audit_target_id
+            or overlay.semantic_round != round_index
+            or overlay.prior_overlay_hashes != expected_prior
+        ):
+            raise Protocol25RecoveryError(
+                "committed prior overlay lineage is inconsistent"
+            )
+        prior.append(overlay)
+    return tuple(sorted(prior, key=lambda item: item.identity))
+
+
 def build_recheck_dispatch_authority(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
@@ -1032,12 +1075,18 @@ def build_recheck_dispatch_authority(
         context.object_store.read_blob(target_authority.candidate_hash),
         AuditCandidateV1.from_json_dict,
     )
-    unresolved = tuple(
-        finding
-        for finding in candidate.findings
-        if finding.finding_key_id not in ledger.latest_finding_closures
-        or ledger.latest_finding_closures[finding.finding_key_id].verdict != "closed"
+    replay = _replay_protocol_25_events(context)
+    unresolved = _effective_unresolved_findings(context, candidate, replay=replay)
+    cycle = replay.source_cycles.get(action.source_cycle_id or "")
+    expected_overlay_id = (
+        None
+        if cycle is None
+        else cycle.resolution_overlays_by_target.get(action.audit_target_id)
     )
+    if expected_overlay_id is None:
+        raise Protocol25RecoveryError(
+            "closure recheck has no replayed resolution overlay authority"
+        )
     overlays = []
     for acceptance in ledger.accepted_artifacts.values():
         if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
@@ -1050,6 +1099,7 @@ def build_recheck_dispatch_authority(
             overlay.audit_epoch_id == epoch.identity
             and overlay.audit_target_id == action.audit_target_id
             and overlay.semantic_round == action.semantic_round
+            and overlay.identity == expected_overlay_id
         ):
             overlays.append(overlay)
     if len(overlays) != 1:
@@ -1161,6 +1211,98 @@ def _source_guard_finding_projection(finding: object) -> object:
     )
 
 
+def _current_source_cycle_authorities(
+    context: Protocol25RunContext,
+    ledger: Protocol25LedgerView,
+    replay: Protocol25ReplayState,
+    action: Protocol25ControllerActionV1,
+    *,
+    epoch_id: str,
+    participants: set[str],
+) -> tuple[tuple[SemanticResolutionOverlayV1, ...], tuple[object, ...]]:
+    """Select only artifacts bound by the active replayed source cycle."""
+    cycle = replay.source_cycles.get(action.source_cycle_id or "")
+    if (
+        cycle is None
+        or cycle.source_id != action.source_id
+        or cycle.semantic_round != action.semantic_round
+    ):
+        raise Protocol25RecoveryError(
+            "source guard has no exact replayed source cycle authority"
+        )
+    expected_overlay_ids = {
+        target_id: cycle.resolution_overlays_by_target.get(target_id)
+        for target_id in participants
+    }
+    if any(value is None for value in expected_overlay_ids.values()):
+        raise Protocol25RecoveryError(
+            "source guard lacks a replayed overlay for every participant"
+        )
+    expected_overlay_hashes = set(expected_overlay_ids.values())
+    overlays = []
+    for acceptance in ledger.accepted_artifacts.values():
+        if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
+            continue
+        overlay = load_canonical_object(
+            context.object_store.read_blob(acceptance.artifact_hash),
+            SemanticResolutionOverlayV1.from_json_dict,
+        )
+        if (
+            overlay.audit_epoch_id == epoch_id
+            and overlay.audit_target_id in participants
+            and overlay.semantic_round == action.semantic_round
+            and overlay.identity in expected_overlay_hashes
+        ):
+            overlays.append(overlay)
+    overlays.sort(key=lambda item: (item.audit_target_id, item.identity))
+    if (
+        len(overlays) != len(participants)
+        or {item.audit_target_id for item in overlays} != participants
+        or any(
+            item.identity != expected_overlay_ids[item.audit_target_id]
+            for item in overlays
+        )
+    ):
+        raise Protocol25RecoveryError(
+            "source guard does not have one current overlay per participant"
+        )
+    expected_assessment_ids = {
+        target_id: cycle.target_assessments.get(target_id)
+        for target_id in participants
+    }
+    if any(value is None for value in expected_assessment_ids.values()):
+        raise Protocol25RecoveryError(
+            "source guard lacks a replayed assessment for every participant"
+        )
+    overlay_ids = {overlay.identity for overlay in overlays}
+    assessment_ids = set(expected_assessment_ids.values())
+    assessments = tuple(
+        sorted(
+            (
+                item
+                for item in ledger.target_closure_assessments.values()
+                if item.audit_epoch_id == epoch_id
+                and item.audit_target_id in participants
+                and item.identity in assessment_ids
+                and item.resolution_overlay_hash in overlay_ids
+            ),
+            key=lambda item: (item.audit_target_id, item.identity),
+        )
+    )
+    if (
+        len(assessments) != len(participants)
+        or {item.audit_target_id for item in assessments} != participants
+        or any(
+            item.identity != expected_assessment_ids[item.audit_target_id]
+            for item in assessments
+        )
+    ):
+        raise Protocol25RecoveryError(
+            "source guard does not have one current assessment per participant"
+        )
+    return tuple(overlays), assessments
+
+
 def build_source_guard_dispatch_authority(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
@@ -1210,42 +1352,15 @@ def build_source_guard_dispatch_authority(
     ):
         raise Protocol25RecoveryError("source guard participant is outside its source")
 
-    overlays = []
-    for acceptance in ledger.accepted_artifacts.values():
-        if acceptance.artifact_key.artifact_kind != "semantic-resolution-overlay":
-            continue
-        overlay = load_canonical_object(
-            context.object_store.read_blob(acceptance.artifact_hash),
-            SemanticResolutionOverlayV1.from_json_dict,
-        )
-        if (
-            overlay.audit_epoch_id == epoch.identity
-            and overlay.audit_target_id in participants
-            and overlay.semantic_round == action.semantic_round
-        ):
-            overlays.append(overlay)
-    overlays.sort(key=lambda item: (item.audit_target_id, item.identity))
-    if {item.audit_target_id for item in overlays} != participants:
-        raise Protocol25RecoveryError(
-            "source guard does not have one current overlay per participant"
-        )
-    assessments = tuple(
-        sorted(
-            (
-                item
-                for item in ledger.target_closure_assessments.values()
-                if item.audit_epoch_id == epoch.identity
-                and item.audit_target_id in participants
-                and item.resolution_overlay_hash
-                in {overlay.identity for overlay in overlays}
-            ),
-            key=lambda item: (item.audit_target_id, item.identity),
-        )
+    replay = _replay_protocol_25_events(context)
+    overlays, assessments = _current_source_cycle_authorities(
+        context,
+        ledger,
+        replay,
+        action,
+        epoch_id=epoch.identity,
+        participants=participants,
     )
-    if {item.audit_target_id for item in assessments} != participants:
-        raise Protocol25RecoveryError(
-            "source guard does not have one current assessment per participant"
-        )
     findings_by_id = {
         finding.finding_key_id: finding
         for candidate in candidates.values()
@@ -1392,15 +1507,29 @@ def _measure_source_guard_context(
 def _record_semantic_context_projection_failure(
     context: Protocol25RunContext,
     action: Protocol25ControllerActionV1,
-    exc: Protocol25RuntimeError,
+    exc: Protocol25RecoveryError | Protocol25RuntimeError,
 ) -> None:
     """Stop deterministically before a provider dispatch can be reserved."""
+    artifact_kind = {
+        "resolve_target": "semantic-resolution-overlay",
+        "recheck_target": "target-closure-assessment",
+        "guard_source": "source-composition-assessment",
+    }.get(action.kind)
+    operation = {
+        "resolve_target": "semantic-resolution",
+        "recheck_target": "closure-recheck",
+        "guard_source": "source-composition-guard",
+    }.get(action.kind)
+    if artifact_kind is None or operation is None:
+        raise Protocol25RecoveryError(
+            "semantic projection failure requires a semantic controller action"
+        )
     ceiling = context.semantic_inputs.artifact_policy.entry_for(
-        "L3", "source-composition-assessment"
+        "L3", artifact_kind
     ).max_context_bundle_bytes
     measured = (
         _measure_source_guard_context(context, action)
-        if "byte ceiling" in str(exc).lower()
+        if action.kind == "guard_source" and "byte ceiling" in str(exc).lower()
         else None
     )
     reason_code = (
@@ -1413,8 +1542,12 @@ def _record_semantic_context_projection_failure(
         {
             "max_canonical_json_bytes": ceiling,
             "measured_canonical_json_bytes": measured,
-            "operation": "source-composition-guard",
-            "participating_target_ids": list(action.participating_target_ids),
+            "operation": operation,
+            "participating_target_ids": list(
+                action.participating_target_ids
+                if action.kind == "guard_source"
+                else (action.audit_target_id,)
+            ),
             "provider_dispatch_count": 0,
             "reason_code": reason_code,
             "semantic_round": action.semantic_round,
@@ -1637,11 +1770,20 @@ def _execute_semantic_action(
             raise Protocol25RecoveryError(
                 "semantic retry dependencies are not provider authority"
             )
-    prepared = context.execution_store.prepare_execution(
-        item,
-        attempt_kind,
-        dependencies,
-    )
+    try:
+        prepared = context.execution_store.prepare_execution(
+            item,
+            attempt_kind,
+            dependencies,
+        )
+    except Protocol22ExecutionError as exc:
+        if "reservation" not in str(exc):
+            raise
+        Protocol25Controller(context)._record_pre_dispatch_executor_failure(
+            item,
+            "reservation_mismatch",
+        )
+        return
     reservation = prepared.reservation
     if not isinstance(reservation, DispatchReservationV1):
         raise Protocol25RecoveryError(
@@ -1790,6 +1932,32 @@ def _replayed_unresolved_finding_ids(
     return tuple(sorted(unresolved))
 
 
+def _effective_unresolved_findings(
+    context: Protocol25RunContext,
+    candidate: AuditCandidateV1,
+    *,
+    replay: Protocol25ReplayState | None = None,
+) -> tuple[SemanticFindingV1, ...]:
+    """Resolve findings from committed event progress, not raw retained receipts."""
+    active_replay = (
+        _replay_protocol_25_events(context) if replay is None else replay
+    )
+    candidate_by_id = {
+        finding.finding_key_id: finding for finding in candidate.findings
+    }
+    effective_ids = active_replay.unresolved_by_target.get(
+        candidate.audit_target_id
+    )
+    if effective_ids is None:
+        return tuple(candidate.findings)
+    unknown = set(effective_ids) - set(candidate_by_id)
+    if unknown:
+        raise Protocol25RecoveryError(
+            "replayed unresolved findings are outside the frozen candidate"
+        )
+    return tuple(candidate_by_id[item] for item in sorted(effective_ids))
+
+
 def _active_target_stage(
     replay: Protocol25ReplayState,
     audit_target_id: str,
@@ -1821,6 +1989,7 @@ def _source_cycle_states(
                 for item in targets
                 if item.source_id == cycle.source_id
                 and item.unresolved_finding_ids
+                and item.stage != "plateau_recorded"
                 and item.semantic_round + 1 == cycle.semantic_round
             )
         )
@@ -2051,10 +2220,14 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "resolution action differs from fresh controller authority"
             )
-        item, semantic_context = build_resolution_dispatch_authority(
-            context,
-            action,
-        )
+        try:
+            item, semantic_context = build_resolution_dispatch_authority(
+                context,
+                action,
+            )
+        except (Protocol25RecoveryError, Protocol25RuntimeError) as exc:
+            _record_semantic_context_projection_failure(context, action, exc)
+            return
         dependencies = context.dependencies_for(item, "initial_generation")
         if (
             not isinstance(dependencies, ProviderExecutionDependenciesV1)
@@ -2076,7 +2249,11 @@ def _apply_controller_action(
             raise Protocol25RecoveryError(
                 "closure recheck action differs from fresh controller authority"
             )
-        item, semantic_context = build_recheck_dispatch_authority(context, action)
+        try:
+            item, semantic_context = build_recheck_dispatch_authority(context, action)
+        except (Protocol25RecoveryError, Protocol25RuntimeError) as exc:
+            _record_semantic_context_projection_failure(context, action, exc)
+            return
         dependencies = context.dependencies_for(item, "initial_generation")
         if (
             not isinstance(dependencies, ProviderExecutionDependenciesV1)
@@ -2103,7 +2280,7 @@ def _apply_controller_action(
                 context,
                 action,
             )
-        except Protocol25RuntimeError as exc:
+        except (Protocol25RecoveryError, Protocol25RuntimeError) as exc:
             _record_semantic_context_projection_failure(context, action, exc)
             return
         dependencies = context.dependencies_for(item, "initial_generation")

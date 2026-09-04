@@ -1,18 +1,34 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unicodedata
 
 import pytest
 
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_25.lifecycle import (
+    _validate_monotonic_successor_policy_upgrade,
     guidance_id_for,
     normalize_guidance_answer,
     semantic_request_id_v2,
     semantic_request_id_v3,
 )
+from harness.re_v2.protocol_25.policies import build_semantic_v1_policy_catalog
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+
+def _policy_with_source_context_ceiling(byte_ceiling: int):
+    policy = build_semantic_v1_policy_catalog()
+    return replace(
+        policy,
+        l3_entries=tuple(
+            replace(item, max_context_bundle_bytes=byte_ceiling)
+            if item.artifact_kind == "source-composition-assessment"
+            else item
+            for item in policy.l3_entries
+        ),
+    )
 
 
 def _request(**changes: object) -> str:
@@ -80,6 +96,42 @@ def test_semantic_request_identity_binds_authority_but_not_resource_ceiling() ->
         guidance_hash=digest("guide"),
         accepted_audit_target_ids=(digest("accepted"),),
     )
+
+
+@pytest.mark.unit
+def test_successor_accepts_only_monotonic_capacity_policy_upgrade() -> None:
+    legacy = _policy_with_source_context_ceiling(224 * 1024)
+    current = build_semantic_v1_policy_catalog()
+
+    _validate_monotonic_successor_policy_upgrade(legacy, current)
+
+    reduced = _policy_with_source_context_ceiling(192 * 1024)
+    with pytest.raises(ValueError, match="reduces a capacity ceiling"):
+        _validate_monotonic_successor_policy_upgrade(legacy, reduced)
+
+    changed_semantics = replace(
+        current,
+        l3_entries=tuple(
+            replace(item, max_canonical_json_bytes=item.max_canonical_json_bytes + 1)
+            if item.artifact_kind == "source-composition-assessment"
+            else item
+            for item in current.l3_entries
+        ),
+    )
+    with pytest.raises(ValueError, match="changes semantic rules"):
+        _validate_monotonic_successor_policy_upgrade(legacy, changed_semantics)
+
+
+@pytest.mark.unit
+def test_closure_successor_identity_allows_pre_root_execution_retry() -> None:
+    request = _request(
+        run_mode="closure-successor",
+        guidance_hash=digest("guide"),
+        frozen_audit_epoch_id=digest("epoch"),
+        closure_root_hash=None,
+    )
+
+    assert request.startswith("sha256:")
 
 
 @pytest.mark.unit

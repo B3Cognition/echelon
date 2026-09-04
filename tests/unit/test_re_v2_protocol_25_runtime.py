@@ -162,8 +162,8 @@ def test_source_guard_accepts_realistic_aggregate_above_single_target_ceiling() 
     )
 
     measured = len(canonical_json_bytes(context.to_json_dict()))
-    assert 192 * 1024 < measured <= 224 * 1024
-    assert context.max_canonical_json_bytes == 224 * 1024
+    assert 192 * 1024 < measured <= 512 * 1024
+    assert context.max_canonical_json_bytes == 512 * 1024
 
 
 @pytest.mark.unit

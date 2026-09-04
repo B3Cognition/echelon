@@ -695,3 +695,56 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
             None,
         )
     ]
+
+
+@pytest.mark.unit
+def test_resume_unwraps_schema5_l3_run_to_immutable_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch the public wrapper hiding resumable L3 authority from the CLI."""
+    from types import SimpleNamespace
+
+    from echelon import cli
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+    from tests.re_v2_protocol_26_fixtures import manifest_v5
+
+    run_dir = tmp_path / "runs" / "re-blocked-l3"
+    calls: list[tuple[Path, Path, str, int | None, int | None]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest_v5("L3", run_id="re-blocked-l3"),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_26.inputs.load_protocol_26_inputs",
+        lambda _paths, _manifest: SimpleNamespace(
+            layer_execution_contract=SimpleNamespace(
+                layer_manifest=manifest_v4(run_id="re-blocked-l3")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_resume",
+        lambda workspace, parent, answer, token_limit, time_limit_minutes: calls.append(
+            (workspace, parent, answer, token_limit, time_limit_minutes)
+        ),
+    )
+
+    cli._cmd_re_resume(["Retry the transient provider failure"])
+
+    assert calls == [
+        (
+            tmp_path,
+            run_dir,
+            "Retry the transient provider failure",
+            None,
+            None,
+        )
+    ]

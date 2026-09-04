@@ -16506,6 +16506,10 @@ def _run_re_v25_next_epoch(
         initialize_protocol_25_successor,
         prepare_next_audit_epoch,
     )
+    from harness.re_v2.protocol_25.policies import (
+        build_semantic_v1_policy_catalog,
+        with_current_semantic_executor_capacities,
+    )
 
     context = _re_v2_context(workspace, parent_run)
     exported = export_protocol_25_parent(context, mode="new-audit-epoch")
@@ -16544,6 +16548,10 @@ def _run_re_v25_next_epoch(
             options.semantic_active_ms_limit
             if options.semantic_active_ms_limit is not None
             else parent_manifest.semantic_closure_policy.active_ms_limit
+        ),
+        successor_artifact_policy=build_semantic_v1_policy_catalog(),
+        successor_executor_contract=with_current_semantic_executor_capacities(
+            exported.inputs.executor_contract
         ),
     )
     created = False
@@ -16587,6 +16595,10 @@ def _run_re_v25_resume(
         initialize_protocol_25_successor,
         prepare_guided_successor,
     )
+    from harness.re_v2.protocol_25.policies import (
+        build_semantic_v1_policy_catalog,
+        with_current_semantic_executor_capacities,
+    )
 
     workspace = workspace_root.resolve()
     parent_dir = parent_run.resolve()
@@ -16613,6 +16625,10 @@ def _run_re_v25_resume(
         ),
         semantic_token_limit=parent_manifest.semantic_closure_policy.token_limit,
         semantic_active_ms_limit=parent_manifest.semantic_closure_policy.active_ms_limit,
+        successor_artifact_policy=build_semantic_v1_policy_catalog(),
+        successor_executor_contract=with_current_semantic_executor_capacities(
+            exported.inputs.executor_contract
+        ),
     )
     created = False
     with _re_v24_creation_lock(workspace):
@@ -17223,12 +17239,20 @@ def _cmd_re_resume(args: list[str]) -> None:
                     "v2 has independent attempt budgets; this option is valid only for v1"
                 )
             from harness.re_v2.protocol_25.model import RunManifestV4
-            from harness.re_v2.run_store import load_run_manifest
+            from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+            from harness.re_v2.protocol_26.model import RunManifestV5
+            from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
             manifest = load_run_manifest(run_dir)
-            if not isinstance(manifest, RunManifestV4):
+            semantic_manifest = manifest
+            if isinstance(manifest, RunManifestV5) and manifest.target_layer == "L3":
+                semantic_manifest = load_protocol_26_inputs(
+                    ReV2Paths.for_run(run_dir),
+                    manifest,
+                ).layer_execution_contract.layer_manifest
+            if not isinstance(semantic_manifest, RunManifestV4):
                 raise ValueError(
-                    "immutable guidance resume is valid only for protocol 2.5"
+                    "immutable guidance resume requires an L3 RE run"
                 )
             _run_re_v25_resume(
                 project_root,

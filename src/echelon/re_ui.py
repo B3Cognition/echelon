@@ -143,7 +143,8 @@ def _accepted_total(document: Mapping[str, object]) -> tuple[int, int]:
         generated = counts.get("generated")
         adopted = counts.get("adopted")
         if all(isinstance(value, int) for value in (required, generated, adopted)):
-            return int(generated) + int(adopted), int(required)
+            total = int(required)
+            return min(int(generated) + int(adopted), total), total
         for key in ("total", "selected_l2", "requested_outputs"):
             nested = counts.get(key)
             if isinstance(nested, Mapping):
@@ -177,7 +178,8 @@ def _accepted_total(document: Mapping[str, object]) -> tuple[int, int]:
             if isinstance(counts.get(key), int):
                 accepted = counts[key]
                 break
-    return accepted, total if isinstance(total, int) else 0
+    bounded_total = total if isinstance(total, int) else 0
+    return min(accepted, bounded_total), bounded_total
 
 
 def print_re_status_card(
@@ -289,7 +291,7 @@ class ReProgressTracker:
             "accepted_slice_recorded",
             "synthesis_artifact_accepted",
         }:
-            self.accepted += 1
+            self.accepted = min(self.accepted + 1, self.total)
             return f"[re] {self.layer} · {self.accepted}/{self.total} accepted"
         if event_type in {
             "run_paused",

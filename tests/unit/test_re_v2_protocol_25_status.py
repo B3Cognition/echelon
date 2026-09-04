@@ -267,21 +267,23 @@ def test_paused_l3_status_prints_copy_pasteable_absolute_ceiling_command(
 
     assert document["next_action"] == (
         "run `echelon re continue re-l3-child --re-time-limit-minutes 780 "
+        "--re-semantic-token-limit 1286432 "
         "--re-semantic-time-limit-minutes 750`"
     )
     assert document["authorization_required"] == {
         "run_wide": {"active_ms": 43_200_000},
-        "semantic": {"active_ms": 43_200_000},
+        "semantic": {"tokens": 786_432, "active_ms": 43_200_000},
     }
     assert document["authorization_recommended"] == {
         "run_wide": {"active_ms": 46_800_000},
-        "semantic": {"active_ms": 45_000_000},
+        "semantic": {"tokens": 1_286_432, "active_ms": 45_000_000},
     }
     assert "authorization required (absolute totals):" in human
     assert "run active time=720 min (currently 60)" in human
     assert "semantic active time=720 min (currently 30)" in human
     assert "recommended continuation ceiling:" in human
     assert "run active time=780 min" in human
+    assert "semantic tokens=1286432" in human
     assert "semantic active time=750 min" in human
 
 

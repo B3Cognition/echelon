@@ -151,14 +151,9 @@ def _guidance_payload(
             raise ValueError(
                 "pre-epoch guidance requires retained candidates and unresolved targets"
             )
-    elif (
-        audit_epoch_id is None
-        or closure_root_hash is None
-        or not findings
-        or targets
-    ):
+    elif audit_epoch_id is None or not findings or targets:
         raise ValueError(
-            "closure guidance requires epoch, closure root, and unresolved findings"
+            "closure guidance requires an epoch and unresolved findings"
         )
     return {
         "accepted_audit_candidate_hashes": list(candidates),
@@ -237,11 +232,7 @@ def semantic_request_id_v2(
             or closure_root_hash is not None
         ):
             raise ValueError("audit successor authority is inconsistent")
-    elif (
-        guidance_hash is None
-        or frozen_audit_epoch_id is None
-        or closure_root_hash is None
-    ):
+    elif guidance_hash is None or frozen_audit_epoch_id is None:
         raise ValueError("closure successor authority is incomplete")
     return content_digest(
         {
@@ -619,7 +610,10 @@ def export_protocol_25_parent(
     if selected_mode is None:
         if state.terminal_state == "blocked_incomplete" and state.audit_epoch_id is None:
             selected_mode = "audit-successor"
-        elif state.terminal_state == "blocked_plateau" and state.audit_epoch_id is not None:
+        elif (
+            state.terminal_state in {"blocked_incomplete", "blocked_plateau"}
+            and state.audit_epoch_id is not None
+        ):
             selected_mode = "closure-successor"
         else:
             raise ValueError(
@@ -636,9 +630,24 @@ def export_protocol_25_parent(
     }:
         raise ValueError("guided resume requires an authenticated terminal event")
 
-    manifest_bytes = _stable_regular_bytes(context.paths.manifest, "parent manifest")
-    if manifest_bytes != canonical_json_bytes(manifest.to_json_dict()):
-        raise ValueError("schema-4 parent manifest changed during export")
+    from harness.re_v2.protocol_26.authority import resolve_run_authority
+    from harness.re_v2.protocol_26.model import RunManifestV5
+
+    active_manifest = resolve_run_authority(context).active_manifest
+    canonical_manifest_bytes = canonical_json_bytes(manifest.to_json_dict())
+    if isinstance(active_manifest, RunManifestV5):
+        # Protocol 2.6 authenticates the semantic manifest inside the immutable
+        # layer execution contract.  The top-level run.json is intentionally the
+        # schema-5 wrapper, so comparing its bytes with the embedded schema-4
+        # manifest would reject every otherwise valid L3 successor export.
+        manifest_bytes = canonical_manifest_bytes
+    else:
+        manifest_bytes = _stable_regular_bytes(
+            context.paths.manifest,
+            "parent manifest",
+        )
+        if manifest_bytes != canonical_manifest_bytes:
+            raise ValueError("schema-4 parent manifest changed during export")
     event_bytes = _stable_regular_bytes(context.paths.events, "parent event chain")
     ledger_bytes = _stable_regular_bytes(context.paths.ledger, "parent ledger chain")
     ledger_history, ledger = context.ledger.replay_with_history()
@@ -667,8 +676,8 @@ def export_protocol_25_parent(
     closure_root = None if not roots else roots[0]
     if len(roots) > 1:
         raise ValueError("schema-4 parent has ambiguous closure roots")
-    if selected_mode in {"closure-successor", "new-audit-epoch"} and closure_root is None:
-        raise ValueError("closure successor parent has no authenticated closure root")
+    if selected_mode == "new-audit-epoch" and closure_root is None:
+        raise ValueError("next audit epoch parent has no authenticated closure root")
     unresolved_findings = tuple(
         sorted(
             {
@@ -898,6 +907,8 @@ def prepare_guided_successor(
     active_ms_limit: int,
     semantic_token_limit: int,
     semantic_active_ms_limit: int,
+    successor_artifact_policy: object | None = None,
+    successor_executor_contract: object | None = None,
 ) -> PreparedProtocol25Creation:
     """Prepare one immutable guided child from authenticated schema-4 authority."""
     return _prepare_protocol_25_l3_child(
@@ -912,6 +923,8 @@ def prepare_guided_successor(
         active_ms_limit=active_ms_limit,
         semantic_token_limit=semantic_token_limit,
         semantic_active_ms_limit=semantic_active_ms_limit,
+        successor_artifact_policy=successor_artifact_policy,
+        successor_executor_contract=successor_executor_contract,
     )
 
 
@@ -927,6 +940,8 @@ def prepare_next_audit_epoch(
     active_ms_limit: int,
     semantic_token_limit: int,
     semantic_active_ms_limit: int,
+    successor_artifact_policy: object | None = None,
+    successor_executor_contract: object | None = None,
 ) -> PreparedProtocol25Creation:
     """Prepare an explicit independent audit epoch over a terminal L3 parent."""
     return _prepare_protocol_25_l3_child(
@@ -941,6 +956,8 @@ def prepare_next_audit_epoch(
         active_ms_limit=active_ms_limit,
         semantic_token_limit=semantic_token_limit,
         semantic_active_ms_limit=semantic_active_ms_limit,
+        successor_artifact_policy=successor_artifact_policy,
+        successor_executor_contract=successor_executor_contract,
     )
 
 
@@ -957,6 +974,8 @@ def _prepare_protocol_25_l3_child(
     active_ms_limit: int,
     semantic_token_limit: int,
     semantic_active_ms_limit: int,
+    successor_artifact_policy: object | None,
+    successor_executor_contract: object | None,
 ) -> PreparedProtocol25Creation:
     """Shared schema-4 child preparation for guided and next-epoch modes."""
     from harness.re_v2.canonical import canonical_json_bytes
@@ -971,6 +990,10 @@ def _prepare_protocol_25_l3_child(
     from .graph import Protocol25GraphInputsV1, build_protocol_25_graph
     from .inputs import Protocol25InputSet, ValidatedProtocol25Inputs
     from .model import RunManifestV4, SemanticClosurePolicyV1
+    from .policies import (
+        SemanticArtifactPolicyCatalogV1,
+        SemanticExecutorContractCatalogV1,
+    )
 
     if not isinstance(parent, ValidatedProtocol25ParentV1):
         raise ValueError("guided successor requires authenticated schema-4 parent")
@@ -986,6 +1009,28 @@ def _prepare_protocol_25_l3_child(
         raise ValueError("guided successor requires RunManifestV4 parent")
     if not isinstance(parent_inputs, ValidatedProtocol25Inputs):
         raise ValueError("guided successor requires authenticated parent inputs")
+    artifact_policy = parent_inputs.artifact_policy
+    if successor_artifact_policy is not None:
+        if not isinstance(
+            successor_artifact_policy, SemanticArtifactPolicyCatalogV1
+        ):
+            raise ValueError("successor artifact policy has an unsupported type")
+        _validate_monotonic_successor_policy_upgrade(
+            artifact_policy,
+            successor_artifact_policy,
+        )
+        artifact_policy = successor_artifact_policy
+    executor_contract = parent_inputs.executor_contract
+    if successor_executor_contract is not None:
+        if not isinstance(
+            successor_executor_contract, SemanticExecutorContractCatalogV1
+        ):
+            raise ValueError("successor executor contract has an unsupported type")
+        _validate_monotonic_successor_executor_upgrade(
+            executor_contract,
+            successor_executor_contract,
+        )
+        executor_contract = successor_executor_contract
     candidate = parent.candidate
     lower = candidate.lower_authority_bundle
     parent_manifest_hash = content_digest(
@@ -1062,8 +1107,8 @@ def _prepare_protocol_25_l3_child(
         partition_manifest_id=parent_manifest.partition_manifest_id,
         selection=parent_manifest.selection,
         run_mode=parent.mode,  # type: ignore[arg-type]
-        artifact_policy_hash=parent_inputs.artifact_policy.identity,
-        executor_contract_hash=parent_inputs.executor_contract.identity,
+        artifact_policy_hash=artifact_policy.identity,
+        executor_contract_hash=executor_contract.identity,
         audit_policy_hash=parent_inputs.audit_policy.identity,
         accepted_audit_target_ids=(
             ()
@@ -1092,11 +1137,11 @@ def _prepare_protocol_25_l3_child(
             "workspace-partition.json",
         ),
         artifact_policy_catalog=CatalogReferenceV1(
-            parent_inputs.artifact_policy.identity,
+            artifact_policy.identity,
             "artifact-policy.json",
         ),
         executor_contract_catalog=CatalogReferenceV1(
-            parent_inputs.executor_contract.identity,
+            executor_contract.identity,
             "executor-contract.json",
         ),
         audit_policy_catalog=CatalogReferenceV1(
@@ -1147,9 +1192,9 @@ def _prepare_protocol_25_l3_child(
     immutable_objects = MappingProxyType(dict(sorted(parent_objects.items())))
     inputs = Protocol25InputSet(
         workspace_partition=parent_inputs.workspace_partition,
-        artifact_policy=parent_inputs.artifact_policy,
-        executor_contract=parent_inputs.executor_contract,
-        audit_policy=parent_inputs.audit_policy,
+        artifact_policy=artifact_policy,
+        executor_contract=executor_contract,
+        audit_policy=artifact_policy.audit_taxonomy,
         parent_authority_bundle=bundle,
         immutable_objects=immutable_objects,
         frozen_audit_epoch=frozen_epoch,
@@ -1166,6 +1211,92 @@ def _prepare_protocol_25_l3_child(
     graph = build_protocol_25_graph(manifest, graph_inputs, accepted_parent)
     canonical_json_bytes(manifest.to_json_dict())
     return PreparedProtocol25Creation(parent, manifest, inputs, graph)
+
+
+def _validate_monotonic_successor_policy_upgrade(
+    parent_policy: object,
+    successor_policy: object,
+) -> None:
+    """Allow retained authority across capacity-only semantic policy upgrades."""
+    from dataclasses import replace
+
+    from .policies import SemanticArtifactPolicyCatalogV1
+
+    if not isinstance(parent_policy, SemanticArtifactPolicyCatalogV1) or not isinstance(
+        successor_policy, SemanticArtifactPolicyCatalogV1
+    ):
+        raise ValueError("successor artifact policy upgrade has unsupported inputs")
+    if (
+        parent_policy.schema_version != successor_policy.schema_version
+        or parent_policy.inherited_catalog != successor_policy.inherited_catalog
+        or parent_policy.audit_taxonomy != successor_policy.audit_taxonomy
+    ):
+        raise ValueError("successor artifact policy changes semantic authority")
+    parent_entries = {item.artifact_kind: item for item in parent_policy.l3_entries}
+    successor_entries = {
+        item.artifact_kind: item for item in successor_policy.l3_entries
+    }
+    if parent_entries.keys() != successor_entries.keys():
+        raise ValueError("successor artifact policy changes semantic artifact kinds")
+    for kind, parent_entry in parent_entries.items():
+        successor_entry = successor_entries[kind]
+        if (
+            successor_entry.max_context_bundle_bytes
+            < parent_entry.max_context_bundle_bytes
+            or successor_entry.max_conservative_input_tokens
+            < parent_entry.max_conservative_input_tokens
+        ):
+            raise ValueError("successor artifact policy reduces a capacity ceiling")
+        normalized = replace(
+            successor_entry,
+            max_context_bundle_bytes=parent_entry.max_context_bundle_bytes,
+            max_conservative_input_tokens=parent_entry.max_conservative_input_tokens,
+        )
+        if normalized != parent_entry:
+            raise ValueError("successor artifact policy changes semantic rules")
+
+
+def _validate_monotonic_successor_executor_upgrade(
+    parent_contract: object,
+    successor_contract: object,
+) -> None:
+    """Allow retained authority across reservation-capacity-only upgrades."""
+    from dataclasses import replace
+
+    from .policies import SemanticExecutorContractCatalogV1
+
+    if not isinstance(
+        parent_contract, SemanticExecutorContractCatalogV1
+    ) or not isinstance(successor_contract, SemanticExecutorContractCatalogV1):
+        raise ValueError("successor executor capacity upgrade has unsupported inputs")
+    if (
+        parent_contract.schema_version != successor_contract.schema_version
+        or parent_contract.inherited_catalog != successor_contract.inherited_catalog
+    ):
+        raise ValueError("successor executor contract changes inherited authority")
+    parent_entries = {
+        item.producer_family: item for item in parent_contract.semantic_entries
+    }
+    successor_entries = {
+        item.producer_family: item for item in successor_contract.semantic_entries
+    }
+    if parent_entries.keys() != successor_entries.keys():
+        raise ValueError("successor executor contract changes semantic families")
+    for family, parent_entry in parent_entries.items():
+        successor_entry = successor_entries[family]
+        parent_limit = parent_entry.limits.max_billable_tokens_per_dispatch
+        successor_limit = successor_entry.limits.max_billable_tokens_per_dispatch
+        if successor_limit < parent_limit:
+            raise ValueError("successor executor contract reduces a capacity ceiling")
+        normalized = replace(
+            successor_entry,
+            limits=replace(
+                successor_entry.limits,
+                max_billable_tokens_per_dispatch=parent_limit,
+            ),
+        )
+        if normalized != parent_entry:
+            raise ValueError("successor executor contract changes execution authority")
 
 
 def initialize_protocol_25_child(run_dir: Path, parent: object) -> None:
@@ -1331,7 +1462,20 @@ def initialize_protocol_25_successor(
     source_ledger = exported.recovered.ledger
     lower_bundle = exported.parent.candidate.lower_authority_bundle
     import_semantic = manifest.run_mode != "new-audit-epoch"
+    semantic = exported.parent.candidate.semantic_authority
 
+    # Source-composition assessments authenticate a separately persisted
+    # composed view.  That blob is a ledger dependency rather than a catalog
+    # object, so copy it explicitly before replaying any retained records.
+    for assessment_hash in semantic.source_assessment_hashes if import_semantic else ():
+        assessment = source_ledger.source_composition_assessments[assessment_hash]
+        payload = exported.source_context.object_store.read_blob(
+            assessment.composed_authority_hash
+        )
+        if objects.put_blob(payload) != assessment.composed_authority_hash:
+            raise ValueError("successor composed source authority hash changed")
+
+    ledger_records: list[tuple[str, object]] = []
     for authority in lower_bundle.artifacts:
         acceptance = source_ledger.accepted_artifacts.get(authority.artifact_key_id)
         certification = source_ledger.certifications.get(
@@ -1342,17 +1486,26 @@ def initialize_protocol_25_successor(
         )
         if acceptance is None or certification is None or work_item is None:
             raise ValueError("successor lower authority receipt closure is incomplete")
-        ledger.record_certification(certification, work_item)
+        ledger_records.append(
+            (
+                "certification",
+                {
+                    "receipt": certification.to_json_dict(),
+                    "work_item": work_item.to_json_dict(),
+                },
+            )
+        )
         if authority.candidate_assessment_id is not None:
             assessment = source_ledger.candidate_assessments.get(
                 authority.candidate_assessment_id
             )
             if assessment is None:
                 raise ValueError("successor lower candidate authority is missing")
-            ledger.record_candidate_assessment(assessment)
-        ledger.record_artifact_acceptance(acceptance)
+            ledger_records.append(
+                ("candidate_assessment", assessment.to_json_dict())
+            )
+        ledger_records.append(("artifact", acceptance.to_json_dict()))
 
-    semantic = exported.parent.candidate.semantic_authority
     retained_semantic_hashes = (
         {
             *semantic.accepted_audit_candidate_hashes,
@@ -1377,7 +1530,9 @@ def initialize_protocol_25_successor(
         certification = source_ledger.semantic_certifications[
             acceptance.certification_receipt_id
         ]
-        ledger.record_semantic_certification(certification)
+        ledger_records.append(
+            ("semantic_certification", certification.to_json_dict())
+        )
         assessments = tuple(
             item
             for item in source_ledger.candidate_assessments.values()
@@ -1385,30 +1540,58 @@ def initialize_protocol_25_successor(
         )
         if len(assessments) != 1:
             raise ValueError("successor semantic candidate authority is ambiguous")
-        ledger.record_candidate_assessment(assessments[0])
-        ledger.record_artifact_acceptance(acceptance)
+        ledger_records.append(
+            ("candidate_assessment", assessments[0].to_json_dict())
+        )
+        ledger_records.append(("artifact", acceptance.to_json_dict()))
 
     if import_semantic and semantic.audit_epoch_id is not None:
-        ledger.record_audit_epoch(source_ledger.audit_epochs[semantic.audit_epoch_id])
+        ledger_records.append(
+            (
+                "audit_epoch",
+                source_ledger.audit_epochs[semantic.audit_epoch_id].to_json_dict(),
+            )
+        )
     for object_id in semantic.target_assessment_hashes if import_semantic else ():
-        ledger.record_target_closure_assessment(
-            source_ledger.target_closure_assessments[object_id]
+        ledger_records.append(
+            (
+                "target_closure_assessment",
+                source_ledger.target_closure_assessments[object_id].to_json_dict(),
+            )
         )
     for object_id in semantic.source_assessment_hashes if import_semantic else ():
-        ledger.record_source_composition_assessment(
-            source_ledger.source_composition_assessments[object_id]
+        ledger_records.append(
+            (
+                "source_composition_assessment",
+                source_ledger.source_composition_assessments[
+                    object_id
+                ].to_json_dict(),
+            )
         )
     for object_id in semantic.closure_receipt_ids if import_semantic else ():
-        ledger.record_finding_closure(source_ledger.finding_closures[object_id])
+        ledger_records.append(
+            (
+                "finding_closure",
+                source_ledger.finding_closures[object_id].to_json_dict(),
+            )
+        )
     if import_semantic and semantic.closure_root_hash is not None:
-        ledger.record_audit_closure_root(
-            source_ledger.audit_closure_roots[semantic.closure_root_hash]
+        ledger_records.append(
+            (
+                "audit_closure_root",
+                source_ledger.audit_closure_roots[
+                    semantic.closure_root_hash
+                ].to_json_dict(),
+            )
         )
     roots_by_identity = {
         item.identity: item for item in source_ledger.l3_source_roots.values()
     }
     for object_id in semantic.l3_source_root_hashes if import_semantic else ():
-        ledger.record_l3_source_root(roots_by_identity[object_id])
+        ledger_records.append(
+            ("l3_source_root", roots_by_identity[object_id].to_json_dict())
+        )
+    ledger.record_import_batch(ledger_records)
 
     source_replay = _replay_protocol_25_events(
         exported.source_context,
@@ -1454,6 +1637,57 @@ def initialize_protocol_25_successor(
                 },
             )
         )
+        # Adopt only progress that crossed the parent's durable per-target
+        # semantic-progress boundary. Accepted artifacts from an interrupted
+        # source cycle remain available as evidence, but do not advance the
+        # successor controller or close findings by themselves.
+        for target_id, semantic_round in sorted(
+            source_replay.rounds_by_target.items()
+        ):
+            expected_events.append(
+                (
+                    "semantic_progress_adopted",
+                    {
+                        "audit_target_id": target_id,
+                        "no_reduction_rounds": (
+                            source_replay.no_reduction_rounds_by_target.get(
+                                target_id,
+                                0,
+                            )
+                        ),
+                        "semantic_round": semantic_round,
+                        "unresolved_finding_ids": sorted(
+                            source_replay.unresolved_by_target[target_id]
+                        ),
+                    },
+                )
+            )
+            lineage = source_replay.resolution_overlays_by_target_round.get(
+                target_id,
+                {},
+            )
+            if set(lineage) != set(range(1, semantic_round + 1)):
+                if source_replay.unresolved_by_target[target_id]:
+                    raise ValueError(
+                        "successor unresolved semantic progress has no complete "
+                        "overlay lineage"
+                    )
+                continue
+            expected_events.append(
+                (
+                    "semantic_progress_lineage_adopted",
+                    {
+                        "audit_target_id": target_id,
+                        "overlay_chain": [
+                            {
+                                "resolution_overlay_id": lineage[round_index],
+                                "semantic_round": round_index,
+                            }
+                            for round_index in range(1, semantic_round + 1)
+                        ],
+                    },
+                )
+            )
     if import_semantic and semantic.closure_root_hash is not None:
         root = source_ledger.audit_closure_roots[semantic.closure_root_hash]
         expected_events.append(
@@ -1484,15 +1718,25 @@ def initialize_protocol_25_successor(
 
     events = EventStore(paths, protocol=PROTOCOL_25_EVENTS)
     existing = events.replay()
+    missing_events: list[tuple[str, dict[str, object], str]] = []
     for index, (event_type, payload) in enumerate(expected_events):
         if index < len(existing):
             event = existing[index]
-            if event.type != event_type or dict(event.payload) != payload:
-                raise ValueError("existing successor initialization conflicts with export")
+            canonical_payload = PROTOCOL_25_EVENTS.canonical_payload(
+                event_type,
+                payload,
+            )
+            if event.type != event_type or event.payload != canonical_payload:
+                raise ValueError(
+                    "existing successor initialization conflicts with export at "
+                    f"event {index + 1}: existing {event.type!r}, "
+                    f"expected {event_type!r}"
+                )
             continue
-        events.append(event_type, payload, occurred_at=manifest.created_at)
+        missing_events.append((event_type, payload, manifest.created_at))
     if len(existing) > len(expected_events):
         return
+    events.append_batch(missing_events)
 
     final = ledger.replay()
     if not {

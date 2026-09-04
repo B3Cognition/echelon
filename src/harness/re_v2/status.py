@@ -12,7 +12,11 @@ from .canonical import content_digest
 from .budget import BudgetDecision, evaluate_budget
 from .events import EventRecord, EventStore
 from .ledger import Ledger, LedgerView, ObjectStore
-from .model import RE_V2_SCHEMA_2_PROTOCOLS, RE_V2_SCHEMA_3_PROTOCOLS
+from .model import (
+    RE_V2_SCHEMA_2_PROTOCOLS,
+    RE_V2_SCHEMA_3_PROTOCOLS,
+    RE_V2_SCHEMA_4_PROTOCOLS,
+)
 from .planner import PlanDecision, WorkGraph, build_initial_inventory_graph, plan_next
 from .projection import rebuild_projection
 from . import publication as publication_store
@@ -77,7 +81,10 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
 
             rendered = render_protocol_26_status(run_path, as_json=as_json)
             return _attach_pending_l4(run_path, rendered, as_json=as_json)
-        if getattr(manifest, "engine_protocol_version", None) == "2.5":
+        if (
+            getattr(manifest, "engine_protocol_version", None)
+            in RE_V2_SCHEMA_4_PROTOCOLS
+        ):
             from .protocol_25.status import render_protocol_25_status
 
             rendered = render_protocol_25_status(run_path, as_json=as_json)

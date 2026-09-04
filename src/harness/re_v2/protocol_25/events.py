@@ -52,6 +52,8 @@ _SEMANTIC_EVENTS = frozenset(
         "source_composition_assessed",
         "finding_closure_recorded",
         "semantic_progress_recorded",
+        "semantic_progress_adopted",
+        "semantic_progress_lineage_adopted",
         "semantic_plateau_reached",
         "audit_closure_root_accepted",
         "l3_source_root_accepted",
@@ -91,6 +93,11 @@ def _nullable_nonnegative(value: object, field_name: str) -> None:
         raise ReV2EventError(f"{field_name} must be null or a nonnegative integer")
 
 
+def _nonnegative(value: object, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ReV2EventError(f"{field_name} must be a nonnegative integer")
+
+
 def _string(value: object, field_name: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ReV2EventError(f"{field_name} must be a nonempty string")
@@ -116,6 +123,24 @@ def _preflight_entry_array(value: object, field_name: str) -> None:
     target_ids = tuple(item.audit_target_id for item in entries)
     if len(target_ids) != len(set(target_ids)):
         raise ReV2EventError(f"{field_name} must have unique targets")
+
+
+def _semantic_overlay_chain(value: object, field_name: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ReV2EventError(f"{field_name} must be a nonempty array")
+    for expected_round, item in enumerate(value, start=1):
+        if not isinstance(item, dict) or frozenset(item) != {
+            "resolution_overlay_id",
+            "semantic_round",
+        }:
+            raise ReV2EventError(f"{field_name} entry is invalid")
+        _digest(item["resolution_overlay_id"], field_name)
+        _positive(item["semantic_round"], field_name)
+        if item["semantic_round"] != expected_round:
+            raise ReV2EventError(f"{field_name} rounds must be consecutive")
+    identities = [item["resolution_overlay_id"] for item in value]
+    if len(identities) != len(set(identities)):
+        raise ReV2EventError(f"{field_name} overlay identities must be unique")
 
 
 def _choice(*choices: str):  # type: ignore[no-untyped-def]
@@ -173,7 +198,11 @@ _PAYLOAD_SCHEMAS = {
     "semantic_context_projection_failed": {
         "max_canonical_json_bytes": _positive,
         "measured_canonical_json_bytes": _nullable_nonnegative,
-        "operation": _choice("source-composition-guard"),
+        "operation": _choice(
+            "semantic-resolution",
+            "closure-recheck",
+            "source-composition-guard",
+        ),
         "participating_target_ids": _digest_array,
         "provider_dispatch_count": _zero,
         "reason_code": _choice(
@@ -243,6 +272,16 @@ _PAYLOAD_SCHEMAS = {
         "unresolved_after_ids": _digest_array,
         "unresolved_before_ids": _digest_array,
     },
+    "semantic_progress_adopted": {
+        "audit_target_id": _digest,
+        "no_reduction_rounds": _nonnegative,
+        "semantic_round": _positive,
+        "unresolved_finding_ids": _digest_array,
+    },
+    "semantic_progress_lineage_adopted": {
+        "audit_target_id": _digest,
+        "overlay_chain": _semantic_overlay_chain,
+    },
     "semantic_plateau_reached": {
         "audit_target_id": _digest,
         "semantic_round": _positive,
@@ -308,6 +347,7 @@ class _SourceCycle:
     semantic_round: int
     resolution_targets: set[str] = field(default_factory=set)
     accepted_resolution_targets: set[str] = field(default_factory=set)
+    resolution_overlays_by_target: dict[str, str] = field(default_factory=dict)
     target_assessments: dict[str, str] = field(default_factory=dict)
     participating_targets: tuple[str, ...] = ()
     source_assessment_id: str | None = None
@@ -340,6 +380,9 @@ class Protocol25ReplayState(EventReplayState):
     rounds_by_target: dict[str, int] = field(default_factory=dict)
     no_reduction_rounds_by_target: dict[str, int] = field(default_factory=dict)
     unresolved_by_target: dict[str, frozenset[str]] = field(default_factory=dict)
+    resolution_overlays_by_target_round: dict[str, dict[int, str]] = field(
+        default_factory=dict
+    )
     plateau_targets: set[str] = field(default_factory=set)
     audit_closure_roots: set[str] = field(default_factory=set)
     l3_source_root_states: dict[str, str] = field(default_factory=dict)
@@ -526,6 +569,10 @@ class Protocol25ReplayState(EventReplayState):
             self._record_closure(payload)
         elif event_type == "semantic_progress_recorded":
             self._record_progress(payload)
+        elif event_type == "semantic_progress_adopted":
+            self._adopt_progress(payload)
+        elif event_type == "semantic_progress_lineage_adopted":
+            self._adopt_progress_lineage(payload)
         elif event_type == "semantic_plateau_reached":
             self._record_plateau(payload)
         elif event_type == "audit_closure_root_accepted":
@@ -598,11 +645,37 @@ class Protocol25ReplayState(EventReplayState):
             raise ReV2EventError(
                 "semantic context projection failure conflicts with active dispatch"
             )
+        operation = str(payload["operation"])
         cycle = self.source_cycles.get(str(payload["source_cycle_id"]))
         participants = tuple(payload["participating_target_ids"])
-        if (
-            self.audit_epoch_id is None
-            or cycle is None
+        if self.audit_epoch_id is None:
+            raise ReV2EventError(
+                "semantic context projection failure requires a frozen epoch"
+            )
+        if operation == "semantic-resolution":
+            if (
+                len(participants) != 1
+                or participants[0] not in self.audit_target_ids
+                or int(payload["semantic_round"])
+                != self.rounds_by_target.get(participants[0], 0) + 1
+            ):
+                raise ReV2EventError(
+                    "semantic context projection failure is outside a ready resolution"
+                )
+        elif operation == "closure-recheck":
+            if (
+                cycle is None
+                or len(participants) != 1
+                or cycle.source_id != payload["source_id"]
+                or cycle.semantic_round != payload["semantic_round"]
+                or participants[0] not in cycle.accepted_resolution_targets
+                or participants[0] in cycle.target_assessments
+            ):
+                raise ReV2EventError(
+                    "semantic context projection failure is outside a ready closure recheck"
+                )
+        elif (
+            cycle is None
             or cycle.source_id != payload["source_id"]
             or cycle.semantic_round != payload["semantic_round"]
             or (
@@ -622,7 +695,9 @@ class Protocol25ReplayState(EventReplayState):
             raise ReV2EventError(
                 "semantic context projection ceiling failure does not exceed its ceiling"
             )
-        cycle.participating_targets = participants
+        if operation == "source-composition-guard":
+            assert cycle is not None
+            cycle.participating_targets = participants
         self.semantic_context_projection_failure = dict(payload)
 
     def _freeze_epoch(self, payload: Mapping[str, object]) -> None:
@@ -789,6 +864,9 @@ class Protocol25ReplayState(EventReplayState):
         )
         assert operation.audit_target_id is not None
         cycle.accepted_resolution_targets.add(operation.audit_target_id)
+        cycle.resolution_overlays_by_target[operation.audit_target_id] = str(
+            payload["resolution_overlay_id"]
+        )
         self.semantic_operation = None
 
     def _accept_target_assessment(self, payload: Mapping[str, object]) -> None:
@@ -898,7 +976,63 @@ class Protocol25ReplayState(EventReplayState):
                 self.no_reduction_rounds_by_target.get(target, 0) + 1
             )
         self.unresolved_by_target[target] = after
+        overlay_id = cycle.resolution_overlays_by_target.get(target)
+        if overlay_id is None:
+            raise ReV2EventError(
+                "semantic progress has no accepted resolution overlay authority"
+            )
+        lineage = self.resolution_overlays_by_target_round.setdefault(target, {})
+        existing = lineage.get(expected_round)
+        if existing is not None and existing != overlay_id:
+            raise ReV2EventError("semantic progress overlay authority conflicts")
+        lineage[expected_round] = overlay_id
         cycle.progress_targets.add(target)
+
+    def _adopt_progress(self, payload: Mapping[str, object]) -> None:
+        """Project only parent progress that crossed its durable cycle boundary."""
+        if self.audit_epoch_id is None:
+            raise ReV2EventError("adopted semantic progress requires a frozen epoch")
+        if self.semantic_operation is not None or self.pending_semantic_binding:
+            raise ReV2EventError("adopted semantic progress conflicts with active work")
+        if any(not cycle.complete for cycle in self.source_cycles.values()):
+            raise ReV2EventError(
+                "adopted semantic progress conflicts with an active source cycle"
+            )
+        target = str(payload["audit_target_id"])
+        if target not in self.audit_target_ids or target not in self.audit_candidates:
+            raise ReV2EventError("adopted semantic progress target is outside the epoch")
+        if target in self.rounds_by_target or target in self.unresolved_by_target:
+            raise ReV2EventError("semantic progress may be adopted once per target")
+        semantic_round = int(payload["semantic_round"])
+        no_reduction_rounds = int(payload["no_reduction_rounds"])
+        if no_reduction_rounds > semantic_round:
+            raise ReV2EventError(
+                "adopted no-reduction count exceeds the semantic round"
+            )
+        self.rounds_by_target[target] = semantic_round
+        self.no_reduction_rounds_by_target[target] = no_reduction_rounds
+        self.unresolved_by_target[target] = frozenset(
+            payload["unresolved_finding_ids"]
+        )
+
+    def _adopt_progress_lineage(self, payload: Mapping[str, object]) -> None:
+        target = str(payload["audit_target_id"])
+        semantic_round = self.rounds_by_target.get(target)
+        if semantic_round is None:
+            raise ReV2EventError(
+                "adopted semantic lineage requires adopted target progress"
+            )
+        if target in self.resolution_overlays_by_target_round:
+            raise ReV2EventError("semantic lineage may be adopted once per target")
+        chain = tuple(payload["overlay_chain"])
+        if len(chain) != semantic_round:
+            raise ReV2EventError(
+                "adopted semantic lineage must cover every committed round"
+            )
+        self.resolution_overlays_by_target_round[target] = {
+            int(item["semantic_round"]): str(item["resolution_overlay_id"])
+            for item in chain
+        }
 
     def _record_plateau(self, payload: Mapping[str, object]) -> None:
         target = str(payload["audit_target_id"])

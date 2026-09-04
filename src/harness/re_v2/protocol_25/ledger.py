@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from harness.re_v2.ledger import (
     DurableLedger,
@@ -818,6 +818,13 @@ class Protocol25Ledger(Protocol22Ledger):
             object_store,
             PROTOCOL_25_LEDGER_PROTOCOL,
         )
+
+    def record_import_batch(
+        self,
+        values: Iterable[tuple[str, object]],
+    ) -> tuple[LedgerRecord, ...]:
+        """Import an ordered authority prefix with one authenticated replay."""
+        return self._append_batch(values)
 
     def record_semantic_certification(
         self, receipt: SemanticCertificationReceiptV1

@@ -671,3 +671,33 @@ def test_v2_publication_attribution_fails_closed_on_damaged_matching_generation(
 
     with pytest.raises(ReV2StatusError):
         render_v2_status(run_dir, as_json=True)
+
+
+@pytest.mark.unit
+def test_render_v2_status_routes_protocol_251_to_semantic_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from harness.re_v2 import status as status_module
+    from harness.re_v2.protocol_25 import status as protocol_25_status
+
+    run_dir = tmp_path / "re-protocol-251"
+    run_dir.mkdir()
+    monkeypatch.setattr(status_module, "detect_re_engine", lambda _path: "v2")
+    monkeypatch.setattr(
+        status_module,
+        "load_run_manifest",
+        lambda _path: SimpleNamespace(engine_protocol_version="2.5.1"),
+    )
+    monkeypatch.setattr(
+        protocol_25_status,
+        "render_protocol_25_status",
+        lambda _path, *, as_json=False: (
+            "semantic-json\n" if as_json else "semantic\n"
+        ),
+    )
+
+    assert status_module.render_v2_status(run_dir) == "semantic\n"
+    assert status_module.render_v2_status(run_dir, as_json=True) == "semantic-json\n"

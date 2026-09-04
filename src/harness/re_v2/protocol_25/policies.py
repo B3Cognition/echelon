@@ -45,6 +45,8 @@ SEMANTIC_EXECUTOR_FAMILIES = (
     "source-composition-guard",
 )
 SEMANTIC_RENDERER_ID = "semantic-compact-renderer-v1"
+SOURCE_COMPOSITION_CONTEXT_CAPACITY = 512 * 1024
+SOURCE_COMPOSITION_DISPATCH_CAPACITY = 768 * 1024
 SEMANTIC_ARTIFACT_KINDS = (
     "audit-closure-root",
     "l3-source-root",
@@ -314,12 +316,12 @@ def build_semantic_v1_policy_catalog() -> SemanticArtifactPolicyCatalogV1:
             content_policy_version="semantic-closure-v1",
             max_canonical_json_bytes=128 * 1024,
             max_context_bundle_bytes=(
-                224 * 1024
+                SOURCE_COMPOSITION_CONTEXT_CAPACITY
                 if kind == "source-composition-assessment"
                 else 192 * 1024
             ),
             max_conservative_input_tokens=(
-                224 * 1024
+                SOURCE_COMPOSITION_CONTEXT_CAPACITY
                 if kind == "source-composition-assessment"
                 else 196_608
             ),
@@ -613,6 +615,16 @@ def build_semantic_executor_catalog(
                     ),
                 ),
             ),
+            limits=(
+                replace(
+                    baseline.limits,
+                    max_billable_tokens_per_dispatch=(
+                        SOURCE_COMPOSITION_DISPATCH_CAPACITY
+                    ),
+                )
+                if authority.producer_family == "source-composition-guard"
+                else baseline.limits
+            ),
         )
         for authority in selected
     )
@@ -620,6 +632,32 @@ def build_semantic_executor_catalog(
         schema_version=1,
         inherited_catalog=inherited,
         semantic_entries=entries,
+    )
+
+
+def with_current_semantic_executor_capacities(
+    catalog: SemanticExecutorContractCatalogV1,
+) -> SemanticExecutorContractCatalogV1:
+    """Apply current capacity envelopes without changing semantic authorities."""
+    if not isinstance(catalog, SemanticExecutorContractCatalogV1):
+        raise Protocol25SchemaError("semantic executor capacity upgrade is invalid")
+    return replace(
+        catalog,
+        semantic_entries=tuple(
+            replace(
+                item,
+                limits=replace(
+                    item.limits,
+                    max_billable_tokens_per_dispatch=max(
+                        item.limits.max_billable_tokens_per_dispatch,
+                        SOURCE_COMPOSITION_DISPATCH_CAPACITY,
+                    ),
+                ),
+            )
+            if item.producer_family == "source-composition-guard"
+            else item
+            for item in catalog.semantic_entries
+        ),
     )
 
 
@@ -631,6 +669,8 @@ __all__ = (
     "SEMANTIC_ARTIFACT_KINDS",
     "SEMANTIC_EXECUTOR_FAMILIES",
     "SEMANTIC_RENDERER_ID",
+    "SOURCE_COMPOSITION_CONTEXT_CAPACITY",
+    "SOURCE_COMPOSITION_DISPATCH_CAPACITY",
     "SemanticArtifactPolicyCatalogV1",
     "SemanticArtifactPolicyEntryV1",
     "SemanticExecutorAuthorityV1",
@@ -638,5 +678,6 @@ __all__ = (
     "SemanticRequestRendererAuthorityV1",
     "SemanticResponseSchemaReferenceV1",
     "build_semantic_executor_catalog",
+    "with_current_semantic_executor_capacities",
     "build_semantic_v1_policy_catalog",
 )

@@ -121,11 +121,13 @@ def test_dry_run_rejects_engine_option_owned_by_shadow_parameter(
     source = cli_path.read_text(encoding="utf-8")
     original = '''    shadow: bool = typer.Option(
         False,
-        "--shadow",'''
+        "--shadow",
+        help="For v2 only, explain the authoritative plan without dispatching work.",'''
     replacement = '''    shadow: bool = typer.Option(
         False,
         "--shadow",
-        "--engine",'''
+        "--engine",
+        help="For v2 only, explain the authoritative plan without dispatching work.",'''
     assert source.count(original) == 1
     cli_path.write_text(source.replace(original, replacement), encoding="utf-8")
     result = subprocess.run(
@@ -170,8 +172,12 @@ def test_dry_run_rejects_misdirected_shadow_callback_route(tmp_path: Path) -> No
     result = _mutated_dry_run(
         tmp_path,
         replace=(
-            'args.append("--shadow")',
-            'args.append("--engine-shadow")',
+            '''    if shadow:
+        args.append("--shadow")
+    _legacy_cli()._cmd_re_run(args)''',
+            '''    if shadow:
+        args.append("--engine-shadow")
+    _legacy_cli()._cmd_re_run(args)''',
         ),
     )
 

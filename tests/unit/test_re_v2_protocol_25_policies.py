@@ -81,13 +81,20 @@ def test_l3_policy_catalog_is_layered_over_exact_l2_catalog() -> None:
 
 
 def test_source_composition_guard_has_bounded_aggregate_context_headroom() -> None:
-    catalog = _policies().build_semantic_v1_policy_catalog()
+    module = _policies()
+    catalog = module.build_semantic_v1_policy_catalog()
 
     assert (
         catalog.entry_for(
             "L3", "source-composition-assessment"
         ).max_context_bundle_bytes
-        == 224 * 1024
+        == module.SOURCE_COMPOSITION_CONTEXT_CAPACITY
+    )
+    assert (
+        catalog.entry_for(
+            "L3", "source-composition-assessment"
+        ).max_conservative_input_tokens
+        == module.SOURCE_COMPOSITION_CONTEXT_CAPACITY
     )
     assert all(
         entry.max_context_bundle_bytes == 192 * 1024
@@ -133,11 +140,77 @@ def test_l3_executor_catalog_reuses_shared_cli_authorities() -> None:
         assert entry.executor_implementation_digest == baseline.executor_implementation_digest
         assert entry.reservation_calculator == baseline.reservation_calculator
         assert entry.token_accounting == baseline.token_accounting
-        assert entry.limits == baseline.limits
+        if family == "source-composition-guard":
+            assert entry.limits == replace(
+                baseline.limits,
+                max_billable_tokens_per_dispatch=(
+                    module.SOURCE_COMPOSITION_DISPATCH_CAPACITY
+                ),
+            )
+        else:
+            assert entry.limits == baseline.limits
         assert entry.model is None
         assert entry.api_transport is None
         assert entry.request_tokenizer is None
         assert entry.generation is None
+
+    assert (
+        module.SOURCE_COMPOSITION_DISPATCH_CAPACITY
+        > module.SOURCE_COMPOSITION_CONTEXT_CAPACITY
+    )
+
+
+def test_existing_semantic_executor_gets_capacity_only_upgrade() -> None:
+    module = _policies()
+    from harness.re_v2.protocol_25.lifecycle import (
+        _validate_monotonic_successor_executor_upgrade,
+    )
+    current = module.build_semantic_executor_catalog(
+        _parent_executor_catalog(),
+        _authorities(),
+        RENDERER_DIGEST,
+    )
+    source = current.entry_for("source-composition-guard")
+    legacy = replace(
+        current,
+        semantic_entries=tuple(
+            replace(
+                item,
+                limits=replace(
+                    item.limits,
+                    max_billable_tokens_per_dispatch=262_144,
+                ),
+            )
+            if item.producer_family == "source-composition-guard"
+            else item
+            for item in current.semantic_entries
+        ),
+    )
+
+    upgraded = module.with_current_semantic_executor_capacities(legacy)
+
+    _validate_monotonic_successor_executor_upgrade(legacy, upgraded)
+    assert upgraded.entry_for("source-composition-guard") == source
+    assert all(
+        upgraded.entry_for(family) == legacy.entry_for(family)
+        for family in SEMANTIC_FAMILIES
+        if family != "source-composition-guard"
+    )
+
+    with pytest.raises(ValueError, match="reduces a capacity ceiling"):
+        _validate_monotonic_successor_executor_upgrade(upgraded, legacy)
+
+    changed_authority = replace(
+        upgraded,
+        semantic_entries=tuple(
+            replace(item, result_contract_id="changed-result-contract")
+            if item.producer_family == "source-composition-guard"
+            else item
+            for item in upgraded.semantic_entries
+        ),
+    )
+    with pytest.raises(ValueError, match="changes execution authority"):
+        _validate_monotonic_successor_executor_upgrade(legacy, changed_authority)
 
 
 @pytest.mark.parametrize("provider_id", ("claude", "codex", "copilot", "opencode"))

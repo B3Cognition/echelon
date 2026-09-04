@@ -138,7 +138,13 @@ class ParentSemanticAuthorityV1:
                 raise Protocol25AdoptionError(
                     "parent semantic audit epoch cannot retain an unresolved audit target"
                 )
-            if self.closure_root_hash is None or not self.l3_source_root_hashes:
+            if self.closure_root_hash is None:
+                if self.l3_source_root_hashes or not self.unresolved_finding_ids:
+                    raise Protocol25AdoptionError(
+                        "incomplete parent semantic closure requires open findings "
+                        "and cannot claim L3 roots"
+                    )
+            elif not self.l3_source_root_hashes:
                 raise Protocol25AdoptionError(
                     "parent semantic audit epoch requires closure and L3 root authority"
                 )
@@ -445,9 +451,8 @@ def validate_protocol_25_parent(
     elif mode == "closure-successor":
         eligible = (
             candidate.parent_layer == "L3"
-            and candidate.parent_state == "blocked_plateau"
+            and candidate.parent_state in {"blocked_incomplete", "blocked_plateau"}
             and semantic.audit_epoch_id is not None
-            and semantic.closure_root_hash is not None
             and bool(semantic.unresolved_finding_ids)
         )
     if not eligible:
