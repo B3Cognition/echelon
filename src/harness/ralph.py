@@ -5313,6 +5313,11 @@ class RalphController:
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
             "If a failure mentions stale/scoped fulfillment evidence, treat it as "
             "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
+            "Ralph owns browser verification execution. Browser or Playwright evidence "
+            "must not be run from the coding CLI. Do not launch Chromium. Do not run "
+            "Playwright or browser E2E commands there. Ralph will rerun the configured "
+            "authoritative verifier after this repair. You may run focused non-browser "
+            "checks that do not invoke a browser.\n\n"
             f"Inner fix {inner_iter}. "
             + (
                 "The prior repair did not clear this failure: diagnose before editing. "

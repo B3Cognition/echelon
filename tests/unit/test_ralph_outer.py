@@ -8830,6 +8830,31 @@ class TestPromptHelpers:
         assert "focused failing check" in result
         assert "hit target" in result
 
+    def test_feedback_prompt_reserves_browser_execution_for_ralph(
+        self, tmp_path: Path
+    ) -> None:
+        """A coding CLI must not launch Chromium during a browser repair."""
+        from harness.verify_result import FailureEntry, FailureCategory, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command",
+                    error="Playwright concurrent-session journey failed",
+                )
+            ],
+        )
+
+        result = controller._make_feedback_prompt("spec 001", verify, inner_iter=2)
+
+        assert "Do not launch Chromium" in result
+        assert "Do not run Playwright" in result
+        assert "configured authoritative verifier" in result
+        assert "focused non-browser checks" in result
+
     def test_verify_owned_artifact_includes_playwright_results(self) -> None:
         from harness.ralph import _is_verify_owned_artifact
 

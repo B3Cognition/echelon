@@ -45,6 +45,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Harness-owned browser verification** — Ralph repair prompts now reserve
+  Chromium and Playwright execution for Echelon's configured authoritative
+  verifier. Coding providers may still run focused non-browser checks, but no
+  longer attempt browser launches from their restricted host sandbox.
+
 - **Live Phase A status and Banzai consensus recovery** — `echelon spec status`
   now detects a live controller lease and tells operators to wait rather than
   suggesting a concurrent continuation. A completed, explicitly
