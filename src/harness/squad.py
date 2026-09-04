@@ -214,6 +214,12 @@ from echelon.product_inputs import (
     validate_immutable_product_input_package,
 )
 from harness.phase_display import format_phase_dispatch_line, format_phase_transition_line
+from harness.issue_identity import (
+    issue_fingerprint,
+    matching_issue_resolution,
+    record_issue_resolution,
+)
+from harness.prompt_markdown import read_prompt_markdown
 from harness.understanding_gate import has_current_understanding_evidence
 
 
@@ -2737,7 +2743,7 @@ class SquadController:
                 "schema_version",
             }
             repair_phase = "phase1-what"
-        elif schema_version == 2:
+        elif schema_version in (2, 3):
             reference_fields = {
                 "evidence_sha256",
                 "issue_id",
@@ -2822,6 +2828,12 @@ class SquadController:
                 **candidate,
                 "repair_phase": "phase1-what",
             }
+        elif payload["schema_version"] == 2:
+            expected_digest = self._dispatch_cap_candidate_digest({
+                key: value for key, value in candidate.items()
+                if key != "issue_fingerprint"
+            })
+            resolved_candidate = candidate
         else:
             expected_digest = self._dispatch_cap_candidate_digest(candidate)
             resolved_candidate = candidate
@@ -2905,7 +2917,7 @@ class SquadController:
                 ),
                 "issue_id": candidate["issue_id"],
                 "repair_phase": repair_phase,
-                "schema_version": 2,
+                "schema_version": 3 if "issue_fingerprint" in candidate else 2,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -5555,6 +5567,22 @@ class SquadController:
             )
         if producer_id == "phase_dispatch_limit":
             candidates = self._banzai_issue_resolution_candidates(dict(state))
+            # Reconstruct the format that was actually sealed. Older evidence
+            # references predate finding fingerprints; their complete original
+            # contract must still compare exactly before migration is allowed.
+            legacy_versions = {}
+            for option in decision.get("options", []):
+                payload = json.loads(str(option["description"]))
+                if isinstance(payload, Mapping):
+                    legacy_versions[option["id"]] = payload.get("schema_version")
+            candidates = [
+                {
+                    key: value for key, value in candidate.items()
+                    if key != "issue_fingerprint"
+                    or legacy_versions.get(candidate["issue_id"]) != 2
+                }
+                for candidate in candidates
+            ]
             return self._human_input_registry.prepare_controller(
                 source_kind=str(decision["source_kind"]),
                 producer_id=producer_id,
@@ -12235,8 +12263,9 @@ class SquadController:
             for candidate in candidates
             if candidate["issue_id"] in actionable_issue_ids
             and (
-                not isinstance(ledger.get(candidate["issue_id"]), Mapping)
-                or ledger[candidate["issue_id"]].get("status")
+                matching_issue_resolution(
+                    ledger, candidate["issue_fingerprint"]
+                ).get("status")
                 not in {"selected", "repaired", "validated"}
             )
         ]
@@ -13447,6 +13476,7 @@ class SquadController:
                 {
                     "issue_id": issue_id,
                     "title": issue_match.group(2),
+                    "issue_fingerprint": issue_fingerprint(title, body),
                     "repair_phase": repair_phase,
                     **fields,
                 }
@@ -13503,8 +13533,7 @@ class SquadController:
                 "dispatch-cap repair phase is invalid"
             )
         ledger = state.get("issue_resolution_ledger")
-        selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
-        selected_ledger[issue_id] = {
+        entry = {
             "issue_id": issue_id,
             "title": selection["title"],
             "severity": "ISSUE",
@@ -13516,6 +13545,9 @@ class SquadController:
             "confidence": selection["confidence"],
             "evidence_backed": selection["evidence_backed"],
         }
+        if selection.get("issue_fingerprint"):
+            entry["issue_fingerprint"] = selection["issue_fingerprint"]
+        selected_ledger = record_issue_resolution(ledger, issue_id, entry)
         return {
             "issue_resolution_ledger": selected_ledger,
             "selected_issue_resolution": issue_id,

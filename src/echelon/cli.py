@@ -41,6 +41,11 @@ from harness.recovery_instruction import (
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.issue_identity import (
+    issue_fingerprint,
+    matching_issue_resolution,
+    record_issue_resolution,
+)
 
 try:
     from codegen.memory.collision import check_wing_collision
@@ -5138,6 +5143,15 @@ def _phase_a_result_line(status: str, state: dict) -> str:
     return "  ·  ".join(parts)
 
 
+def _issue_explicitly_resolved(title: str, body: str) -> bool:
+    """Recognize resolution markers, not ordinary mentions of resolved evidence."""
+    return bool(
+        re.search(r"(?:[✓✔]\s*RESOLVED|\[RESOLVED\]|\(RESOLVED\))\s*$", title, re.IGNORECASE)
+        or re.search(r"\*\*Status(?::)?\*\*\s*:?[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
+        or re.search(r"(?m)^[ \t]*(?:-[ \t]*)?No action required\.?[ \t]*$", body, re.IGNORECASE)
+    )
+
+
 def _current_issues_recap(
     project_root: Path,
     squad_dir: Path,
@@ -5178,15 +5192,11 @@ def _current_issues_recap(
         issues: list[str] = []
         severity_counts: dict[str, int] = {}
         for title, body in issue_blocks:
-            issue_id_match = re.match(r"^(ISS-\d+):", title.strip())
-            issue_id = issue_id_match.group(1) if issue_id_match else ""
             if (
-                (issue_id and isinstance(ledger.get(issue_id), dict)
-                 and ledger[issue_id].get("status") == "validated")
-                or
-                "RESOLVED" in title.upper()
-                or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
-                or re.search(r"\bNo action required\b", body, re.IGNORECASE)
+                matching_issue_resolution(
+                    ledger, issue_fingerprint(title, body)
+                ).get("status") == "validated"
+                or _issue_explicitly_resolved(title, body)
             ):
                 continue
             severity = re.search(r"\*\*Severity(?::)?\*\*\s*:?\s*(\w+)", body)
@@ -5225,11 +5235,7 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
         issue_id_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
         if not issue_id_match:
             continue
-        if (
-            "RESOLVED" in title.upper()
-            or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
-            or re.search(r"\bNo action required\b", body, re.IGNORECASE)
-        ):
+        if _issue_explicitly_resolved(title, body):
             continue
         action = re.search(r"\*\*Action Required:\*\*\s*(.+)", body)
         amendment = re.search(r"\*\*Required Amendment\*\*:\s*(.+)", body)
@@ -5257,6 +5263,7 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
             continue
         request = {
             "issue_id": issue_id_match.group(1),
+            "issue_fingerprint": issue_fingerprint(title, body),
             "title": issue_id_match.group(2),
             "severity": severity.group(1).upper() if severity else "ISSUE",
             "guidance": guidance,
@@ -5282,8 +5289,8 @@ def _issue_resolution_guidance_recap(
     ledger = ledger if isinstance(ledger, dict) else {}
     lines: list[str] = []
     for request in _issue_resolution_requests(project_root, squad_dir, state):
-        entry = ledger.get(request["issue_id"])
-        if isinstance(entry, dict) and entry.get("status") == "validated":
+        entry = matching_issue_resolution(ledger, request["issue_fingerprint"])
+        if entry.get("status") == "validated":
             continue
         lines.append(
             f"- {request['issue_id']} [{request['severity']}]: {request['guidance']}"
@@ -5310,8 +5317,9 @@ def _issue_resolution_screen_guidance(
         request
         for request in _issue_resolution_requests(project_root, squad_dir, state)
         if not (
-            isinstance(ledger.get(request["issue_id"]), dict)
-            and ledger[request["issue_id"]].get("status") == "validated"
+            matching_issue_resolution(
+                ledger, request["issue_fingerprint"]
+            ).get("status") == "validated"
         )
     ]
     for index, request in enumerate(unresolved_requests):
@@ -5377,8 +5385,8 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     ledger = state.get("issue_resolution_ledger")
     if not isinstance(ledger, dict):
         ledger = {}
-    existing = ledger.get(issue_id)
-    if isinstance(existing, dict):
+    existing = matching_issue_resolution(ledger, matching["issue_fingerprint"])
+    if existing:
         existing_status = str(existing.get("status") or "").strip()
         existing_decision = " ".join(
             str(existing.get("decision") or "").split()
@@ -5404,7 +5412,9 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     unresolved_before = [
         item["issue_id"]
         for item in requests
-        if ledger.get(item["issue_id"], {}).get("status") != "validated"
+        if matching_issue_resolution(
+            ledger, item["issue_fingerprint"]
+        ).get("status") != "validated"
     ]
     if unresolved_before and unresolved_before[0] != issue_id:
         print(
@@ -5412,12 +5422,12 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
             file=sys.stderr,
         )
         raise SystemExit(1)
-    ledger[issue_id] = {
+    ledger = record_issue_resolution(ledger, issue_id, {
         **matching,
         "status": "selected",
         "decision": decision,
         "repair_phase": "phase1-what",
-    }
+    })
     state["issue_resolution_ledger"] = ledger
     state["selected_issue_resolution"] = issue_id
     # A new decision starts a new targeted-validation allowance, even when it

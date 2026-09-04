@@ -585,6 +585,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
     assert resolved["selected_issue_resolution"] == "ISS-002"
     assert "issue_resolution_revalidation_attempted" not in resolved
+    assert len(resolved["issue_resolution_ledger"]["ISS-002"].pop("issue_fingerprint")) == 64
     assert resolved["issue_resolution_ledger"]["ISS-002"] == {
         "issue_id": "ISS-002",
         "title": "Retry policy needs a product decision",
@@ -645,6 +646,15 @@ def test_resolve_same_selected_decision_is_idempotent(
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
+    # Establish content-bound authority through the real CLI first. A legacy
+    # ID-only record cannot certify the current issue after an upgrade.
+    _cmd_spec_resolve(
+        ["ISS-001", "Use exponential backoff."],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+    first_state = json.loads(state_path.read_text(encoding="utf-8"))
+    first_baseline = first_state["issue_resolution_repair_baseline"]
     _cmd_spec_resolve(
         ["ISS-001", "Use exponential backoff."],
         project_root=tmp_path,
@@ -652,7 +662,8 @@ def test_resolve_same_selected_decision_is_idempotent(
     )
 
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
-    assert unchanged["issue_resolution_repair_baseline"] == {"recorded_at": "fixed"}
+    assert unchanged == first_state
+    assert unchanged["issue_resolution_repair_baseline"] == first_baseline
     assert "already recorded with this decision" in capsys.readouterr().out
 
 
@@ -691,6 +702,41 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "issue_resolution_ledger" not in unchanged
 
 
+def test_resolve_and_status_recognize_reused_id_with_changed_evidence(tmp_path: Path) -> None:
+    from echelon.cli import _cmd_spec_resolve, _issue_resolution_screen_guidance
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    issues = spec_dir / "issues.md"
+    issues.write_text("""### ISS-001: Mental-model source gaps contradict resolved feature evidence
+- **Severity:** HIGH
+- **Affected artifact:** assumptions.md
+- **Evidence:** The user decision establishes non-collision.
+- **Action Required:** Reconcile the discovery artifact to resolved evidence.
+""")
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    state["spec_dir"] = str(spec_dir)
+    state_path.write_text(json.dumps(state))
+    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    state = json.loads(state_path.read_text())
+    state["issue_resolution_ledger"]["ISS-001"]["status"] = "validated"
+    state["selected_issue_resolution"] = None
+    prior = dict(state["issue_resolution_ledger"]["ISS-001"])
+    state_path.write_text(json.dumps(state))
+    issues.write_text(issues.read_text().replace("assumptions.md", "mental-model.md"))
+
+    guidance = dict(_issue_resolution_screen_guidance(tmp_path, run_dir, state))
+    assert "ISS-001" in guidance
+    _cmd_spec_resolve(["ISS-001", "Reconcile the discovery evidence."], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+
+    selected = json.loads(state_path.read_text())["issue_resolution_ledger"]["ISS-001"]
+    assert selected["status"] == "selected"
+    assert selected["issue_fingerprint"] != prior["issue_fingerprint"]
+    assert selected["previous_resolutions"] == [prior]
+
+
 def test_issue_requests_skip_resolved_issues_and_read_required_amendment(tmp_path: Path) -> None:
     from echelon.cli import _issue_resolution_requests
 
@@ -711,7 +757,9 @@ No action required.
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     state["spec_dir"] = str(spec_dir)
 
-    assert _issue_resolution_requests(tmp_path, run_dir, state) == [
+    requests = _issue_resolution_requests(tmp_path, run_dir, state)
+    assert len(requests[0].pop("issue_fingerprint")) == 64
+    assert requests == [
         {
             "issue_id": "ISS-002",
             "title": "State machine incomplete",

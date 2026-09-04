@@ -179,14 +179,16 @@ def test_issue_resolution_context_keeps_repaired_issue_available_for_retry():
         "issue_resolution_ledger": {
             "ISS-001": {
                 "status": "repaired",
-                "title": "Retry policy",
-                "guidance": "Choose retry behavior.",
-                "decision": "Use exponential backoff.",
+                "title": "Stale mental model",
+                "guidance": "Reconcile mental-model.md with resolved evidence.",
+                "decision": "Record the shared-seed lifecycle in mental-model.md.",
             }
         },
     })
 
     assert "ISS-001" in prompt
-    assert "Use exponential backoff." in prompt
+    assert "Record the shared-seed lifecycle in mental-model.md." in prompt
+    assert "Amend spec.md only when the named repair requires" in prompt
+    assert "current affected artifacts implement that decision" in prompt
     assert "targeted validation" in prompt
     assert "OMIT this issue from `finding_routes`" in prompt

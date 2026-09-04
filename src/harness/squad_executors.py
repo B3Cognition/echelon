@@ -803,13 +803,13 @@ def _render_issue_resolution_context(state: dict) -> str:
     if status == "repaired":
         validation_rules = (
             "- This repair is now under targeted validation. Compare the current "
-            "specification with the exact guidance and user decision above.\n"
-            "- If the current specification implements that decision, OMIT this "
+            "affected artifacts with the exact guidance and decision above.\n"
+            "- If the current affected artifacts implement that decision, OMIT this "
             "issue from `finding_routes` even when the aggregate Understanding "
             "gate still fails. Those aggregate failures may be caused by other "
             "issues.\n"
             "- Re-list this issue only when you can identify a concrete missing or "
-            "contradictory part of its decision in the current spec, citing the "
+            "contradictory part of its decision in the affected artifacts, citing the "
             "affected section and the missing detail. Never re-list it merely "
             "because it appeared in a prior issues.md or prior score report.\n"
         )
@@ -818,7 +818,10 @@ def _render_issue_resolution_context(state: dict) -> str:
         f"- Issue: {selected} — {entry.get('title', '')}\n"
         f"- SAGE guidance: {entry.get('guidance', '')}\n"
         f"- User decision: {entry.get('decision', '')}\n"
-        "- You MUST amend the canonical spec.md to implement this named repair. "
+        "- You MUST implement this named repair in the affected canonical artifacts "
+        "identified by the current issues.md and decision above. Amend spec.md only "
+        "when the named repair requires a specification change; a repair to discovery "
+        "artifacts such as mental-model.md does not require an unrelated spec.md edit. "
         "Do not declare the issue advisory, defer it, or claim design readiness instead.\n"
         "- If the repair cannot be completed from the declared evidence, return FAIL "
         "with the exact missing evidence or user decision; do not advance.\n"

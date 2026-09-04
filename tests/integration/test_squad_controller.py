@@ -7560,6 +7560,113 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    @pytest.mark.parametrize("current_id", ["ISS-001", "ISS-017"])
+    def test_banzai_does_not_reselect_the_same_resolved_finding(
+        self, tmp_path: Path, current_id: str,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        content = issues_path.read_text().replace("ISS-QUALITY-0", "ISS-001").replace(
+            "**Banzai eligible:** no", "**Banzai eligible:** yes"
+        )
+        issues_path.write_text(content)
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        state.update({
+            "autonomy_mode": "banzai",
+            "issue_resolution_ledger": {"ISS-001": {
+                "status": "validated", "issue_fingerprint": candidate["issue_fingerprint"],
+            }},
+        })
+        store.save(state)
+        issues_path.write_text(content.replace("ISS-001", current_id))
+        snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+        assessment = SimpleNamespace(exact_routes=({"issue_id": current_id, "route": "spec_repair"},))
+
+        assert ctrl._prepare_banzai_quality_issue_resolution(snapshot, assessment) is None
+        assert store.load() == snapshot.state
+
+    @pytest.mark.parametrize("legacy_option", [False, True])
+    def test_issue_options_bind_current_artifact_evidence_and_read_legacy_seals(
+        self, tmp_path: Path, legacy_option: bool,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(issues_path.read_text().replace("ISS-QUALITY-0", "ISS-001").replace(
+            "**Banzai eligible:** no", "**Banzai eligible:** yes"
+        ))
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        if legacy_option:
+            candidate.pop("issue_fingerprint")
+        option = ctrl._dispatch_cap_options([candidate])[0]
+        resolved = ctrl._dispatch_cap_candidate_for_resolution(state, option)
+        assert len(resolved["issue_fingerprint"]) == 64
+        if not legacy_option:
+            issues_path.write_text(issues_path.read_text().replace(
+                "**Affected artifact:** spec.md", "**Affected artifact:** mental-model.md"
+            ))
+            with pytest.raises(HumanInputPolicyError, match="evidence changed"):
+                ctrl._dispatch_cap_candidate_for_resolution(state, option)
+
+    @pytest.mark.parametrize("old_identity", ["legacy", "different_title", "different_evidence"])
+    def test_banzai_reused_issue_id_recovers_after_quality_budget_exhaustion(
+        self, tmp_path: Path, old_identity: str,
+    ) -> None:
+        """A new contradiction must not inherit an unrelated ISS-001 resolution."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path, automatic_consumed=3)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        current = (
+            issues_path.read_text()
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("- **HIGH:** 0", "- **HIGH:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("**Severity:** LOW", "**Severity:** HIGH")
+            .replace("**Type:** incompleteness", "**Type:** contradiction")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        old = current.replace(
+            "Residual quality debt" if old_identity == "different_title" else
+            "The immutable Understanding score is below threshold.",
+            "A different, already resolved finding.",
+        )
+        why2.echelon_result["state_updates"]["finding_routes"]["findings"][0]["issue_id"] = "ISS-001"
+        issues_path.write_text(old)
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        selection = ctrl._validate_banzai_issue_resolution_selection(
+            {"issue_id": "ISS-001", "decision": candidate["suggested_option"],
+             "rationale": candidate["evidence_basis"], "confidence": "high",
+             "evidence_backed": True}, [candidate],
+        )
+        previous = ctrl._issue_resolution_state_updates(
+            state, selection, source_phase="phase1-why2",
+        )["issue_resolution_ledger"]["ISS-001"]
+        previous["status"] = "validated"
+        if old_identity == "legacy":
+            previous.pop("issue_fingerprint", None)
+        state.update(updates)
+        state.update({"autonomy_mode": "banzai", "issue_resolution_ledger": {"ISS-001": previous}})
+        store.save(state)
+        issues_path.write_text(current)
+
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+
+        persisted = store.load()
+        assert persisted["status"] == "running"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["blocked_decision"]["status"] == "resolved"
+        assert persisted["phase1_quality_repair"]["automatic_consumed"] == 3
+        selected = persisted["issue_resolution_ledger"]["ISS-001"]
+        assert selected["status"] == "selected"
+        assert selected["issue_fingerprint"] != previous.get("issue_fingerprint")
+        assert selected["previous_resolutions"] == [previous]
+        ctrl._provider.exec_agent.assert_not_called()
+
     def test_banzai_resolves_eligible_sage_issue_before_proportional_budget(
         self,
         tmp_path: Path,
