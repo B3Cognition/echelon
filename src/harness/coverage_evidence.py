@@ -188,7 +188,7 @@ def _table_cells(line: str) -> list[str]:
 
 def _requirement_ids(value: str, canonical_ids: set[str]) -> tuple[str, ...]:
     selected: list[str] = []
-    for raw in re.split(r"\s*,\s*", value.strip()):
+    for raw in re.split(r"\s*(?:,|/)\s*", value.strip()):
         token = raw.strip()
         match = _RANGE_RE.fullmatch(token)
         if match is None:

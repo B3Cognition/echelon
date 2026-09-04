@@ -49,6 +49,27 @@ def test_build_coverage_evidence_expands_ranges_and_preserves_test_ids(
 
 
 @pytest.mark.unit
+def test_build_coverage_evidence_accepts_slash_separated_requirement_ids(
+    tmp_path: Path,
+) -> None:
+    """Coverage rows may jointly own acceptance and functional requirements."""
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_map(
+        spec_dir,
+        "| AC-001 / FR-001 | E-SCENE-001 | e2e | automated | automated | tests/e2e/scene.spec.ts | |\n",
+    )
+
+    result = build_coverage_evidence(
+        spec_dir=spec_dir,
+        canonical_ids=("AC-001", "FR-001"),
+        deferred_ids=set(),
+    )
+
+    assert result.by_requirement["AC-001"].status == "automated"
+    assert result.by_requirement["FR-001"].status == "automated"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("automation", "coverage", "expected"),
     [

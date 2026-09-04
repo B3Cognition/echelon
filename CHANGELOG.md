@@ -45,6 +45,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Coupled coverage requirements** — Fulfillment evidence now recognizes
+  slash-separated requirement IDs in one coverage-map row (for example,
+  `AC-001 / FR-001`), rather than falsely treating both requirements as
+  absent and exhausting delivery repair attempts.
+
 - **Harness-owned browser verification** — Ralph repair prompts now reserve
   Chromium and Playwright execution for Echelon's configured authoritative
   verifier. Coding providers may still run focused non-browser checks, but no
