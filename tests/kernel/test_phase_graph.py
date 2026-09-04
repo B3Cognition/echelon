@@ -375,6 +375,22 @@ class TestPhaseGraph:
                     ),
                 ),
             ),
+            (
+                "controller_safeguard",
+                "banzai_issue_resolution",
+                "banzai_issue_resolution",
+            ): (
+                "material", "require_human", "banzai_issue_resolution", False,
+                frozenset({"phase1-why2"}),
+                frozenset({"phase1-what"}),
+                (
+                    "phase",
+                    "issue_resolution_ledger",
+                    "phase1_quality_repair",
+                    "understanding_evidence",
+                ),
+                (), (),
+            ),
             ("controller_safeguard", "phase_dispatch_limit", "phase_dispatch_limit"): (
                 "material", "require_human", "phase_dispatch_limit", False,
                 dispatch_phases,

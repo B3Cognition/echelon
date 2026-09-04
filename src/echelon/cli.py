@@ -66,7 +66,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.12"
+CLI_VERSION = "4.0.14"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -745,38 +745,23 @@ def _cmd_init(
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
-    local_cfg = project_dir / ".echelon" / "local.yml"
     try:
-        _assert_local_config_untracked(project_dir)
-        local_config = (
-            yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
-            if local_cfg.exists()
-            else {}
-        )
-        if not isinstance(local_config, dict):
-            raise ValueError(f"local config must be a mapping: {local_cfg}")
         selected_llm_cli = _apply_workspace_llm_selection(
-            local_config,
+            config,
             llm_cli=llm_cli,
             openai_base_url=openai_base_url,
             openai_model=openai_model,
             openai_api_key_file=openai_api_key_file,
             openai_api_key_env=openai_api_key_env,
         )
-        local_cfg.parent.mkdir(parents=True, exist_ok=True)
-        local_cfg.write_text(
-            yaml.dump(local_config, default_flow_style=False, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
-        _ensure_local_config_ignored(project_dir)
     except Exception as e:
-        print(f"✗ Cannot write local LLM provider: {e}", file=sys.stderr)
+        print(f"✗ Cannot configure LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
     echelon_cfg.write_text(
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"✓ local LLM provider configured: {selected_llm_cli}")
+    print(f"✓ LLM provider configured: {selected_llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
@@ -1096,106 +1081,6 @@ def _dispatch_land_to_spec_targets(
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
 
-def _cmd_harness(args: list[str]) -> None:
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: echelon harness <subcommand> [args...]\n"
-            "Compatibility alias for: echelon delivery <subcommand> [args...]\n\n"
-            "Subcommands:\n"
-            "  init                              Initialize delivery environment — config, mirror, verify\n"
-            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
-            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
-            "                                     Run build→verify→PR loop\n"
-            "                                     mode: semi (default) | banzai | guided\n"
-            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked run with a human answer\n"
-            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Continue a blocked/checkpointed run without a new answer\n"
-            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
-            "Examples:\n"
-            "  echelon delivery init\n"
-            "  echelon delivery init https://github.com/org/repo\n"
-            "  echelon delivery run 001\n"
-            "  echelon delivery run 001 strategy=codegen\n"
-            "  echelon delivery run 001 strategy=default mode=banzai max_outer=3\n"
-            "  echelon delivery continue 001\n"
-            "  echelon delivery resume 001 \"Use the simpler option\"\n"
-        )
-        return
-
-    subcmd = args[0]
-    if subcmd == "init":
-        _cmd_harness_init(args[1:])
-    elif subcmd == "run":
-        _cmd_harness_run(args[1:])
-    elif subcmd == "resume":
-        _cmd_harness_resume(args[1:])
-    elif subcmd == "continue":
-        _cmd_harness_continue(args[1:])
-    elif subcmd == "land":
-        _cmd_land(args[1:])
-    else:
-        print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
-        sys.exit(1)
-
-
-def _cmd_delivery(args: list[str]) -> None:
-    if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage: echelon delivery <subcommand> [args...]\n\n"
-            "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
-            "Subcommands:\n"
-            "  init                              Initialize delivery environment — sandbox, mirror, verify\n"
-            "  target <spec_id>                  Prepare target-scoped delivery metadata\n"
-            "  status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state\n"
-            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
-            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
-            "                                     Run build→verify→PR loop\n"
-            "                                     mode: semi (default) | banzai | guided\n"
-            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked delivery run with a human answer\n"
-            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Continue a blocked/checkpointed delivery run without a new answer\n"
-            "  checkpoint list <spec_id> [strategy=<s>]\n"
-            "                                     List delivery checkpoint/recovery commits\n"
-            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
-            "Examples:\n"
-            "  echelon delivery init\n"
-            "  echelon delivery target 001\n"
-            "  echelon delivery status 001\n"
-            "  echelon delivery run 001\n"
-            "  echelon delivery run 001 strategy=codegen\n"
-            "  echelon delivery run 001 mode=banzai max_outer=3\n"
-            "  echelon delivery continue 001\n"
-            "  echelon delivery resume 001 \"Use the simpler option\"\n"
-            "  echelon delivery land 001\n"
-        )
-        return
-
-    subcmd = args[0]
-    if subcmd == "init":
-        _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
-    elif subcmd == "target":
-        _cmd_delivery_target(args[1:])
-    elif subcmd == "status":
-        _cmd_delivery_status(args[1:])
-    elif subcmd == "run":
-        _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
-    elif subcmd == "resume":
-        _cmd_harness_resume(args[1:])
-    elif subcmd == "continue":
-        _cmd_harness_continue(args[1:])
-    elif subcmd == "checkpoint":
-        _cmd_delivery_checkpoint(args[1:])
-    elif subcmd == "land":
-        _cmd_land(args[1:])
-    else:
-        print(f"echelon delivery: unknown subcommand '{subcmd}'\n", file=sys.stderr)
-        sys.exit(1)
-
-
 def _print_harness_config_error(error: Exception) -> None:
     field_path = getattr(error, "field_path", None)
     if field_path == "target_repo":
@@ -1213,6 +1098,129 @@ def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "ech
         f"  Delivery will not infer or mutate targets for spec '{spec_id}'.",
         file=sys.stderr,
     )
+
+
+def _delivery_provisioning_blockers(
+    project_root: Path,
+    target_root: Path,
+) -> list[str]:
+    """Return target-local verification provisioning blockers without side effects."""
+    from harness.config import get_full_resolved_config
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    target_config_dir = target_root / ".echelon"
+    # A configured source owns its stack selection. Targets without their own
+    # config keep the historical workspace-root selection for compatibility.
+    target_has_source_config = target_root != project_root and any(
+        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    stack_config_root = target_root if target_has_source_config else project_root
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    target_archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not all(
+        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
+    ):
+        raise StackSelectionError(
+            "stacks.selected must be a list of non-empty stack IDs"
+        )
+    if not isinstance(target_archetypes, list) or not all(
+        isinstance(archetype, str) and archetype.strip()
+        for archetype in target_archetypes
+    ):
+        raise StackSelectionError(
+            "stacks.target_archetypes must be a list of non-empty archetype IDs"
+        )
+    if not selected:
+        return []
+
+    definitions = _load_stack_definitions_for_project(project_root)
+    resolved = resolve_stacks(
+        selected,
+        definitions,
+        target_archetypes=set(target_archetypes) or None,
+    )
+    target = target_root
+    blockers: list[str] = []
+    for status in provisioning_statuses(resolved, target, os.environ):
+        provisioner = next(
+            item.provisioner
+            for item in resolved.provisioners
+            if item.owner_stack_id == status.owner_stack_id
+            and item.provisioner.id == status.provisioner_id
+        )
+        environment = ", ".join(provisioner.required_environment)
+        if status.state == "missing":
+            blockers.append(
+                "STACK_PROVISIONING_MISSING: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "is not configured for this target. Run: "
+                f"echelon stack provision --target {target}"
+            )
+        elif status.state == "prepared":
+            blockers.append(
+                "STACK_PROVISIONING_PREPARED: verification provisioner "
+                f"{status.provisioner_id!r} for stack {status.owner_stack_id!r} "
+                "has target-local artifacts, but Echelon did not start the service. "
+                "Start the prepared service manually or configure an external URL via "
+                f"{environment}."
+            )
+    return blockers
+
+
+def _resolve_delivery_verification_services(
+    config: object,
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    """Attach target-applicable sandbox services from the stack contract."""
+    from harness.config import get_full_resolved_config
+
+    target_config_dir = target_root.resolve() / ".echelon"
+    stack_config_root = (
+        target_root.resolve()
+        if target_root.resolve() != project_root.resolve()
+        and any((target_config_dir / name).is_file() for name in ("config.yml", "local.yml"))
+        else project_root.resolve()
+    )
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not isinstance(archetypes, list):
+        raise StackSelectionError("stack selection must use list values")
+    resolved = resolve_stacks(
+        [str(value) for value in selected],
+        _load_stack_definitions_for_project(project_root),
+        target_archetypes={str(value) for value in archetypes} or None,
+    )
+    config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
+
+
+def _block_if_delivery_provisioning_incomplete(
+    *,
+    project_root: Path,
+    target_root: Path,
+) -> None:
+    blockers = _delivery_provisioning_blockers(project_root, target_root)
+    if not blockers:
+        return
+    print(
+        "✗ Delivery verification provisioning is not ready for this target.\n"
+        + "".join(f"  - {blocker}\n" for blocker in blockers),
+        file=sys.stderr,
+        end="",
+    )
+    raise SystemExit(1)
 
 
 def _block_if_spec_task_targets_mismatch(
@@ -2234,70 +2242,13 @@ def _cmd_harness_run(
         _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
         sys.exit(1)
 
-    from harness.config import load_config, ValidationError as HarnessValidationError
-    from harness.docker_provider import DockerWorktreeProvider
-    from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run, _count_tasks
+    # Validate authored build inputs before Phase A readiness.  A malformed
+    # published task/plan needs its migration guidance, while a well-formed but
+    # incomplete spec needs the Phase A recovery guidance.  Both checks happen
+    # before creating Git or sandbox resources.
+    from harness.skills.run_skill import _count_tasks
     from harness.plan_validation import PlanValidationError, validate_plan_file
     from harness.task_validation import TaskValidationError
-
-    # Single-repo mode: require local Echelon harness config.
-    echelon_yml = _project_echelon_config(config_root)
-    if not echelon_yml.exists():
-        print(
-            "✗ Harness not initialised for this project.\n"
-            f"  Expected: {echelon_yml}\n"
-            "  Fix: run 'echelon delivery init' first, or add 'targets:' to your spec.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from harness.paths import mirror_path as _mirror_path_fn
-    mirror_path = _mirror_path_fn(harness_base_dir)
-    if not mirror_path.exists() and not target_env:
-        print(
-            "✗ Harness mirror not initialised for this project.\n"
-            f"  Expected: {mirror_path}\n"
-            "  Fix: run 'echelon delivery init' to create the mirror.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    try:
-        config = load_config(project_root=config_root, squad_only=bool(target_env))
-    except HarnessValidationError as e:
-        _print_harness_config_error(e)
-        sys.exit(1)
-    if direct_target_path is not None:
-        config.target_repo = str(direct_target_path.resolve())
-        if not getattr(config, "target_default_branch", None):
-            config.target_default_branch = "main"
-        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
-            config.provider = "docker"
-        _apply_target_verify_command_detection(
-            config,
-            target_repo=direct_target_path.resolve(),
-            spec_id=spec_id,
-        )
-    elif target_env:
-        target_repo_path = Path(target_env).resolve()
-        config.target_repo = str(target_repo_path)
-        if not getattr(config, "target_default_branch", None):
-            config.target_default_branch = "main"
-        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
-            config.provider = "docker"
-        _apply_target_verify_command_detection(
-            config,
-            target_repo=target_repo_path,
-            spec_id=spec_id,
-        )
-    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
-    if target_env and not mirror_path.exists():
-        gitops.clone_mirror(config.target_repo)
-    provider = DockerWorktreeProvider(
-        buffer_limit_bytes=config.buffer_limit_bytes,
-        container_cli=_container_runtime_cli(config),
-    )
 
     try:
         task_count = _count_tasks(spec_id, str(spec_search_root))
@@ -2330,9 +2281,87 @@ def _cmd_harness_run(
                 file=sys.stderr,
             )
             sys.exit(1)
-
     if spec_dir is not None:
         _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.skills.run_skill import run
+
+    # Single-repo mode: require local Echelon harness config.
+    echelon_yml = _project_echelon_config(config_root)
+    if not echelon_yml.exists():
+        print(
+            "✗ Harness not initialised for this project.\n"
+            f"  Expected: {echelon_yml}\n"
+            "  Fix: run 'echelon delivery init' first, or add 'targets:' to your spec.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from harness.paths import mirror_path as _mirror_path_fn
+    mirror_path = _mirror_path_fn(harness_base_dir)
+    if not mirror_path.exists() and not target_env:
+        print(
+            "✗ Harness mirror not initialised for this project.\n"
+            f"  Expected: {mirror_path}\n"
+            "  Fix: run 'echelon delivery init' to create the mirror.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_config(project_root=config_root, squad_only=bool(target_env))
+    except HarnessValidationError as e:
+        _print_harness_config_error(e)
+        sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
+    if direct_target_path is not None:
+        config.target_repo = str(direct_target_path.resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=direct_target_path.resolve(),
+            spec_id=spec_id,
+        )
+    elif target_env:
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=target_repo_path,
+            spec_id=spec_id,
+        )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
+    if target_env and not mirror_path.exists():
+        gitops.clone_mirror(config.target_repo)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=_container_runtime_cli(config),
+    )
 
     assert spec_dir is not None
     delivery_build_id = _prepare_delivery_build_state(
@@ -2354,7 +2383,7 @@ def _cmd_harness_run(
         _write_spec_status(spec_dir, "in_progress")
 
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -2364,6 +2393,10 @@ def _cmd_harness_run(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        # A child target process is the authority for its own delivery outcome.
+        # Multi-target orchestration must never infer success from rendered text.
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -2387,6 +2420,19 @@ def _cmd_harness_run(
             command=rerun_command,
             exc=exc,
         )
+
+
+def _delivery_outcome_exit_code(outcome: object) -> int:
+    """Return a process outcome from typed delivery state, never rendered text."""
+    from harness.delivery_results import DeliveryRunOutcome
+
+    if not isinstance(outcome, DeliveryRunOutcome):
+        # Keeps CLI adapters compatible with legacy/mocked run adapters. The
+        # production run skill always returns a typed DeliveryRunOutcome.
+        return 0
+    if outcome.landing.status == "blocked":
+        return 1
+    return 0 if any(result.status == "converged" for result in outcome.results) else 1
 
 
 def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
@@ -2618,7 +2664,7 @@ def _status_path(status_line: str) -> str:
     line = status_line.strip()
     if not line:
         return ""
-    path = line[3:].strip() if len(status_line) >= 4 else line
+    path = status_line[3:].strip() if len(status_line) >= 4 else line
     if " -> " in path:
         path = path.split(" -> ", 1)[1]
     return path.strip('"').replace("\\", "/")
@@ -2673,6 +2719,14 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
 
 
+def _outer_cap_delivery_action(spec_id: str) -> tuple[str, str]:
+    """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    return (
+        f"echelon delivery run {spec_id}",
+        "Starts a fresh outer-loop budget from the latest durable checkpoint.",
+    )
+
+
 def _cmd_harness_resume(
     args: list[str],
     *,
@@ -2689,7 +2743,8 @@ def _cmd_harness_resume(
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
             "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
-            "and recovery from build_incomplete/publish_failed committed work.\n\n"
+            "downstream visual/review/finalization failures, and recovery from\n"
+            "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. Fix the blocker shown by the previous delivery output.\n"
             "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
@@ -2825,6 +2880,12 @@ def _cmd_harness_resume(
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
+    if not hasattr(config, "verification") or not hasattr(
+        config.verification, "execution"
+    ):
+        from harness.config import VerificationConfig
+
+        config.verification = VerificationConfig()
     if direct_target_path is not None:
         config.target_repo = str(direct_target_path.resolve())
         if not getattr(config, "target_default_branch", None):
@@ -2848,6 +2909,17 @@ def _cmd_harness_resume(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
+
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
+    _resolve_delivery_verification_services(
+        config,
+        project_root=config_root,
+        target_root=Path(config.target_repo),
+    )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
@@ -2903,24 +2975,76 @@ def _cmd_harness_resume(
         "provider_session_limit",
         "target_merge_failed",
     }
+    downstream_continuation_reasons = {
+        "visual": {
+            "app_runtime_failed",
+            "missing_registered_worktree",
+            "verified_provenance_mismatch",
+            "visual_failed",
+            "visual_feedback_failed",
+        },
+        "review": {
+            "missing_pr_url",
+            "review_boundary_failed",
+            "review_provider_failed",
+            "review_reentry_checkpoint_failed",
+            "review_side_effects_pending",
+            "review_staging_failed",
+        },
+        "finalization": {
+            "finalization_write_failed",
+            "lifecycle_status_conflict",
+            "target_merge_failed",
+            "verified_provenance_mismatch",
+        },
+    }
+    blocked_phase = str(state.get("blocked_phase") or "")
+    if termination_reason in downstream_continuation_reasons.get(
+        blocked_phase, set()
+    ):
+        continuation_reasons.add(termination_reason)
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
     retryable_error_reasons = {"harness_error"}
 
-    if current_status != "blocked" and termination_reason not in recoverable_reasons:
+    resumable_statuses = {
+        "blocked",
+        "running",
+        "interrupted",
+        "verified",
+        "validating",
+        "reviewing",
+        "finalizing",
+    }
+    if (
+        current_status not in resumable_statuses
+        and termination_reason not in recoverable_reasons
+    ):
         print(
-            f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
-            "  Use 'echelon delivery run <spec_id>' to start or continue.",
+            f"✗ Spec {spec_id!r} has no resumable delivery checkpoint "
+            f"(status={current_status!r}).\n"
+            "  Use 'echelon delivery run <spec_id>' to start a new run.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if termination_reason not in {
+    if current_status == "blocked" and termination_reason not in {
         "verify_command_needed",
         *recoverable_reasons,
         *continuation_reasons,
         *retryable_error_reasons,
     }:
+        if termination_reason == "outer_cap":
+            next_command, next_explanation = _outer_cap_delivery_action(spec_id)
+            print(
+                f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
+                f"  Next: {next_command}\n"
+                f"  {next_explanation}\n"
+                "  Destructive alternative: "
+                f"echelon delivery run {spec_id} --reset discards the blocked delivery checkpoints.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if termination_reason == "build_blocked":
             build_reason = str(state.get("build_reason") or "the build agent reported a blocker")
             print(
@@ -3001,7 +3125,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3011,6 +3135,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3071,7 +3197,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3081,6 +3207,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3160,7 +3288,7 @@ def _cmd_harness_resume(
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(
+            outcome = run(
                 user_message,
                 provider,
                 gitops,
@@ -3170,6 +3298,8 @@ def _cmd_harness_resume(
                 orchestration_root=spec_search_root,
                 summary_command=command_prefix,
             )
+            if _delivery_outcome_exit_code(outcome):
+                raise SystemExit(1)
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -3216,7 +3346,7 @@ def _cmd_harness_resume(
     )
     user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
-        run(
+        outcome = run(
             user_message,
             provider,
             gitops,
@@ -3226,6 +3356,8 @@ def _cmd_harness_resume(
             orchestration_root=spec_search_root,
             summary_command=command_prefix,
         )
+        if _delivery_outcome_exit_code(outcome):
+            raise SystemExit(1)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -5919,21 +6051,27 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
     runs = project_root / "runs"
     if not runs.exists():
         return states
-    for build in sorted(runs.glob("build-*/"), reverse=True):
-        state_dir = build / "state"
-        if not state_dir.exists():
-            continue
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = _json.loads(state_file.read_text(encoding="utf-8"))
-            except Exception:
+    build_roots: list[tuple[Path, str]] = [(runs, "")]
+    for target_runs in sorted(runs.glob("targets/*/runs")):
+        build_roots.append((target_runs, target_runs.parent.name))
+    for build_root, target_id in build_roots:
+        for build in sorted(build_root.glob("build-*/"), reverse=True):
+            state_dir = build / "state"
+            if not state_dir.exists():
                 continue
-            if isinstance(data, dict):
-                data.setdefault("build_id", build.name)
-                data.setdefault("strategy_id", state_file.stem)
-                data.setdefault("state_file", str(state_file))
-                states.append(data)
-    return states
+            for state_file in sorted(state_dir.glob("*.json")):
+                try:
+                    data = _json.loads(state_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(data, dict):
+                    data.setdefault("build_id", build.name)
+                    data.setdefault("strategy_id", state_file.stem)
+                    data.setdefault("state_file", str(state_file))
+                    if target_id:
+                        data.setdefault("target_id", target_id)
+                    states.append(data)
+    return sorted(states, key=lambda state: str(state.get("build_id") or ""), reverse=True)
 
 
 def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
@@ -5977,20 +6115,107 @@ def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
     return spec_id, strategy, json_output
 
 
-def _delivery_status_next_step(state: dict, spec_id: str) -> str:
+def _delivery_status_escalation(state: dict, project_root: Path) -> dict[str, object] | None:
+    """Read optional human-decision details without making status fragile."""
+    raw_path = str(state.get("escalation_file") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = project_root / path
+    escalation: dict[str, object] = {"path": str(path)}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return escalation
+
+    def section(name: str) -> str:
+        match = re.search(
+            rf"^## {re.escape(name)}\s*$\n(.*?)(?=^## |\Z)",
+            text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        return match.group(1).strip() if match else ""
+
+    question = section("Question")
+    context = section("Context")
+    if question:
+        escalation["question"] = question
+    if context:
+        escalation["context"] = context
+    metadata = re.search(
+        r"^## Decision Metadata\s*$\n```json\s*(\{.*?\})\s*```",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if not metadata:
+        return escalation
+    try:
+        decision = json.loads(metadata.group(1))
+    except (json.JSONDecodeError, TypeError):
+        return escalation
+    suggestions = decision.get("suggested_answers") if isinstance(decision, dict) else None
+    if not isinstance(suggestions, list):
+        return escalation
+    choices: list[dict[str, str | bool]] = []
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        answer = str(suggestion.get("answer") or "").strip()
+        if not answer:
+            continue
+        choice = {
+            "label": str(suggestion.get("label") or "Suggested answer").strip(),
+            "answer": answer,
+            "consequence": str(suggestion.get("consequence") or "").strip(),
+            "recommended": bool(suggestion.get("recommended")),
+        }
+        choices.append(choice)
+    if choices:
+        escalation["choices"] = choices
+    return escalation
+
+
+def _delivery_status_next_step(
+    state: dict,
+    spec_id: str,
+    escalation: dict[str, object] | None = None,
+) -> str:
     status = str(state.get("status") or "unknown")
     termination_reason = str(state.get("termination_reason") or "")
     effective_spec = spec_id or str(state.get("spec_id") or "<spec_id>")
     if status == "converged":
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
+        if termination_reason == "outer_cap":
+            command, explanation = _outer_cap_delivery_action(effective_spec)
+            return f"{command}  # {explanation}"
         if str(state.get("escalation_file") or ""):
+            choices = escalation.get("choices") if escalation else None
+            if isinstance(choices, list):
+                recommended = next(
+                    (
+                        choice
+                        for choice in choices
+                        if isinstance(choice, dict) and choice.get("recommended")
+                    ),
+                    None,
+                )
+                if isinstance(recommended, dict):
+                    answer = str(recommended.get("answer") or "").strip()
+                    if answer:
+                        return f"echelon delivery resume {effective_spec} {shlex.quote(answer)}"
             return f'echelon delivery resume {effective_spec} "<answer>"'
         if termination_reason == "verify_command_needed":
             return "set delivery.verify_command, then echelon delivery continue " + effective_spec
+        if termination_reason == "build_blocked":
+            return (
+                "resolve the reported blocker, then "
+                f"echelon delivery run {effective_spec}"
+            )
         return f"echelon delivery continue {effective_spec}"
     if status in {"initialized", "running", "interrupted"}:
-        return f"echelon delivery continue {effective_spec}"
+        return f"echelon delivery run {effective_spec}"
     if status in {"failed", "cancelled_by_coordinator"}:
         return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
     return f"echelon delivery run {effective_spec}"
@@ -6006,6 +6231,11 @@ def _delivery_status_summary(
     status = str(state.get("status") or "unknown")
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
+    escalation = (
+        None
+        if str(state.get("termination_reason") or "") == "outer_cap"
+        else _delivery_status_escalation(state, project_root)
+    )
     summary = {
         "spec_id": spec_id,
         "strategy": strategy,
@@ -6022,12 +6252,49 @@ def _delivery_status_summary(
         "pr_url": str(state.get("pr_url") or ""),
         "target_branch": str(state.get("target_branch") or ""),
         "target_commit": str(state.get("target_commit") or ""),
+        "target": str(
+            state.get("target_id")
+            or state.get("target_repo")
+            or state.get("implementation_target")
+            or ""
+        ),
         "salvage_branch": str(state.get("salvage_branch") or ""),
         "salvage_commit": str(state.get("salvage_commit") or ""),
         "checkpoint_count": checkpoint_count,
         "state_file": str(state.get("state_file") or ""),
-        "next": _delivery_status_next_step(state, spec_id),
+        "next": _delivery_status_next_step(state, spec_id, escalation),
     }
+    if escalation is not None:
+        summary["escalation"] = escalation
+    publication_failure = state.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        summary["publication_failure"] = {
+            "stage": str(publication_failure.get("stage") or ""),
+            "error": str(publication_failure.get("error") or ""),
+        }
+    runnability = _normalized_delivery_runnability(state.get("user_runnability"))
+    if runnability is not None:
+        summary["user_runnability"] = runnability
+    last_verify = state.get("last_verify_result")
+    if isinstance(last_verify, dict):
+        verification_evidence = last_verify.get("verification_evidence")
+        if isinstance(verification_evidence, dict):
+            raw_playwright = verification_evidence.get("playwright")
+            if isinstance(raw_playwright, dict):
+                summary["playwright"] = {
+                    key: max(0, int(raw_playwright.get(key) or 0))
+                    for key in ("total", "passed", "failed", "skipped")
+                }
+    visual_evidence = state.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        summary["visual_evidence"] = {
+            "path": str(visual_evidence.get("path") or ""),
+            "passed": visual_evidence.get("passed") is True,
+            "artifact_count": max(0, int(visual_evidence.get("artifact_count") or 0)),
+            "candidate_fingerprint": str(
+                visual_evidence.get("candidate_fingerprint") or ""
+            ),
+        }
     try:
         from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 
@@ -6037,6 +6304,22 @@ def _delivery_status_summary(
             frontmatter = read_frontmatter(spec_dir)
             if frontmatter.get("status"):
                 summary["spec_status"] = str(frontmatter.get("status"))
+                if status == "converged" and summary["spec_status"] == "landed":
+                    summary["next"] = (
+                        "No action required; delivery is already landed."
+                    )
+            runnability = summary.get("user_runnability")
+            if isinstance(runnability, dict) and runnability.get("status") == "deferred":
+                try:
+                    from harness.runnability_disposition import read_runnability_disposition
+
+                    disposition = read_runnability_disposition(spec_dir)
+                    if disposition is not None and disposition.status == "deferred":
+                        runnability["proposal"] = str(
+                            spec_dir / disposition.follow_up_proposal
+                        )
+                except Exception:
+                    pass
             try:
                 from harness.harness_run_history import summarize_history
 
@@ -6071,6 +6354,8 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
     ]
     if summary.get("spec_status"):
         fields.append(("spec status", str(summary["spec_status"])))
+    if summary.get("target"):
+        fields.append(("target", str(summary["target"])))
     if summary.get("mode"):
         fields.append(("mode", str(summary["mode"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
@@ -6098,6 +6383,156 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         value = str(summary.get(key) or "").strip()
         if value:
             fields.append((label, value[:12] if key.endswith("_commit") else value))
+    publication_failure = summary.get("publication_failure")
+    if isinstance(publication_failure, dict):
+        stage = str(publication_failure.get("stage") or "").strip()
+        error = str(publication_failure.get("error") or "").strip()
+        if stage:
+            fields.append(("publish stage", stage))
+        if error:
+            fields.append(("publish error", error))
+    playwright = summary.get("playwright")
+    if isinstance(playwright, dict):
+        fields.append(
+            (
+                "sandbox journey",
+                (
+                    f"{playwright.get('passed', 0)} passed, "
+                    f"{playwright.get('failed', 0)} failed, "
+                    f"{playwright.get('skipped', 0)} skipped"
+                ),
+            )
+        )
+    visual_evidence = summary.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        visual_status = "passed" if visual_evidence.get("passed") else "failed"
+        fields.append(
+            (
+                "visual artifacts",
+                f"{visual_evidence.get('artifact_count', 0)} retained ({visual_status})",
+            )
+        )
+        visual_path = str(visual_evidence.get("path") or "").strip()
+        if visual_path:
+            fields.append(("visual evidence", visual_path))
+    escalation = summary.get("escalation")
+    if isinstance(escalation, dict):
+        question = str(escalation.get("question") or "").strip()
+        context = str(escalation.get("context") or "").strip()
+        if question:
+            fields.append(("question", question))
+        if context:
+            fields.append(("context", context))
+        choices = escalation.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                label = str(choice.get("label") or "Suggested answer").strip()
+                answer = str(choice.get("answer") or "").strip()
+                consequence = str(choice.get("consequence") or "").strip()
+                marker = " (recommended)" if choice.get("recommended") else ""
+                if answer:
+                    details = answer
+                    if consequence:
+                        details += f" — {consequence}"
+                    fields.append((f"choice{marker}", f"{label}: {details}"))
+        path = str(escalation.get("path") or "").strip()
+        if path:
+            fields.append(("escalation", path))
+    runnability = summary.get("user_runnability")
+    if isinstance(runnability, dict):
+        status = str(runnability.get("status") or "unknown")
+        label = {
+            "runnable": "passed",
+            "not_runnable": "failed",
+            "blocked": "blocked",
+            "deferred": "deferred",
+            "not_applicable": "not applicable",
+        }.get(status, status)
+        fields.append(("user runnable", label))
+        failed_stage = str(runnability.get("failed_stage") or "").strip()
+        if failed_stage:
+            fields.append(("stage", failed_stage.replace("_", " ")))
+        failure_class = str(runnability.get("failure_class") or "").strip()
+        if failure_class:
+            fields.append(("runnability reason", failure_class))
+        diagnostic = str(runnability.get("summary") or "").strip()
+        if diagnostic:
+            fields.append(("runnability summary", diagnostic))
+        commands = runnability.get("user_commands")
+        if isinstance(commands, dict):
+            for command_kind in (
+                "prerequisites",
+                "install",
+                "provision",
+                "bootstrap",
+                "start",
+                "open",
+                "stop",
+            ):
+                values = commands.get(command_kind)
+                if isinstance(values, list) and values:
+                    fields.append((command_kind, "; ".join(str(value) for value in values)))
+        local_journey = runnability.get("local_journey")
+        if isinstance(local_journey, dict):
+            local_status = str(local_journey.get("status") or "unknown").strip()
+            fields.append(("local journey", local_status))
+            local_reason = str(local_journey.get("reason") or "").strip()
+            if local_reason:
+                fields.append(("local reason", local_reason))
+            local_commands = local_journey.get("commands")
+            if isinstance(local_commands, dict):
+                for command_kind in (
+                    "prerequisites",
+                    "provision",
+                    "readiness",
+                    "prepare",
+                    "session",
+                    "verify",
+                    "start",
+                    "open",
+                    "stop",
+                    "cleanup",
+                ):
+                    values = local_commands.get(command_kind)
+                    if isinstance(values, list) and values:
+                        fields.append(
+                            (
+                                f"local {command_kind}",
+                                "; ".join(str(value) for value in values),
+                            )
+                        )
+            boundary_probes = local_journey.get("boundary_probes")
+            if isinstance(boundary_probes, list):
+                for probe in boundary_probes:
+                    if not isinstance(probe, dict):
+                        continue
+                    probe_id = str(probe.get("id") or "boundary").strip()
+                    command = str(probe.get("command") or "").strip()
+                    if command:
+                        fields.append(("local boundary", f"{probe_id}: {command}"))
+        report = str(runnability.get("report") or "").strip()
+        if report:
+            fields.append(("evidence", report))
+        if status == "not_runnable":
+            fields.append(
+                ("runnability next", "delivery will repair this current-spec product gap")
+            )
+        elif status == "blocked":
+            fields.append(
+                ("runnability next", "repair the Echelon sandbox prerequisite, then retry")
+            )
+        elif status == "deferred":
+            proposal = str(runnability.get("proposal") or "").strip()
+            fields.append(
+                (
+                    "runnability next",
+                    f"review the advisory follow-up proposal: {proposal}"
+                    if proposal
+                    else "review the owner-approved runnability deferral",
+                )
+            )
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
@@ -6108,6 +6543,87 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         fields.append(("state", str(summary["state_file"])))
     fields.append(("next", str(summary.get("next") or "")))
     return fields
+
+
+def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    status = str(value.get("status") or "").strip()
+    if not status:
+        return None
+    raw_commands = value.get("user_commands")
+    commands: dict[str, list[str]] = {}
+    if isinstance(raw_commands, dict):
+        for key, raw_values in raw_commands.items():
+            if not isinstance(raw_values, list):
+                continue
+            normalized = [str(item).strip() for item in raw_values if str(item).strip()]
+            if normalized:
+                commands[str(key)] = normalized
+    local_journey: dict[str, object] | None = None
+    raw_local_journey = value.get("local_journey")
+    if isinstance(raw_local_journey, dict):
+        local_status = str(raw_local_journey.get("status") or "").strip()
+        local_commands: dict[str, list[str]] = {}
+        raw_local_commands = raw_local_journey.get("commands")
+        if isinstance(raw_local_commands, dict):
+            for key, raw_values in raw_local_commands.items():
+                if not isinstance(raw_values, list):
+                    continue
+                normalized = [
+                    str(item).strip()
+                    for item in raw_values
+                    if str(item).strip()
+                ]
+                if normalized:
+                    local_commands[str(key)] = normalized
+        if local_status:
+            boundary_probes: list[dict[str, str]] = []
+            raw_boundary_probes = raw_local_journey.get("boundary_probes")
+            if isinstance(raw_boundary_probes, list):
+                for raw_probe in raw_boundary_probes:
+                    if not isinstance(raw_probe, dict):
+                        continue
+                    command = str(raw_probe.get("command") or "").strip()
+                    if not command:
+                        continue
+                    boundary_probes.append(
+                        {
+                            "id": str(raw_probe.get("id") or "").strip(),
+                            "service": str(raw_probe.get("service") or "").strip(),
+                            "command": command,
+                        }
+                    )
+            local_journey = {
+                "status": local_status,
+                "reason": str(raw_local_journey.get("reason") or "").strip(),
+                "commands": local_commands,
+                **(
+                    {"boundary_probes": boundary_probes}
+                    if boundary_probes
+                    else {}
+                ),
+            }
+    diagnostic = str(value.get("summary") or "").strip()
+    if len(diagnostic) > 240:
+        diagnostic = diagnostic[:237].rstrip() + "..."
+    return {
+        "status": status,
+        "failed_stage": str(value.get("failed_stage") or "").strip() or None,
+        "failure_class": str(value.get("failure_class") or "").strip(),
+        "summary": diagnostic,
+        "report": str(value.get("report") or "").strip(),
+        "candidate_fingerprint": str(value.get("candidate_fingerprint") or "").strip(),
+        "contract_hash": str(value.get("contract_hash") or "").strip(),
+        "stack_hash": str(value.get("stack_hash") or "").strip(),
+        "user_commands": commands,
+        **({"local_journey": local_journey} if local_journey is not None else {}),
+        **(
+            {"proposal": str(value.get("proposal") or "").strip()}
+            if value.get("proposal")
+            else {}
+        ),
+    }
 
 
 def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
@@ -16720,6 +17236,9 @@ def _cmd_spec(args: list[str]) -> None:
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
             "                                      Remove an unused target and re-plan tasks\n"
+            "  defer-runnability <spec_id> --reason <owner-approved reason>\n"
+            "                                      Defer failed runnability to advisory follow-up\n"
+            "  plan-runnability <spec_id>          Restore runnability to current-spec work\n"
             "  retarget <spec_id> --target <source-id-or-path>... [--confirm]\n"
             "                                      Destructively replace all implementation targets\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
@@ -17719,8 +18238,11 @@ from harness.stacks import (  # noqa: E402  (CLI command helpers)
     detection_report_to_yaml,
     load_stack_definitions,
     preflight_to_dict,
+    provisioning_statuses,
+    ProvisioningError,
     render_detection_markdown,
     render_preflight_markdown,
+    render_provisioner,
     resolve_stacks,
     resolved_to_dict,
     run_stack_preflight,
@@ -17745,6 +18267,7 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
             "[--write] [--format text|yaml] [--json]\n"
             "  echelon stack preflight [--stack <id>] "
             "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]\n"
+            "  echelon stack provision [--stack <id>] [--target <path>] [--force] [--json]\n"
             "  echelon stack selected [--json]\n"
             "  echelon stack enable <stack-id>... [--dry-run]\n"
             "  echelon stack disable <stack-id>... [--dry-run]\n"
@@ -17763,6 +18286,10 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
 
     if subcmd == "preflight":
         _cmd_stack_preflight(args[1:], project_root=project_root)
+        return
+
+    if subcmd == "provision":
+        _cmd_stack_provision(args[1:], project_root=project_root)
         return
 
     if subcmd == "enable":
@@ -17961,6 +18488,7 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         selected,
         target_archetypes,
         from_detect,
+        target_root,
         probe_tools,
         json_output,
     ) = _parse_stack_preflight_args(args, project_root=project_root)
@@ -17999,7 +18527,12 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    result = run_stack_preflight(resolved, probe_tools=probe_tools)
+    result = run_stack_preflight(
+        resolved,
+        probe_tools=probe_tools,
+        target_root=target_root or project_root,
+        environment=os.environ,
+    )
 
     if json_output:
         import json
@@ -18024,14 +18557,137 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
         sys.exit(1)
 
 
+def _cmd_stack_provision(args: list[str], *, project_root: Path) -> None:
+    selected, target_root, force, json_output = _parse_stack_provision_args(
+        args, project_root=project_root
+    )
+    if not selected:
+        selected = list(_load_cli_config(project_root).stacks.selected)
+    if not selected:
+        message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
+        if json_output:
+            print(json.dumps({"target": str(target_root), "generated": [], "message": message}, indent=2))
+        else:
+            print(message)
+        return
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        resolved = resolve_stacks(selected, definitions)
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+        generated = _render_missing_provisioners(
+            resolved, statuses, target_root=target_root, force=force
+        )
+        statuses = provisioning_statuses(resolved, target_root, os.environ)
+    except (StackError, ProvisioningError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "target": str(target_root),
+                    "generated": [str(path) for path in generated],
+                    "provisioners": [
+                        {
+                            "id": status.provisioner_id,
+                            "stack_id": status.owner_stack_id,
+                            "state": status.state,
+                            "message": status.message,
+                            "path": str(status.path) if status.path is not None else None,
+                        }
+                        for status in statuses
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not resolved.provisioners:
+        print("Selected stacks declare no verification provisioners.")
+        return
+
+    if generated:
+        print("Generated verification provisioning files:")
+        for path in generated:
+            print(f"- {path}")
+    else:
+        print("No verification provisioning files were generated.")
+    print("Echelon did not start Docker. Review the files, then run:")
+    print("  docker compose -f docker-compose.echelon-verify.yml up -d")
+    print("  export DATABASE_URL='postgresql://<user>:<password>@<host>/<database>'")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres pg_isready -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml exec postgres psql -U echelon -d echelon_verify")
+    print("  docker compose -f docker-compose.echelon-verify.yml down -v")
+
+
+def _render_missing_provisioners(
+    resolved,
+    statuses,
+    *,
+    target_root: Path,
+    force: bool,
+) -> list[Path]:
+    generated: list[Path] = []
+    rendered_ids: set[str] = set()
+    for item, status in zip(resolved.provisioners, statuses):
+        if status.provisioner_id in rendered_ids:
+            continue
+        if status.state == "ready" or (status.state == "prepared" and not force):
+            continue
+        generated.extend(render_provisioner(item, target_root, force=force))
+        rendered_ids.add(status.provisioner_id)
+    return generated
+
+
+def _parse_stack_provision_args(
+    args: list[str], *, project_root: Path
+) -> tuple[list[str], Path, bool, bool]:
+    selected: list[str] = []
+    target_root = project_root
+    force = False
+    json_output = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--stack":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --stack requires a value", file=sys.stderr)
+                sys.exit(1)
+            selected.append(args[index])
+        elif arg.startswith("--stack="):
+            selected.append(arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack provision: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--force":
+            force = True
+        elif arg == "--json":
+            json_output = True
+        else:
+            print(f"echelon stack provision: unknown argument '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+    return selected, target_root, force, json_output
+
+
 def _parse_stack_preflight_args(
     args: list[str],
     *,
     project_root: Path,
-) -> tuple[list[str], list[str], Path | None, bool, bool]:
+) -> tuple[list[str], list[str], Path | None, Path | None, bool, bool]:
     selected: list[str] = []
     target_archetypes: list[str] = []
     from_detect: Path | None = None
+    target_root: Path | None = None
     probe_tools = False
     json_output = False
 
@@ -18068,6 +18724,14 @@ def _parse_stack_preflight_args(
             from_detect = _resolve_cli_path(project_root, args[index])
         elif arg.startswith("--from-detect="):
             from_detect = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack preflight: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target_root = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target_root = _resolve_cli_path(project_root, arg.split("=", 1)[1])
         elif arg == "--probe-tools":
             probe_tools = True
         elif arg == "--json":
@@ -18077,7 +18741,7 @@ def _parse_stack_preflight_args(
             sys.exit(1)
         index += 1
 
-    return selected, target_archetypes, from_detect, probe_tools, json_output
+    return selected, target_archetypes, from_detect, target_root, probe_tools, json_output
 
 
 def _stack_selection_from_detection(report) -> tuple[list[str], list[str]]:
@@ -18142,6 +18806,25 @@ def _stack_definition_to_dict(stack) -> dict:
         },
         "detection": stack.detection.to_dict(),
         "tools": sorted(stack.tools),
+        "provisioners": [
+            {
+                "id": provisioner.id,
+                "scope": provisioner.scope,
+                "services": provisioner.services,
+                "environment": {"required": provisioner.required_environment},
+                "readiness": {"command": provisioner.readiness_command},
+                "satisfiers": [
+                    {
+                        "kind": satisfier.kind,
+                        "variable": satisfier.variable,
+                        "output": satisfier.output,
+                        "env_example": satisfier.env_example,
+                    }
+                    for satisfier in provisioner.satisfiers
+                ],
+            }
+            for provisioner in stack.provisioners
+        ],
     }
 
 

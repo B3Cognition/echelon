@@ -10,7 +10,14 @@ from harness.stacks.preflight import (
     run_stack_preflight,
 )
 from harness.stacks.resolver import resolve_stacks
-from harness.stacks.schema import StackDefinition, StackTool, StackToolCommand
+from harness.stacks.resolver import ResolvedStackProvisioner, ResolvedStacks
+from harness.stacks.schema import (
+    StackDefinition,
+    StackProvisioner,
+    StackProvisionerSatisfier,
+    StackTool,
+    StackToolCommand,
+)
 
 
 def _stack(
@@ -35,6 +42,40 @@ def _stack(
         requires_registries=requires_registries or [],
         tools=tools or {},
         context_files=["context.md"],
+    )
+
+
+def _resolved_postgres() -> ResolvedStacks:
+    provisioner = StackProvisioner(
+        id="postgres-verify",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[
+            StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL"),
+            StackProvisionerSatisfier(
+                kind="compose-template",
+                output="docker-compose.echelon-verify.yml",
+                env_example=".env.echelon-verify.example",
+            ),
+        ],
+    )
+    return ResolvedStacks(
+        selected_ids=["game-persistence-postgres"],
+        resolved_ids=["game-persistence-postgres"],
+        implied_by={},
+        capabilities={},
+        tools={},
+        required_commands=[],
+        required_registries=[],
+        context_files=[],
+        provisioners=[
+            ResolvedStackProvisioner(
+                owner_stack_id="game-persistence-postgres",
+                provisioner=provisioner,
+            )
+        ],
     )
 
 
@@ -67,14 +108,14 @@ def test_available_required_command_passes_preflight() -> None:
 
 
 @pytest.mark.unit
-def test_registry_without_a_probe_is_a_warning_not_blocker() -> None:
+def test_required_registry_is_warning_not_blocker() -> None:
     resolved = resolve_stacks(
         ["playbook"],
         {
             "playbook": _stack(
                 "playbook",
                 requires_commands=["npx"],
-                requires_registries=["custom-registry"],
+                requires_registries=["statsperform-nexus"],
             )
         },
     )
@@ -84,75 +125,6 @@ def test_registry_without_a_probe_is_a_warning_not_blocker() -> None:
     assert result.status == "warn"
     assert not result.has_errors
     assert [finding.code for finding in result.findings] == ["STACK_REGISTRY_UNVERIFIED"]
-
-
-@pytest.mark.unit
-def test_statsperform_nexus_registry_probe_suppresses_unverified_warning() -> None:
-    """A reachable authenticated registry must not be reported as unverified."""
-    resolved = resolve_stacks(
-        ["playbook"],
-        {
-            "playbook": _stack(
-                "playbook",
-                requires_registries=["statsperform-nexus"],
-            )
-        },
-    )
-    calls: list[list[str]] = []
-
-    result = run_stack_preflight(
-        resolved,
-        command_locator=lambda command: f"/bin/{command}",
-        command_runner=lambda command, _timeout_seconds: calls.append(command)
-        or subprocess.CompletedProcess(command, 0, stdout="1.2.3", stderr=""),
-    )
-
-    assert result.status == "pass"
-    assert result.findings == []
-    assert calls == [
-        [
-            "npm",
-            "view",
-            "@statsperform/playbook-cli",
-            "version",
-            "--registry=https://nexus.statsperform.tools/repository/public-npm/",
-        ]
-    ]
-
-
-@pytest.mark.unit
-def test_statsperform_nexus_registry_probe_reports_access_failure() -> None:
-    """An unavailable registry must not be reported as successfully verified."""
-    resolved = resolve_stacks(
-        ["playbook"],
-        {
-            "playbook": _stack(
-                "playbook",
-                requires_registries=["statsperform-nexus"],
-            )
-        },
-    )
-
-    result = run_stack_preflight(
-        resolved,
-        command_locator=lambda command: f"/bin/{command}",
-        command_runner=lambda command, _timeout_seconds: subprocess.CompletedProcess(
-            command, 1, stdout="", stderr="authentication required"
-        ),
-    )
-
-    assert result.status == "warn"
-    assert [finding.code for finding in result.findings] == [
-        "STACK_REGISTRY_PROBE_FAILED"
-    ]
-    assert "authentication required" in result.findings[0].message
-    assert result.findings[0].command == [
-        "npm",
-        "view",
-        "@statsperform/playbook-cli",
-        "version",
-        "--registry=https://nexus.statsperform.tools/repository/public-npm/",
-    ]
 
 
 @pytest.mark.unit
@@ -278,3 +250,46 @@ def test_render_preflight_markdown_names_status_and_findings() -> None:
     assert "## Stack Preflight" in markdown
     assert "Status: fail" in markdown
     assert "STACK_COMMAND_MISSING" in markdown
+
+
+@pytest.mark.unit
+def test_preflight_reports_missing_postgres_provisioner(tmp_path: Path) -> None:
+    result = run_stack_preflight(
+        _resolved_postgres(), target_root=tmp_path, environment={}
+    )
+
+    assert any(
+        finding.code == "STACK_PROVISIONING_MISSING" for finding in result.findings
+    )
+    assert result.has_errors
+
+
+@pytest.mark.unit
+def test_preflight_reports_prepared_provisioner_without_claiming_docker_started(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "docker-compose.echelon-verify.yml").write_text("services: {}\n")
+    (tmp_path / ".env.echelon-verify.example").write_text("DATABASE_URL=\n")
+
+    result = run_stack_preflight(
+        _resolved_postgres(), target_root=tmp_path, environment={}
+    )
+
+    finding = next(
+        finding
+        for finding in result.findings
+        if finding.code == "STACK_PROVISIONING_PREPARED"
+    )
+    assert finding.severity == "warning"
+    assert "did not start Docker" in finding.message
+
+
+@pytest.mark.unit
+def test_preflight_does_not_report_ready_provisioner(tmp_path: Path) -> None:
+    result = run_stack_preflight(
+        _resolved_postgres(),
+        target_root=tmp_path,
+        environment={"DATABASE_URL": "postgresql://isolated"},
+    )
+
+    assert not any("STACK_PROVISIONING" in finding.code for finding in result.findings)

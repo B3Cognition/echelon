@@ -7,8 +7,8 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Iterable, Mapping
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterable, Mapping, Sequence
 
 
 CLASSIFICATIONS = {"commit", "ignore", "leave", "block"}
@@ -134,11 +134,15 @@ def adjudicate_dirty_worktree(
     worktree: Path,
     *,
     llm_provider: object | None = None,
+    exclude_paths: Sequence[str] = (),
 ) -> DirtyAdjudicationResult:
     """Classify dirty files and apply safe ignore decisions."""
     paths = _dirty_paths(worktree)
     if paths is None:
         return _result("skipped", (), llm_used=False, reason="not_git_worktree")
+    paths = tuple(
+        path for path in paths if not _matches_any(path.path, exclude_paths)
+    )
     if not paths:
         return _result("clean", (), llm_used=False)
 
@@ -151,6 +155,10 @@ def adjudicate_dirty_worktree(
         _ask_llm(worktree, llm_paths, llm_provider) if llm_paths else {}
     )
     refreshed = _dirty_paths(worktree)
+    if refreshed is not None:
+        refreshed = tuple(
+            path for path in refreshed if not _matches_any(path.path, exclude_paths)
+        )
     if refreshed is not None and _path_signature(refreshed) != _path_signature(paths):
         paths = refreshed
         allowed = {path.path for path in paths}
@@ -169,6 +177,21 @@ def adjudicate_dirty_worktree(
         else "applied"
     )
     return _result(status, applied, llm_used=bool(llm_decisions))
+
+
+def _matches_any(path: str, patterns: Sequence[str]) -> bool:
+    relative = PurePosixPath(path)
+    for raw_pattern in patterns:
+        pattern = str(raw_pattern).strip().lstrip("/")
+        if not pattern:
+            continue
+        if relative.match(pattern):
+            return True
+        if pattern.endswith("/**"):
+            root = pattern[:-3].rstrip("/")
+            if path == root or path.startswith(f"{root}/"):
+                return True
+    return False
 
 
 def dirty_summary_text(value: Mapping[str, object] | None) -> str | None:

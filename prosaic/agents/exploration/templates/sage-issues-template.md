@@ -17,8 +17,8 @@
 - **Affected section:** <section reference>
 - **Evidence:** <quote or specific finding>
 - **Recommendation:** <specific fix>
-- **Responsible agent:** <DISCOVER | WHAT | HOW | SENTINEL | ORCHESTRATOR>
-- **Action Required:** <the next concrete action; for an advisory use `None` or `None — advisory. <brief handoff>`>
+- **Responsible agent:** <DISCOVER | WHAT | HOW>
+- **Action Required:** <the next concrete action; use `None` only when advisory>
 
 ### Resolution Guidance
 - **Decision required:** <exact decision, or `No user decision — agent repair`>

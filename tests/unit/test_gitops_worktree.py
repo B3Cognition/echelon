@@ -70,6 +70,25 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     assert result is None
 
 
+def test_destroy_worktree_reports_git_failure_when_given_path(tmp_path, caplog):
+    """A failed cleanup with a Path preserves Git's diagnostic instead of raising TypeError."""
+    gitops = _make_gitops(tmp_path)
+    orphaned_worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    failure = subprocess.CalledProcessError(
+        128,
+        ["git", "worktree", "remove"],
+        stderr="fatal: not a working tree\n",
+    )
+
+    with patch("harness.gitops.subprocess.run", side_effect=failure), caplog.at_level(
+        "WARNING", logger="harness.gitops"
+    ):
+        gitops.destroy_worktree(orphaned_worktree)
+
+    assert "Could not remove worktree" in caplog.text
+    assert "fatal: not a working tree" in caplog.text
+
+
 def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     """Harness worktrees get the local Echelon extension even when it is untracked."""
     source = tmp_path / ".echelon" / "runtime"
@@ -1110,6 +1129,81 @@ def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
 
     assert (worktree / "current.txt").read_text(encoding="utf-8") == "current main\n"
     assert not (worktree / "stale.txt").exists()
+
+
+def test_fresh_legacy_worktree_retains_explicit_checkpoint_baseline(tmp_path):
+    """A fresh budget may retain only the checkpoint selected by orchestration."""
+    target = tmp_path / "target"
+    target.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(args, cwd=target, check=True)
+    (target / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+
+    config = HarnessConfig(target_repo=str(target), target_default_branch="main", provider="docker")
+    gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+    gitops.clone_mirror(str(target))
+    previous = tmp_path / "previous"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "candidate", str(previous), "main"],
+        cwd=gitops.mirror_path,
+        check=True,
+    )
+    (previous / "candidate.txt").write_text("retain me\n", encoding="utf-8")
+    subprocess.run(["git", "add", "candidate.txt"], cwd=previous, check=True)
+    subprocess.run(["git", "commit", "-m", "candidate"], cwd=previous, check=True)
+    candidate = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=previous, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    subprocess.run(["git", "worktree", "remove", "--force", str(previous)], cwd=gitops.mirror_path, check=True)
+
+    (target / "main-only.txt").write_text("new main\n", encoding="utf-8")
+    subprocess.run(["git", "add", "main-only.txt"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "advance main"], cwd=target, check=True)
+
+    with patch.object(gitops, "sync_runtime_extension"):
+        worktree = Path(gitops.create_worktree(
+            "905-import-prose", "default", 0, build_id="build-new",
+            fresh_branch=True, fresh_branch_base=candidate,
+        ))
+
+    assert (worktree / "candidate.txt").read_text(encoding="utf-8") == "retain me\n"
+    assert not (worktree / "main-only.txt").exists()
+
+
+def test_commit_excludes_verification_artifacts_when_requested(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(args, cwd=target, check=True)
+    (target / "app.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.txt"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+    (target / "app.txt").write_text("product\n", encoding="utf-8")
+    artifact = target / "test-results" / "trace.zip"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"trace")
+
+    gitops = GitOpsManager(
+        config=HarnessConfig(target_repo=str(target), target_default_branch="main", provider="docker"),
+        base_dir=str(tmp_path / "harness"),
+    )
+    gitops.commit(str(target), "checkpoint", exclude_paths=("test-results/**",))
+
+    committed = subprocess.run(
+        ["git", "show", "--format=", "--name-only", "HEAD"],
+        cwd=target, check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    assert committed == ["app.txt"]
 
 
 def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base(

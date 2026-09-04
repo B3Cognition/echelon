@@ -27,7 +27,7 @@ Use the Agent tool:
 
   <instructions>
   You are DOCS VERIFIER. Read subagents/echelon.docs-verifier.md for your complete protocol.
-  Independently inspect every delivery_change_id and cited implementation evidence. Verify whether README.md works as a first-run local manual, CHANGELOG.md records only actual completed changes, and documentation-impact-report.md honestly and completely maps the delivery inventory to the docs. Write a version-2 {spec_dir}/docs-verification-report.md with reviewed_change_ids, uncovered_change_ids, unsupported_claims, and structured repair findings. Return verdict PASS only when docs are adequate. Return verdict FAIL when TECH WRITER must repair docs. Return verdict BLOCKED only when required inputs are missing or unreadable.
+  Independently inspect every delivery_change_id and cited implementation evidence. Verify whether README.md works as a first-run local manual, CHANGELOG.md records only actual completed changes, and documentation-impact-report.md honestly and completely maps the delivery inventory to the docs. When user runnability is required, compare README sandbox commands, local lifecycle and session commands, consumer-boundary probes, and URLs with the current passing immutable report, require truthful disclosure of an `unverified` local journey, and cite its evidence_sha256. Write a version-2 {spec_dir}/docs-verification-report.md with reviewed_change_ids, uncovered_change_ids, unsupported_claims, runnability_evidence_sha256, runnability_commands_current, and structured repair findings. Return verdict PASS only when docs are adequate and the runnability evidence is current. Return verdict FAIL when TECH WRITER must repair docs. Return verdict BLOCKED only when required inputs are missing or unreadable.
   </instructions>
   ```
 
@@ -44,6 +44,11 @@ DOCS VERIFIER must:
 7. Return `echelon_result.verdict: PASS` when all documentation is adequate.
 8. Return `echelon_result.verdict: FAIL` with structured repair findings when TECH WRITER must repair docs.
 9. Return `echelon_result.verdict: BLOCKED` only when required inputs cannot be read.
+10. Never return PASS for required runnability when the report is missing,
+    failed, stale, or provisional.
+11. Never return PASS when README omits a declared local journey instruction,
+    session command, or consumer-boundary probe, or claims an `unverified`
+    local journey passed.
 
 Routing:
 

@@ -12,9 +12,18 @@ from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
 from harness.stacks.errors import StackResolutionError
 from harness.stacks.paths import find_stack_extension_root
+from harness.stacks.preflight import StackPreflightResult
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def mock_stack_preflight(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Keep prompt-context unit tests independent of registry availability."""
+    preflight = MagicMock(return_value=StackPreflightResult(findings=[]))
+    monkeypatch.setattr("harness.stacks.context.run_stack_preflight", preflight)
+    return preflight
 
 
 def _coordinator_with_stacks(
@@ -56,6 +65,54 @@ def test_build_prompt_includes_dedicated_stack_context_section() -> None:
 
 
 @pytest.mark.unit
+def test_browser_stack_context_explains_candidate_owned_runnability_contract() -> None:
+    coord = _coordinator_with_stacks(
+        ["browser-3d-game", "game-persistence-postgres"],
+        ROOT,
+        target_archetypes=["browser_3d_game"],
+    )
+
+    stack_context = coord._build_stack_context()
+
+    assert ".echelon/runnability.yml" in stack_context
+    assert "browser_dom" in stack_context
+    assert "postgres_query" in stack_context
+    assert "echelon delivery status" in stack_context
+    assert "echelon spec defer-runnability" in stack_context
+    assert "## Candidate Runnability Contract Schema" in stack_context
+    assert "schema_version: 1" in stack_context
+    assert "install_commands:" in stack_context
+    assert "real_services_required: [web, api, postgres]" in stack_context
+    assert "kind: http" in stack_context
+    assert "expectation: status_200" in stack_context
+    assert "persistence_probe:" in stack_context
+    assert "local_journey:" in stack_context
+    assert "provision_commands:" in stack_context
+    assert "readiness_commands:" in stack_context
+    assert "prepare_commands:" in stack_context
+    assert "verify_commands:" in stack_context
+    assert "cleanup_commands:" in stack_context
+    assert "No compatible runner executes these local commands" in stack_context
+    assert "invent aliases such as `runtime`, `provision`" in stack_context
+    assert "`expect` requires `selector` plus `state`" in stack_context
+    assert "`text:<exact text>`" in stack_context
+
+
+@pytest.mark.unit
+def test_ios_runnability_stack_context_names_future_runner_without_claiming_pass() -> None:
+    coord = _coordinator_with_stacks(
+        ["ios-ar-game"],
+        ROOT,
+        target_archetypes=["ios_ar_game"],
+    )
+
+    stack_context = coord._build_stack_context()
+
+    assert "macOS simulator runner" in stack_context
+    assert "cannot be represented as a pass" in stack_context
+
+
+@pytest.mark.unit
 def test_no_selected_stacks_preserves_original_strategy_context() -> None:
     coord = _coordinator_with_stacks([], ROOT)
 
@@ -67,7 +124,9 @@ def test_no_selected_stacks_preserves_original_strategy_context() -> None:
 
 
 @pytest.mark.unit
-def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> None:
+def test_selected_stark_stack_context_resolves_playbook_dependency_first(
+    mock_stack_preflight: MagicMock,
+) -> None:
     coord = _coordinator_with_stacks(["statsperform-stark-webapp"], ROOT)
 
     stack_context = coord._build_stack_context()
@@ -80,6 +139,7 @@ def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> No
     assert "## Stack Guidance" in stack_context
     assert "Use Playbook for UI components" in stack_context
     assert "Use the Opta Stark Nx/Next.js archetype" in stack_context
+    mock_stack_preflight.assert_called_once()
 
 
 @pytest.mark.unit

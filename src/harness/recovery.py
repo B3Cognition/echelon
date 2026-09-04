@@ -437,6 +437,37 @@ def _apply_commit(
         source_repo=source_repo,
         commit=commit,
     )
+    target_is_ancestor = _run_git(
+        ["merge-base", "--is-ancestor", "HEAD", commit],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if target_is_ancestor.returncode == 0:
+        _run_git(["merge", "--ff-only", commit], cwd=str(project_dir))
+        tracked_marker = _run_git(
+            ["ls-files", "--error-unmatch", BUILD_STATUS_FILENAME],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if tracked_marker.returncode == 0:
+            _run_git(["rm", BUILD_STATUS_FILENAME], cwd=str(project_dir))
+            _run_git(
+                [
+                    "commit",
+                    "-m",
+                    "[skip ci] harness recovery: remove transient build status",
+                ],
+                cwd=str(project_dir),
+            )
+        return RecoveryResult(
+            source=source_label,
+            commit=commit,
+            target_branch=target_branch,
+            applied=True,
+            backed_up_untracked=backed_up_untracked,
+            backup_dir=backup_dir,
+        )
+
     try:
         _run_git(["cherry-pick", commit], cwd=str(project_dir))
     except GitOpsError as e:
@@ -459,6 +490,7 @@ def _apply_commit(
                 backed_up_untracked=backed_up_untracked,
                 backup_dir=backup_dir,
             )
+        _run_git(["cherry-pick", "--abort"], cwd=str(project_dir), check=False)
         raise HarnessRecoveryError(f"Could not cherry-pick recovered commit {commit}: {e}") from e
     return RecoveryResult(
         source=source_label,

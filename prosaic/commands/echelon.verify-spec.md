@@ -15,6 +15,12 @@ report freshness checks. Follow the current phase prompt's exact Python-owned
 harness invocations; do not inspect Echelon orchestration internals to infer
 routing or provenance formats.
 
+For direct Ralph fulfillment refreshes, `verify_run_dir` is already initialized
+and is the only writable run-artifact directory. Do not initialize or select a
+different run. When supplied, `verification_receipt` and
+`verification_evidence_sha256` identify authoritative read-only host-verifier
+evidence; inspect it as an input but never modify its directory.
+
 ALWAYS treat this command as read-only by default.
 ALWAYS remember: source code is always read-only, including when `--reconcile`
 is present.

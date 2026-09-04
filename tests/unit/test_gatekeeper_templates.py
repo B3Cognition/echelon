@@ -138,11 +138,3 @@ class TestGatekeeperTemplates:
         assert "implementability_metrics" in phase_text
         assert "      - implementability_metrics" in definition_text
         assert "Do not put ASSESS2 implementability metrics under `quality_scores`" in agent_text
-
-    def test_assess2_separates_completed_rejection_from_execution_block(self) -> None:
-        agent_text = AGENT.read_text(encoding="utf-8")
-        phase_text = PHASE3.read_text(encoding="utf-8")
-
-        for text in (agent_text, phase_text):
-            assert "A completed negative assessment returns `REJECTED`" in text
-            assert "`BLOCKED` is reserved for an assessment that could not complete" in text

@@ -70,6 +70,7 @@ def migrate_legacy_delivery_state(
     migrated["enabled_phases"] = list(phases)
     migrated.setdefault("last_completed_phase", None)
     migrated.setdefault("verified_commit", None)
+    migrated.setdefault("visual_evidence", None)
     status = migrated.get("status")
     if status == "blocked":
         migrated["blocked_phase"] = migrated.get("blocked_phase") or "implementation"
@@ -399,6 +400,7 @@ class StateStore:
             "blocked_phase": None,
             "interrupted_phase": None,
             "verified_commit": None,
+            "visual_evidence": None,
             "mode": mode,
             "outer_iter": 0,
             "max_outer": max_outer,

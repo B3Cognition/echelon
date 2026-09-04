@@ -92,6 +92,43 @@ class TestInnerLoopConvergence:
         assert result.status == "verified"
         assert result.inner_iterations > 0
 
+    def test_runnability_sandbox_prerequisite_blocks_without_product_feedback(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        ctrl = _make_controller(tmp_path, [])
+        ctrl._exec_feedback = MagicMock()
+        unavailable = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "user-runnability-sandbox-prerequisite",
+                    "Docker daemon is unavailable.",
+                )
+            ],
+        )
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=unavailable,
+            outer_iter=0,
+            max_inner=3,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="repair product",
+        )
+
+        assert result["blocked"] is True
+        assert result["blocked_reason"] == "user_runnability_sandbox_prerequisite"
+        assert result["inner_count"] == 0
+        ctrl._exec_feedback.assert_not_called()
+
     def test_unchanged_concrete_fulfillment_gaps_without_product_delta_block(
         self, tmp_path: Path
     ) -> None:
@@ -458,6 +495,7 @@ class TestInnerLoopTaskProgress:
                 prompt: str,
                 *,
                 containment_policy_file: str | None = None,
+                prompt_metadata: dict[str, object] | None = None,
             ) -> BuildResult:
                 return BuildResult(
                     exit_code=0,

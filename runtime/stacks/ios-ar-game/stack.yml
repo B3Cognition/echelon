@@ -1,0 +1,46 @@
+schema_version: "1.2"
+stack:
+  id: ios-ar-game
+  name: iPhone AR Game
+  version: "1.0.0"
+  kind: archetype
+  owner: echelon
+  description: iPhone-first augmented-reality game client using SwiftUI, RealityKit, and ARKit.
+applies_to:
+  archetypes:
+    - ios_ar_game
+provides:
+  web_app.framework: swiftui
+  web_app.rendering: realitykit
+  test.frontend: xctest
+  delivery.web_app: xcodebuild
+  x.game.client_runtime: ios-ar
+implies: []
+requires:
+  commands:
+    - swift
+    - xcodebuild
+runnability:
+  classification: user_facing
+  policy: advisory
+  runner: macos_simulator
+  capabilities:
+    - install
+    - start
+    - readiness
+    - primary_journey
+    - stop
+  required_observations: []
+detection:
+  positive:
+    technologies:
+      - swiftui
+      - realitykit
+      - arkit
+    files:
+      - Package.swift
+      - project.pbxproj
+context:
+  files:
+    - context.md
+conflicts: []

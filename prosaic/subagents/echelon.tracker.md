@@ -120,9 +120,7 @@ Place `drift_severity: {ALIGNED|MINOR_DRIFT|MAJOR_DRIFT}` on the second line of 
 - User's explicit words override ALL agent reasoning
 - "Best" means best, not "pragmatic subset"
 - "All" means all, not "MVP first"
-- If material ambiguity remains after applying explicit input, the selected
-  stack, reachable evidence, and any low-risk reversible Banzai default, ask
-  the user; do not invent an unsupported answer
+- If in doubt about intent, always ask the user — don't assume
 - Intent corrections are the HIGHEST priority change (even above constitution)
 
 ALWAYS include `status: blocked`, `blocked_reason`, and a concrete
@@ -136,12 +134,6 @@ For every question use `blocked_reason: human_clarification_required`. Include
 evidence-backed recommendation; otherwise omit both. Never put a question on
 `ESCALATE` or another verdict. The controller owns clarification writes and
 state cleanup.
-`escalation_recommended_answer` must contain the exact answer value that can be
-copied verbatim into `answer_text`; do not write an instruction, rationale, or
-recommendation preamble in that field.
-In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
-that explicit input, the selected stack, reachable evidence, or a conventional
-default can resolve; record the assumption and continue.
 
 ## Stakeholder Model
 

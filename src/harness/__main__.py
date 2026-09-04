@@ -9,6 +9,7 @@ Subcommands:
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
+  write-coverage-evidence — write deterministic coverage-map evidence artifacts
   write-judgment-prepass — write deterministic verify-spec judgment pre-pass artifacts
   write-fallback-fulfillment-template — write bounded fallback judgment template
   assemble-fulfillment-report — assemble final fulfillment report from pre-pass and fallback rows
@@ -487,6 +488,52 @@ def _write_judgment_prepass() -> None:
         f"OK: wrote judgment pre-pass to {result.json_path} "
         f"(mechanical={result.mechanical_count}, fallback={result.fallback_count})"
     )
+
+
+def _write_coverage_evidence() -> None:
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python -m harness write-coverage-evidence "
+            "<spec-dir> <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import json
+    from pathlib import Path
+
+    from harness.coverage_evidence import write_coverage_evidence
+    from harness.deferred_scope import active_entries
+
+    spec_dir = Path(sys.argv[2]).resolve()
+    verify_run_dir = Path(sys.argv[3]).resolve()
+    canonical_path = verify_run_dir / "canonical-requirements.json"
+    _require_inputs([canonical_path])
+    _require_verify_spec_state(verify_run_dir)
+    payload = json.loads(canonical_path.read_text(encoding="utf-8"))
+    requirements = payload.get("requirements", [])
+    canonical_ids = tuple(
+        str(row.get("id") or "").strip()
+        for row in requirements
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    )
+    deferred_ids = {
+        item_id
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
+    result = write_coverage_evidence(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        canonical_ids=canonical_ids,
+        deferred_ids=deferred_ids,
+    )
+    _stamp_verify_spec_state(
+        verify_run_dir,
+        {"coverage_evidence": "ready"},
+    )
+    print(f"OK: wrote coverage evidence to {result.json_path}")
 
 
 def _assemble_fulfillment_report() -> None:
@@ -1510,6 +1557,8 @@ def main() -> None:
         _mark_task_progress()
     elif subcommand == "write-progress-integrity":
         _write_progress_integrity()
+    elif subcommand == "write-coverage-evidence":
+        _write_coverage_evidence()
     elif subcommand == "write-task-requirement-mapping-candidates":
         _write_task_requirement_mapping_candidates()
     elif subcommand == "apply-task-requirement-mapping":
@@ -1562,7 +1611,7 @@ def main() -> None:
         print(
             f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
             "'validate-tasks', 'validate-task-targets', 'validate-task-progress', 'mark-task-progress', "
-            "'write-progress-integrity', "
+            "'write-progress-integrity', 'write-coverage-evidence', "
             "'write-task-requirement-mapping-candidates', "
             "'apply-task-requirement-mapping', "
             "'write-progress-reconciliation-candidates', "

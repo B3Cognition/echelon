@@ -321,11 +321,6 @@ Must follow the structure in `agents/exploration/templates/sage-issues-template.
 For every issue, include `Action Required` and a `Resolution Guidance` subsection.
 This is a controller contract, not optional explanatory prose:
 
-- In WHY3, set `Responsible agent` to the earliest agent that can edit the
-  affected artifact: `WHAT` for validated specification content, `HOW` for
-  architecture or a repair spanning multiple downstream artifacts, `SENTINEL`
-  for test-strategy/coverage-only repair, or `ORCHESTRATOR` for task-plan-only
-  repair. Never label every WHY3 failure as `WHAT` or `HOW` by default.
 - State the one next action or decision that can advance this issue. Never write
   "retry" as an action.
 - State one suggested option only if it is grounded in cited project evidence.
@@ -349,12 +344,6 @@ return `verdict: STOP_AND_ASK` with `status: blocked`,
 recommendation is evidence-backed; otherwise omit both. Never attach a
 question to `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
 clarification writes and state cleanup.
-`escalation_recommended_answer` must contain the exact answer value that can be
-copied verbatim into `answer_text`; do not write an instruction, rationale, or
-recommendation preamble in that field.
-In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
-that explicit input, the selected stack, reachable evidence, or a conventional
-default can resolve; record the assumption and continue.
 
 ---
 
@@ -381,10 +370,7 @@ These rules govern your PASS/FAIL decisions. They are non-negotiable.
 
 1. **If you find CRITICAL issues: you MUST report FAIL.** No exceptions. One CRITICAL issue is enough.
 2. **If you find only HIGH issues:** Report PASS with warnings if fewer than 3. Report FAIL if 3 or more HIGH issues compound to create a systemic problem.
-3. **If you find only MEDIUM/LOW issues:** Report `PASS` only when every
-   finding is explicitly advisory and requires no action from CARTOGRAPHER,
-   ARCHITECT, or the user. If any finding requires a repair or decision, report
-   `FAIL` even when its severity is MEDIUM or LOW.
+3. **If you find only MEDIUM/LOW issues:** Report PASS with the issues listed as warnings.
 4. **Always show your checks. Never rubber-stamp.** Your job is to find problems. If you find nothing wrong, explicitly state:
    - What you checked
    - Why each area passed
@@ -423,12 +409,6 @@ If `coverage-map.md` exists, read it and check every row:
 
 2. **Any row with `coverage_type: deferred-automation`** — raise a HIGH issue:
    > "Requirement {ID} is deferred-automation. Verify a task exists in `tasks.md` to implement this test before merge. If no task exists, this is effectively unverified."
-
-   An owned `deferred-automation` row with a concrete mapped automation task is
-   a delivery-time warning. It does not require a Phase A amendment and does
-   not by itself prevent WHY3 from returning PASS. If the row has no owning
-   task, the missing ownership is a required planning amendment and must be
-   reported as blocking.
 
 3. **Any row with `coverage_type: escalated`** — check `state.json` for an explicit `deferred_risky_accepted` entry. If the entry is absent, raise CRITICAL: "Requirement {ID} was escalated but no user acceptance is recorded in state.json."
 

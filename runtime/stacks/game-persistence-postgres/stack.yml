@@ -1,0 +1,51 @@
+schema_version: "1.2"
+stack:
+  id: game-persistence-postgres
+  name: Game Persistence with Postgres
+  version: "1.0.0"
+  kind: capability
+  owner: echelon
+  description: Durable Postgres persistence and authority boundaries for persistent games.
+applies_to:
+  archetypes:
+    - browser_3d_game
+    - ios_ar_game
+    - browser_wasm_game
+provides:
+  data.database: postgres
+  data.migrations: checked-in
+  data.durability: checkpoint-snapshots
+  x.game.mutation_authority: server
+  x.game.persistence_cadence: bounded
+implies: []
+requires: {}
+runnability:
+  classification: user_facing
+  policy: not_applicable
+  capabilities:
+    - provision
+    - local_journey
+    - persistence
+  required_observations:
+    - http
+    - postgres_query
+provisioning:
+  - id: postgres-verify
+    scope: verification
+    services:
+      - postgres
+    environment:
+      required:
+        - DATABASE_URL
+    readiness:
+      command: pg_isready
+    satisfiers:
+      - kind: environment
+        variable: DATABASE_URL
+      - kind: compose-template
+        output: docker-compose.echelon-verify.yml
+        env_example: .env.echelon-verify.example
+context:
+  files:
+    - context.md
+conflicts: []

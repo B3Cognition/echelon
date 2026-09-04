@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -26,7 +27,7 @@ import sys
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
@@ -37,8 +38,10 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     write_not_applicable_documentation_impact_report,
 )
+from harness.docs_verifier import write_docs_verification_report
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
+from harness.errors import NotSupportedError, SandboxError
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
 from harness.fulfillment_runner import FulfillmentRunner
@@ -47,6 +50,20 @@ from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_contract import (
+    CONTRACT_PATH as RUNNABILITY_CONTRACT_PATH,
+    RunnabilityContractError,
+    load_runnability_contract,
+)
+from harness.runnability_disposition import (
+    RunnabilityDispositionError,
+    read_runnability_disposition,
+)
+from harness.runnability_evidence import (
+    RunnabilityEvidenceRef,
+    load_runnability_evidence_ref,
+)
+from harness.runnability_runner import RunnabilityRunResult, RunnabilityRunner
 from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.secret_scan import scan_git_staged
 from harness.spec_frontmatter import find_spec_dir
@@ -57,6 +74,13 @@ from harness.task_progress import (
     update_task_progress_markdown,
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from harness.verification_evidence import (
+    VerificationStage,
+    redact_verification_text,
+    write_verification_receipt,
+)
+from harness.verification_plan import build_verification_plan, materialize_services
+from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
     blocking_fulfillment_gaps,
@@ -81,16 +105,110 @@ _BANZAI_MILESTONE_DEFER_REASON = (
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
+_TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
+_TASK_FILE_BULLET_RE = re.compile(r"^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)")
+_VERIFICATION_ARTIFACT_PATHS = (
+    "test-results/**",
+    "playwright-report/**",
+    "blob-report/**",
+    "coverage/**",
+)
+
+
+def _is_user_runnability_sandbox_prerequisite(result: VerifyResult) -> bool:
+    return any(
+        failure.id == "user-runnability-sandbox-prerequisite"
+        for failure in result.failures
+    )
+
+
+def _runnability_target_id(target_repo: str) -> str:
+    target = str(target_repo).strip().rstrip("/")
+    if not target:
+        return "workspace"
+    return Path(target).name or "target"
+
+
+def _next_runnability_attempt_sequence(evidence_dir: Path) -> int:
+    highest = 0
+    for path in Path(evidence_dir).glob("attempt-*.json"):
+        match = re.match(r"attempt-(\d+)-", path.name)
+        if match is not None:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
+def _missing_completed_task_deliverables(
+    markdown: str,
+    *,
+    task_statuses: Mapping[str, str],
+    worktree_path: Path,
+    implementation_target: str,
+) -> list[str]:
+    """Return completed task deliverables absent from the target worktree."""
+    target = implementation_target.strip().strip("/")
+    missing: list[str] = []
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        match = _TASK_HEADER_RE.match(line)
+        if match is None or task_statuses.get(match.group("task_id")) not in {
+            "DONE", "DONE_WITH_CONCERNS"
+        }:
+            continue
+        task_id = match.group("task_id")
+        end = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(lines))
+                if _TASK_HEADER_RE.match(lines[candidate]) is not None
+            ),
+            len(lines),
+        )
+        in_files = False
+        for task_line in lines[index + 1:end]:
+            if task_line.strip() == "**Files:**":
+                in_files = True
+                continue
+            if in_files and task_line.startswith("  **"):
+                break
+            if not in_files:
+                continue
+            path_match = _TASK_FILE_BULLET_RE.match(task_line)
+            if path_match is None:
+                continue
+            declared = path_match.group("path").strip().lstrip("./")
+            relative = (
+                declared[len(target) + 1:]
+                if target and declared.startswith(target + "/")
+                else declared
+            )
+            if relative and not (worktree_path / relative).is_file():
+                missing.append(f"{task_id}: {relative}")
+    return missing
+
+
+def _is_verification_environment_deferral(
+    result: Mapping[str, object],
+) -> bool:
+    return (
+        result.get("completion_marker_explicit") is True
+        and str(result.get("build_status") or "") == "blocked"
+        and str(result.get("blocker_kind") or "")
+        == "verification_environment"
+    )
 
 
 def _current_git_commit(worktree: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=worktree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
     if result.returncode != 0:
         return None
     commit = result.stdout.strip()
@@ -178,6 +296,9 @@ class RalphController:
         fulfillment_runner: Optional[FulfillmentRunner] = None,
         build_id: str = "",
         fresh_delivery: bool = False,
+        fresh_branch_base: Optional[str] = None,
+        defer_target_merge: bool = False,
+        resume_worktree_path: Optional[str] = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -200,12 +321,19 @@ class RalphController:
         )
         self._build_id = build_id
         self._fresh_delivery = fresh_delivery
+        self._fresh_branch_base = fresh_branch_base
+        self._defer_target_merge = defer_target_merge
+        self._resume_worktree_path = resume_worktree_path
 
         self._interrupted = False
         self._original_sigterm: Any = None
         self._original_sigint: Any = None
 
     # === Main entry point ===
+
+    def reuse_worktree_on_next_run(self, worktree_path: str) -> None:
+        """Carry a downstream repair into the next Phase 1 verification run."""
+        self._resume_worktree_path = worktree_path
 
     def run_loop(
         self,
@@ -336,13 +464,41 @@ class RalphController:
 
             # Create worktree — use feature branch when available so spec artifacts
             # (spec.md, tasks.md, constitution.md) are present from the start.
-            worktree_path = self._gitops.create_worktree(
-                self._spec_id, self._strategy_id, outer_iter,
-                base_branch=feature_branch,
-                build_id=self._build_id,
-                prepare_codegraph=True,
-                fresh_branch=self._fresh_delivery and outer_iter == start_outer,
-            )
+            if self._resume_worktree_path and outer_iter == start_outer:
+                worktree_path = self._resume_worktree_path
+                self._resume_worktree_path = None
+                if not Path(worktree_path).is_dir():
+                    return self._finalize(
+                        status="blocked",
+                        reason="verified_provenance_unavailable",
+                        outer_iterations=outer_iter,
+                        inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
+                        tokens_used=tokens_used,
+                        final_verify=None,
+                    )
+                state = self._state_store.read()
+                reentry = state.get("downstream_reentry")
+                if isinstance(reentry, dict):
+                    state["downstream_reentry"] = {**reentry, "consumed": True}
+                    self._state_store.write(state)
+                logger.info(
+                    "Reusing registered worktree %s for downstream repair re-verification",
+                    worktree_path,
+                )
+            else:
+                worktree_path = self._gitops.create_worktree(
+                    self._spec_id, self._strategy_id, outer_iter,
+                    base_branch=feature_branch,
+                    build_id=self._build_id,
+                    prepare_codegraph=True,
+                    fresh_branch=self._fresh_delivery and outer_iter == start_outer,
+                    fresh_branch_base=(
+                        self._fresh_branch_base
+                        if self._fresh_delivery and outer_iter == start_outer
+                        else None
+                    ),
+                )
             preserve_worktree = False
 
             try:
@@ -369,9 +525,14 @@ class RalphController:
                         },
                     )
 
-                # Create sandbox
-                sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
-                handle = self._provider.create(sandbox_spec)
+                # Host-side LLM builds and verification do not use the sandbox.
+                # Avoid creating it here: doing so makes Codex/Claude delivery
+                # fail when Docker is unavailable despite no sandbox operation
+                # being required.
+                handle: Optional[SandboxHandle] = None
+                if not (self._llm_build_runner and build_prompt):
+                    sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
+                    handle = self._provider.create(sandbox_spec)
 
                 try:
                     # Clear stale build status before each iteration so a
@@ -542,7 +703,45 @@ class RalphController:
                     # marker was missing/unreadable, while other statuses (for
                     # example "impasse") are explicit build outcomes.
                     if not build_result.get("passed", True):
-                        if self._should_continue_after_missing_marker(
+                        if _is_verification_environment_deferral(build_result):
+                            try:
+                                deferred_commit = (
+                                    self._checkpoint_verification_deferred_candidate(
+                                        worktree_path,
+                                        outer_iter=outer_iter,
+                                        inner_iter=0,
+                                        phase="build",
+                                    )
+                                )
+                                self._record_verification_environment_deferral(
+                                    build_result,
+                                    commit=deferred_commit,
+                                    outer_iter=outer_iter,
+                                    inner_iter=0,
+                                    phase="build",
+                                )
+                            except Exception as exc:
+                                preserve_worktree = True
+                                return self._finalize(
+                                    status="blocked",
+                                    reason="verification_evidence_invalid",
+                                    outer_iterations=outer_iter + 1,
+                                    inner_iterations=total_inner_iterations,
+                                    pr_url=pr_url,
+                                    tokens_used=tokens_used,
+                                    final_verify=VerifyResult(
+                                        passed=False,
+                                        failures=[
+                                            FailureEntry(
+                                                FailureCategory.OTHER,
+                                                "verification-evidence-invalid",
+                                                "could not checkpoint verification-deferred "
+                                                f"candidate: {exc}",
+                                            )
+                                        ],
+                                    ),
+                                )
+                        elif self._should_continue_after_missing_marker(
                             build_result,
                             worktree_path=worktree_path,
                             checkpoint=build_checkpoint,
@@ -732,24 +931,20 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
-                    verify_result = self._apply_task_progress_gate(
-                        verify_result, worktree_path
-                    )
-                    verify_result = self._refresh_fulfillment_report(
+                    verify_result = self._apply_post_verify_gates(
                         verify_result,
                         worktree_path,
                         completed_task_ids=scoped_completed_task_ids,
                         changed_files=scoped_changed_files,
                     )
-                    verify_result = self._apply_fulfillment_gate(
-                        verify_result, worktree_path
-                    )
-                    verify_result = self._apply_documentation_gate(
-                        verify_result,
-                        worktree_path,
+                    tokens_used += verify_result.token_usage
+                    self._record_provider_attempt_summary(
+                        phase="build",
+                        attempt=outer_iter + 1,
+                        result=build_result,
+                        verify_result=verify_result,
                         changed_files=scoped_changed_files,
                     )
-                    tokens_used += verify_result.token_usage
 
                     if _is_provider_session_limit_verify_result(verify_result):
                         preserve_worktree = True
@@ -783,6 +978,36 @@ class RalphController:
                         return self._finalize(
                             status="blocked",
                             reason="verify_command_needed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
+                    # Infrastructure cannot be repaired by the product agent.
+                    # Block immediately with a durable reason instead of consuming
+                    # build retries and misreporting a coordinator exception.
+                    if any(
+                        f.id == "sandbox-verification-unavailable"
+                        for f in verify_result.failures
+                    ):
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="sandbox_verification_unavailable",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
+                    if _is_user_runnability_sandbox_prerequisite(verify_result):
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="user_runnability_sandbox_prerequisite",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -829,6 +1054,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=verify_result,
+                                    error=e,
                                 ),
                             )
                         if not self._merge_verified_branch(worktree_path, branch, verify_result):
@@ -869,6 +1095,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=verify_result,
+                                    error=e,
                                 ),
                             )
                         try:
@@ -890,6 +1117,7 @@ class RalphController:
                                     branch=branch,
                                     stage="pr",
                                     verify_result=verify_result,
+                                    error=exc,
                                 ),
                             )
                         # Phase 2/3 and landing consume the converged delivery
@@ -976,6 +1204,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=inner_result.get("final_verify"),
+                                    error=e,
                                 ),
                             )
                         if not self._merge_verified_branch(
@@ -1018,6 +1247,7 @@ class RalphController:
                                     branch=e.branch,
                                     stage=e.stage,
                                     verify_result=inner_result.get("final_verify"),
+                                    error=e,
                                 ),
                             )
                         try:
@@ -1039,6 +1269,7 @@ class RalphController:
                                     branch=branch,
                                     stage="pr",
                                     verify_result=inner_result.get("final_verify"),
+                                    error=exc,
                                 ),
                             )
                         # Phase 2/3 and landing consume the converged delivery
@@ -1066,6 +1297,22 @@ class RalphController:
                                 inner_result.get("blocked_reason")
                                 or "blocker_escalation"
                             ),
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=inner_result.get("final_verify"),
+                        )
+
+                    if _is_task_progress_incomplete(inner_result.get("final_verify")):
+                        # Canonical task evidence is a delivery-completeness
+                        # blocker, not an implementation retry or a publication
+                        # failure. Do not consume more outer iterations or try
+                        # to checkpoint incidental verification artifacts.
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="task_progress_incomplete",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -1142,15 +1389,23 @@ class RalphController:
                             tokens_used=tokens_used,
                             final_verify=inner_result.get("final_verify"),
                             branch=e.branch,
+                            extra_state=self._publish_checkpoint_state(
+                                worktree_path=worktree_path,
+                                branch=e.branch,
+                                stage=e.stage,
+                                verify_result=inner_result.get("final_verify"),
+                                error=e,
+                            ),
                         )
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
 
                 finally:
-                    try:
-                        self._provider.destroy(handle)
-                    except Exception as exc:
-                        self._record_cleanup_warning("sandbox_destroy", exc)
-                        logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
+                    if handle is not None:
+                        try:
+                            self._provider.destroy(handle)
+                        except Exception as exc:
+                            self._record_cleanup_warning("sandbox_destroy", exc)
+                            logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
 
             except BaseException:
                 # An unexpected interruption may leave uncommitted evidence that
@@ -1215,7 +1470,7 @@ class RalphController:
 
     def _run_inner_loop(
         self,
-        handle: SandboxHandle,
+        handle: Optional[SandboxHandle],
         verify_result: VerifyResult,
         outer_iter: int,
         max_inner: int,
@@ -1231,12 +1486,23 @@ class RalphController:
 
         Returns dict with: converged, blocked, inner_count, tokens_used, final_verify.
         """
-        if _is_fulfillment_refresh_deferred(verify_result) or _is_fulfillment_freshness_failure(
-            verify_result
+        if (
+            _is_fulfillment_refresh_deferred(verify_result)
+            or _is_fulfillment_freshness_failure(verify_result)
+            or _is_task_progress_incomplete(verify_result)
         ):
             return {
                 "converged": False,
                 "blocked": False,
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
+        if _is_user_runnability_sandbox_prerequisite(verify_result):
+            return {
+                "converged": False,
+                "blocked": True,
+                "blocked_reason": "user_runnability_sandbox_prerequisite",
                 "inner_count": 0,
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
@@ -1392,26 +1658,64 @@ class RalphController:
             )
 
             if fix_result.get("build_status") == "blocked":
-                blocker = str(
-                    fix_result.get("build_reason") or "build agent reported a blocker"
-                )
-                return {
-                    "converged": False,
-                    "blocked": True,
-                    "blocked_reason": "build_blocked",
-                    "inner_count": inner_iter,
-                    "tokens_used": tokens_used,
-                    "final_verify": VerifyResult(
-                        passed=False,
-                        failures=[
-                            FailureEntry(
-                                FailureCategory.OTHER,
-                                "build-blocked",
-                                blocker,
+                if _is_verification_environment_deferral(fix_result):
+                    try:
+                        deferred_commit = (
+                            self._checkpoint_verification_deferred_candidate(
+                                worktree_path,
+                                outer_iter=outer_iter,
+                                inner_iter=inner_iter,
+                                phase="fix",
                             )
-                        ],
-                    ),
-                }
+                        )
+                        self._record_verification_environment_deferral(
+                            fix_result,
+                            commit=deferred_commit,
+                            outer_iter=outer_iter,
+                            inner_iter=inner_iter,
+                            phase="fix",
+                        )
+                    except Exception as exc:
+                        return {
+                            "converged": False,
+                            "blocked": True,
+                            "blocked_reason": "verification_evidence_invalid",
+                            "inner_count": inner_iter,
+                            "tokens_used": tokens_used,
+                            "final_verify": VerifyResult(
+                                passed=False,
+                                failures=[
+                                    FailureEntry(
+                                        FailureCategory.OTHER,
+                                        "verification-evidence-invalid",
+                                        "could not checkpoint verification-deferred "
+                                        f"candidate: {exc}",
+                                    )
+                                ],
+                            ),
+                        }
+                else:
+                    blocker = str(
+                        fix_result.get("build_reason")
+                        or "build agent reported a blocker"
+                    )
+                    return {
+                        "converged": False,
+                        "blocked": True,
+                        "blocked_reason": "build_blocked",
+                        "inner_count": inner_iter,
+                        "tokens_used": tokens_used,
+                        "final_verify": VerifyResult(
+                            passed=False,
+                            failures=[
+                                FailureEntry(
+                                    FailureCategory.OTHER,
+                                    "build-blocked",
+                                    blocker,
+                                )
+                            ],
+                        ),
+                    }
 
             # Check termination
             termination = self._check_termination(
@@ -1429,18 +1733,10 @@ class RalphController:
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
             inner_changed_files = self._changed_files_since_head(worktree_path)
-            current_verify = self._refresh_fulfillment_report(
+            current_verify = self._apply_post_verify_gates(
                 current_verify,
                 worktree_path,
                 completed_task_ids=scoped_completed_task_ids,
-                changed_files=inner_changed_files,
-            )
-            current_verify = self._apply_fulfillment_gate(
-                current_verify, worktree_path
-            )
-            current_verify = self._apply_documentation_gate(
-                current_verify,
-                worktree_path,
                 changed_files=inner_changed_files,
             )
             tokens_used += current_verify.token_usage
@@ -1456,6 +1752,13 @@ class RalphController:
                     for f in current_verify.failures
                 ],
             )
+            self._record_provider_attempt_summary(
+                phase="fix",
+                attempt=inner_iter,
+                result=fix_result,
+                verify_result=current_verify,
+                changed_files=inner_changed_files,
+            )
 
             if current_verify.passed:
                 return {
@@ -1470,6 +1773,16 @@ class RalphController:
                 return {
                     "converged": False,
                     "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
+            if _is_user_runnability_sandbox_prerequisite(current_verify):
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "blocked_reason": "user_runnability_sandbox_prerequisite",
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
                     "final_verify": current_verify,
@@ -1593,7 +1906,7 @@ class RalphController:
 
     def _exec_build(
         self,
-        handle: SandboxHandle,
+        handle: Optional[SandboxHandle],
         build_command: str,
         strategy_context: str,
         worktree_path: str = "",
@@ -1626,6 +1939,7 @@ class RalphController:
                 containment_policy_file=str(
                     self._state_store.state_dir / "delivery-containment-policy.json"
                 ),
+                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
             )
             return {
                 "exit_code": result.exit_code,
@@ -1633,6 +1947,7 @@ class RalphController:
                 "build_status": result.status,
                 "completion_marker_explicit": True,
                 "build_reason": result.reason,
+                "blocker_kind": result.blocker_kind,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
                 "provider_invocation": result.provider_invocation,
@@ -1662,33 +1977,172 @@ class RalphController:
             "stderr": result.stderr,
         }
 
-    def _exec_verify(self, handle: SandboxHandle, worktree_path: str = "") -> VerifyResult:
+    def _exec_verify(self, handle: SandboxHandle | None, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
 
-        When the LLM build runner path is active and worktree_path is provided, runs verification
-        locally on the host via the detected package manager's install + test + build
-        commands (avoids Docker networking issues where the internal network blocks
-        package downloads). Falls back to sandbox provider path otherwise.
+        Verification runs in a managed sandbox by default.  Host execution is an
+        explicit compatibility fallback only; the LLM build process itself may
+        still run on the host.
 
         Returns parsed VerifyResult.
         """
-        if self._llm_build_runner and worktree_path:
+        if (
+            self._llm_build_runner
+            and worktree_path
+            and self._config.verification.execution == "host"
+        ):
             return self._exec_verify_locally(worktree_path)
 
-        result = self._provider.exec(handle, "echelon verify", timeout_ms=600_000)
-
-        # Parse verify result from stdout
+        owned_handle = False
         try:
-            data = json.loads(result.stdout)
-            return VerifyResult.from_dict(data)
-        except (json.JSONDecodeError, Exception):
-            # If parsing fails, create a failed VerifyResult
-            return VerifyResult(
+            if handle is None:
+                handle = self._provider.create(
+                    self._build_sandbox_spec(worktree_path, 0)
+                )
+                owned_handle = True
+            verification_plan = build_verification_plan(
+                Path(worktree_path), self._config,
+                services=tuple(self._config.verification_services),
+            )
+            service_env: dict[str, str] = {}
+            verification_stages: list[VerificationStage] = []
+            if verification_plan.services:
+                start_services = getattr(self._provider, "start_services", None)
+                if start_services is None:
+                    raise NotSupportedError(
+                        "sandbox provider does not support verification services"
+                    )
+                materialized_services = materialize_services(
+                    verification_plan.services, session_id=handle.session_id
+                )
+                start_services(handle, materialized_services.services)
+                service_env = dict(materialized_services.verifier_environment)
+            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+            candidate_path = Path(worktree_path)
+            candidate_commit = (
+                _current_git_commit(candidate_path)
+                if candidate_path.is_dir()
+                else None
+            )
+            sandbox_context = {
+                "mode": "sandbox",
+                "image": verification_plan.image,
+                "network": "internal",
+                "services": [service.service_name for service in verification_plan.services],
+            }
+            for command in verification_plan.bootstrap_commands:
+                bootstrap_started_at = datetime.now(timezone.utc).isoformat()
+                bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
+                verification_stages.append(VerificationStage(
+                    name="bootstrap", command=tuple(shlex.split(command)),
+                    exit_code=bootstrap.exit_code, duration_ms=bootstrap.duration_ms,
+                    stdout=bootstrap.stdout.encode(), stderr=bootstrap.stderr.encode(),
+                    started_at=bootstrap_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ))
+                if bootstrap.exit_code != 0:
+                    failures = [FailureEntry(
+                        category=FailureCategory.BUILD,
+                        id="sandbox-bootstrap",
+                        error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
+                    )]
+                    return self._attach_host_verification_receipt(
+                        worktree_path=worktree_path,
+                        candidate_commit=candidate_commit,
+                        fingerprint_before=fingerprint_before,
+                        fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                        verifier_source="sandbox",
+                        detection_evidence=("sandbox bootstrap",),
+                        stages=tuple(verification_stages),
+                        failures=failures,
+                        duration_s=bootstrap.duration_ms / 1000.0,
+                        execution_context=sandbox_context,
+                    )
+
+            command = self._config.verify_command
+            detection_evidence: tuple[str, ...] = ("harness verify_command",)
+            legacy_sandbox_verifier = False
+            if not command:
+                if self._llm_build_runner is None:
+                    # Existing sandbox-native build providers return the
+                    # structured result from their harness verifier. Keep that
+                    # contract while LLM delivery uses detected project commands.
+                    command = "echelon verify"
+                    legacy_sandbox_verifier = True
+                else:
+                    detection = detect_verify_command(Path(worktree_path))
+                    if detection.command is None:
+                        return VerifyResult(
+                            passed=False,
+                            failures=[FailureEntry(
+                                category=FailureCategory.BUILD,
+                                id="local-verify-skipped",
+                                error=(
+                                    "no high-confidence verifier was detected; "
+                                    "set harness.verify_command"
+                                ),
+                            )],
+                        )
+                    command = detection.command
+                    detection_evidence = tuple(detection.evidence)
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
+
+            if legacy_sandbox_verifier:
+                try:
+                    return VerifyResult.from_dict(json.loads(result.stdout))
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    return VerifyResult(
+                        passed=result.exit_code == 0,
+                        failures=[] if result.exit_code == 0 else [FailureEntry(
+                            category=FailureCategory.TEST,
+                            id="verify-command",
+                            error=(result.stdout + result.stderr)[-2000:],
+                        )],
+                        duration_s=result.duration_ms / 1000.0,
+                        token_usage=_estimate_tokens(result),
+                    )
+
+            verify = VerifyResult(
                 passed=result.exit_code == 0,
-                failures=[],
+                failures=[] if result.exit_code == 0 else [FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command",
+                    error=(result.stdout + result.stderr)[-2000:],
+                )],
                 duration_s=result.duration_ms / 1000.0,
                 token_usage=_estimate_tokens(result),
             )
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
+                verifier_source="sandbox",
+                detection_evidence=("sandbox provider", *detection_evidence),
+                stages=(*verification_stages, VerificationStage(
+                    name="verify", command=tuple(shlex.split(command)),
+                    exit_code=result.exit_code, duration_ms=result.duration_ms,
+                    stdout=result.stdout.encode(), stderr=result.stderr.encode(),
+                    started_at=stage_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )),
+                failures=verify.failures,
+                duration_s=verify.duration_s,
+                execution_context=sandbox_context,
+            )
+        except SandboxError as exc:
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="sandbox-verification-unavailable",
+                    error=str(exc),
+                )],
+            )
+        finally:
+            if owned_handle and handle is not None:
+                self._provider.destroy(handle)
 
     def _apply_fulfillment_gate(
         self,
@@ -1724,6 +2178,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         current_commit = _current_git_commit(Path(worktree_path))
@@ -1746,6 +2201,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         deferred_scope_issues = validate_deferred_scope_rows(report, spec_dir)
@@ -1760,6 +2216,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         if not fulfillment_has_blocking_gaps(report, strict=True):
@@ -1810,7 +2267,284 @@ class RalphController:
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
+
+    def _apply_post_verify_gates(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+        *,
+        completed_task_ids: Optional[List[str]] = None,
+        changed_files: Optional[List[str]] = None,
+    ) -> VerifyResult:
+        """Apply candidate gates in evidence-production order.
+
+        User runnability executes before fulfillment refresh because its
+        harness-owned composition evidence is an input to requirement judgment,
+        not a consequence of that judgment.
+        """
+        verify_result = self._apply_task_progress_gate(
+            verify_result, worktree_path, require_completion=False
+        )
+        verify_result = self._apply_user_runnability_gate(
+            verify_result,
+            worktree_path,
+            candidate_commit=_current_git_commit(Path(worktree_path)) or "",
+            evidence_dir=self._runnability_evidence_dir(),
+        )
+        verify_result = self._refresh_fulfillment_report(
+            verify_result,
+            worktree_path,
+            completed_task_ids=completed_task_ids,
+            changed_files=changed_files,
+        )
+        verify_result = self._apply_fulfillment_gate(verify_result, worktree_path)
+        verify_result = self._apply_documentation_gate(
+            verify_result,
+            worktree_path,
+            changed_files=changed_files,
+        )
+        return self._apply_task_progress_gate(
+            verify_result, worktree_path, require_completion=True
+        )
+
+    def _apply_user_runnability_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+        *,
+        candidate_commit: str,
+        evidence_dir: Path,
+    ) -> VerifyResult:
+        """Require a fresh composed journey when resolved stacks demand it."""
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        resolved_policy = getattr(self._config, "resolved_runnability", None)
+        policy = str(getattr(resolved_policy, "policy", "not_applicable"))
+        required = policy == "required"
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is not None:
+            try:
+                disposition = read_runnability_disposition(spec_dir)
+            except RunnabilityDispositionError as exc:
+                return self._runnability_failure(
+                    verify_result,
+                    failure_id="user-runnability-disposition-invalid",
+                    error=f"Owner runnability disposition is invalid: {exc}",
+                    details={"disposition": str(spec_dir / "runnability-disposition.json")},
+                )
+            if disposition is not None and disposition.status == "deferred":
+                self._record_user_runnability_state(
+                    {
+                        "status": "deferred",
+                        "failed_stage": None,
+                        "failure_class": "owner_deferred",
+                        "summary": disposition.reason,
+                        "report": disposition.evidence_report,
+                        "candidate_fingerprint": "",
+                        "contract_hash": "",
+                        "stack_hash": "",
+                        "user_commands": {},
+                    }
+                )
+                return verify_result
+
+        candidate_contract_path = Path(worktree_path) / RUNNABILITY_CONTRACT_PATH
+        if not candidate_contract_path.exists():
+            if not required:
+                return verify_result
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-missing",
+                error=(
+                    "Selected stacks require a composed user-runnability journey, but "
+                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
+                ),
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Add the project-owned runnability contract and real journey.",
+                },
+            )
+
+        try:
+            contract = load_runnability_contract(Path(worktree_path))
+        except (OSError, RunnabilityContractError) as exc:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-invalid",
+                error=f"Candidate runnability contract is invalid: {exc}",
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Repair the candidate-owned runnability contract.",
+                },
+            )
+
+        if contract is None:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-missing",
+                error=(
+                    "Selected stacks require a composed user-runnability journey, but "
+                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
+                ),
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Add the project-owned runnability contract and real journey.",
+                },
+            )
+        if not contract.enabled:
+            if not required:
+                return verify_result
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-contract-disabled",
+                error="A candidate contract cannot disable a stack-required runnability gate.",
+                details={
+                    "contract": str(RUNNABILITY_CONTRACT_PATH),
+                    "required_repair": "Enable and complete the candidate runnability contract.",
+                },
+            )
+
+        resolved_stacks = getattr(self._config, "resolved_stacks", None)
+        if resolved_stacks is None:
+            return self._runnability_failure(
+                verify_result,
+                failure_id="user-runnability-stack-resolution-missing",
+                error="Resolved stack evidence is unavailable for the runnability gate.",
+                details={
+                    "required_repair": "Rerun delivery with resolved stack runtime data."
+                },
+            )
+
+        runner = RunnabilityRunner(
+            provider=self._provider,
+            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
+                str(worktree), 0
+            ),
+            spec_id=self._spec_id,
+            target_id=_runnability_target_id(self._config.target_repo),
+            strategy_id=self._strategy_id,
+            build_id=self._build_id or str(self._state_store.read().get("run_id") or "run"),
+        )
+        result = runner.run(
+            worktree=Path(worktree_path),
+            contract=contract,
+            resolved=resolved_stacks,
+            candidate_commit=candidate_commit,
+            evidence_dir=evidence_dir,
+            attempt_sequence=_next_runnability_attempt_sequence(evidence_dir),
+        )
+        self._record_user_runnability_result(result)
+        if result.status == "runnable":
+            evidence = dict(verify_result.verification_evidence)
+            evidence["runnability_evidence"] = result.evidence.as_mapping()
+            return VerifyResult(
+                passed=True,
+                failures=list(verify_result.failures),
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+                verification_evidence=evidence,
+            )
+
+        report_path = str(result.evidence.markdown_path)
+        failure_id = (
+            "user-runnability-sandbox-prerequisite"
+            if result.failure_class == "sandbox_prerequisite_missing"
+            else f"user-runnability-{result.failure_class.replace('_', '-')}"
+        )
+        repair = (
+            "Repair the sandbox/provider prerequisite and retry delivery."
+            if result.failure_class == "sandbox_prerequisite_missing"
+            else "Repair the candidate product or .echelon/runnability.yml, then retry delivery."
+        )
+        return self._runnability_failure(
+            verify_result,
+            failure_id=failure_id,
+            error=(
+                f"User runnability {result.failure_class} failed at "
+                f"{result.failed_stage or 'unknown'}: "
+                f"{result.summary}. Evidence: {report_path}"
+            ),
+            details={
+                "failed_stage": result.failed_stage,
+                "failure_class": result.failure_class,
+                "summary": result.summary,
+                "report": report_path,
+                "required_repair": repair,
+            },
+        )
+
+    def _runnability_failure(
+        self,
+        verify_result: VerifyResult,
+        *,
+        failure_id: str,
+        error: str,
+        details: dict[str, object],
+    ) -> VerifyResult:
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=failure_id,
+                    error=error,
+                    details=details,
+                )
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
+        )
+
+    def _runnability_evidence_dir(self) -> Path:
+        return self._state_store.state_dir.parent / "evidence" / "user-runnability"
+
+    def _record_user_runnability_result(self, result: RunnabilityRunResult) -> None:
+        summary: dict[str, object] = {
+            "status": result.status,
+            "failed_stage": result.failed_stage,
+            "failure_class": result.failure_class,
+            "summary": result.summary,
+            "report": str(result.evidence.markdown_path),
+            "candidate_fingerprint": result.candidate_fingerprint,
+            "contract_hash": result.contract_hash,
+            "stack_hash": result.stack_hash,
+            "user_commands": {
+                key: list(commands)
+                for key, commands in result.user_commands.items()
+            },
+        }
+        if (
+            result.local_journey_status != "not_required"
+            or result.local_user_commands
+        ):
+            local_journey: dict[str, object] = {
+                "status": result.local_journey_status,
+                "reason": result.local_journey_reason,
+                "commands": {
+                    key: list(commands)
+                    for key, commands in result.local_user_commands.items()
+                },
+            }
+            if result.local_boundary_probes:
+                local_journey["boundary_probes"] = [
+                    {
+                        "id": probe.id,
+                        "service": probe.service,
+                        "command": probe.command,
+                    }
+                    for probe in result.local_boundary_probes
+                ]
+            summary["local_journey"] = local_journey
+        self._record_user_runnability_state(summary)
+
+    def _record_user_runnability_state(self, summary: dict[str, object]) -> None:
+        state = self._state_store.read()
+        state["user_runnability"] = summary
+        self._state_store.write(state)
 
     def _apply_documentation_gate(
         self,
@@ -1836,10 +2570,34 @@ class RalphController:
             documentation_changes,
         )
 
+        state = self._state_store.read()
+        raw_runnability = state.get("user_runnability")
+        runnability_ref: RunnabilityEvidenceRef | None = None
+        if isinstance(raw_runnability, dict) and raw_runnability.get("status") == "runnable":
+            try:
+                runnability_ref = load_runnability_evidence_ref(
+                    str(raw_runnability.get("report") or "")
+                )
+            except ValueError:
+                runnability_ref = None
+        resolved_policy = getattr(self._config, "resolved_runnability", None)
+        runnability_required = (
+            str(getattr(resolved_policy, "policy", "not_applicable")) == "required"
+            or runnability_ref is not None
+        )
+        if runnability_ref is not None:
+            write_docs_verification_report(
+                Path(worktree_path),
+                spec_dir,
+                runnability_report=runnability_ref,
+            )
+
         gate = evaluate_documentation_gate(
             Path(worktree_path),
             spec_dir,
             changed_files=documentation_changes,
+            runnability_report=runnability_ref,
+            runnability_required=runnability_required,
         )
         if self._can_write_noop_documentation_report(
             gate,
@@ -1859,6 +2617,8 @@ class RalphController:
                 Path(worktree_path),
                 spec_dir,
                 changed_files=documentation_changes,
+                runnability_report=runnability_ref,
+                runnability_required=runnability_required,
             )
         if gate.passed:
             return verify_result
@@ -1869,6 +2629,7 @@ class RalphController:
             failures=[gate.failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _documentation_delivery_changes(
@@ -2008,6 +2769,8 @@ class RalphController:
         self,
         verify_result: VerifyResult,
         worktree_path: str,
+        *,
+        require_completion: bool = True,
     ) -> VerifyResult:
         """Treat task progress mismatches as verification failures."""
         if not verify_result.passed or not worktree_path:
@@ -2027,23 +2790,57 @@ class RalphController:
             state.get("build") if isinstance(state.get("build"), dict) else {},
             selected_task_ids=self._target_task_ids(),
         )
-        if summary.valid:
+        if not summary.valid:
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="task-progress-mismatch",
+                error=(
+                    "task progress tracking is inconsistent: "
+                    + "; ".join(summary.errors)
+                    + ". Update tasks.md canonical rows and state.json build progress before convergence."
+                ),
+            )
+        elif require_completion:
+            incomplete = sorted(
+                task_id
+                for task_id, status in summary.task_statuses.items()
+                if status in {"PENDING", "BLOCKED"}
+            )
+            if incomplete:
+                failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="task-progress-incomplete",
+                    error=(
+                        "canonical delivery tasks remain open: "
+                        + ", ".join(incomplete)
+                        + ". Complete them or record approved deferred scope before convergence."
+                    ),
+                )
+            else:
+                missing = _missing_completed_task_deliverables(
+                    tasks_path.read_text(encoding="utf-8", errors="replace"),
+                    task_statuses=summary.task_statuses,
+                    worktree_path=Path(worktree_path),
+                    implementation_target=str(state.get("implementation_target") or ""),
+                )
+                if not missing:
+                    return verify_result
+                failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="task-deliverable-missing",
+                    error=(
+                        "completed task deliverables are absent from the target worktree: "
+                        + ", ".join(missing)
+                    ),
+                )
+        else:
             return verify_result
-
-        failure = FailureEntry(
-            category=FailureCategory.OTHER,
-            id="task-progress-mismatch",
-            error=(
-                "task progress tracking is inconsistent: "
-                + "; ".join(summary.errors)
-                + ". Update tasks.md canonical rows and state.json build progress before convergence."
-            ),
-        )
         return VerifyResult(
             passed=False,
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _apply_build_task_progress(
@@ -2209,6 +3006,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         refresh_kwargs: dict[str, object] = {
@@ -2219,6 +3017,10 @@ class RalphController:
                 else None
             )
         }
+        if verify_result.verification_evidence:
+            refresh_kwargs["verification_evidence"] = dict(
+                verify_result.verification_evidence
+            )
         if decision.get("action") == "scoped":
             refresh_kwargs.update(
                 {
@@ -2274,6 +3076,7 @@ class RalphController:
                     failures=[failure],
                     duration_s=verify_result.duration_s,
                     token_usage=verify_result.token_usage,
+                    verification_evidence=dict(verify_result.verification_evidence),
                 )
             return verify_result
 
@@ -2291,6 +3094,7 @@ class RalphController:
                 failures=[failure],
                 duration_s=verify_result.duration_s,
                 token_usage=verify_result.token_usage,
+                verification_evidence=dict(verify_result.verification_evidence),
             )
 
         failure = FailureEntry(
@@ -2306,6 +3110,7 @@ class RalphController:
             failures=[failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+            verification_evidence=dict(verify_result.verification_evidence),
         )
 
     def _task_progress_counts(self) -> tuple[int, int]:
@@ -2323,7 +3128,9 @@ class RalphController:
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
         total, completed = self._task_progress_counts()
-        tasks_complete = total > 0 and completed >= total
+        tasks_complete = (
+            total > 0 and completed >= total
+        ) or self._all_canonical_tasks_complete(worktree_path)
         if self._target_task_ids() is not None:
             state = self._state_store.read()
             declared_targets = state.get("declared_targets")
@@ -2492,27 +3299,97 @@ class RalphController:
         # intentionally does not contain source scripts.
         if self._config.verify_command:
             import subprocess as _sp
-            cmd = self._config.verify_command.split()
+            cmd = shlex.split(self._config.verify_command)
             verify_cwd = (
                 str(Path(worktree_path).resolve())
                 if worktree_path
                 else str(getattr(self._gitops, "base_dir", ""))
             )
+            fingerprint_before = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
+            candidate_commit = _current_git_commit(Path(worktree_path))
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
-                res = _sp.run(cmd, cwd=verify_cwd, capture_output=True, text=True, timeout=300)
+                res = _sp.run(
+                    cmd,
+                    cwd=verify_cwd,
+                    capture_output=True,
+                    timeout=300,
+                )
+                stdout = bytes(res.stdout or b"")
+                stderr = bytes(res.stderr or b"")
+                exit_code = int(res.returncode)
                 if res.returncode != 0:
-                    out = (res.stdout + res.stderr).strip()
+                    out = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.TEST,
                         id="verify-command",
                         error=out[-2000:] if len(out) > 2000 else out,
                     ))
+            except _sp.TimeoutExpired as exc:
+                stdout = bytes(exc.stdout or b"")
+                stderr = bytes(exc.stderr or b"")
+                exit_code = 124
+                failures.append(FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="verify-command-timeout",
+                    error="configured verifier timed out after 300 seconds",
+                ))
             except Exception as e:
                 failures.append(FailureEntry(
                     category=FailureCategory.OTHER, id="verify-command-error", error=str(e),
                 ))
+            stage_completed_at = datetime.now(timezone.utc).isoformat()
+            fingerprint_after = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
+            if (
+                fingerprint_before is not None
+                and fingerprint_after is not None
+                and fingerprint_before != fingerprint_after
+            ):
+                failures.append(
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="candidate-mutated-during-verification",
+                        error=(
+                            "configured verifier changed bounded candidate "
+                            "content during verification"
+                        ),
+                    )
+                )
             duration_s = time.monotonic() - start
-            return VerifyResult(passed=not failures, failures=failures, duration_s=duration_s)
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=fingerprint_after,
+                verifier_source="configured",
+                detection_evidence=("harness verify_command",),
+                stages=(
+                    VerificationStage(
+                        name="verify",
+                        command=tuple(cmd),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=stage_completed_at,
+                    ),
+                ),
+                failures=failures,
+                duration_s=duration_s,
+            )
 
         # Python project: skip all npm/pnpm/yarn steps, delegate to verify.sh
         # Python takes priority over Node when both pyproject.toml and package.json exist
@@ -2542,26 +3419,26 @@ class RalphController:
             return self._exec_verify_python(worktree_path, start)
 
         if is_swift:
-            return self._exec_verify_swift(str(swift_package_dir), start)
+            return self._exec_verify_swift(
+                str(swift_package_dir), start, worktree_path
+            )
 
+        detection = detect_verify_command(wt)
         if (wt / "pnpm-lock.yaml").exists():
             commands = [
                 ("install", "pnpm install --frozen-lockfile --ignore-scripts"),
-                ("test", "pnpm test"),
-                ("build", "pnpm run build"),
             ]
+            fallback_commands = [("test", "pnpm test"), ("build", "pnpm run build")]
         elif (wt / "yarn.lock").exists():
             commands = [
                 ("install", "yarn install --frozen-lockfile"),
-                ("test", "yarn test"),
-                ("build", "yarn run build"),
             ]
+            fallback_commands = [("test", "yarn test"), ("build", "yarn run build")]
         elif is_node:
             commands = [
                 ("install", "npm ci"),
-                ("test", "npm test"),
-                ("build", "npm run build"),
             ]
+            fallback_commands = [("test", "npm test"), ("build", "npm run build")]
         else:
             # Unknown project type — cannot verify locally.
             # Return passed=False so the harness does not falsely claim convergence.
@@ -2584,17 +3461,38 @@ class RalphController:
                 duration_s=0.0,
             )
 
+        if detection.command and detection.evidence == ["package.json scripts.verify"]:
+            commands.append(("verify", detection.command))
+        else:
+            commands.extend(fallback_commands)
+
+        verify_env = os.environ.copy()
+        verify_env["CI"] = "true"
+        candidate_commit = _current_git_commit(wt)
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+        verification_stages: list[VerificationStage] = []
         for stage, cmd in commands:
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
                 result = subprocess.run(
-                    cmd.split(),
+                    shlex.split(cmd),
                     cwd=worktree_path,
                     capture_output=True,
-                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    env=verify_env,
                     timeout=300,
                 )
+                stdout = _output_bytes(result.stdout)
+                stderr = _output_bytes(result.stderr)
+                exit_code = int(result.returncode)
                 if result.returncode != 0:
-                    output = (result.stdout + result.stderr).strip()
+                    output = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.BUILD if stage in ("build", "install") else FailureCategory.TEST,
                         id=f"local-{stage}",
@@ -2604,6 +3502,7 @@ class RalphController:
                     if stage in ("install", "test"):
                         break
             except subprocess.TimeoutExpired:
+                exit_code = 124
                 failures.append(FailureEntry(
                     category=FailureCategory.BUILD if stage in ("build", "install") else FailureCategory.TEST,
                     id=f"local-{stage}-timeout",
@@ -2616,14 +3515,152 @@ class RalphController:
                     id=f"local-{stage}-error",
                     error=str(e),
                 ))
+            finally:
+                verification_stages.append(
+                    VerificationStage(
+                        name=stage,
+                        command=tuple(shlex.split(cmd)),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+            if failures:
                 break
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "detected verifier changed bounded candidate content "
+                        "during verification"
+                    ),
+                )
+            )
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=tuple(detection.evidence),
+            stages=tuple(verification_stages),
             failures=failures,
             duration_s=duration_s,
         )
+
+    def _attach_host_verification_receipt(
+        self,
+        *,
+        worktree_path: str,
+        candidate_commit: str | None,
+        fingerprint_before: str | None,
+        fingerprint_after: str | None,
+        verifier_source: str,
+        detection_evidence: tuple[str, ...],
+        stages: tuple[VerificationStage, ...],
+        failures: list[FailureEntry],
+        duration_s: float,
+        execution_context: Mapping[str, object] | None = None,
+    ) -> VerifyResult:
+        """Persist and attach evidence for one Ralph-owned verification."""
+        if not candidate_commit or not fingerprint_before or not fingerprint_after:
+            missing = [
+                name
+                for name, value in (
+                    ("candidate commit", candidate_commit),
+                    ("pre-verification fingerprint", fingerprint_before),
+                    ("post-verification fingerprint", fingerprint_after),
+                )
+                if not value
+            ]
+            return VerifyResult(
+                passed=False,
+                failures=[
+                    *failures,
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="verification-evidence-invalid",
+                        error=(
+                            "could not bind verification to the candidate "
+                            "commit and content fingerprint; missing "
+                            + ", ".join(missing)
+                        ),
+                    ),
+                ],
+                duration_s=duration_s,
+            )
+        evidence_dir = (
+            self._state_store.state_dir.parent
+            / "evidence"
+            / self._strategy_id
+            / "verification"
+        )
+        sequence = self._next_host_verification_attempt(evidence_dir)
+        try:
+            ref = write_verification_receipt(
+                evidence_dir=evidence_dir,
+                spec_id=self._spec_id,
+                strategy_id=self._strategy_id,
+                build_id=self._build_id
+                or str(self._state_store.read().get("run_id") or ""),
+                target_id=str(
+                    self._state_store.read().get("source_id") or ""
+                ),
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=fingerprint_after,
+                verifier_source=verifier_source,
+                detection_evidence=detection_evidence,
+                execution_context=execution_context,
+                stages=stages,
+                attempt_sequence=sequence,
+                sensitive_environment=os.environ,
+                started_at=stages[0].started_at if stages else None,
+            )
+        except (OSError, ValueError) as exc:
+            return VerifyResult(
+                passed=False,
+                failures=[
+                    *failures,
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="verification-evidence-invalid",
+                        error=f"could not persist verification evidence: {exc}",
+                    ),
+                ],
+                duration_s=duration_s,
+            )
+        return VerifyResult(
+            passed=ref.passed and not failures,
+            failures=failures,
+            duration_s=duration_s,
+            verification_evidence=ref.as_mapping(),
+        )
+
+    @staticmethod
+    def _next_host_verification_attempt(evidence_dir: Path) -> int:
+        if not evidence_dir.exists():
+            return 1
+        sequences: list[int] = []
+        for path in evidence_dir.glob("attempt-*.json"):
+            match = re.match(r"attempt-(\d+)-", path.name)
+            if match:
+                sequences.append(int(match.group(1)))
+        return max(sequences, default=0) + 1
 
     def _exec_verify_python(self, worktree_path: str, start: float) -> VerifyResult:
         """Run Python verification using uv (if uv.lock present) or pytest.
@@ -2641,6 +3678,8 @@ class RalphController:
 
         failures = []
         wt = Path(worktree_path)
+        candidate_commit = _current_git_commit(wt)
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
 
         # Prefer uv when a lockfile is present (handles venv + deps automatically)
         use_uv = (wt / "uv.lock").exists() and shutil.which("uv") is not None
@@ -2656,22 +3695,32 @@ class RalphController:
                   else ["python", "-m", "pytest"] + _pytest_args)
         )
 
+        stage_started_at = datetime.now(timezone.utc).isoformat()
+        stage_start = time.monotonic()
+        stdout = b""
+        stderr = b""
+        exit_code = 1
         try:
             result = subprocess.run(
                 pytest_cmd,
                 cwd=worktree_path,
                 capture_output=True,
-                text=True,
                 timeout=300,
             )
+            stdout = _output_bytes(result.stdout)
+            stderr = _output_bytes(result.stderr)
+            exit_code = int(result.returncode)
             if result.returncode != 0:
-                output = (result.stdout + result.stderr).strip()
+                output = (stdout + stderr).decode(
+                    "utf-8", errors="replace"
+                ).strip()
                 failures.append(FailureEntry(
                     category=FailureCategory.TEST,
                     id="pytest",
                     error=output[-2000:] if len(output) > 2000 else output,
                 ))
         except subprocess.TimeoutExpired:
+            exit_code = 124
             failures.append(FailureEntry(
                 category=FailureCategory.TEST,
                 id="pytest-timeout",
@@ -2685,13 +3734,49 @@ class RalphController:
             ))
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "pytest changed bounded candidate content during "
+                        "verification"
+                    ),
+                )
+            )
+        detection = detect_verify_command(wt)
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=tuple(detection.evidence),
+            stages=(
+                VerificationStage(
+                    name="pytest",
+                    command=tuple(str(item) for item in pytest_cmd),
+                    exit_code=exit_code,
+                    duration_ms=int((time.monotonic() - stage_start) * 1000),
+                    stdout=stdout,
+                    stderr=stderr,
+                    started_at=stage_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                ),
+            ),
             failures=failures,
             duration_s=duration_s,
         )
 
-    def _exec_verify_swift(self, package_dir: str, start: float) -> VerifyResult:
+    def _exec_verify_swift(
+        self, package_dir: str, start: float, worktree_path: str
+    ) -> VerifyResult:
         """Run Swift Package Manager verification: ``swift build`` then ``swift test``.
 
         Runs from ``package_dir`` (the directory containing Package.swift).
@@ -2703,33 +3788,67 @@ class RalphController:
         import time
 
         failures = []
+        candidate_commit = _current_git_commit(Path(worktree_path))
+        fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
+        stages: list[VerificationStage] = []
 
         if not shutil.which("swift"):
             duration_s = time.monotonic() - start
-            return VerifyResult(
-                passed=False,
-                failures=[FailureEntry(
+            message = (
+                "swift toolchain not found on PATH. Install Xcode or the "
+                "Swift toolchain and ensure 'swift' is on PATH."
+            )
+            failures.append(FailureEntry(
                     category=FailureCategory.BUILD,
                     id="swift-not-found",
-                    error=(
-                        "swift toolchain not found on PATH. "
-                        "Install Xcode or the Swift toolchain and ensure 'swift' is on PATH."
-                    ),
-                )],
+                    error=message,
+                ))
+            stages.append(
+                VerificationStage(
+                    name="swift-build",
+                    command=("swift", "build"),
+                    exit_code=127,
+                    duration_ms=0,
+                    stdout=b"",
+                    stderr=message.encode("utf-8"),
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            return self._attach_host_verification_receipt(
+                worktree_path=worktree_path,
+                candidate_commit=candidate_commit,
+                fingerprint_before=fingerprint_before,
+                fingerprint_after=_safe_product_evidence_fingerprint(
+                    worktree_path
+                ),
+                verifier_source="detected",
+                detection_evidence=("Package.swift",),
+                stages=tuple(stages),
+                failures=failures,
                 duration_s=duration_s,
             )
 
         for stage, cmd in [("build", "swift build"), ("test", "swift test")]:
+            stage_started_at = datetime.now(timezone.utc).isoformat()
+            stage_start = time.monotonic()
+            stdout = b""
+            stderr = b""
+            exit_code = 1
             try:
                 result = subprocess.run(
                     cmd.split(),
                     cwd=package_dir,
                     capture_output=True,
-                    text=True,
                     timeout=600,
                 )
+                stdout = _output_bytes(result.stdout)
+                stderr = _output_bytes(result.stderr)
+                exit_code = int(result.returncode)
                 if result.returncode != 0:
-                    output = (result.stdout + result.stderr).strip()
+                    output = (stdout + stderr).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
                     failures.append(FailureEntry(
                         category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
                         id=f"swift-{stage}",
@@ -2737,6 +3856,7 @@ class RalphController:
                     ))
                     break
             except subprocess.TimeoutExpired:
+                exit_code = 124
                 failures.append(FailureEntry(
                     category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
                     id=f"swift-{stage}-timeout",
@@ -2749,13 +3869,84 @@ class RalphController:
                     id=f"swift-{stage}-error",
                     error=str(e),
                 ))
+            finally:
+                stages.append(
+                    VerificationStage(
+                        name=f"swift-{stage}",
+                        command=tuple(cmd.split()),
+                        exit_code=exit_code,
+                        duration_ms=int(
+                            (time.monotonic() - stage_start) * 1000
+                        ),
+                        stdout=stdout,
+                        stderr=stderr,
+                        started_at=stage_started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+            if failures:
                 break
 
         duration_s = time.monotonic() - start
-        return VerifyResult(
-            passed=len(failures) == 0,
+        fingerprint_after = _safe_product_evidence_fingerprint(worktree_path)
+        if (
+            fingerprint_before is not None
+            and fingerprint_after is not None
+            and fingerprint_before != fingerprint_after
+        ):
+            failures.append(
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="candidate-mutated-during-verification",
+                    error=(
+                        "Swift verification changed bounded candidate content"
+                    ),
+                )
+            )
+        return self._attach_host_verification_receipt(
+            worktree_path=worktree_path,
+            candidate_commit=candidate_commit,
+            fingerprint_before=fingerprint_before,
+            fingerprint_after=fingerprint_after,
+            verifier_source="detected",
+            detection_evidence=("Package.swift",),
+            stages=tuple(stages),
             failures=failures,
             duration_s=duration_s,
+        )
+
+    def run_downstream_feedback(
+        self,
+        *,
+        handle: SandboxHandle,
+        worktree_path: str,
+        verify_result: VerifyResult,
+        build_command: str,
+        strategy_context: str,
+        build_prompt: str,
+        phase: str,
+        evidence_paths: tuple[str, ...] = (),
+    ) -> Dict[str, Any]:
+        """Apply a downstream-gate repair through the configured build provider."""
+        _clear_build_status(worktree_path)
+        prompt = self._make_feedback_prompt(build_prompt, verify_result, 0)
+        prompt += (
+            f"\n\nThis repair was requested by the downstream {phase} gate. "
+            "Repair the product or its executable acceptance test; do not weaken, "
+            "skip, or remove the gate. The harness will rerun Phase 1 and the "
+            f"{phase} gate after this invocation."
+        )
+        if evidence_paths:
+            prompt += "\nEvidence paths available for inspection:\n" + "\n".join(
+                f"- {path}" for path in evidence_paths
+            )
+        return self._exec_feedback(
+            handle,
+            verify_result,
+            build_command,
+            strategy_context,
+            worktree_path=worktree_path,
+            prompt=prompt,
         )
 
     def _exec_feedback(
@@ -2783,6 +3974,7 @@ class RalphController:
                 containment_policy_file=str(
                     self._state_store.state_dir / "delivery-containment-policy.json"
                 ),
+                prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
             )
             return {
                 "exit_code": result.exit_code,
@@ -2790,12 +3982,15 @@ class RalphController:
                 "build_status": result.status,
                 "completion_marker_explicit": True,
                 "build_reason": result.reason,
+                "blocker_kind": result.blocker_kind,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
                 "provider_invocation": result.provider_invocation,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
         # Fallback: original sandbox path
         failures_json = json.dumps([
@@ -4027,6 +5222,27 @@ class RalphController:
             return "external"
         return "worktree"
 
+    def _llm_build_prompt_metadata(self, worktree_path: str) -> dict[str, object]:
+        """Authorize candidate contract and narrow external documentation outputs."""
+        write_paths = [
+            str(Path(worktree_path) / ".echelon" / "runnability.yml")
+        ]
+        if self._spec_artifacts_mode() != "external":
+            return {"tool_write_paths": write_paths}
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return {"tool_write_paths": write_paths}
+        write_paths.extend(
+            (
+                str(spec_dir / "documentation-impact-report.md"),
+                str(spec_dir / "docs-verification-report.md"),
+            )
+        )
+        return {
+            "tool_read_roots": [str(spec_dir)],
+            "tool_write_paths": write_paths,
+        }
+
     def _target_task_ids(self) -> set[str] | None:
         """Return the orchestrator-owned task scope for this source repo."""
         persisted = self._state_store.read().get("target_task_ids")
@@ -4097,8 +5313,18 @@ class RalphController:
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
             "If a failure mentions stale/scoped fulfillment evidence, treat it as "
             "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
-            f"Inner fix {inner_iter}. Fix these verification failures "
-            f"without re-running the full build pipeline:\n{failures_text}"
+            f"Inner fix {inner_iter}. "
+            + (
+                "The prior repair did not clear this failure: diagnose before editing. "
+                "Reproduce the focused failing check and identify the actual failing "
+                "component or browser hit target. For pointer/interactivity failures, "
+                "inspect DOM hit-testing and stacking contexts; do not make speculative "
+                "CSS or selector changes. Do not commit generated test traces or results.\n\n"
+                if inner_iter >= 2
+                else ""
+            )
+            + "Fix these verification failures without re-running the full build pipeline:\n"
+            + failures_text
         )
 
     # === Git operations ===
@@ -4127,6 +5353,93 @@ class RalphController:
         except Exception as exc:
             logger.warning("Could not create harness checkpoint commit: %s", exc)
             return None
+
+    def _checkpoint_verification_deferred_candidate(
+        self,
+        worktree_path: str,
+        *,
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> str:
+        """Commit a neutral candidate without claiming task completion."""
+        marker = Path(worktree_path) / BUILD_STATUS_FILENAME
+        marker.unlink(missing_ok=True)
+        if self._has_non_verify_worktree_changes(worktree_path):
+            message = build_echelon_commit_message(
+                (
+                    f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+                    f"iter-{outer_iter} {phase} verification-deferred"
+                ),
+                EchelonCommitMetadata(
+                    origin="delivery",
+                    action="checkpoint",
+                    spec_id=self._spec_id,
+                    run_id=self._build_id,
+                    phase=phase,
+                    strategy=self._strategy_id,
+                ),
+            )
+            reported_commit = self._gitops.commit(
+                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+            )
+            commit = _current_git_commit(Path(worktree_path))
+            if not commit or (
+                reported_commit and str(reported_commit) != commit
+            ):
+                raise RuntimeError(
+                    "verification-deferred checkpoint did not bind current HEAD"
+                )
+        else:
+            commit = _current_git_commit(Path(worktree_path))
+            if not commit:
+                raise RuntimeError(
+                    "verification-deferred candidate has no Git commit"
+                )
+        state = self._state_store.read()
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            checkpoints = []
+        checkpoints.append(
+            {
+                "commit": commit,
+                "outer_iter": outer_iter,
+                "inner_iter": inner_iter,
+                "phase": phase,
+                "task_ids": [],
+                "provenance": "verification_deferred",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        state["checkpoint_commits"] = checkpoints
+        self._state_store.write(state)
+        return commit
+
+    def _record_verification_environment_deferral(
+        self,
+        result: Mapping[str, object],
+        *,
+        commit: str,
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> None:
+        state = self._state_store.read()
+        deferrals = state.get("verification_environment_deferrals")
+        if not isinstance(deferrals, list):
+            deferrals = []
+        deferrals.append(
+            {
+                "commit": commit,
+                "outer_iter": outer_iter,
+                "inner_iter": inner_iter,
+                "phase": phase,
+                "reason": str(result.get("build_reason") or ""),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        state["verification_environment_deferrals"] = deferrals
+        self._state_store.write(state)
 
     def _checkpoint_progress_commit(
         self,
@@ -4186,7 +5499,9 @@ class RalphController:
                 strategy=self._strategy_id,
             ),
         )
-        commit = self._gitops.commit(worktree_path, message)
+        commit = self._gitops.commit(
+            worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+        )
         checkpoint = {
             "commit": commit,
             "outer_iter": outer_iter,
@@ -4422,6 +5737,7 @@ class RalphController:
         adjudication = adjudicate_dirty_worktree(
             Path(worktree_path),
             llm_provider=self._llm_provider,
+            exclude_paths=_VERIFICATION_ARTIFACT_PATHS,
         )
         if adjudication.status != "skipped":
             try:
@@ -4444,9 +5760,12 @@ class RalphController:
                 f"{adjudication.summary.get('left', 0)} unresolved path(s)",
                 branch=branch,
                 worktree_path=worktree_path,
+                stage="dirty_adjudication",
             )
         try:
-            self._gitops.commit(worktree_path, message)
+            self._gitops.commit(
+                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+            )
         except Exception as e:
             logger.warning("Commit failed for %s: %s", worktree_path, e)
             raise CommitPushError(
@@ -4520,10 +5839,38 @@ class RalphController:
         worktree_path: str,
         branch: str,
         verify_result: Optional[VerifyResult],
+        *,
+        force: bool = False,
     ) -> bool:
         """Merge a verified delivery branch into the target default branch."""
         if verify_result is None or not verify_result.passed:
             return False
+
+        if self._defer_target_merge and not force:
+            try:
+                state = self._state_store.read()
+                state["target_merge"] = {
+                    "status": "deferred",
+                    "branch": branch,
+                    "default_branch": self._gitops.get_default_branch(),
+                    "verified": True,
+                    "worktree_path": worktree_path,
+                    "verify_result": _verify_to_dict(verify_result),
+                }
+                self._state_store.write(state)
+                logger.info(
+                    "Deferred verified delivery branch merge for %s until "
+                    "downstream delivery gates pass",
+                    self._spec_id,
+                )
+                return True
+            except Exception as exc:
+                logger.warning(
+                    "Could not persist deferred target merge for %s: %s",
+                    self._spec_id,
+                    exc,
+                )
+                return False
 
         default_branch = None
         try:
@@ -4571,6 +5918,20 @@ class RalphController:
             except Exception as state_exc:
                 logger.warning("Could not persist target merge failure: %s", state_exc)
             return False
+
+    def publish_verified_branch(
+        self,
+        worktree_path: str,
+        branch: str,
+        verify_result: Optional[VerifyResult],
+    ) -> bool:
+        """Publish a deferred Phase 1 candidate after downstream gates pass."""
+        return self._merge_verified_branch(
+            worktree_path,
+            branch,
+            verify_result,
+            force=True,
+        )
 
     def _commit_orchestration_spec_artifacts(
         self,
@@ -4703,8 +6064,15 @@ class RalphController:
         """Build SandboxSpec from config and context."""
         from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
 
+        from harness.verification_plan import build_verification_plan
+
+        verification_plan = build_verification_plan(
+            Path(worktree_path),
+            self._config,
+            services=tuple(self._config.verification_services),
+        )
         return SandboxSpec(
-            image=self._config.base_image or "python:3.9-slim",
+            image=verification_plan.image,
             image_source="config_override" if self._config.base_image else "fingerprint",
             worktree_mount=worktree_path,
             container_mount="/workspace",
@@ -4720,6 +6088,11 @@ class RalphController:
             ),
             env={
                 "ECHELON_HARNESS_RUN": "1",
+                # Corepack uses Node's fetch implementation. Conventional
+                # HTTP(S)_PROXY alone is not honoured unless this opt-in is
+                # present, which would otherwise make clean Node sandboxes try
+                # external DNS from the internal-only network.
+                "NODE_OPTIONS": "--use-env-proxy",
             },
             secrets_env={},
             post_create_command=None,
@@ -4729,6 +6102,7 @@ class RalphController:
                 "spec_id": self._spec_id,
                 "run_id": str(outer_iter),
             },
+            ephemeral_volumes=["node_modules"],
         )
 
     def _append_iteration_log(
@@ -4788,6 +6162,107 @@ class RalphController:
                 state=fresh_state,
             )
 
+    def _record_provider_attempt_summary(
+        self,
+        *,
+        phase: str,
+        attempt: int,
+        result: Mapping[str, object],
+        verify_result: VerifyResult,
+        changed_files: Iterable[str],
+    ) -> dict[str, object] | None:
+        """Persist and render one fact-backed summary for an LLM attempt."""
+        raw_invocation = result.get("provider_invocation")
+        invocation = raw_invocation if isinstance(raw_invocation, Mapping) else None
+        provider = str(invocation.get("provider") or "").strip() if invocation else ""
+        if not provider:
+            return None
+        note = _compact_provider_note(str(result.get("stdout") or ""))
+        failures = verify_result.failures or []
+        primary_failure = _compact_provider_note(failures[0].error) if failures else ""
+        summary: dict[str, object] = {
+            "provider": provider,
+            "phase": phase,
+            "attempt": attempt,
+            "outcome": "verification passed" if verify_result.passed else "verification failed",
+            "changed_files": sorted(
+                {
+                    str(path).strip()
+                    for path in changed_files
+                    if str(path).strip() and not _is_verify_owned_artifact(str(path))
+                }
+            )[:8],
+            "provider_note": note or "Provider did not return a completion note.",
+            "primary_failure": primary_failure,
+        }
+        verification_evidence = verify_result.verification_evidence
+        raw_playwright = (
+            verification_evidence.get("playwright")
+            if isinstance(verification_evidence, dict)
+            else None
+        )
+        if isinstance(raw_playwright, dict):
+            summary["playwright"] = {
+                key: max(0, _safe_int(raw_playwright.get(key)))
+                for key in ("total", "passed", "failed", "skipped")
+            }
+        evidence_gaps: list[str] = []
+        for failure in failures:
+            details = failure.details
+            raw_gaps = details.get("gaps") if isinstance(details, dict) else None
+            if not isinstance(raw_gaps, list):
+                continue
+            for gap in raw_gaps:
+                if not isinstance(gap, dict):
+                    continue
+                requirement_id = str(gap.get("requirement_id") or "").strip()
+                gap_status = str(gap.get("status") or "").strip()
+                if requirement_id:
+                    evidence_gaps.append(
+                        f"{requirement_id} [{gap_status or 'UNRESOLVED'}]"
+                    )
+        if evidence_gaps:
+            summary["evidence_gaps"] = evidence_gaps[:8]
+        state = self._state_store.read()
+        attempts = state.get("provider_attempts")
+        if not isinstance(attempts, list):
+            attempts = []
+        attempts.append(summary)
+        state["provider_attempts"] = attempts
+        self._state_store.write(state)
+
+        from echelon.ui import banner
+
+        fields = [
+            ("changed", ", ".join(summary["changed_files"]) or "no product files detected"),
+            ("provider", str(summary["provider_note"])),
+            ("verify", str(summary["outcome"])),
+        ]
+        if primary_failure:
+            fields.append(("blocker", primary_failure))
+        playwright = summary.get("playwright")
+        if isinstance(playwright, dict):
+            fields.append(
+                (
+                    "playwright",
+                    (
+                        f"{playwright.get('total', 0)} total, "
+                        f"{playwright.get('passed', 0)} passed, "
+                        f"{playwright.get('failed', 0)} failed, "
+                        f"{playwright.get('skipped', 0)} skipped"
+                    ),
+                )
+            )
+        if evidence_gaps:
+            fields.append(("evidence gaps", ", ".join(evidence_gaps[:8])))
+        banner(
+            f"{provider.upper()} {'BUILD' if phase == 'build' else 'REPAIR'} {attempt}",
+            fields,
+            subtitle=str(summary["outcome"]).capitalize(),
+            file=sys.stderr,
+        )
+        return summary
+
     def _append_delivery_provider_telemetry(
         self,
         invocation: dict[str, object],
@@ -4846,6 +6321,8 @@ class RalphController:
             state["last_verify_result"] = (
                 _verify_to_dict(final_verify) if final_verify else None
             )
+            if reason != "publish_failed":
+                state.pop("publication_failure", None)
             if extra_state:
                 state.update(extra_state)
             self._state_store.write(state)
@@ -4940,6 +6417,7 @@ class RalphController:
         branch: str,
         stage: str,
         verify_result: Optional[VerifyResult],
+        error: BaseException | None = None,
     ) -> Optional[Dict[str, Any]]:
         checkpoint = self._verified_publish_checkpoint(
             worktree_path=worktree_path,
@@ -4947,7 +6425,17 @@ class RalphController:
             stage=stage,
             verify_result=verify_result,
         )
-        return {"verified_publish_checkpoint": checkpoint} if checkpoint else None
+        state: Dict[str, Any] = {}
+        if checkpoint:
+            state["verified_publish_checkpoint"] = checkpoint
+        if error is not None:
+            state["publication_failure"] = {
+                "stage": stage,
+                "error": str(error),
+                "branch": branch,
+                "worktree_path": worktree_path,
+            }
+        return state or None
 
     def resume_verified_publication(self) -> Optional[ImplementationResult]:
         """Retry verified publication effects without dispatching another build."""
@@ -5018,7 +6506,15 @@ class RalphController:
                     tokens_used=tokens_used,
                     final_verify=verify_result,
                     branch=branch,
-                    extra_state={"verified_publish_checkpoint": checkpoint},
+                    extra_state={
+                        "verified_publish_checkpoint": checkpoint,
+                        "publication_failure": {
+                            "stage": "push",
+                            "error": str(exc),
+                            "branch": branch,
+                            "worktree_path": worktree_path,
+                        },
+                    },
                 )
             stage = "target_merge"
 
@@ -5057,7 +6553,15 @@ class RalphController:
                     tokens_used=tokens_used,
                     final_verify=verify_result,
                     branch=branch,
-                    extra_state={"verified_publish_checkpoint": checkpoint},
+                    extra_state={
+                        "verified_publish_checkpoint": checkpoint,
+                        "publication_failure": {
+                            "stage": exc.stage,
+                            "error": str(exc),
+                            "branch": branch,
+                            "worktree_path": worktree_path,
+                        },
+                    },
                 )
             stage = "pr"
 
@@ -5075,11 +6579,20 @@ class RalphController:
                 tokens_used=tokens_used,
                 final_verify=verify_result,
                 branch=branch,
-                extra_state={"verified_publish_checkpoint": checkpoint},
+                extra_state={
+                    "verified_publish_checkpoint": checkpoint,
+                    "publication_failure": {
+                        "stage": "pr",
+                        "error": str(exc),
+                        "branch": branch,
+                        "worktree_path": worktree_path,
+                    },
+                },
             )
 
         state = self._state_store.read()
         state.pop("verified_publish_checkpoint", None)
+        state.pop("publication_failure", None)
         state["verified_publish_recovery"] = {
             "status": "completed",
             "commit": commit,
@@ -5498,7 +7011,7 @@ def _status_path(status_line: str) -> str:
     line = status_line.strip()
     if not line:
         return ""
-    path = line[3:].strip() if len(status_line) >= 4 else line
+    path = status_line[3:].strip() if len(status_line) >= 4 else line
     if " -> " in path:
         path = path.split(" -> ", 1)[1]
     return path.strip('"').replace("\\", "/")
@@ -5540,6 +7053,10 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _is_task_progress_incomplete(verify_result: VerifyResult) -> bool:
+    return any(f.id == "task-progress-incomplete" for f in verify_result.failures)
 
 
 def _is_fulfillment_freshness_failure(verify_result: VerifyResult) -> bool:
@@ -5645,14 +7162,42 @@ def _safe_product_evidence_fingerprint(worktree_path: str) -> str | None:
         return None
 
 
+def _output_bytes(value: object) -> bytes:
+    if isinstance(value, bytes):
+        return value
+    if value is None:
+        return b""
+    return str(value).encode("utf-8", errors="replace")
+
+
 def _clean_task_ids(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
     return [str(task_id).strip() for task_id in value if str(task_id).strip()]
 
 
+def _compact_provider_note(value: object, *, limit: int = 360) -> str:
+    """Keep provider text useful in normal output without exposing raw logs."""
+    text = " ".join(
+        redact_verification_text(str(value or ""), os.environ).split()
+    )
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _safe_int(value: object) -> int:
+    """Normalize an evidence counter without trusting provider-authored types."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _is_verify_owned_artifact(path: str) -> bool:
     posix = path.replace("\\", "/")
+    if posix.startswith(("test-results/", "playwright-report/", "blob-report/", "coverage/")):
+        return True
     if posix.startswith("runs/verify-spec-"):
         return True
     if "/runs/verify-spec-" in posix:
@@ -6812,4 +8357,5 @@ def _verify_to_dict(verify: VerifyResult) -> Dict[str, Any]:
         ],
         "duration_s": verify.duration_s,
         "token_usage": verify.token_usage,
+        "verification_evidence": dict(verify.verification_evidence),
     }

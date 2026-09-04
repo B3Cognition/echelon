@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +37,20 @@ class RecordingProvider:
     def exec(self, handle, cmd, cwd=None, env=None, timeout_ms=1_200_000):
         self.commands.append(cmd)
         if "playwright" in cmd:
-            return _ok(json.dumps({"suites": [], "errors": []}))
+            return _ok(json.dumps({
+                "suites": [{
+                    "specs": [{
+                        "title": "journey",
+                        "file": "tests/journey.spec.ts",
+                        "tests": [{
+                            "projectName": "chromium",
+                            "expectedStatus": "passed",
+                            "results": [{"status": "passed"}],
+                        }],
+                    }],
+                }],
+                "errors": [],
+            }))
         return _ok("ready")
 
     def write_file(self, handle, path, content):
@@ -77,9 +91,16 @@ def test_command_app_visual_runtime_smoke_order(tmp_path: Path) -> None:
         config=config,
         spec_id="001",
         strategy_id="default",
+        base_dir=str(tmp_path),
+        build_id="build-1",
     )
+    screenshot = tmp_path / "journey.png"
+    screenshot.write_bytes(b"visual-proof")
 
-    result = controller.run_loop(str(tmp_path))
+    with patch.object(
+        controller, "_retrieve_screenshots", return_value=[str(screenshot)]
+    ):
+        result = controller.run_loop(str(tmp_path))
 
     assert result.status == "passed"
     assert provider.destroyed is True

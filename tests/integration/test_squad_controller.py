@@ -7507,6 +7507,103 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_banzai_resolves_eligible_sage_issue_before_proportional_budget(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit SAGE authority drives targeted repair without spending a loop."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("- **CRITICAL:** 0", "- **CRITICAL:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("**Severity:** LOW", "**Severity:** CRITICAL")
+            .replace("**Type:** incompleteness", "**Type:** contradiction")
+            .replace(
+                "Repair the certified failing dimension.",
+                "Treat checkpoint inventory as authoritative when restoring a player.",
+            )
+            .replace(
+                "Immutable Understanding evidence.",
+                "The checkpoint requirements explicitly include inventory state.",
+            )
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes"),
+            encoding="utf-8",
+        )
+        finding = why2.echelon_result["state_updates"]["finding_routes"][
+            "findings"
+        ][0]
+        finding["issue_id"] = "ISS-001"
+        state = store.load()
+        state.update(updates)
+        state["autonomy_mode"] = "banzai"
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "terminal-blocked"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["status"] == "running"
+        assert persisted["blocked_decision"]["resolved_by"] == "controller"
+        assert persisted["selected_issue_resolution"] == "ISS-001"
+        selected = persisted["issue_resolution_ledger"]["ISS-001"]
+        assert selected["status"] == "selected"
+        assert selected["decision"] == (
+            "Treat checkpoint inventory as authoritative when restoring a player."
+        )
+        repair = persisted["phase1_quality_repair"]
+        assert repair["automatic_consumed"] == 0
+        assert repair["candidate_ids"] == []
+        assert "quality_gate_remediation" not in persisted
+        ctrl._provider.exec_agent.assert_not_called()
+
+    def test_pending_evidence_routes_to_investigator_before_proportional_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A valid evidence request is workflow routing, not candidate corruption."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        why2_updates = why2.echelon_result["state_updates"]
+        why2_updates["evidence_resolution_status"] = "pending"
+        why2_updates["evidence_requests"] = {
+            "requests": [
+                {
+                    "id": "ER-001",
+                    "question": "Which browser baseline is authoritative?",
+                    "affected_requirements": ["FR-001"],
+                    "evidence_needed": "A declared support baseline.",
+                    "supplied_reference_ids": ["IN-REF-001"],
+                }
+            ]
+        }
+        why2_updates["finding_routes"]["findings"][0]["route"] = (
+            "evidence_resolution"
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-investigate"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+
     def test_restart_migrates_v2_proportional_decision_from_candidate_authority(
         self,
         tmp_path: Path,
@@ -8127,32 +8224,14 @@ class TestProportionalQualityController:
             "qualitative_debt"
         ]
 
-    def test_qualitative_only_sage_failure_is_commander_executable_in_banzai(
+    def test_qualitative_only_sage_failure_uses_controller_evidence_in_banzai(
         self,
         tmp_path: Path,
     ) -> None:
-        commander = SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DECISION_RESOLVED",
-                "state_updates": {},
-                "journal_entries": [],
-                "decision": {
-                    "selected_option_id": "continue_with_debt",
-                    "answer_text": None,
-                    "rationale": "Accept the bounded qualitative debt.",
-                    "confidence": "high",
-                },
-            },
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
         ctrl, store, _calls = _run_proportional_quality_loop(
             tmp_path,
             automatic_consumed=3,
             autonomy_mode="banzai",
-            commander_results=(commander,),
             qualitative_only=True,
         )
 
@@ -8164,9 +8243,9 @@ class TestProportionalQualityController:
 
         state = store.load()
         assert result.status == "running"
-        assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+        assert state["blocked_decision"]["resolved_by"] == "controller"
         authorization = state["spec_quality_debt_authorization"]
-        assert authorization["resolved_by"] == "COMMANDER"
+        assert authorization["resolved_by"] == "controller"
         assert authorization["failed_gates"] == []
         assert authorization["qualitative_debt"][0]["issue_id"] == (
             "ISS-QUALITY-0"
@@ -9427,6 +9506,10 @@ class TestProportionalQualityController:
         )
         assert state["phase1_quality_repair"]["extension_authorized"] == 1
         assert state["phase1_quality_repair"]["extension_consumed"] == 1
+        assert state["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0",
+            "quality-candidate-1",
+        ]
         assert [
             option["id"] for option in state["blocked_decision"]["options"]
         ] == ["continue_with_debt", "stop"]
@@ -9464,32 +9547,14 @@ class TestProportionalQualityController:
         assert PENDING_CONTROLLER_COMPLETION_KEY not in state
         assert calls == {"why2": 1, "what": 0, "understanding": 0}
 
-    def test_banzai_commander_receives_sealed_quality_choice_and_accepts_debt(
+    def test_banzai_controller_applies_sealed_quality_choice_without_commander(
         self,
         tmp_path: Path,
     ) -> None:
-        commander = SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DECISION_RESOLVED",
-                "state_updates": {},
-                "journal_entries": [],
-                "decision": {
-                    "selected_option_id": "continue_with_debt",
-                    "answer_text": None,
-                    "rationale": "Accept the explicitly bounded residual debt.",
-                    "confidence": "high",
-                },
-            },
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
         ctrl, store, calls = _run_proportional_quality_loop(
             tmp_path,
             automatic_consumed=3,
             autonomy_mode="banzai",
-            commander_results=(commander,),
         )
 
         result = ctrl.run_single_phase(
@@ -9502,12 +9567,12 @@ class TestProportionalQualityController:
         assert result.status == "running"
         assert state["phase"] == "phase1-lexicon-derive"
         assert state["blocked_decision"]["status"] == "resolved"
-        assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+        assert state["blocked_decision"]["resolved_by"] == "controller"
         assert state["blocked_decision"]["selected_option_id"] == (
             "continue_with_debt"
         )
         assert state["spec_quality_debt_authorization"]["resolved_by"] == (
-            "COMMANDER"
+            "controller"
         )
         assert (
             tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
@@ -9517,36 +9582,10 @@ class TestProportionalQualityController:
             for call in ctrl._provider.exec_agent.call_args_list
             if "# COMMANDER DECISION RESOLUTION" in str(call.args[1])
         ]
-        assert len(commander_prompts) == 1
-        prompt = commander_prompts[0]
-        request_payload = json.loads(
-            prompt.split("## Prepared Request\n", 1)[1].split(
-                "\n\n## Authoritative Recommendation", 1
-            )[0]
-        )
-        context_payload = json.loads(
-            prompt.split("### State\n", 1)[1].split("\n", 1)[0]
-        )
-        assert request_payload["options"] == state["blocked_decision"][
-            "options"
-        ]
-        assert [option["id"] for option in request_payload["options"]] == [
-            "extend_once",
-            "continue_with_debt",
-            "stop",
-        ]
-        assert context_payload["phase1_quality_repair"] == state[
-            "phase1_quality_repair"
-        ]
-        assert context_payload[
-            "proportional_quality_candidate_evidence"
-        ] == state["proportional_quality_candidate_evidence"]
-        assert context_payload["proportional_quality_candidate_evidence"][
-            "recommendation_evidence"
-        ]["score_history"]
+        assert commander_prompts == []
         assert calls == {"why2": 1, "what": 0, "understanding": 0}
 
-    def test_banzai_commander_rejects_undeclared_and_mutating_answers_twice(
+    def test_banzai_ignores_untrusted_commander_answers_for_controller_choice(
         self,
         tmp_path: Path,
     ) -> None:
@@ -9599,23 +9638,22 @@ class TestProportionalQualityController:
 
         state = store.load()
         decision = state["blocked_decision"]
-        assert result.status == "blocked"
-        assert state["phase"] == decision["source_phase"] == "phase1-why2"
-        assert decision["status"] == "failed"
-        assert decision["attempts"] == 2
-        assert decision["failure_code"] == "invalid_resolution_result"
-        assert decision["selected_option_id"] is None
-        assert "spec_quality_debt_authorization" not in state
-        assert not (
+        assert result.status == "running"
+        assert state["phase"] == "phase1-lexicon-derive"
+        assert decision["status"] == "resolved"
+        assert decision["resolved_by"] == "controller"
+        assert decision["attempts"] == 0
+        assert decision["selected_option_id"] == "continue_with_debt"
+        assert "spec_quality_debt_authorization" in state
+        assert (
             tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
-        ).exists()
+        ).is_file()
         commander_prompts = [
             str(call.args[1])
             for call in ctrl._provider.exec_agent.call_args_list
             if "# COMMANDER DECISION RESOLUTION" in str(call.args[1])
         ]
-        assert len(commander_prompts) == 2
-        assert commander_prompts[0] == commander_prompts[1]
+        assert commander_prompts == []
         assert [option["id"] for option in decision["options"]] == [
             "extend_once",
             "continue_with_debt",
@@ -9641,23 +9679,6 @@ class TestProportionalQualityController:
                     "selected_option_id": "extend_once",
                     "answer_text": None,
                     "rationale": "r" * 4_097,
-                    "confidence": "high",
-                },
-            },
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
-        accepted = SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DECISION_RESOLVED",
-                "state_updates": {},
-                "journal_entries": [],
-                "decision": {
-                    "selected_option_id": "continue_with_debt",
-                    "answer_text": None,
-                    "rationale": "Accept the explicitly bounded residual debt.",
                     "confidence": "high",
                 },
             },
@@ -9700,6 +9721,11 @@ class TestProportionalQualityController:
             tmp_path / ".echelon/prosaic",
             dirs_exist_ok=True,
         )
+        monkeypatch.setattr(
+            ctrl,
+            "_proportional_controller_resolution",
+            lambda _decision, _state: None,
+        )
 
         blocked = ctrl.run_single_phase(
             "phase1-why2",
@@ -9738,18 +9764,6 @@ class TestProportionalQualityController:
         assert displayed_commands == ["echelon phase run phase1-why2"]
         displayed_argv = shlex.split(displayed_commands[0])
 
-        original_exec_agent = ctrl._provider.exec_agent.side_effect
-
-        def replay_exec_agent(
-            root: str,
-            prompt: str,
-            **kwargs: object,
-        ) -> SquadAgentResult:
-            if "# COMMANDER DECISION RESOLUTION" in prompt:
-                return accepted
-            return original_exec_agent(root, prompt, **kwargs)
-
-        ctrl._provider.exec_agent.side_effect = replay_exec_agent
         monkeypatch.setattr(
             "harness.squad_provider.SquadCliProvider",
             lambda _config: ctrl._provider,
@@ -9767,7 +9781,69 @@ class TestProportionalQualityController:
         assert state["blocked_decision"]["selected_option_id"] == (
             "continue_with_debt"
         )
+        assert state["blocked_decision"]["resolved_by"] == "controller"
         assert calls == {"why2": 2, "what": 0, "understanding": 0}
+
+    def test_failed_proportional_controller_decision_autorecovers_without_replay(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        invalid = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": "extend_once",
+                    "answer_text": None,
+                    "rationale": "r" * 4_097,
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store, calls = _run_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+            autonomy_mode="banzai",
+            commander_results=(invalid, invalid),
+        )
+        controller_resolution = ctrl._proportional_controller_resolution
+        monkeypatch.setattr(
+            ctrl,
+            "_proportional_controller_resolution",
+            lambda _decision, _state: None,
+        )
+
+        blocked = ctrl.run_single_phase(
+            "phase1-why2",
+            user_message="simulate a pre-fix failed automatic decision",
+            mode="banzai",
+        )
+        assert blocked.status == "blocked"
+        assert store.load()["blocked_decision"]["status"] == "failed"
+        calls_before_recovery = dict(calls)
+
+        monkeypatch.setattr(
+            ctrl,
+            "_proportional_controller_resolution",
+            controller_resolution,
+        )
+        assert ctrl.resume_pending_human_input() is True
+
+        recovered = store.load()
+        assert recovered["status"] == "running"
+        assert recovered["phase"] == "phase1-lexicon-derive"
+        assert recovered["blocked_decision"]["status"] == "resolved"
+        assert recovered["blocked_decision"]["resolved_by"] == "controller"
+        assert recovered["blocked_decision"]["selected_option_id"] == (
+            "continue_with_debt"
+        )
+        assert calls == calls_before_recovery
 
     def test_run_candidate_capture_cas_failure_has_no_orphan_and_retry_converges(
         self,

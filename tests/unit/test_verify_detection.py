@@ -27,6 +27,46 @@ class TestVerifyCommandDetection:
         assert result.confidence == "high"
         assert "package.json scripts.test" in result.evidence
 
+    def test_prefers_pnpm_verify_over_test(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "test": "vitest run",
+                        "verify": "pnpm lint && pnpm test:e2e",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "pnpm-lock.yaml").write_text(
+            "lockfileVersion: '9.0'\n", encoding="utf-8"
+        )
+
+        result = detect_verify_command(tmp_path)
+
+        assert result.command == "pnpm verify"
+        assert result.evidence == ["package.json scripts.verify"]
+
+    def test_falls_back_when_verify_is_placeholder(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "verify": "echo no test specified && exit 1",
+                        "test": "vitest run",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        result = detect_verify_command(tmp_path)
+
+        assert result.command == "npm test"
+        assert result.evidence == ["package.json scripts.test"]
+
     def test_rejects_placeholder_node_test_script(self, tmp_path: Path) -> None:
         (tmp_path / "package.json").write_text(
             json.dumps({"scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}),

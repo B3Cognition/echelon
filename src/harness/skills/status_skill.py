@@ -56,6 +56,7 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
                     "dirty_worktree_adjudication": data.get(
                         "dirty_worktree_adjudication"
                     ),
+                    "publication_failure": data.get("publication_failure"),
                 }
             except (json.JSONDecodeError, Exception) as e:
                 strategies[sid] = {
@@ -93,6 +94,11 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
         dirty_line = dirty_summary_text(info.get("dirty_worktree_adjudication"))
         if dirty_line:
             val_lines.append(dirty_line)
+        publication_failure = info.get("publication_failure")
+        if isinstance(publication_failure, dict):
+            stage = str(publication_failure.get("stage") or "publication")
+            error = str(publication_failure.get("error") or "unknown error")
+            val_lines.append(f"publish failure: {stage}: {error}")
         if info.get("status") == "blocked" and info.get("escalation_file"):
             val_lines.append(f"blocked: see {info['escalation_file']}")
 

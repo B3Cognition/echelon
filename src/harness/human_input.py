@@ -66,6 +66,7 @@ _RECOMMENDATION_AUTHORITIES = frozenset({
 _RECOMMENDATION_CONFIDENCES = frozenset({"high", "medium", "low"})
 _RECOMMENDATION_MODES = frozenset({"static", "controller"})
 _RESOLUTION_HANDLERS = frozenset({
+    "banzai_issue_resolution",
     "clarification_resume",
     "gate_outcome",
     "phase_dispatch_limit",
@@ -712,7 +713,7 @@ class DecisionResolution:
 class AppliedHumanInputResolution:
     selected_option_id: str | None
     answer_text: str | None
-    resolved_by: Literal["user", "semi", "COMMANDER"]
+    resolved_by: Literal["user", "semi", "COMMANDER", "controller"]
     rationale: str | None = None
     confidence: Literal["high", "medium", "low"] | None = None
 
@@ -733,6 +734,7 @@ class ProportionalQualityRecommendationEvidence:
     previous_formal_statement_count: int
     formal_statement_count: int
     qualitative_failure_count: int = 0
+    qualitative_hard_blocker_count: int = 0
 
     def __post_init__(self) -> None:
         margin = self.borderline_margin
@@ -749,12 +751,17 @@ class ProportionalQualityRecommendationEvidence:
             "previous_formal_statement_count",
             "formal_statement_count",
             "qualitative_failure_count",
+            "qualitative_hard_blocker_count",
         ):
             count = getattr(self, field)
             if type(count) is not int or count < 0:
                 raise HumanInputPolicyError(
                     f"{field} must be a non-negative integer"
                 )
+        if self.qualitative_hard_blocker_count > self.qualitative_failure_count:
+            raise HumanInputPolicyError(
+                "qualitative hard blockers cannot exceed qualitative failures"
+            )
         previous = self._validate_gates(self.previous_gates, "previous_gates")
         current = self._validate_gates(self.current_gates, "current_gates")
         if {row[0] for row in previous} != {row[0] for row in current}:
@@ -1066,9 +1073,10 @@ def v2_automatic_decision_is_registered(
 
     dynamic_dispatch_cap = (
         policy.source_kind == "controller_safeguard"
-        and policy.producer_id == "phase_dispatch_limit"
-        and policy.reason_code == "phase_dispatch_limit"
-        and policy.resolution_handler == "phase_dispatch_limit"
+        and policy.producer_id
+        in {"phase_dispatch_limit", "banzai_issue_resolution"}
+        and policy.reason_code == policy.producer_id
+        and policy.resolution_handler == policy.producer_id
     )
     if dynamic_dispatch_cap:
         if not options:
@@ -1456,8 +1464,15 @@ def prepare_controller_proportional_quality_decision(
         for name, score, _threshold, _passed
         in recommendation_evidence.previous_gates
     }
+    has_hard_blocker = (
+        recommendation_evidence.qualitative_hard_blocker_count > 0
+    )
     should_extend = (
-        reason_code == "proportional_quality_budget_exhausted"
+        has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
+    ) or (
+        not has_hard_blocker
+        and reason_code == "proportional_quality_budget_exhausted"
         and not no_artifact_progress
         and bool(current_failures)
         and all(
@@ -1475,7 +1490,13 @@ def prepare_controller_proportional_quality_decision(
         and recommendation_evidence.formal_statement_count
         <= recommendation_evidence.previous_formal_statement_count
     )
-    recommended_id = "extend_once" if should_extend else "continue_with_debt"
+    recommended_id = (
+        "extend_once"
+        if should_extend
+        else "stop"
+        if has_hard_blocker
+        else "continue_with_debt"
+    )
     if recommended_id not in {option.id for option in policy.options}:
         raise HumanInputPolicyError(
             "registered policy does not contain the controller recommendation"
@@ -1493,7 +1514,17 @@ def prepare_controller_proportional_quality_decision(
             source_state_revision=source_state_revision,
         )
     )
-    if should_extend:
+    if has_hard_blocker and should_extend:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, so the single available extension is required."
+        )
+    elif has_hard_blocker:
+        rationale = (
+            "The residual qualitative finding is a hard blocker that cannot be "
+            "accepted as quality debt, and the bounded extension is exhausted."
+        )
+    elif should_extend:
         rationale = (
             "Residual gates improved within the configured borderline margin "
             "without formal-statement growth, so one final repair is favored."
@@ -1566,8 +1597,106 @@ def prepare_controller_proportional_quality_decision(
                         "qualitative_failure_count": (
                             recommendation_evidence.qualitative_failure_count
                         ),
+                        "qualitative_hard_blocker_count": (
+                            recommendation_evidence.qualitative_hard_blocker_count
+                        ),
                     },
                 }),
+            ),
+        ),
+        risk_level=None,
+        resolution_handler=policy.resolution_handler,
+        source_state_revision=revision,
+    )
+
+
+def prepare_controller_banzai_issue_resolution_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    option_contract: object,
+) -> PreparedHumanInput:
+    """Seal the first explicit Banzai-eligible issue as controller authority."""
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "Banzai issue preparation requires a policy registry"
+        )
+    if reason_code != "banzai_issue_resolution":
+        raise HumanInputPolicyError(
+            "reason_code is not a Banzai issue resolution"
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        reason_code,
+    )
+    normalized_phase, normalized_question, revision = (
+        _controller_preparation_identity(
+            policy,
+            phase_id=phase_id,
+            question=question,
+            source_state_revision=source_state_revision,
+        )
+    )
+    if (
+        type(option_contract) is not tuple
+        or not option_contract
+        or not all(
+            isinstance(option, HumanInputOption)
+            for option in option_contract
+        )
+        or any(option.recommended for option in option_contract)
+        or any(option.outcome is not None for option in option_contract)
+    ):
+        raise HumanInputPolicyError(
+            "Banzai issue option contract is invalid"
+        )
+    _validate_options(
+        option_contract,
+        allowed_target_phases=policy.allowed_target_phases,
+    )
+    selected = option_contract[0]
+    prepared_options = tuple(
+        replace(option, recommended=index == 0)
+        for index, option in enumerate(option_contract)
+    )
+    evidence_payload = {
+        "kind": "banzai_issue_resolution",
+        "phase_id": normalized_phase,
+        "document_order": [option.id for option in option_contract],
+        "recommended_option": _recommendation_option_payload(
+            prepared_options[0]
+        ),
+    }
+    return PreparedHumanInput(
+        schema_version=2,
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=normalized_phase,
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question=normalized_question,
+        options=prepared_options,
+        recommended_answer=None,
+        recommended_option_id=selected.id,
+        recommended_action=None,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "The selected issue is the first unresolved Banzai-eligible entry "
+            "in authoritative issues.md document order. Its sealed suggested "
+            "option and evidence provide deterministic repair authority."
+        ),
+        recommendation_confidence="high",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(
+            RecommendationEvidence(
+                id=f"banzai-issue-resolution:{selected.id}",
+                kind="banzai_issue_resolution",
+                reference=f"issues.md#{selected.id}",
+                digest=_canonical_sha256(evidence_payload),
             ),
         ),
         risk_level=None,
@@ -1587,6 +1716,11 @@ _CONTROLLER_RECOMMENDATION_PREPARERS = MappingProxyType({
         "phase_dispatch_limit",
         "phase_dispatch_limit",
     ): prepare_controller_phase_dispatch_limit_decision,
+    (
+        "controller_safeguard",
+        "banzai_issue_resolution",
+        "banzai_issue_resolution",
+    ): prepare_controller_banzai_issue_resolution_decision,
     (
         "controller_safeguard",
         "proportional_quality_budget_exhausted",
@@ -1725,6 +1859,25 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
         "escalate",
     })
     return (
+        HumanInputPolicy(
+            source_kind="controller_safeguard",
+            producer_id="banzai_issue_resolution",
+            reason_code="banzai_issue_resolution",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="banzai_issue_resolution",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-why2"}),
+            allowed_target_phases=frozenset({"phase1-what"}),
+            context_state_keys=(
+                "phase",
+                "issue_resolution_ledger",
+                "phase1_quality_repair",
+                "understanding_evidence",
+            ),
+            context_paths=(),
+            options=(),
+        ),
         HumanInputPolicy(
             source_kind="controller_safeguard", producer_id="phase_dispatch_limit",
             reason_code="phase_dispatch_limit", classification="material",

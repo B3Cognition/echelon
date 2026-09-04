@@ -184,6 +184,31 @@ class TestCmdHarnessResume:
         assert "delivery state" in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
 
+    def test_outer_cap_rejection_points_to_checkpoint_preserving_new_budget(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        """Rejected outer-cap resume names the one non-destructive recovery command."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "outer_cap",
+            "escalation_file": "runs/build-test/escalation.md",
+            "checkpoint_commits": [{"commit": "a" * 40}],
+        })
+
+        rc = self._call(["001", "Continue with blocker context"], tmp_path)
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "echelon delivery run 001" in err
+        assert "latest durable checkpoint" in err
+        assert "echelon delivery run 001 --reset" in err
+        assert "discard" in err.lower()
+        assert "retry: echelon delivery resume 001" not in err
+
     def test_docs_report_only_containment_violation_resumes(
         self,
         tmp_path: Path,
@@ -195,9 +220,68 @@ class TestCmdHarnessResume:
             "termination_reason": "containment_violation",
             "containment_violation": {
                 "changed_status": [
-                    "?? specs/001-demo/documentation-impact-report.md",
+                    " M specs/001-demo/documentation-impact-report.md",
                     "?? specs/001-demo/docs-verification-report.md",
                 ],
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    @pytest.mark.parametrize(
+        ("blocked_phase", "reason"),
+        [
+            ("visual", "visual_feedback_failed"),
+            ("visual", "app_runtime_failed"),
+            ("review", "review_provider_failed"),
+            ("finalization", "finalization_write_failed"),
+        ],
+    )
+    def test_downstream_phase_failure_can_continue_from_its_checkpoint(
+        self,
+        tmp_path: Path,
+        blocked_phase: str,
+        reason: str,
+    ) -> None:
+        """A status-recommended continue command must accept phase failures."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "blocked_phase": blocked_phase,
+            "termination_reason": reason,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_continue_reattaches_to_interrupted_active_build(
+        self, tmp_path: Path
+    ) -> None:
+        """A SIGINT-left running state must not require a destructive new run."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "running",
+            "termination_reason": "visual_feedback_failed",
+            "downstream_reentry": {
+                "from_phase": "visual",
+                "reason": "candidate_changed_after_checkpoint",
             },
         })
 
@@ -747,6 +831,62 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
+
+    def test_continue_returns_nonzero_when_recovered_delivery_cannot_land(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.delivery_results import (
+            DeliveryResult,
+            DeliveryRunOutcome,
+            LandingOutcome,
+        )
+
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(
+            sd,
+            "001",
+            "default",
+            {"status": "blocked", "termination_reason": "publish_failed"},
+        )
+        outcome = DeliveryRunOutcome(
+            results=(
+                DeliveryResult(
+                    status="converged",
+                    termination_reason="converged",
+                    outer_iterations=2,
+                    inner_iterations=0,
+                    pr_url=None,
+                    tokens_used=100,
+                    final_verify=None,
+                    blocked_phase=None,
+                    branch="harness/001/default/iter-1",
+                ),
+            ),
+            landing=LandingOutcome("blocked", "land_returned_false"),
+        )
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run", return_value=outcome), \
+             patch(
+                 "harness.docker_provider.DockerWorktreeProvider.__init__",
+                 return_value=None,
+             ), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            mock_recover.return_value = MagicMock(
+                source="worktree",
+                commit="abc123",
+                target_branch="harness/001/default/iter-0",
+                applied=True,
+            )
+            from echelon.cli import _cmd_harness_continue
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_continue(["001"])
+
+        assert exc.value.code == 1
 
     def test_provider_limit_resume_skips_recovery_for_legacy_blocked_state(
         self, tmp_path: Path

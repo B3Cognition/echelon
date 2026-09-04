@@ -53,7 +53,7 @@ def render_stack_contract(contract: object) -> str:
         lines.extend(["No Echelon stack is selected for this run.", ""])
         return "\n".join(lines)
     lines.extend([
-        "This controller-owned snapshot governs product shape, constitution, "
+        "This controller-owned snapshot governs product shape, constitution, ",
         "requirements, architecture, implementation planning, and tests.",
         "Do not infer a conflicting stack or replace these constraints.",
         "",

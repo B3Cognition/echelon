@@ -317,7 +317,8 @@ These are architectural decisions, not feature add-ons. Address each as a design
 4. **PROPOSE** technical ADR-level governance additions in `constitution-amendment-candidates.md` when architecture work reveals a durable principle.
 
 ALWAYS treat the injected constitution section as read-only governance context.
-NEVER create a constitution, edit or append to `.echelon/constitution.md`, or require a spec-local `constitution.md` copy.
+ALWAYS consume the injected section as the read-only `constitution.md` snapshot.
+NEVER create a constitution, edit `.echelon/constitution.md`, or append directly to `constitution.md`; do not require a spec-local `constitution.md` copy.
 
 **If the injected constitution section is missing or contains template markers (should not happen in normal flow):**
 

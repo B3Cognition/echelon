@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from harness.stacks.errors import StackValidationError
-from harness.stacks.schema import parse_stack_definition
+from harness.stacks.schema import StackRunnability, parse_stack_definition
 
 
 VALID_STACK = {
@@ -43,6 +43,30 @@ VALID_STACK = {
 }
 
 
+def _postgres_stack_raw() -> dict:
+    return {
+        **VALID_STACK,
+        "schema_version": "1.1",
+        "provisioning": [
+            {
+                "id": "postgres-verify",
+                "scope": "verification",
+                "services": ["postgres"],
+                "environment": {"required": ["DATABASE_URL"]},
+                "readiness": {"command": "pg_isready"},
+                "satisfiers": [
+                    {"kind": "environment", "variable": "DATABASE_URL"},
+                    {
+                        "kind": "compose-template",
+                        "output": "docker-compose.echelon-verify.yml",
+                        "env_example": ".env.echelon-verify.example",
+                    },
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.unit
 def test_parse_valid_stack_definition() -> None:
     stack = parse_stack_definition(VALID_STACK, Path("stack.yml"))
@@ -53,6 +77,203 @@ def test_parse_valid_stack_definition() -> None:
     assert stack.provides == {"ui.components": "example"}
     assert stack.tools["example_cli"].command == "npx"
     assert stack.tools["example_cli"].commands["list"].output == "json"
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_required_linux_runnability() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.2",
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+            "capabilities": [
+                "install",
+                "start",
+                "primary_journey",
+                "local_journey",
+                "stop",
+            ],
+            "required_observations": ["browser_dom"],
+        },
+    }
+
+    parsed = parse_stack_definition(raw, Path("stack.yml"))
+
+    assert parsed.runnability == StackRunnability(
+        classification="user_facing",
+        policy="required",
+        runner="linux_container",
+        capabilities=(
+            "install",
+            "start",
+            "primary_journey",
+            "local_journey",
+            "stop",
+        ),
+        required_observations=("browser_dom",),
+    )
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_runnability_before_schema_1_2() -> None:
+    raw = {
+        **VALID_STACK,
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+        },
+    }
+
+    with pytest.raises(
+        StackValidationError,
+        match="runnability requires stack schema_version 1.2",
+    ):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("classification", "application", "classification"),
+        ("policy", "optional", "policy"),
+        ("runner", "host", "runner"),
+        ("capabilities", ["start", "start"], "duplicate"),
+        ("required_observations", ["browser_dom", "shell_text"], "observation"),
+        ("unknown", True, "unknown runnability key"),
+    ],
+)
+def test_stack_schema_rejects_invalid_runnability_contract(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    runnability = {
+        "classification": "user_facing",
+        "policy": "required",
+        "runner": "linux_container",
+        "capabilities": ["start"],
+        "required_observations": ["browser_dom"],
+    }
+    runnability[field] = value
+    raw = {**VALID_STACK, "schema_version": "1.2", "runnability": runnability}
+
+    with pytest.raises(StackValidationError, match=message):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_postgres_verification_provisioner(tmp_path: Path) -> None:
+    definition = parse_stack_definition(_postgres_stack_raw(), tmp_path / "stack.yml")
+
+    provisioner = definition.provisioners[0]
+    assert provisioner.id == "postgres-verify"
+    assert provisioner.required_environment == ["DATABASE_URL"]
+    assert provisioner.satisfiers[1].output == "docker-compose.echelon-verify.yml"
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_output_outside_target(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["output"] = "../compose.yml"
+
+    with pytest.raises(StackValidationError, match="target-relative"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_env_example_outside_target(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["env_example"] = "../.env"
+
+    with pytest.raises(StackValidationError, match="target-relative"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_partial_compose_artifact_pair(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    del raw["provisioning"][0]["satisfiers"][1]["env_example"]
+
+    with pytest.raises(StackValidationError, match="fixed artifact pair"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_unsupported_satisfier_kind(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][0]["kind"] = "shell"
+
+    with pytest.raises(StackValidationError, match="unsupported satisfier kind"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("variable", None, "must declare variable"),
+        ("output", "unexpected.yml", "does not support output"),
+    ],
+)
+def test_stack_schema_rejects_malformed_environment_satisfier(
+    tmp_path: Path,
+    field: str,
+    value: str | None,
+    message: str,
+) -> None:
+    raw = _postgres_stack_raw()
+    satisfier = raw["provisioning"][0]["satisfiers"][0]
+    if value is None:
+        satisfier.pop(field)
+    else:
+        satisfier[field] = value
+
+    with pytest.raises(StackValidationError, match=message):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_environment_variable_not_declared_by_provisioner(
+    tmp_path: Path,
+) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][0]["variable"] = "OTHER_URL"
+
+    with pytest.raises(StackValidationError, match="environment.required"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_compose_satisfier_variable(tmp_path: Path) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0]["satisfiers"][1]["variable"] = "DATABASE_URL"
+
+    with pytest.raises(StackValidationError, match="does not support variable"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("services", ["postgres\n  injected: {}"]),
+        ("readiness", {"command": "pg_isready\n# injected"}),
+    ],
+)
+def test_stack_schema_rejects_non_allowlisted_compose_contract(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    raw = _postgres_stack_raw()
+    raw["provisioning"][0][field] = value
+
+    with pytest.raises(StackValidationError, match="supported PostgreSQL contract"):
+        parse_stack_definition(raw, tmp_path / "stack.yml")
 
 
 @pytest.mark.unit

@@ -91,6 +91,7 @@ class MockGitOps:
         base_branch: str | None = None, build_id: str = "",
         prepare_codegraph: bool = False,
         fresh_branch: bool = False,
+        fresh_branch_base: str | None = None,
     ) -> str:
         """Create a fake worktree directory with a real git repo so that
         _has_file_changes works correctly (avoids false no-progress escalation).
@@ -119,11 +120,21 @@ class MockGitOps:
         self._latest_worktrees[(spec_id, strategy_id, build_id)] = str(wt_path)
         return str(wt_path)
 
+    def find_feature_branch(self, spec_id: str) -> None:
+        """Model a new target repository with no pre-existing feature branch."""
+        return None
+
     def destroy_worktree(self, worktree_path: str, keep_branch: bool = False) -> None:
         """Record worktree destruction."""
         self.worktrees_destroyed.append(worktree_path)
 
-    def commit(self, worktree_path: str, message: str) -> None:
+    def commit(
+        self,
+        worktree_path: str,
+        message: str,
+        *,
+        exclude_paths: tuple[str, ...] = (),
+    ) -> None:
         """Record and create a real worktree commit for provenance checks."""
         self.commits.append({"path": worktree_path, "message": message})
         subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, check=False)

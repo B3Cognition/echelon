@@ -109,6 +109,28 @@ class TestRunMultiTarget:
             rc = run_multi_target("024", targets, [], echelon_bin="echelon")
         assert rc == 1
 
+    def test_aggregate_summary_calls_incomplete_delivery_a_dispatch_result(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A blocked child is authoritative; its parent must not call it a worker failure."""
+        target = tmp_path / "app"
+        target.mkdir()
+        with patch(
+            "subprocess.Popen",
+            side_effect=self._make_popen_factory(
+                {"app": "child delivery summary\n"}, {"app": 1}
+            ),
+        ):
+            assert run_multi_target(
+                "024", [target], [], echelon_bin="echelon", workspace_root=tmp_path
+            ) == 1
+
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+        assert "DELIVERY DISPATCH" in output
+        assert "A target delivery is incomplete." in output
+        assert "A target worker failed." not in output
+
     def test_workspace_delivery_uses_one_aggregate_summary(self, tmp_path: Path) -> None:
         targets = [tmp_path / "a", tmp_path / "b"]
         for target in targets:
@@ -269,7 +291,7 @@ class TestRunMultiTarget:
         with patch("subprocess.Popen", side_effect=fake_popen):
             run_multi_target("024", [target], ["strategy=codegen", "max_outer=3"],
                              echelon_bin="echelon")
-        assert captured_cmd["cmd"] == ["echelon", "harness", "run", "024",
+        assert captured_cmd["cmd"] == ["echelon", "delivery", "run", "024",
                                        "strategy=codegen", "max_outer=3"]
 
     def test_single_target_metadata_env_includes_owned_task_ids(self, tmp_path: Path) -> None:
@@ -369,6 +391,57 @@ class TestRunMultiTarget:
         assert calls[0]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/api"
         assert calls[1]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/web"
         assert calls[0]["env"]["ECHELON_DECLARED_TARGETS"] == "sources/web,sources/api"
+
+    def test_failed_target_skips_dependents_but_runs_independent_targets(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        sources = tmp_path / "sources"
+        api = sources / "a-api"
+        worker = sources / "b-worker"
+        web = sources / "c-web"
+        api.mkdir(parents=True)
+        worker.mkdir()
+        web.mkdir()
+        spec_dir = tmp_path / "specs" / "001-dashboard"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 "
+            "depends=none target=sources/a-api\n"
+            "- [ ] T-002 complexity=standard phase=worker req=FR-002 "
+            "depends=none target=sources/b-worker\n"
+            "- [ ] T-003 complexity=standard phase=web req=FR-003 "
+            "depends=T-001 target=sources/c-web\n",
+            encoding="utf-8",
+        )
+        calls: list[str] = []
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            name = Path(cwd).name
+            calls.append(name)
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 1 if name == "a-api" else 0
+            mock.wait.return_value = None
+            return mock
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = run_multi_target(
+                "001-dashboard",
+                [web, worker, api],
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+            )
+
+        assert result == 1
+        assert calls == ["a-api", "b-worker"]
+        captured = capsys.readouterr()
+        assert "c-web" in captured.err
+        assert "skipped because dependency target(s) failed: a-api" in captured.err
+        assert "✓ [b-worker]: exit 0" in captured.out
+        assert "✗ [c-web]: exit 1" in captured.out
 
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path

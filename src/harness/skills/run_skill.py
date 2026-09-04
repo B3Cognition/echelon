@@ -30,6 +30,12 @@ from harness.spec_frontmatter import find_spec_dir, read_targets
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
+_RECOVERABLE_BASELINE_REASONS = {
+    "outer_cap",
+    "checkpoint_outer_cap",
+    "task_progress_incomplete",
+    "publish_failed",
+}
 
 
 class RunContextError(ValueError):
@@ -87,6 +93,98 @@ def _resolve_run_roots(
             f"orchestration root is not a directory: {workspace_root}"
         )
     return harness_root, workspace_root
+
+
+def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]:
+    """Return checkpoint commits a new delivery budget may safely retain.
+
+    A normal fresh delivery intentionally restarts from the target default branch.
+    The exception is a prior stopped run for the same spec whose last durable
+    checkpoint represents unfinished delivery work.  A state left ``running`` by
+    an ungraceful process exit is recoverable only after its lock owner is dead;
+    a live owner prevents a competing delivery.  This decision is made before the
+    current-build marker is advanced, so the new build cannot accidentally erase
+    the only recoverable candidate branch.
+    """
+    if getattr(intent, "reset", False) or getattr(intent, "resume", False):
+        return {}
+    marker = current_build_marker(harness_root, intent.spec_id)
+    try:
+        marked_build_id = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        marked_build_id = ""
+
+    # A cancelled or failed fresh attempt can advance the marker without ever
+    # writing a durable checkpoint.  Search the remaining build directories as
+    # well, newest first, so that bookkeeping failure cannot strand an older
+    # recoverable candidate.
+    build_ids = [marked_build_id] if marked_build_id else []
+    build_ids.extend(
+        path.name
+        for path in sorted(runs_dir(harness_root).glob("build-*"), reverse=True)
+        if path.is_dir() and path.name != marked_build_id
+    )
+
+    baselines: dict[str, str] = {}
+    for strategy_id in intent.strategies:
+        for prior_build_id in build_ids:
+            state_path = runs_dir(harness_root) / prior_build_id / "state" / f"{strategy_id}.json"
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            status = str(state.get("status") or "")
+            if status == "running" and _state_lock_owner_is_alive(state_path):
+                raise RunContextError(
+                    "delivery is already active for "
+                    f"{intent.spec_id}/{strategy_id} in {prior_build_id}"
+                )
+            recoverable = (
+                status in {"interrupted", "running"}
+                or (
+                    status == "blocked"
+                    and state.get("termination_reason")
+                    in _RECOVERABLE_BASELINE_REASONS
+                )
+            )
+            if not recoverable:
+                continue
+            checkpoints = state.get("checkpoint_commits")
+            if not isinstance(checkpoints, list):
+                continue
+            for checkpoint in reversed(checkpoints):
+                if not isinstance(checkpoint, dict):
+                    continue
+                commit = checkpoint.get("commit")
+                if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
+                    baselines[strategy_id] = commit
+                    break
+            if strategy_id in baselines:
+                break
+    return baselines
+
+
+def _state_lock_owner_is_alive(state_path: Path) -> bool:
+    """Return whether a delivery state lock names a currently live process."""
+    try:
+        lock_text = state_path.with_suffix(".lock").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
+    if match is None:
+        return False
+    pid = int(match.group(1))
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
@@ -418,6 +516,12 @@ def _print_delivery_summary(
                             f"next: echelon delivery run {intent.spec_id}  "
                             "# continue with a fresh outer-loop budget"
                         )
+                if reason == "publish_failed":
+                    failure = info.get("publication_failure")
+                    if isinstance(failure, Mapping):
+                        stage = str(failure.get("stage") or "publication")
+                        error = str(failure.get("error") or "unknown error")
+                        lines.append(f"publish failure: {stage}: {error}")
             fv = getattr(result, "final_verify", None)
             if fv is not None:
                 duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
@@ -602,6 +706,7 @@ def _print_delivery_exception_summary(
             "provider_limit_message": state.get("provider_limit_message"),
             "provider_reset_hint": state.get("provider_reset_hint"),
             "completed_task_ids": state.get("completed_task_ids") or [],
+            "publication_failure": state.get("publication_failure"),
         }
     _print_delivery_summary(
         intent,
@@ -725,6 +830,12 @@ def _execute_delivery_run(
 ) -> DeliveryRunOutcome:
     """Execute one already-identified delivery command inside its summary scope."""
 
+    # The CLI reserves a new build directory before this adapter runs and passes
+    # that ID here.  A build ID therefore does not itself mean "resume"; intent
+    # is the authority for whether a prior checkpoint must be retained.
+    fresh_branch_bases = (
+        {} if getattr(intent, "resume", False) else _fresh_delivery_baselines(harness_root, intent)
+    )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)
     rd.mkdir(parents=True, exist_ok=True)
@@ -738,7 +849,13 @@ def _execute_delivery_run(
         base_dir=harness_root,
         build_id=build_id,
         orchestration_root=workspace_root,
+        fresh_branch_bases=fresh_branch_bases,
     )
+    if fresh_branch_bases:
+        logger.info(
+            "Starting new delivery budget from checkpointed candidate(s): %s",
+            ", ".join(f"{strategy}={commit[:12]}" for strategy, commit in fresh_branch_bases.items()),
+        )
     try:
         run_gc(config, base_dir=str(harness_root))
     except Exception as exc:

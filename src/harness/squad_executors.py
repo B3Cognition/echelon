@@ -31,7 +31,6 @@ from harness.agent_context import (
     parse_context_pack_item,
     policy_for_context,
     render_context_path,
-    render_user_request,
     resolve_context_render_mode,
     write_context_budget_report,
 )
@@ -563,7 +562,12 @@ def _render_controller_owned_prompt_context(state: dict) -> str:
         return stack_context
     if not receipt.strip():
         return stack_context
-    return stack_context + "## Resolved Clarifications\n\n" + receipt.strip() + "\n\n"
+    return (
+        stack_context
+        + "## Resolved Clarifications\n\n"
+        + receipt.strip()
+        + "\n\n"
+    )
 
 
 def _render_controller_repair_context(state: dict) -> str:
@@ -1727,14 +1731,6 @@ class PhaseExecutor(ABC):
         selector = parse_context_pack_item(item)
         if not selector.path_ref or selector.path_ref.startswith("#"):
             return None
-        if selector.path_ref == "user_request":
-            policy = policy_for_context(
-                phase_id=node_id,
-                agent_id=agent_id,
-                mode=mode,
-                path_ref=selector.path_ref,
-            )
-            return render_user_request(state, policy.cap_bytes)
         resolved = translate_ref(selector.path_ref)
         candidates = [Path(resolved)] if resolved.startswith("/") else [
             base / resolved for base in search_bases
@@ -1916,7 +1912,6 @@ class PhaseExecutor(ABC):
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
             f"{_render_product_input_context(state)}"
-            f"{_render_controller_owned_prompt_context(state)}"
             f"{_render_controller_repair_context(state)}"
             f"{_render_issue_resolution_context(state)}"
             f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
@@ -2067,7 +2062,6 @@ class PhaseExecutor(ABC):
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
-            + _render_controller_owned_prompt_context(state)
             + _render_controller_repair_context(state)
             + _render_published_re_context(state)
             + self._extension_path_context()
@@ -2618,19 +2612,9 @@ class StagedParallelExecutor(PhaseExecutor):
     that bypasses Stage 1.
     """
 
-    _WHY3_ISSUES_MAX_BYTES = 1_000_000
-
     @staticmethod
     def _why3_repair_phase_from_issues(issues_text: str) -> str:
-        """Choose the earliest phase capable of repairing WHY3-owned issues.
-
-        WHY3 reviews specification, architecture, test, and plan artifacts, so
-        ``FAIL`` alone does not identify CARTOGRAPHER as the owner.  SAGE's
-        canonical issue records already name the responsible agent; route from
-        that exact field and fail closed to WHAT when authority is absent or
-        unknown.  Action prose is only a legacy fallback, and only explicit
-        agent identifiers in that prose may establish ownership.
-        """
+        """Choose the earliest phase capable of repairing WHY3-owned issues."""
         phase_order = (
             "phase1-what",
             "phase3-how",
@@ -2685,37 +2669,17 @@ class StagedParallelExecutor(PhaseExecutor):
                 return phase
         return "phase1-what"
 
-    def _why3_repair_phase(self, state: dict) -> str:
-        spec_dir_ref = _normalize_spec_dir_ref(
-            str(state.get("spec_dir") or "").strip(),
-            self._project_root,
-        )
-        if not spec_dir_ref:
-            return "phase1-what"
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-        try:
-            payload = (spec_dir / "issues.md").read_bytes()
-            if len(payload) > self._WHY3_ISSUES_MAX_BYTES:
-                return "phase1-what"
-            issues_text = payload.decode("utf-8")
-        except (OSError, UnicodeError):
-            return "phase1-what"
-        return self._why3_repair_phase_from_issues(issues_text)
-
     @staticmethod
     def _normalize_completed_assess2_rejection(
         label: str,
         result: "SquadAgentResult",
     ) -> "SquadAgentResult":
-        """Separate a completed ASSESS2 rejection from executor failure.
+        """Keep a completed ASSESS2 rejection distinct from executor failure.
 
-        Older prompts allowed GATEKEEPER to report ``BLOCKED`` both for an
-        incomplete dispatch and for a completed critical-feasibility decision.
-        The latter already carries the canonical negative gate decision and
-        repair target, so treating it as a retryable executor block discards
-        the recommendation and loops the same phase forever.
+        Legacy GATEKEEPER prompts can report ``BLOCKED`` for both an incomplete
+        invocation and a completed feasibility rejection.  The latter carries
+        the controller-owned negative decision and repair target, so normalize
+        it before generic blocked-result handling can discard that outcome.
         """
         if (
             label.strip().upper() != "ASSESS2"
@@ -2854,7 +2818,6 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
-            f"{_render_controller_owned_prompt_context(state)}"
             f"{_render_controller_repair_context(state)}"
             f"{_render_certified_understanding_context(state, mode_label)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
@@ -2970,13 +2933,6 @@ class StagedParallelExecutor(PhaseExecutor):
             )
             if verdict_state_key is not None:
                 state[verdict_state_key] = result.verdict
-            if label.strip().upper() == "WHY3":
-                if result.verdict == "FAIL":
-                    state["why3_repair_phase"] = self._why3_repair_phase(
-                        state
-                    )
-                else:
-                    state.pop("why3_repair_phase", None)
             for k, v in result.state_updates.items():
                 state[k] = v
             state_store.save(state)
@@ -3107,7 +3063,6 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
-                        + _render_controller_owned_prompt_context(state)
                         + _render_controller_repair_context(state)
                     )
                     prompt = prompt.replace("{spec_dir}", spec_dir_ref)

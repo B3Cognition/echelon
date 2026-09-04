@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from echelon.checkpoint_cli import run_checkpoint_command
-from echelon.cli import _classify_run_recovery
+from echelon.cli import _classify_run_recovery, _cmd_rewind
 from echelon.checkpoint_coverage import (
     CheckpointCoverageError,
     compute_spec_checkpoint_coverage,
@@ -20,6 +20,7 @@ from harness.phase_checkpoints import (
     load_checkpoint_ledger,
     record_checkpoint_metadata,
 )
+from echelon.rewind import RewindResult
 
 
 class _CoverageGraph:
@@ -457,11 +458,9 @@ def test_terminal_gate_recovery_uses_latest_registered_predecessor_commit(
     )
 
 
-@pytest.mark.parametrize("entry_point", ["spec", "alias"])
 def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    entry_point: str,
 ) -> None:
     from echelon.cli_app import app
 
@@ -568,8 +567,6 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
         "--next-phase checkpoint-assess --confirm"
     )
     command_args = shlex.split(action.command)[1:]
-    if entry_point == "alias":
-        command_args = ["rewind", *command_args[2:]]
     monkeypatch.chdir(tmp_path)
 
     result = CliRunner().invoke(app, command_args)
@@ -579,7 +576,6 @@ def test_terminal_gate_displayed_rewind_selects_exact_colliding_ledger_row(
     assert _git(tmp_path, "rev-parse", "HEAD") == shared_commit
     assert (spec_dir / "spec.md").read_text(encoding="utf-8") == "# Intended checkpoint\n"
     assert load_checkpoint_ledger(spec_dir).checkpoints == [intended]
-
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(

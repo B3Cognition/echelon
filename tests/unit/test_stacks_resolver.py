@@ -8,8 +8,14 @@ import pytest
 from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
-from harness.stacks.resolver import resolve_stacks
-from harness.stacks.schema import StackDefinition, StackTool
+from harness.stacks.resolver import resolved_stack_contract_sha256, resolve_stacks
+from harness.stacks.schema import (
+    StackDefinition,
+    StackProvisioner,
+    StackProvisionerSatisfier,
+    StackRunnability,
+    StackTool,
+)
 
 
 def _stack(
@@ -22,6 +28,8 @@ def _stack(
     requires_commands: list[str] | None = None,
     requires_registries: list[str] | None = None,
     tools: dict[str, StackTool] | None = None,
+    provisioners: list[StackProvisioner] | None = None,
+    runnability: StackRunnability | None = None,
 ) -> StackDefinition:
     return StackDefinition(
         id=stack_id,
@@ -38,6 +46,8 @@ def _stack(
         requires_registries=requires_registries or [],
         tools=tools or {},
         context_files=context_files or ["context.md"],
+        provisioners=provisioners or [],
+        runnability=runnability or StackRunnability(),
     )
 
 
@@ -93,6 +103,257 @@ def test_resolve_no_selected_stacks_is_empty() -> None:
     assert resolved.required_commands == []
     assert resolved.required_registries == []
     assert resolved.context_files == []
+    assert resolved.provisioners == []
+    assert resolved.runnability.policy == "not_applicable"
+
+
+@pytest.mark.unit
+def test_resolve_runnability_unions_obligations_and_uses_strongest_policy() -> None:
+    definitions = {
+        "web": _stack(
+            "web",
+            provides={"web_app.framework": "vite-react"},
+            runnability=StackRunnability(
+                classification="user_facing",
+                policy="required",
+                runner="linux_container",
+                capabilities=("start", "primary_journey"),
+                required_observations=("browser_dom",),
+            ),
+        ),
+        "persistence": _stack(
+            "persistence",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                classification="non_runnable",
+                policy="advisory",
+                runner="linux_container",
+                capabilities=("provision",),
+                required_observations=("postgres_query",),
+            ),
+        ),
+    }
+
+    resolved = resolve_stacks(["web", "persistence"], definitions)
+
+    assert resolved.runnability.classification == "user_facing"
+    assert resolved.runnability.policy == "required"
+    assert resolved.runnability.runner == "linux_container"
+    assert resolved.runnability.capabilities == (
+        "start",
+        "primary_journey",
+        "provision",
+    )
+    assert resolved.runnability.required_observations == (
+        "browser_dom",
+        "postgres_query",
+    )
+    assert resolved.runnability.sources == ("web", "persistence")
+
+
+@pytest.mark.unit
+def test_resolve_runnability_rejects_incompatible_runners() -> None:
+    definitions = {
+        "linux": _stack(
+            "linux",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(runner="linux_container"),
+        ),
+        "mac": _stack(
+            "mac",
+            provides={"test.framework": "xctest"},
+            runnability=StackRunnability(runner="macos_simulator"),
+        ),
+    }
+
+    with pytest.raises(StackConflictError, match="runnability runner"):
+        resolve_stacks(["linux", "mac"], definitions)
+
+
+@pytest.mark.unit
+def test_resolved_stack_contract_hash_is_selection_order_stable() -> None:
+    definitions = {
+        "web": _stack(
+            "web",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(
+                classification="user_facing",
+                policy="required",
+                runner="linux_container",
+                capabilities=("start",),
+                required_observations=("browser_dom",),
+            ),
+        ),
+        "persistence": _stack(
+            "persistence",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                policy="advisory",
+                runner="linux_container",
+                capabilities=("provision",),
+                required_observations=("postgres_query",),
+            ),
+        ),
+    }
+
+    first = resolve_stacks(["web", "persistence"], definitions)
+    second = resolve_stacks(["persistence", "web"], definitions)
+
+    assert resolved_stack_contract_sha256(first) == resolved_stack_contract_sha256(second)
+
+
+@pytest.mark.unit
+def test_rendered_resolution_explains_runnability_obligations() -> None:
+    resolved = resolve_stacks(
+        ["web"],
+        {
+            "web": _stack(
+                "web",
+                provides={"web_app.framework": "vite"},
+                runnability=StackRunnability(
+                    classification="user_facing",
+                    policy="required",
+                    runner="linux_container",
+                    capabilities=("start", "primary_journey"),
+                    required_observations=("browser_dom",),
+                ),
+            )
+        },
+    )
+
+    data = resolved_to_dict(resolved)
+    markdown = render_resolved_markdown(resolved)
+
+    assert data["runnability"] == {
+        "classification": "user_facing",
+        "policy": "required",
+        "runner": "linux_container",
+        "capabilities": ["start", "primary_journey"],
+        "required_observations": ["browser_dom"],
+        "sources": ["web"],
+    }
+    assert "## User Runnability" in markdown
+    assert "Policy: `required`" in markdown
+
+
+def test_postgres_verification_provisioner_resolves_sandbox_service() -> None:
+    provisioner = StackProvisioner(
+        id="postgres-verify",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[],
+    )
+
+    resolved = resolve_stacks(
+        ["postgres"],
+        {"postgres": _stack("postgres", provides={}, provisioners=[provisioner])},
+    )
+
+    assert resolved.services[0].image == "postgres:16.4-alpine"
+    assert resolved.services[0].environment_names == (
+        "DATABASE_URL",
+        "TEST_DATABASE_URL",
+    )
+
+
+@pytest.mark.unit
+def test_resolve_provisioners_preserves_resolution_order_and_owner() -> None:
+    provisioner = StackProvisioner(
+        id="postgres-verify",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[
+            StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL")
+        ],
+    )
+    definitions = {
+        "application": _stack(
+            "application",
+            provides={"web_app.framework": "nextjs"},
+            implies=["database"],
+        ),
+        "database": _stack(
+            "database",
+            provides={"data.database": "postgres"},
+            provisioners=[provisioner],
+        ),
+    }
+
+    resolved = resolve_stacks(["application"], definitions)
+
+    assert [(item.owner_stack_id, item.provisioner.id) for item in resolved.provisioners] == [
+        ("database", "postgres-verify")
+    ]
+
+
+@pytest.mark.unit
+def test_conflicting_provisioner_ids_fail() -> None:
+    def provisioner(readiness_command: str) -> StackProvisioner:
+        return StackProvisioner(
+            id="postgres-verify",
+            scope="verification",
+            services=["postgres"],
+            required_environment=["DATABASE_URL"],
+            readiness_command=readiness_command,
+            satisfiers=[
+                StackProvisionerSatisfier(
+                    kind="environment", variable="DATABASE_URL"
+                )
+            ],
+        )
+
+    definitions = {
+        "a": _stack(
+            "a",
+            provides={"data.database": "postgres"},
+            provisioners=[provisioner("pg_isready")],
+        ),
+        "b": _stack(
+            "b",
+            provides={"data.migrations": "checked-in"},
+            provisioners=[provisioner("pg_isready --quiet")],
+        ),
+    }
+
+    with pytest.raises(StackConflictError, match="postgres-verify"):
+        resolve_stacks(["a", "b"], definitions)
+
+
+@pytest.mark.unit
+def test_equal_provisioner_ids_preserve_each_declaring_stack() -> None:
+    shared = StackProvisioner(
+        id="shared",
+        scope="verification",
+        services=["postgres"],
+        required_environment=["DATABASE_URL"],
+        readiness_command="pg_isready",
+        satisfiers=[
+            StackProvisionerSatisfier(kind="environment", variable="DATABASE_URL")
+        ],
+    )
+    definitions = {
+        "a": _stack(
+            "a",
+            provides={"data.database": "postgres"},
+            provisioners=[shared],
+        ),
+        "b": _stack(
+            "b",
+            provides={"data.migrations": "checked-in"},
+            provisioners=[shared],
+        ),
+    }
+
+    resolved = resolve_stacks(["a", "b"], definitions)
+
+    assert [(item.owner_stack_id, item.provisioner.id) for item in resolved.provisioners] == [
+        ("a", "shared"),
+        ("b", "shared"),
+    ]
 
 
 @pytest.mark.unit

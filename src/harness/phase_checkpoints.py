@@ -653,7 +653,6 @@ def resolve_rewind_checkpoint(
     next_phase: str = "",
 ) -> PhaseCheckpoint:
     """Resolve one supported rewind row, including its rendered discriminator."""
-
     selected_ledger = ledger
     normalized_next_phase = next_phase.strip()
     if normalized_next_phase:

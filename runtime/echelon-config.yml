@@ -200,7 +200,6 @@ golddigger:
 scoring:
   confidence_min: 0.0
   confidence_max: 1.0
-  confidence_threshold: 0.7
   evidence_grades: [A, B, C, D, E]
 
 # =============================================================================
@@ -755,10 +754,9 @@ mempalace:
 # STACKS — Opt-in technology profiles
 # =============================================================================
 # Empty means Echelon keeps deciding from requirements and repository evidence.
-# Add stack IDs only when a project should explicitly use a known stack, such as
-# statsperform-playbook, statsperform-stark-webapp, or statsperform-msa-service.
-# Stark applies to web apps and implies Playbook; MSA applies to backend services
-# and stays separate from Stark and infrastructure choices.
+# Add stack IDs only when a project should explicitly use known stack contracts,
+# such as statsperform-playbook or a persistent game composition:
+# game-persistence-postgres + browser-3d-game.
 
 stacks:
   selected: []

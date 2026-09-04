@@ -50,6 +50,14 @@ echelon.engineering-manager (ENGINEERING MANAGER) must confirm:
 3. The build is ready for full echelon.verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
 5. **Documentation Convergence Gate passed**: `documentation-impact-report.md` and `docs-verification-report.md` exist; when docs are required, `README.md` and `CHANGELOG.md` were updated, README.md works as a first-run manual for runnable projects, CHANGELOG.md follows Keep a Changelog-style `[Unreleased]` entries, and DOCS VERIFIER returned PASS.
+6. **User-runnability evidence is current**: for a required stack, the
+   harness-owned `user-runnability` report exists and is passing, its product,
+   candidate-contract, and resolved-stack hashes still match, and the final docs
+   report is not provisional. When the stack requires a local journey, the
+   report contains the complete declared sequence and its truthful verification
+   status; `unverified` must never be presented as passed. A missing, failed,
+   stale, or provisional result always routes to rework or the explicit
+   owner-controlled deferral path.
 
 If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 
@@ -144,6 +152,7 @@ Verify all report files are populated:
 - `progress-report.md` — One section per task + summary
 - `documentation-impact-report.md` — README/CHANGELOG impact decision and update evidence
 - `docs-verification-report.md` — README/CHANGELOG quality verification and repair-loop evidence
+- `evidence/user-runnability/report.json` — harness-owned composed first-run evidence when required
 - `gap-report.md` — Verification coverage and gaps
 - `verification-summary.md` — Final PASS / FAIL completion verdict
 
@@ -353,6 +362,20 @@ if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
   printf '{"status":"blocked","reason":"specific blocker requiring human input"}' > "$HARNESS_BUILD_STATUS_FILE"
 fi
 ```
+
+When the implementation is ready but verification cannot execute only because
+the coding provider lacks a host-bound dependency, ALWAYS classify that exact
+condition with `"blocker_kind":"verification_environment"`. NEVER use this
+classification for a real test failure, implementation defect, missing secret,
+requirement ambiguity, or another blocker that would remain on the host:
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  printf '{"status":"blocked","blocker_kind":"verification_environment","reason":"Chromium is unavailable in the coding sandbox"}' > "$HARNESS_BUILD_STATUS_FILE"
+fi
+```
+
+This is a deferral to Ralph's authoritative verifier, not a passing result.
 
 Do not write `impasse` for ordinary partial progress. An incomplete MVP is not a blocker by itself.
 

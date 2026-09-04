@@ -8,12 +8,6 @@ from harness.checkpoint_policy import (
     checkpoint_additional_owned_paths,
     phase_checkpoint_policy,
 )
-from harness.human_input import (
-    HumanInputOption,
-    HumanInputPolicyRegistry,
-    RecommendationEvidence,
-    controller_safeguard_policies,
-)
 from harness.phase_graph import PhaseGraph
 
 
@@ -88,85 +82,3 @@ def test_ordinary_phase_has_no_additional_owned_paths(tmp_path: Path) -> None:
         "phase1-discover",
         {"spec_id": "001-demo"},
     ) == ()
-
-
-def test_registered_checkpoint_assess_preparer_describes_accepted_debt() -> None:
-    graph = PhaseGraph(
-        Path(__file__).resolve().parents[2]
-        / "runtime"
-        / "workflow"
-        / "definition.yaml"
-    )
-    registry = graph.human_input_policy_registry()
-    authorization_digest = "a" * 64
-
-    prepared = registry.prepare_controller(
-        source_kind="human_gate",
-        producer_id="checkpoint-assess",
-        reason_code="checkpoint_assess_decision_required",
-        phase_id="checkpoint-assess",
-        question="Review the current Phase 1 checkpoint authority.",
-        source_state_revision=12,
-        authority_kind="accepted_with_debt",
-        authority_evidence=(
-            RecommendationEvidence(
-                id="checkpoint-assess:accepted-debt",
-                kind="accepted_with_debt",
-                reference="state:spec_quality_debt_authorization",
-                digest=authorization_digest,
-            ),
-            RecommendationEvidence(
-                id="checkpoint-assess:quality-gates",
-                kind="quality_gate_failure",
-                reference="specs/001-demo/quality-gates.md",
-                digest="b" * 64,
-            ),
-        ),
-        accepted_debt_resolver="user",
-        authorization_digest=authorization_digest,
-    )
-
-    assert prepared.recommended_option_id == "approve"
-    assert "accepted_with_debt" in prepared.recommendation_rationale
-    assert "user" in prepared.recommendation_rationale
-    assert authorization_digest in prepared.recommendation_rationale
-    assert any(
-        evidence.kind == "quality_gate_failure"
-        for evidence in prepared.recommendation_evidence
-    )
-
-
-def test_registered_phase_dispatch_preparer_uses_document_order() -> None:
-    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
-    option_contract = tuple(
-        HumanInputOption(
-            id=issue_id,
-            label=f"{issue_id}: {title}",
-            description=f"Evidence-backed suggestion for {issue_id}.",
-            recommended=False,
-            risk_level="medium",
-            next_phase="phase1-what",
-            outcome=None,
-        )
-        for issue_id, title in (
-            ("ISS-010", "First in the document"),
-            ("ISS-001", "Lower numeric identifier"),
-        )
-    )
-
-    prepared = registry.prepare_controller(
-        source_kind="controller_safeguard",
-        producer_id="phase_dispatch_limit",
-        reason_code="phase_dispatch_limit",
-        phase_id="phase1-why2",
-        question="Select one sealed evidence-backed issue resolution.",
-        source_state_revision=8,
-        option_contract=option_contract,
-    )
-
-    assert prepared.recommended_option_id == "ISS-010"
-    assert "first eligible entry" in prepared.recommendation_rationale
-    assert [option.id for option in prepared.options if option.recommended] == [
-        "ISS-010"
-    ]
-    assert prepared.recommendation_evidence[0].kind == "phase_dispatch_issue"

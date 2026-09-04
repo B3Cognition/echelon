@@ -409,10 +409,9 @@ def _parse_authoritative_sage_assessment_bytes(
 def is_actionable_sage_issue(issue: Mapping[str, object]) -> bool:
     """Return whether an authoritative SAGE issue requires follow-up.
 
-    The issues template reserves ``None`` and ``None — advisory…`` for
-    explicit advisory findings. Treat a missing or malformed field as
-    actionable so a degraded artifact cannot silently bypass the repair-route
-    contract.
+    Explicit advisory findings use ``None`` or ``None — advisory…``. Missing
+    or malformed action metadata remains actionable so degraded evidence
+    cannot silently bypass the repair-route contract.
     """
     action_required = issue.get("action_required")
     if not isinstance(action_required, str):

@@ -46,6 +46,10 @@ NEVER return DONE without a report that the harness can parse.
 ALWAYS give every harness-supplied `delivery_change_id` exactly one `documented_changes` disposition backed by repository evidence.
 NEVER omit a delivered change, invent an evidence path, or use `not_applicable` without a concrete reason.
 
+### Rule 7 - Sandbox and Local User-Runnability Facts
+ALWAYS copy sandbox instructions and every declared local prerequisite, provision, readiness, prepare, verify, start, session, open, stop, cleanup, and consumer-boundary probe instruction exactly from the current passing user-runnability evidence when the selected stack requires it; preserve the recorded local-journey status.
+NEVER invent, simplify, or substitute commands from `.echelon/runnability.yml`, README prose, package scripts, or a provisional report when current harness evidence differs or is absent, and never describe an `unverified` local journey as passed.
+
 ## Inputs
 
 1. `{spec_dir}/spec.md`
@@ -57,6 +61,7 @@ NEVER omit a delivered change, invent an evidence path, or use `not_applicable` 
 7. Changed-file list from the build worktree
 8. Existing repo-root `README.md` if present
 9. Existing repo-root `CHANGELOG.md` if present
+10. Candidate `.echelon/runnability.yml` path and the current immutable `evidence/user-runnability/report.json` when supplied by Ralph
 
 ## Process
 
@@ -91,6 +96,12 @@ Cover these sections when supported by implementation evidence:
 7. **Troubleshooting** - common first-run failures, missing prerequisites, config discovery problems, permission issues, lossy/skipped transformations, networking/service startup failures, and how to recover.
 8. **Develop** - install dependencies, run tests, build, lint/typecheck, and locate the main source directories.
 9. **Further reading** - link deeper docs for concepts, target contracts, API references, architecture, or contribution guides.
+
+For a required runnable stack, the current passing user-runnability report is
+the authority for the first-run operation sequence. Preserve sandbox commands,
+declared local commands, consumer-boundary probes, URLs, and the local-journey status exactly. The
+candidate contract explains intent, but an `unverified` local journey does not
+prove those instructions worked on the user's machine.
 
 Do not invent commands, config keys, outputs, services, guarantees, runtime versions, or troubleshooting causes. If evidence is incomplete, write a short "Not documented yet" note only for the specific missing detail and point to the command or file a maintainer should verify.
 ALWAYS verify npm commands against `package.json` before documenting them for npm projects.

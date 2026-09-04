@@ -61,6 +61,30 @@ def test_persisted_policy_is_immutable_and_rendered_for_agent_context(tmp_path: 
 
 
 @pytest.mark.unit
+def test_multiple_human_decisions_are_preserved_in_one_feature_policy(tmp_path: Path) -> None:
+    """A later clarification must not make an earlier one unresumable."""
+    from echelon.feature_policy import (
+        derive_feature_policy,
+        merge_feature_policies,
+        persist_feature_policy,
+    )
+
+    first = derive_feature_policy(
+        "No deployment requirement.", decision_id="DEC-001"
+    )
+    second = derive_feature_policy(
+        "Use only the latest checkpoint.", decision_id="DEC-002"
+    )
+    persist_feature_policy(tmp_path, first)
+
+    merged = merge_feature_policies(first, second)
+    persist_feature_policy(tmp_path, merged)
+
+    assert merged["scope"] == {"deployment": "descoped"}
+    assert merged["provenance"]["decision_ids"] == ["DEC-001", "DEC-002"]
+
+
+@pytest.mark.unit
 def test_reconciliation_retains_refuted_production_assumptions(tmp_path: Path) -> None:
     from echelon.feature_policy import derive_feature_policy, reconcile_feature_artifacts
 

@@ -240,9 +240,7 @@ def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, ca
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
     config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
-    assert "llm" not in config.get("harness", {})
-    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
-    assert local["harness"]["llm"]["cli"] == "codex"
+    assert config["harness"]["llm"]["cli"] == "codex"
 
 
 def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypatch, capsys) -> None:
@@ -267,10 +265,8 @@ def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypa
     captured = capsys.readouterr()
     assert "LLM provider configured: codex" in captured.out
     loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
-    assert loaded["harness"]["llm"]["cli"] == "claude"
-    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
-    assert local["harness"]["llm"]["cli"] == "codex"
-    assert "/.echelon/local.yml" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert loaded["harness"]["llm"]["cli"] == "codex"
+    assert not (tmp_path / ".echelon" / "local.yml").exists()
 
 
 def test_workspace_init_persists_openai_compatible_endpoint_config(tmp_path, monkeypatch, capsys) -> None:
@@ -310,9 +306,7 @@ def test_workspace_init_persists_openai_compatible_endpoint_config(tmp_path, mon
     captured = capsys.readouterr()
     assert "LLM provider configured: openai-compatible" in captured.out
     loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
-    assert loaded["harness"]["llm"] == {"cli": "claude"}
-    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
-    assert local["harness"]["llm"] == {
+    assert loaded["harness"]["llm"] == {
         "cli": "openai-compatible",
         "base_url": "http://127.0.0.1:8000/v1",
         "model": "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
@@ -481,9 +475,7 @@ def test_workspace_init_persists_additional_llm_providers(tmp_path, monkeypatch,
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
     config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
-    assert "llm" not in config.get("harness", {})
-    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
-    assert local["harness"]["llm"]["cli"] == llm_cli
+    assert config["harness"]["llm"]["cli"] == llm_cli
 
 
 def test_workspace_init_flag_writes_local_unsafe_host_execution_policy(

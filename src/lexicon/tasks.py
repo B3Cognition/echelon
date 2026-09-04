@@ -21,21 +21,12 @@ class TaskRecord:
     line: int
 
 
-_INDEPENDENT_CLAUSE_AFTER_AND_RE = re.compile(
-    r"\band\s+"
-    r"(?:(?:the|a|an|each|every|this|that|another)\s+|(?:it|they|we|you)\s+)"
-    r"(?=[^,.;\n]{0,80}\b(?:"
-    r"is|are|was|were|has|have|does|will|must|should|can|"
-    r"[a-z][a-z0-9_-]*(?:s|ed)"
-    r")\b)",
-    re.IGNORECASE,
-)
+_COMPOUND_RE = re.compile(r"\band\b", re.IGNORECASE)
 
 _ROW_START = re.compile(rf"^- \[[ xX]\]\s+(?P<id>{TASK_ID_PATTERN})\b")
 _TEST_RE = re.compile(r"^\s*\*\*Test:\*\*\s*(?P<v>.+?)\s*$")
 _ACC_HDR = re.compile(r"^\s*\*\*Acceptance Criteria:\*\*\s*$")
 _ACC_ITEM = re.compile(r"^\s*- \[[ xX]\]\s*(?P<v>.+?)\s*$")
-_FIELD_HDR = re.compile(r"^\s*\*\*[^*]+:\*\*")
 
 
 def _row_start_lines(lines: list[str]) -> list[int]:
@@ -69,13 +60,9 @@ def extract_tasks(text: str) -> list[TaskRecord]:
             mt = _TEST_RE.match(bl)
             if mt:
                 test = mt.group("v")
-                in_acc = False
                 continue
             if _ACC_HDR.match(bl):
                 in_acc = True
-                continue
-            if in_acc and _FIELD_HDR.match(bl):
-                in_acc = False
                 continue
             ma = _ACC_ITEM.match(bl)
             if ma and in_acc:
@@ -93,15 +80,7 @@ def within_doc_findings(text: str, glossary: set[str]) -> list[Finding]:
     findings.extend(unresolved_terms(text, glossary))  # T: terms bind to glossary
     findings.extend(placeholder_findings(text))      # C: no <placeholder>/TBD/TODO
     for t in extract_tasks(text):                    # atomicity: one deliverable
-        # Conjunctions alone are not evidence of multiple deliverables: one
-        # observable commonly has several conditions ("on load and reload",
-        # "zero collection, transmission, and persistence").  Flag only when
-        # two conjunctions introduce their own subject/predicate clauses, as
-        # in "the list renders and the panel updates and an email is sent".
-        if any(
-            len(_INDEPENDENT_CLAUSE_AFTER_AND_RE.findall(item)) >= 2
-            for item in t.acceptance.splitlines()
-        ):
+        if len(_COMPOUND_RE.findall(t.acceptance)) >= 2:
             findings.append(Finding(
                 code="task-not-atomic",
                 message=f"TASK {t.id} ACCEPTANCE bundles multiple obligations; split into atomic tasks",

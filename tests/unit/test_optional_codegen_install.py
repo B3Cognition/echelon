@@ -112,7 +112,7 @@ def test_installer_manages_codegen_launcher_by_mode() -> None:
 def test_installer_recommends_poppler_without_installing_it() -> None:
     script = _installer()
 
-    install = script.index('uv pip install -q --python "$VENV_DIR" -e "$ECHELON_DIR"')
+    install = script.index('uv pip install -q --reinstall --python "$VENV_DIR" -e "$ECHELON_DIR"')
     done = script.index("# ── Done")
 
     assert "pdftotext (Poppler) is recommended for higher-fidelity PDF extraction" in script[install:done]

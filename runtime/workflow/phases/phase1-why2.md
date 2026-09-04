@@ -147,14 +147,11 @@ echelon_result:
           supplied_reference_ids: [IN-REF-...]
 ```
 
-Every WHY2 result MUST also classify its required findings in the control
-plane. For a passing review return `evidence_resolution_status: not_required`
-with an empty list. For a failing review, include one entry for every finding
-whose `Action Required` is not an explicit advisory. An explicit advisory uses
-either `Action Required: None` or `Action Required: None — advisory. <brief
-handoff>` and is omitted from `finding_routes`; it must not be presented as
-repair debt. The `route` value must be exactly `spec_repair`,
-`evidence_resolution`, or `human_decision`:
+Every WHY2 result MUST also classify its findings in the control plane. For a
+passing review return `evidence_resolution_status: not_required` with an empty
+list. For a failing review, include one entry for every blocking finding. The
+`route` value must be exactly `spec_repair`, `evidence_resolution`, or
+`human_decision`:
 
 ```yaml
 echelon_result:
@@ -206,7 +203,7 @@ echelon_result:
     status: blocked
     blocked_reason: human_clarification_required
     escalation_question: "<one concrete project decision>"
-    escalation_recommended_answer: "<exact answer value>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
     escalation_risk_level: "<low | medium | high | critical>"
 ```
 
@@ -214,11 +211,5 @@ Include `escalation_recommended_answer` and `escalation_risk_level` together
 only when evidence supports a recommendation; otherwise omit both. Never put a
 question on `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
 clarification writes and state cleanup.
-`escalation_recommended_answer` must contain the exact answer value that can be
-copied verbatim into `answer_text`; do not write an instruction, rationale, or
-recommendation preamble in that field.
-In `banzai` mode, do not use `STOP_AND_ASK` for a low-risk, reversible detail
-that explicit input, the selected stack, reachable evidence, or a conventional
-default can resolve; record the assumption and continue.
 
 **Transition:** `phases[phase1-why2]` in `workflow/definition.yaml`.

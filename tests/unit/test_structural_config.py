@@ -31,16 +31,3 @@ def test_agent_timeout_defaults_to_one_hour(
 
     assert config["execution"]["agent_timeout_seconds"] == 3600
     assert "longer timeout under harness.llm.timeout_ms" in text
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "relative_path",
-    ["runtime/echelon-config.yml", "runtime/config-template.yml"],
-)
-def test_scoring_confidence_threshold_is_available_to_phase_agents(
-    relative_path: str,
-) -> None:
-    config = yaml.safe_load((ROOT / relative_path).read_text(encoding="utf-8"))
-
-    assert config["scoring"]["confidence_threshold"] == 0.7

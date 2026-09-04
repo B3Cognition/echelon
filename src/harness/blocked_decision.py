@@ -34,9 +34,13 @@ _V2_CLASSIFICATIONS = frozenset(
     {"operational", "material", "external_prerequisite"}
 )
 _V2_AUTONOMY_MODES = frozenset({"guided", "semi", "banzai"})
-_V2_RESOLVERS = frozenset({"user", "semi", "COMMANDER"})
+_V2_RESOLVERS = frozenset({"user", "semi", "COMMANDER", "controller"})
 _V2_OPTION_REQUIRED_HANDLERS = frozenset(
-    {"phase_dispatch_limit", "proportional_quality_debt"}
+    {
+        "banzai_issue_resolution",
+        "phase_dispatch_limit",
+        "proportional_quality_debt",
+    }
 )
 _V2_OPTION_FIELDS = frozenset(
     {"id", "label", "description", "recommended", "risk_level", "next_phase", "outcome"}
@@ -681,7 +685,7 @@ def validate_blocked_decision_v3(value: object) -> dict[str, object]:
             raise BlockedDecisionError(
                 "recommendation_followed does not match the sealed recommendation"
             )
-        if resolved_by in {"semi", "COMMANDER"}:
+        if resolved_by in {"semi", "COMMANDER", "controller"}:
             if not automatic_eligible:
                 raise BlockedDecisionError(
                     "automatic resolution requires automatic_eligible"

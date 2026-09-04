@@ -31,9 +31,25 @@ server.listen(4173, '127.0.0.1');
         encoding="utf-8",
     )
     (tmp_path / "playwright-result.json").write_text(
-        json.dumps({"suites": [], "errors": []}),
+        json.dumps({
+            "suites": [{
+                "specs": [{
+                    "title": "journey",
+                    "file": "journey.spec.ts",
+                    "tests": [{
+                        "projectName": "chromium",
+                        "expectedStatus": "passed",
+                        "results": [{"status": "passed"}],
+                    }],
+                }],
+            }],
+            "errors": [],
+        }),
         encoding="utf-8",
     )
+    screenshot_dir = tmp_path / "playwright-report"
+    screenshot_dir.mkdir()
+    (screenshot_dir / "journey.png").write_bytes(b"visual-proof")
 
     config = HarnessConfig(
         target_repo=".",
@@ -63,6 +79,8 @@ server.listen(4173, '127.0.0.1');
         config=config,
         spec_id="smoke",
         strategy_id="docker",
+        base_dir=str(tmp_path),
+        build_id="build-smoke",
     )
 
     result = controller.run_loop(str(tmp_path))

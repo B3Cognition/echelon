@@ -2677,9 +2677,10 @@ class SquadController:
                 "controller_safeguard",
                 "legacy_recovery",
             }
-            and policy.producer_id == "phase_dispatch_limit"
-            and policy.reason_code == "phase_dispatch_limit"
-            and policy.resolution_handler == "phase_dispatch_limit"
+            and policy.producer_id
+            in {"phase_dispatch_limit", "banzai_issue_resolution"}
+            and policy.reason_code == policy.producer_id
+            and policy.resolution_handler == policy.producer_id
         )
 
     @staticmethod
@@ -3534,6 +3535,7 @@ class SquadController:
             request.source_kind == "controller_safeguard"
             and request.producer_id
             in {
+                "banzai_issue_resolution",
                 "consecutive_why_fails",
                 "why2_metric_stagnation",
                 "proportional_quality_budget_exhausted",
@@ -3890,6 +3892,151 @@ class SquadController:
             )
         return None
 
+    def _proportional_controller_resolution(
+        self,
+        decision: Mapping[str, object],
+        state: Mapping[str, object],
+    ) -> AppliedHumanInputResolution | None:
+        """Apply a sealed proportional recommendation without provider replay."""
+        if (
+            decision.get("schema_version") != 3
+            or decision.get("source_kind") != "controller_safeguard"
+            or decision.get("producer_id")
+            not in {
+                "proportional_quality_budget_exhausted",
+                "proportional_quality_extension_exhausted",
+            }
+            or decision.get("reason_code") != decision.get("producer_id")
+            or decision.get("automatic_eligible") is not True
+            or decision.get("recommendation_authority") != "controller_evidence"
+        ):
+            return None
+        options = self._human_input_options_from_decision(decision)
+        recommended = [option for option in options if option.recommended]
+        recommended_option_id = decision.get("recommended_option_id")
+        evidence = decision.get("recommendation_evidence")
+        if (
+            len(recommended) != 1
+            or recommended[0].id != recommended_option_id
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("kind") != "proportional_quality"
+                for item in evidence
+            )
+        ):
+            return None
+        selected_option_id = recommended[0].id
+        rationale = str(decision["recommendation_rationale"])
+        confidence = str(decision["recommendation_confidence"])
+        if selected_option_id == "continue_with_debt":
+            candidate_evidence = state.get(
+                "proportional_quality_candidate_evidence"
+            )
+            if not isinstance(candidate_evidence, Mapping):
+                return None
+            manifest_ref = candidate_evidence.get("candidate_manifest")
+            manifest_sha = candidate_evidence.get(
+                "candidate_manifest_sha256"
+            )
+            candidate_id = candidate_evidence.get("selected_candidate_id")
+            if not all(
+                isinstance(value, str) and value
+                for value in (manifest_ref, manifest_sha, candidate_id)
+            ):
+                return None
+            manifest_path = Path(str(manifest_ref))
+            if not manifest_path.is_absolute():
+                manifest_path = self._project_root / manifest_path
+            try:
+                candidate = load_quality_candidate_manifest(
+                    manifest_path,
+                    expected_sha256=str(manifest_sha),
+                    expected_candidate_id=str(candidate_id),
+                )
+                repair = validate_repair_state(
+                    state.get("phase1_quality_repair")
+                )
+            except (QualityCandidateIntegrityError, TypeError, ValueError):
+                return None
+            has_hard_blocker = any(
+                route.get("severity") == "CRITICAL"
+                or route.get("type") == "contradiction"
+                for route in candidate.sage_finding_routes
+            )
+            if has_hard_blocker:
+                option_ids = {option.id for option in options}
+                extension_available = (
+                    decision.get("reason_code")
+                    == "proportional_quality_budget_exhausted"
+                    and repair["extension_authorized"] == 0
+                    and repair["extension_consumed"] == 0
+                    and "extend_once" in option_ids
+                )
+                selected_option_id = (
+                    "extend_once" if extension_available else "stop"
+                )
+                if selected_option_id not in option_ids:
+                    return None
+                rationale = (
+                    "Current candidate integrity evidence contains a hard SAGE "
+                    "blocker that cannot be accepted as quality debt; apply the "
+                    + (
+                        "single available extension."
+                        if extension_available
+                        else "fail-closed stop option."
+                    )
+                )
+                confidence = "high"
+        return AppliedHumanInputResolution(
+            selected_option_id=selected_option_id,
+            answer_text=None,
+            resolved_by="controller",
+            rationale=rationale,
+            confidence=confidence,
+        )
+
+    def _banzai_issue_controller_resolution(
+        self,
+        decision: Mapping[str, object],
+    ) -> AppliedHumanInputResolution | None:
+        """Apply sealed issues.md authority without a COMMANDER replay."""
+        if (
+            decision.get("schema_version") != 3
+            or decision.get("source_kind") != "controller_safeguard"
+            or decision.get("producer_id") != "banzai_issue_resolution"
+            or decision.get("reason_code") != "banzai_issue_resolution"
+            or decision.get("resolution_handler")
+            != "banzai_issue_resolution"
+            or decision.get("automatic_eligible") is not True
+            or decision.get("recommendation_authority")
+            != "controller_evidence"
+        ):
+            return None
+        options = self._human_input_options_from_decision(decision)
+        recommended = [option for option in options if option.recommended]
+        evidence = decision.get("recommendation_evidence")
+        if (
+            len(recommended) != 1
+            or recommended[0].id != decision.get("recommended_option_id")
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(
+                not isinstance(item, Mapping)
+                or item.get("kind") != "banzai_issue_resolution"
+                for item in evidence
+            )
+        ):
+            return None
+        return AppliedHumanInputResolution(
+            selected_option_id=recommended[0].id,
+            answer_text=None,
+            resolved_by="controller",
+            rationale=str(decision["recommendation_rationale"]),
+            confidence=str(decision["recommendation_confidence"]),
+        )
+
     @staticmethod
     def _validate_human_input_resolver(
         decision: Mapping[str, object],
@@ -3899,6 +4046,7 @@ class SquadController:
             "user": ("awaiting_human", None),
             "semi": ("pending", "semi"),
             "COMMANDER": ("resolving", "banzai"),
+            "controller": ("pending", "banzai"),
         }
         contract = resolver_contract.get(resolution.resolved_by)
         if contract is None:
@@ -4153,22 +4301,45 @@ class SquadController:
             os.close(directory_fd)
         from echelon.feature_policy import (
             derive_feature_policy,
+            load_feature_policy,
+            merge_feature_policies,
             persist_feature_policy,
             reconcile_feature_artifacts,
         )
 
-        feature_policy = derive_feature_policy(
+        incoming_feature_policy = derive_feature_policy(
             answer,
             decision_id=str(decision["id"]),
         )
         staging_dir = self._authoritative_human_input_roots(state)["{staging_dir}"]
         assert staging_dir is not None
+        feature_policy = merge_feature_policies(
+            load_feature_policy(staging_dir),
+            incoming_feature_policy,
+        )
         persist_feature_policy(staging_dir, feature_policy)
         updates: dict[str, object] = {
             "status": "running",
             "phase": route,
             "feature_policy": feature_policy,
         }
+        state_removals: set[str] = set()
+        if self._is_proportional_quality_state(state):
+            # A clarification can rewrite the requirements after a candidate
+            # was captured.  That candidate's immutable evidence then belongs
+            # to the superseded requirements and must not drive a later debt
+            # or restore decision.
+            repair = initialize_repair_state(
+                {"spec_authoring_mode": state.get("spec_authoring_mode")}
+            )
+            if repair is not None:
+                updates["phase1_quality_repair"] = repair
+            state_removals.update(
+                {
+                    "quality_gate_remediation",
+                    "proportional_quality_candidate_evidence",
+                }
+            )
         spec_dir = self._validated_spec_root(state)
         if spec_dir is not None and spec_dir.is_dir():
             reconciliation = reconcile_feature_artifacts(spec_dir, feature_policy)
@@ -4184,7 +4355,7 @@ class SquadController:
         updates["context_dir"] = str(context_result.context_dir)
         return _HumanInputResolutionEffects(
             state_updates=updates,
-            state_removals=frozenset(),
+            state_removals=frozenset(state_removals),
             route=route,
         )
 
@@ -4322,6 +4493,65 @@ class SquadController:
             route=route,
         )
 
+    def _banzai_issue_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        _resolution: AppliedHumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        """Route one sealed SAGE issue through the normal repair lifecycle."""
+        if selected is None:
+            raise HumanInputPolicyError(
+                "Banzai issue resolution must select one sealed issue option"
+            )
+        candidate = self._dispatch_cap_candidate_for_resolution(
+            state,
+            selected,
+        )
+        selection = self._validate_banzai_issue_resolution_selection(
+            {
+                "issue_id": candidate["issue_id"],
+                "decision": candidate["suggested_option"],
+                "rationale": candidate["evidence_basis"],
+                "confidence": "high",
+                "evidence_backed": True,
+            },
+            [candidate],
+        )
+        if selection is None:
+            raise HumanInputPolicyError(
+                "Banzai issue resolution is not evidence-backed"
+            )
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
+        if route != selection["repair_phase"]:
+            raise HumanInputPolicyError(
+                "Banzai issue repair route is not sealed by issue authority"
+            )
+        updates = self._issue_resolution_state_updates(
+            dict(state),
+            selection,
+            source_phase=str(decision["source_phase"]),
+        )
+        updates.update(
+            {
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+            }
+        )
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset({"quality_gate_remediation"}),
+            route=route,
+        )
+
     def _proportional_quality_debt_resolution(
         self,
         state: Mapping[str, object],
@@ -4419,9 +4649,9 @@ class SquadController:
             )
 
         if selected.id == "continue_with_debt":
-            if resolution.resolved_by not in {"user", "COMMANDER"}:
+            if resolution.resolved_by not in {"user", "COMMANDER", "controller"}:
                 raise HumanInputPolicyError(
-                    "quality debt requires a human or COMMANDER resolver"
+                    "quality debt requires a human, COMMANDER, or controller resolver"
                 )
             lexicon = self._lexicon_gate_config().get("lexicon_gate")
             route = (
@@ -4654,6 +4884,7 @@ class SquadController:
             resolution,
         )
         handlers = {
+            "banzai_issue_resolution": self._banzai_issue_resolution,
             "clarification_resume": self._clarification_resume_resolution,
             "gate_outcome": self._gate_outcome_resolution,
             "phase_dispatch_limit": self._phase_dispatch_limit_resolution,
@@ -5442,6 +5673,7 @@ class SquadController:
         if PENDING_CONTROLLER_COMPLETION_KEY in pending:
             if not self._drain_pending_controller_completion().recovered:
                 return False
+        pending = self._state_store.reopen_failed_proportional_controller_decision()
         raw_pending_decision = pending.get("blocked_decision")
         v2_automatic_eligible = (
             self._v2_decision_automatic_eligible(raw_pending_decision)
@@ -5493,6 +5725,25 @@ class SquadController:
             if decision.get("automatic_eligible") is not True:
                 return False
             policy = self._policy_for_human_input_decision(decision)
+            controller_resolution = (
+                self._banzai_issue_controller_resolution(decision)
+            )
+            if controller_resolution is not None:
+                return self.apply_human_input_resolution(
+                    str(decision["id"]),
+                    expected_state_revision=int(state["state_revision"]),
+                    resolution=controller_resolution,
+                )
+            controller_resolution = self._proportional_controller_resolution(
+                decision,
+                state,
+            )
+            if controller_resolution is not None:
+                return self.apply_human_input_resolution(
+                    str(decision["id"]),
+                    expected_state_revision=int(state["state_revision"]),
+                    resolution=controller_resolution,
+                )
             return self._dispatch_commander_human_input(
                 state,
                 decision,
@@ -10674,6 +10925,12 @@ class SquadController:
                 qualitative_failure_count=len(
                     recommendation_current.sage_finding_routes
                 ),
+                qualitative_hard_blocker_count=sum(
+                    1
+                    for route in recommendation_current.sage_finding_routes
+                    if route.get("severity") == "CRITICAL"
+                    or route.get("type") == "contradiction"
+                ),
             ),
             option_contract=policy.options,
             no_artifact_progress=(
@@ -11776,6 +12033,16 @@ class SquadController:
                 prepared,
                 snapshot,
             )
+        if prepared.state_updates.get("evidence_resolution_status") == "pending":
+            # The phase graph gives executable evidence collection precedence
+            # over quality repair.  A mixed WHY2 result may contain ordinary
+            # spec-repair findings and a project fact for INVESTIGATOR; that is
+            # valid workflow routing, not quality-candidate corruption.
+            return None, {
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+            }, None
         if prepared.state_updates.get("escalation_question"):
             return self._coordinate_why_transition_state_legacy(
                 node,
@@ -11796,11 +12063,6 @@ class SquadController:
         except QualityCandidateIntegrityError:
             return self._proportional_integrity_failure()
 
-        if (
-            assessment.hard_blockers
-            and assessment.hard_blockers != ("sage_contradiction",)
-        ):
-            return self._proportional_integrity_failure()
         if assessment.ordinary_pass:
             try:
                 captured = self._capture_proportional_quality_candidate(
@@ -11856,6 +12118,55 @@ class SquadController:
             "blocked_reason": "proportional_quality_candidate_integrity_failed",
         }, None
 
+    def _prepare_banzai_quality_issue_resolution(
+        self,
+        snapshot: RoutingStateSnapshot,
+        assessment: AuthoritativeQualityAssessment,
+    ) -> PreparedHumanInput | None:
+        """Prepare the next explicit semantic repair before loop accounting."""
+        state = snapshot.state
+        if (
+            state.get("autonomy_mode") != "banzai"
+            or state.get("selected_issue_resolution")
+        ):
+            return None
+        try:
+            candidates = self._banzai_issue_resolution_candidates(dict(state))
+        except _DispatchCapEvidenceError:
+            return None
+        actionable_issue_ids = {
+            str(route.get("issue_id") or "").strip()
+            for route in assessment.exact_routes
+            if route.get("route") == "spec_repair"
+        }
+        raw_ledger = state.get("issue_resolution_ledger")
+        ledger = raw_ledger if isinstance(raw_ledger, Mapping) else {}
+        unresolved = [
+            candidate
+            for candidate in candidates
+            if candidate["issue_id"] in actionable_issue_ids
+            and (
+                not isinstance(ledger.get(candidate["issue_id"]), Mapping)
+                or ledger[candidate["issue_id"]].get("status")
+                not in {"selected", "repaired", "validated"}
+            )
+        ]
+        if not unresolved:
+            return None
+        options = self._dispatch_cap_options(unresolved)
+        return self._human_input_registry.prepare_controller(
+            source_kind="controller_safeguard",
+            producer_id="banzai_issue_resolution",
+            phase_id="phase1-why2",
+            reason_code="banzai_issue_resolution",
+            question=(
+                "Apply the first unresolved Banzai-eligible SAGE resolution "
+                "from authoritative issues.md before proportional repair."
+            ),
+            source_state_revision=snapshot.state_revision,
+            option_contract=options,
+        )
+
     def _coordinate_proportional_failure(
         self,
         assessment: AuthoritativeQualityAssessment,
@@ -11872,11 +12183,76 @@ class SquadController:
             not isinstance(assessment, AuthoritativeQualityAssessment)
             or not assessment.proportional_failure
             or assessment.ordinary_pass
-            or assessment.hard_blockers not in {(), ("sage_contradiction",)}
         ):
             raise QualityCandidateIntegrityError(
                 "proportional failure assessment is invalid"
             )
+        issue_request = self._prepare_banzai_quality_issue_resolution(
+            snapshot,
+            assessment,
+        )
+        if issue_request is not None:
+            return PHASE_TERMINAL_BLOCKED, {}, issue_request
+        if assessment.hard_blockers not in {(), ("sage_contradiction",)}:
+            raise QualityCandidateIntegrityError(
+                "proportional failure assessment is invalid"
+            )
+        existing_repair = validate_repair_state(
+            snapshot.state.get("phase1_quality_repair")
+        )
+        existing_evidence = snapshot.state.get(
+            "proportional_quality_candidate_evidence"
+        )
+        automatic_exhausted = (
+            existing_repair["automatic_consumed"]
+            == existing_repair["automatic_limit"]
+        )
+        extension_unavailable = (
+            existing_repair["extension_authorized"] == 0
+            and existing_repair["extension_consumed"] == 0
+        ) or (
+            existing_repair["extension_authorized"]
+            == existing_repair["extension_limit"]
+            and existing_repair["extension_consumed"]
+            == existing_repair["extension_limit"]
+        )
+        if (
+            automatic_exhausted
+            and extension_unavailable
+            and existing_repair["candidate_ids"]
+            and len(existing_repair["candidate_ids"])
+            == (
+                int(existing_repair["automatic_consumed"])
+                + int(existing_repair["extension_consumed"])
+                + 1
+            )
+            and isinstance(existing_evidence, Mapping)
+            and isinstance(
+                existing_evidence.get("selected_candidate_id"),
+                str,
+            )
+            and existing_evidence.get("selected_candidate_id")
+        ):
+            reason_code = (
+                "proportional_quality_extension_exhausted"
+                if existing_repair["extension_authorized"]
+                == existing_repair["extension_limit"]
+                and existing_repair["extension_consumed"]
+                == existing_repair["extension_limit"]
+                else "proportional_quality_budget_exhausted"
+            )
+            request, decision_updates = (
+                self._prepare_proportional_quality_decision(
+                    snapshot.state,
+                    repair_state=existing_repair,
+                    reason_code=reason_code,
+                    source_state_revision=snapshot.state_revision,
+                    last_repair_outcome=existing_evidence.get(
+                        "last_repair_outcome"
+                    ),
+                )
+            )
+            return PHASE_TERMINAL_BLOCKED, decision_updates, request
         captured = self._capture_proportional_quality_candidate(
             prepared,
             snapshot,

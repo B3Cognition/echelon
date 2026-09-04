@@ -15,6 +15,7 @@ from harness.docs_verifier import (
     REPORT_NAME,
     verify_docs,
 )
+from harness.runnability_evidence import RunnabilityEvidenceRef
 from harness.verify_result import FailureCategory, FailureEntry
 
 
@@ -61,6 +62,8 @@ def evaluate_documentation_gate(
     spec_dir: Path | str,
     *,
     changed_files: Iterable[str] | None = None,
+    runnability_report: RunnabilityEvidenceRef | None = None,
+    runnability_required: bool = False,
 ) -> DocumentationGateResult:
     """Validate TECH WRITER's documentation impact report and required docs."""
     worktree = Path(worktree_path)
@@ -80,6 +83,27 @@ def evaluate_documentation_gate(
             f"{report} must set exactly `docs_required: true` or "
             "`docs_required: false` in YAML frontmatter",
         )
+
+    if runnability_required and runnability_report is None:
+        return _fail(
+            "docs-runnability-evidence-missing",
+            "final documentation convergence requires current passing user-runnability evidence",
+        )
+
+    if runnability_report is not None:
+        runnability_docs = verify_docs(
+            worktree,
+            spec,
+            runnability_report=runnability_report,
+        )
+        runnability_findings = [
+            finding
+            for finding in runnability_docs.findings
+            if finding.section in {"Observed First Run", "User Runnability Evidence"}
+        ]
+        if runnability_findings:
+            finding = runnability_findings[0]
+            return _fail("docs-runnability-commands-stale", finding.issue)
 
     if docs_required is False:
         reason = str(metadata.get("not_applicable_reason") or "").strip()
@@ -120,12 +144,23 @@ def evaluate_documentation_gate(
             "docs are required but README.md and CHANGELOG.md are not both changed in the delivery slice",
         )
 
-    deterministic_failure = _deterministic_docs_failure(worktree, spec, metadata)
+    deterministic_failure = _deterministic_docs_failure(
+        worktree,
+        spec,
+        metadata,
+        runnability_report=runnability_report,
+    )
     if deterministic_failure:
         identifier, error = deterministic_failure
         return _fail(identifier, error)
 
-    docs_verification_failure = _docs_verification_report_failure(spec)
+    docs_verification_failure = _docs_verification_report_failure(
+        spec,
+        runnability_required=runnability_required,
+        expected_runnability_sha256=(
+            runnability_report.evidence_sha256 if runnability_report else ""
+        ),
+    )
     if docs_verification_failure:
         identifier, error = docs_verification_failure
         return _fail(identifier, error)
@@ -320,6 +355,8 @@ def _deterministic_docs_failure(
     worktree: Path,
     spec: Path,
     metadata: dict,
+    *,
+    runnability_report: RunnabilityEvidenceRef | None = None,
 ) -> tuple[str, str] | None:
     if metadata.get("changelog_format") != "keep_a_changelog":
         return (
@@ -327,7 +364,11 @@ def _deterministic_docs_failure(
             f"{spec / REPORT_NAME} must declare changelog_format: keep_a_changelog",
         )
 
-    result = verify_docs(worktree, spec)
+    result = verify_docs(
+        worktree,
+        spec,
+        runnability_report=runnability_report,
+    )
     if not result.findings:
         return None
 
@@ -349,7 +390,12 @@ def _deterministic_docs_failure(
     return ("documentation-impact-report-invalid", finding.issue)
 
 
-def _docs_verification_report_failure(spec_dir: Path) -> tuple[str, str] | None:
+def _docs_verification_report_failure(
+    spec_dir: Path,
+    *,
+    runnability_required: bool = False,
+    expected_runnability_sha256: str = "",
+) -> tuple[str, str] | None:
     report = spec_dir / DOCS_VERIFICATION_REPORT_NAME
     if not report.exists():
         return (
@@ -409,6 +455,19 @@ def _docs_verification_report_failure(spec_dir: Path) -> tuple[str, str] | None:
             "docs-verification-report-invalid",
             f"{report} must check README, CHANGELOG, impact report, and project evidence",
         )
+
+    if runnability_required:
+        if metadata.get("runnability_commands_current") is not True:
+            return (
+                "docs-runnability-evidence-stale",
+                f"{report} is provisional; regenerate it from current passing runnability evidence",
+            )
+        observed_sha = str(metadata.get("runnability_evidence_sha256") or "")
+        if not expected_runnability_sha256 or observed_sha != expected_runnability_sha256:
+            return (
+                "docs-runnability-evidence-stale",
+                f"{report} does not cite the current user-runnability evidence digest",
+            )
 
     return None
 

@@ -63,6 +63,7 @@ class SandboxSpec:
     forward_ports: List[int]
     session_timeout_ms: int = 3_600_000  # 1 hour default
     labels: Dict[str, str] = field(default_factory=dict)
+    ephemeral_volumes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -153,6 +154,20 @@ class SandboxProvider(abc.ABC):
     def get_cost(self, handle: SandboxHandle) -> Optional[MonetaryCost]:
         """Return monetary cost. Returns None for local providers."""
         return None
+
+    def start_services(self, handle: SandboxHandle, services: tuple[Any, ...]) -> tuple[str, ...]:
+        """Start attempt-scoped sidecars when supported by the provider."""
+        raise NotSupportedError("verification services not supported by this provider")
+
+    def exec_service(
+        self,
+        handle: SandboxHandle,
+        service_name: str,
+        argv: tuple[str, ...],
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        """Execute argv directly inside an attempt-owned named sidecar."""
+        raise NotSupportedError("service execution not supported by this provider")
 
 
 # --- Provider registration ---

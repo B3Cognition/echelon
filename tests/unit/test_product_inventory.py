@@ -123,6 +123,26 @@ def test_product_inventory_falls_back_without_discarding_hidden_product_files(
     ]
 
 
+def test_product_inventory_skips_tracked_file_deleted_before_inventory(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-b", "main")
+    (project / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    artifact = project / "test-results" / "error-context.md"
+    artifact.parent.mkdir()
+    artifact.write_text("old run\n", encoding="utf-8")
+    _git(project, "add", "app.py", "test-results/error-context.md")
+    artifact.unlink()
+
+    result = write_product_inventory(project, tmp_path / "verify-run")
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    assert [entry["path"] for entry in payload["entries"]] == ["app.py"]
+    assert payload["summary"]["entry_count"] == 1
+
+
 def test_product_evidence_fingerprint_ignores_control_plane_but_tracks_product(
     tmp_path: Path,
 ) -> None:
@@ -148,6 +168,29 @@ def test_product_evidence_fingerprint_ignores_control_plane_but_tracks_product(
 
     (project / "app.py").write_text("print('two')\n", encoding="utf-8")
     assert product_evidence_fingerprint(project) != original
+
+
+def test_product_evidence_fingerprint_ignores_verifier_output_roots(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-b", "main")
+    (project / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    _git(project, "add", "app.ts")
+    original = product_evidence_fingerprint(project)
+
+    for relative in (
+        "test-results/run/trace.zip",
+        "playwright-report/index.html",
+        "coverage/coverage-final.json",
+    ):
+        output = project / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("generated\n", encoding="utf-8")
+        _git(project, "add", relative)
+
+    assert product_evidence_fingerprint(project) == original
 
 
 def test_write_product_inventory_cli_stamps_existing_verify_state(

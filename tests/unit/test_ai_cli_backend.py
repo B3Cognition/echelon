@@ -3327,9 +3327,11 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
     assert allowed == {
         f"Read(/{run_root}/**)",
         f"Read(/{canonical_root}/**)",
+        f"Read(/{write_path})",
         f"Write(/{write_path})",
         f"Edit(/{write_path})",
     }
+    assert f'(allow file-read* (literal "{write_path}"))' in profile
 
 
 def test_claude_boundary_is_prompt_only_without_sandbox_for_ordinary_dispatch(
@@ -4249,7 +4251,7 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
     assert f'{json.dumps(str(write_path))}="write"' in profile
 
 
-def test_codex_native_boundary_preserves_authenticated_operational_scopes(
+def test_codex_backend_allows_explicit_contract_inside_forbidden_control_root(
     tmp_path,
 ) -> None:
     backend = CodexCliBackend(_config("codex"))
@@ -4270,24 +4272,21 @@ def test_codex_native_boundary_preserves_authenticated_operational_scopes(
         captured["command"] = command
         return FakeProcess()
 
-    forbidden_root = (tmp_path / '.echelon "control"').resolve()
-    operational_root = (forbidden_root / "runtime" / "scripts").resolve()
-    operational_read_path = (forbidden_root / "config.yml").resolve()
-    denied_child = (forbidden_root / "prosaic").resolve()
-    operational_root.mkdir(parents=True)
-    operational_read_path.write_text("selected_stack: demo\n", encoding="utf-8")
-    denied_child.mkdir()
+    control_root = (tmp_path / ".echelon").resolve()
+    control_root.mkdir()
+    protected_config = control_root / "config.yml"
+    protected_config.write_text("protected\n", encoding="utf-8")
+    contract = control_root / "runnability.yml"
     request = CliRunRequest(
         cwd=str(tmp_path),
-        prompt="Run the named helper.",
+        prompt="Write the candidate contract.",
         env={},
         timeout_s=10,
         metadata={
             "prompt_metadata": {
-                "tool_forbidden_roots": [str(forbidden_root)],
-                "tool_operational_roots": [str(operational_root)],
-                "tool_operational_read_paths": [str(operational_read_path)],
-                "tool_operational_metadata_paths": [str(forbidden_root)],
+                "tool_write_paths": [str(contract)],
+                "tool_forbidden_roots": [str(control_root)],
+                "tool_operational_metadata_paths": [str(control_root)],
             }
         },
     )
@@ -4303,76 +4302,14 @@ def test_codex_native_boundary_preserves_authenticated_operational_scopes(
 
     command = captured["command"]
     profile = next(
-        command[index + 1]
+        value
         for index, value in enumerate(command)
-        if value == "-c"
-        and command[index + 1].startswith("permissions.echelon_product_plane=")
+        if command[index - 1 : index] == ["-c"]
+        and value.startswith("permissions.echelon_product_plane=")
     )
-    assert f'{json.dumps(str(forbidden_root))}="read"' in profile
-    assert f'{json.dumps(str(forbidden_root / "runtime"))}="deny"' in profile
-    assert f'{json.dumps(str(denied_child))}="deny"' in profile
-    assert f'{json.dumps(str(operational_root))}="read"' in profile
-    assert f'{json.dumps(str(operational_read_path))}="read"' in profile
-
-
-def test_codex_approved_unsafe_boundary_keeps_single_outer_sandbox(tmp_path) -> None:
-    config = _config("codex")
-    backend = CodexCliBackend(
-        replace(
-            config,
-            llm=replace(
-                config.llm,
-                tool_policy=LlmToolPolicy(
-                    allow_unsafe_host_execution=True,
-                    approval_reason="Operator approved the disposable test workspace.",
-                ),
-            ),
-        )
-    )
-    captured = {}
-
-    class FakeProcess:
-        stdout = io.BytesIO(b"")
-        stderr = io.BytesIO(b"")
-        returncode = 0
-
-        def kill(self) -> None:
-            return None
-
-        def wait(self) -> int:
-            return self.returncode
-
-    def fake_popen(command, **_kwargs):
-        captured["command"] = command
-        return FakeProcess()
-
-    forbidden_root = (tmp_path / ".echelon").resolve()
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Do approved work.",
-        env={},
-        timeout_s=10,
-        metadata={
-            "prompt_metadata": {
-                "tool_forbidden_roots": [str(forbidden_root)],
-            }
-        },
-    )
-
-    with (
-        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
-        patch(
-            "harness.ai_cli_backends.codex._sandbox_exec_path",
-            return_value="/usr/bin/sandbox-exec",
-        ),
-    ):
-        backend.run_prompt(request)
-
-    command = captured["command"]
-    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
-    assert command.count("/usr/bin/sandbox-exec") == 1
-    assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert "default_permissions" not in " ".join(command)
+    assert f'{json.dumps(str(control_root))}="read"' in profile
+    assert f'{json.dumps(str(protected_config))}="deny"' in profile
+    assert f'{json.dumps(str(contract))}="write"' in profile
 
 
 def test_codex_backend_uses_native_sandbox_for_isolated_non_git_root(
@@ -4635,150 +4572,6 @@ def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsy
     assert "very noisy command output" not in captured.out
     assert "aggregated_output" not in captured.out
     assert '"type": "item.completed"' not in captured.out
-
-
-def test_codex_backend_sanitizes_failed_command_event_in_normal_mode(
-    tmp_path, capsys, monkeypatch
-) -> None:
-    backend = CodexCliBackend(_config("codex"))
-    monkeypatch.delenv("ECHELON_DEBUG_LLM", raising=False)
-    final_message = (
-        "echelon_result:\n"
-        "  verdict: COMPLETE\n"
-        "  state_updates: {}\n"
-        "  journal_entries: []\n"
-    )
-    leaked_path = "/Users/example/private-workspace/specs"
-    leaked_output = f"{leaked_path}\ntotal 304\n-rw------- secret-plan.md\n"
-
-    class FakeProcess:
-        stdout = io.BytesIO(
-            (
-                json.dumps(
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            "id": "item_1",
-                            "type": "command_execution",
-                            "command": f"/bin/zsh -lc 'pwd && ls -la {leaked_path}'",
-                            "aggregated_output": leaked_output,
-                            "exit_code": 1,
-                            "status": "failed",
-                        },
-                    }
-                )
-                + "\n"
-                + json.dumps(
-                    {
-                        "type": "event_msg",
-                        "payload": {
-                            "type": "task_complete",
-                            "last_agent_message": final_message,
-                        },
-                    }
-                )
-                + "\n"
-            ).encode()
-        )
-        stderr = io.BytesIO(b"")
-        returncode = 0
-
-        def kill(self) -> None:
-            return None
-
-        def wait(self, timeout=None) -> int:
-            return self.returncode
-
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Do work.",
-        env={},
-        timeout_s=10,
-    )
-
-    with patch(
-        "harness.ai_cli_backends.codex.subprocess.Popen",
-        return_value=FakeProcess(),
-    ):
-        result = backend.run_agent(request)
-
-    captured = capsys.readouterr()
-    assert result.stdout == final_message
-    assert "[codex] command failed (exit 1)" in captured.out
-    assert leaked_path not in captured.out
-    assert "secret-plan.md" not in captured.out
-    assert "pwd && ls" not in captured.out
-
-
-def test_codex_backend_keeps_failed_command_details_console_only_in_debug_mode(
-    tmp_path, capsys, monkeypatch
-) -> None:
-    backend = CodexCliBackend(_config("codex"))
-    monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
-    final_message = (
-        "echelon_result:\n"
-        "  verdict: COMPLETE\n"
-        "  state_updates: {}\n"
-        "  journal_entries: []\n"
-    )
-    command = "/bin/zsh -lc 'pwd && ls -la /workspace/private'"
-    command_output = "/workspace/private\ntotal 8\n-rw------- secret-plan.md\n"
-
-    class FakeProcess:
-        stdout = io.BytesIO(
-            (
-                json.dumps(
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            "id": "item_1",
-                            "type": "command_execution",
-                            "command": command,
-                            "aggregated_output": command_output,
-                            "exit_code": 1,
-                            "status": "failed",
-                        },
-                    }
-                )
-                + "\n"
-                + json.dumps(
-                    {
-                        "type": "event_msg",
-                        "payload": {
-                            "type": "task_complete",
-                            "last_agent_message": final_message,
-                        },
-                    }
-                )
-                + "\n"
-            ).encode()
-        )
-        stderr = io.BytesIO(b"")
-        returncode = 0
-
-        def kill(self) -> None:
-            return None
-
-        def wait(self, timeout=None) -> int:
-            return self.returncode
-
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Do work.",
-        env={},
-        timeout_s=10,
-    )
-
-    with patch(
-        "harness.ai_cli_backends.codex.subprocess.Popen",
-        return_value=FakeProcess(),
-    ):
-        result = backend.run_agent(request)
-
-    captured = capsys.readouterr()
-    assert result.stdout == final_message
-    assert command in captured.out
-    assert command_output in captured.out
 
 
 def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:

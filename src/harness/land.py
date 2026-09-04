@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tarfile
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -29,6 +30,28 @@ from kernel.fulfillment import (
 )
 from kernel.spec_identity import spec_identity_aliases
 from harness.deferred_scope import active_entries, ledger_path
+from harness.product_inventory import product_evidence_fingerprint
+from harness.runnability_contract import (
+    RunnabilityContractError,
+    load_runnability_contract,
+    runnability_contract_sha256,
+)
+from harness.runnability_disposition import (
+    RunnabilityDispositionError,
+    read_runnability_disposition,
+)
+from harness.runnability_evidence import (
+    RunnabilityEvidenceRef,
+    load_runnability_evidence_ref,
+    validate_runnability_report,
+)
+from harness.verification_evidence import (
+    VerificationEvidenceRef,
+    validate_verification_receipt,
+)
+from harness.stacks.loader import load_stack_definitions
+from harness.stacks.paths import find_stack_extension_root
+from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +96,12 @@ _LAND_GENERATED_DRIFT_EXACT = {
     "docs/perf/perf-metrics.json",
     "docs/perf/perf-metrics-pty.json",
 }
+_LAND_GENERATED_DRIFT_PREFIXES = (
+    "blob-report/",
+    "coverage/",
+    "playwright-report/",
+    "test-results/",
+)
 
 
 @dataclass(frozen=True)
@@ -119,6 +148,7 @@ def prepare_feature_branch(
             options=options,
         )
 
+    _discard_known_generated_land_drift(project_dir)
     dirty = _run_git(
         ["status", "--porcelain", "--untracked-files=no"],
         cwd=str(project_dir),
@@ -560,8 +590,41 @@ def _find_current_build_harness_branch(
 
     state = candidates[0]
     strategy = str(state.get("strategy_id") or "")
+    if not strategy:
+        raise RuntimeError("converged current build lacks branch identity")
+
+    recorded_branch = str(state.get("branch") or state.get("branch_name") or "").strip()
+    if recorded_branch:
+        valid_recorded_branch = any(
+            re.fullmatch(
+                rf"harness/{re.escape(alias)}/{re.escape(strategy)}/iter-\d+",
+                recorded_branch,
+            )
+            for alias in spec_identity_aliases(spec_id)
+        )
+        if not valid_recorded_branch:
+            raise RuntimeError(
+                "converged current build recorded an invalid delivery branch"
+            )
+        exists = _run_git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{recorded_branch}"],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if exists.returncode != 0:
+            raise RuntimeError(
+                "converged current build delivery branch is not available locally"
+            )
+        _validate_harness_branch_provenance(
+            project_dir,
+            spec_dir,
+            recorded_branch,
+            required=True,
+        )
+        return recorded_branch
+
     iteration = state.get("outer_iter")
-    if not strategy or not isinstance(iteration, int) or iteration < 0:
+    if not isinstance(iteration, int) or iteration < 0:
         raise RuntimeError("converged current build lacks branch identity")
 
     branches: list[str] = []
@@ -861,19 +924,27 @@ def land(
                         required=False,
                     )
         except RuntimeError as exc:
-            logger.error("land: could not resolve legacy harness branch for %s: %s", spec_id, exc)
+            logger.error("land: could not resolve delivery branch for %s: %s", spec_id, exc)
             _banner(
                 "LAND — BRANCH RESOLUTION BLOCKED",
                 [
                     ("spec", spec_id),
                     ("problem", str(exc)),
-                    ("next step", "resolve the legacy harness branch, then re-run land"),
+                    ("next step", "resolve the recorded delivery branch, then re-run land"),
                 ],
                 subtitle="Echelon will not mark a spec landed until its verified branch is resolved.",
             )
             return False
 
     if feature_branch is None:
+        if not _check_runnability_before_land(
+            spec_id,
+            wrapper_project_dir=wrapper_project_dir,
+            project_dir=project_dir,
+            candidate_ref=None,
+            harness_root=runtime_root,
+        ):
+            return False
         return _finish_branchless_landing(
             spec_id,
             wrapper_project_dir=wrapper_project_dir,
@@ -897,6 +968,14 @@ def land(
     readiness_ref = feature_branch if project_dir == wrapper_project_dir else None
     fulfillment_project_dir = None if project_dir == wrapper_project_dir else project_dir
     fulfillment_ref = feature_branch if project_dir != wrapper_project_dir else None
+    if not _check_runnability_before_land(
+        spec_id,
+        wrapper_project_dir=wrapper_project_dir,
+        project_dir=project_dir,
+        candidate_ref=feature_branch,
+        harness_root=runtime_root,
+    ):
+        return False
     if not options.prepare_only and not _check_ready_before_land(
         spec_id,
         wrapper_project_dir,
@@ -929,7 +1008,13 @@ def land(
         return True
 
     if pr_url:
-        if not _verify_before_land(spec_id, project_dir, gitops, options):
+        if not _verify_before_land(
+            spec_id,
+            project_dir,
+            gitops,
+            options,
+            harness_root=runtime_root,
+        ):
             return False
         merged = gitops.merge_pr(pr_url)
         if merged:
@@ -950,7 +1035,13 @@ def land(
         )
         if prepare_result is None:
             return False
-        if not _verify_before_land(spec_id, project_dir, gitops, options):
+        if not _verify_before_land(
+            spec_id,
+            project_dir,
+            gitops,
+            options,
+            harness_root=runtime_root,
+        ):
             return False
         _banner(
             "LAND — ACTION NEEDED",
@@ -985,7 +1076,13 @@ def land(
     )
     if prepare_result is None:
         return False
-    if not _verify_before_land(spec_id, project_dir, gitops, options):
+    if not _verify_before_land(
+        spec_id,
+        project_dir,
+        gitops,
+        options,
+        harness_root=runtime_root,
+    ):
         return False
     if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
         return False
@@ -1027,6 +1124,64 @@ def land(
         spec_project_dir=wrapper_project_dir,
         harness_root=runtime_root,
     )
+
+
+def _check_runnability_before_land(
+    spec_id: str,
+    *,
+    wrapper_project_dir: Path,
+    project_dir: Path,
+    candidate_ref: str | None,
+    harness_root: Path,
+) -> bool:
+    spec_dir = find_spec_dir(spec_id, wrapper_project_dir)
+    if spec_dir is not None:
+        try:
+            disposition = read_runnability_disposition(spec_dir)
+        except RunnabilityDispositionError as exc:
+            _banner(
+                "LAND — RUNNABILITY DISPOSITION INVALID",
+                [
+                    ("spec", spec_id),
+                    ("problem", str(exc)),
+                    ("next step", "repair the owner disposition ledger, then re-run land"),
+                ],
+                subtitle="Echelon stopped before changing the target repository.",
+            )
+            return False
+        if disposition is not None and disposition.status == "deferred":
+            proposal = spec_dir / disposition.follow_up_proposal
+            _banner(
+                "LAND — USER RUNNABILITY DEFERRED",
+                [
+                    ("spec", spec_id),
+                    ("reason", disposition.reason),
+                    ("evidence", disposition.evidence_report),
+                    ("proposal", str(proposal)),
+                ],
+                subtitle="Landing is permitted by an explicit owner-controlled disposition.",
+            )
+            return True
+
+    warning = _runnability_warning(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+        ref=candidate_ref,
+        stack_project_dir=wrapper_project_dir,
+    )
+    if warning is None:
+        return True
+    _banner(
+        "LAND — USER RUNNABILITY BLOCKED",
+        [
+            ("spec", spec_id),
+            ("problem", warning),
+            ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
+        ],
+        subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+    )
+    return False
 
 
 def _clean_generated_drift_before_direct_merge(spec_id: str, project_dir: Path) -> bool:
@@ -1079,7 +1234,10 @@ def _tracked_dirty_files(project_dir: Path) -> list[str]:
 
 
 def _is_known_land_generated_drift(path: str) -> bool:
-    return path in _LAND_GENERATED_DRIFT_EXACT
+    normalized = path.replace("\\", "/")
+    return normalized in _LAND_GENERATED_DRIFT_EXACT or normalized.startswith(
+        _LAND_GENERATED_DRIFT_PREFIXES
+    )
 
 
 def _default_branch_already_contains_feature(
@@ -1187,6 +1345,163 @@ def _check_ready_before_land(
     )
 
 
+def _runnability_warning(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path,
+    ref: str | None = None,
+    stack_project_dir: Path | None = None,
+    required: bool | None = None,
+    stack_hash: str | None = None,
+) -> str | None:
+    """Return a blocking warning when required runnable evidence is absent or stale."""
+    resolved_required = bool(required)
+    resolved_hash = stack_hash
+    if required is None or resolved_hash is None:
+        try:
+            policy_required, current_stack_hash = _resolved_runnability_requirement(
+                stack_project_dir or project_dir
+            )
+        except Exception as exc:
+            return f"could not resolve the current stack runnability contract: {exc}"
+        if required is None:
+            resolved_required = policy_required
+        if resolved_hash is None:
+            resolved_hash = current_stack_hash
+
+    if (
+        not resolved_required
+        and not (project_dir / ".echelon" / "runnability.yml").exists()
+        and not (project_dir / ".git").exists()
+    ):
+        return None
+
+    try:
+        candidate_context = _land_candidate_tree(project_dir, ref)
+        with candidate_context as candidate:
+            try:
+                contract = load_runnability_contract(candidate)
+            except (OSError, RunnabilityContractError) as exc:
+                return f"candidate runnability contract is invalid: {exc}"
+
+            if contract is not None and contract.enabled:
+                resolved_required = True
+            if not resolved_required:
+                return None
+            if contract is None:
+                return (
+                    "required user-runnability contract is missing: "
+                    ".echelon/runnability.yml"
+                )
+            if not contract.enabled:
+                return "stack-required user-runnability contract is disabled"
+
+            state = _latest_runnability_state(Path(harness_root), spec_id)
+            raw_summary = state.get("user_runnability") if state is not None else None
+            if not isinstance(raw_summary, dict) or raw_summary.get("status") != "runnable":
+                return "no passing user-runnability evidence was recorded for this delivery"
+            ref_value, error = _runnability_ref_from_state(raw_summary)
+            if ref_value is None:
+                return f"passing user-runnability evidence is unavailable: {error}"
+
+            try:
+                candidate_fingerprint = product_evidence_fingerprint(candidate)
+                contract_hash = runnability_contract_sha256(contract)
+            except (OSError, ValueError) as exc:
+                return f"could not fingerprint the runnable candidate: {exc}"
+            validation = validate_runnability_report(
+                ref_value,
+                candidate_commit=_ref_git_commit(project_dir, ref) if ref else _current_git_commit(project_dir) or "",
+                candidate_fingerprint=candidate_fingerprint,
+                contract_hash=contract_hash,
+                stack_hash=str(resolved_hash or ""),
+            )
+            if validation.valid:
+                return None
+            return f"user-runnability evidence is stale: {validation.reason}"
+    except (OSError, RuntimeError, tarfile.TarError) as exc:
+        if not resolved_required and not (project_dir / ".echelon" / "runnability.yml").exists():
+            return None
+        return f"could not inspect the landing candidate for runnability: {exc}"
+
+
+def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
+    from harness.config import get_full_resolved_config
+
+    root = Path(project_dir).resolve()
+    raw = get_full_resolved_config(root)
+    stacks = raw.get("stacks") or {}
+    if not isinstance(stacks, dict):
+        raise ValueError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not isinstance(archetypes, list):
+        raise ValueError("stack selection must use list values")
+    resolved = resolve_stacks(
+        [str(item) for item in selected],
+        load_stack_definitions(
+            extension_root=find_stack_extension_root(root),
+            project_root=root,
+        ),
+        target_archetypes={str(item) for item in archetypes} or None,
+    )
+    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
+
+
+def _latest_runnability_state(harness_root: Path, spec_id: str) -> dict[str, object] | None:
+    states: list[tuple[str, Path, dict[str, object]]] = []
+    for state_path in Path(harness_root).glob("runs/**/state/*.json"):
+        if state_path.is_symlink() or not state_path.is_file():
+            continue
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        observed = str(payload.get("spec_id") or "")
+        if observed != spec_id and not observed.startswith(f"{spec_id}-") and not spec_id.startswith(f"{observed}-"):
+            continue
+        build_id = str(payload.get("build_id") or state_path.parents[1].name)
+        states.append((build_id, state_path, payload))
+    return max(states, default=("", Path(), None), key=lambda item: (item[0], str(item[1])))[2]
+
+
+def _runnability_ref_from_state(
+    summary: dict[str, object],
+) -> tuple[RunnabilityEvidenceRef | None, str]:
+    report = Path(str(summary.get("report") or ""))
+    if not report.is_absolute():
+        return None, "state report path is not absolute"
+    try:
+        return load_runnability_evidence_ref(report), ""
+    except ValueError as exc:
+        return None, str(exc)
+
+
+@contextmanager
+def _land_candidate_tree(project_dir: Path, ref: str | None) -> Iterator[Path]:
+    if ref is None:
+        yield Path(project_dir)
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        archive = root / "candidate.tar"
+        snapshot = root / "candidate"
+        snapshot.mkdir()
+        result = _run_git(
+            ["archive", "--format=tar", "--output", str(archive), ref],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"could not read landing candidate ref {ref}")
+        with tarfile.open(archive, mode="r:") as handle:
+            handle.extractall(snapshot, filter="data")
+        yield snapshot
+
+
 def _land_status_warning(
     spec_id: str,
     project_dir: Path,
@@ -1255,7 +1570,36 @@ def _verify_before_land(
     project_dir: Path,
     gitops: Any,
     options: LandOptions,
+    *,
+    harness_root: Path | None = None,
 ) -> bool:
+    evidence_valid, evidence_detail = _authoritative_delivery_verify_before_land(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+    )
+    if evidence_valid is True:
+        logger.info(
+            "land: reused authoritative delivery verification for %s: %s",
+            spec_id,
+            evidence_detail,
+        )
+        return True
+    if evidence_valid is False:
+        _banner(
+            "LAND — AUTHORITATIVE VERIFY STALE",
+            [
+                ("spec", spec_id),
+                ("problem", evidence_detail),
+                (
+                    "next step",
+                    f"rerun delivery verification, then: echelon delivery land {spec_id}",
+                ),
+            ],
+            subtitle="Echelon stopped before merging because the delivered product no longer matches its sandbox evidence.",
+        )
+        return False
+
     passed, output = _run_land_verify(project_dir, gitops)
     if passed:
         return True
@@ -1271,6 +1615,86 @@ def _verify_before_land(
         subtitle="Echelon stopped before merging or changing landing state.",
     )
     return False
+
+
+def _authoritative_delivery_verify_before_land(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path | None,
+) -> tuple[bool | None, str]:
+    """Validate and reuse the current delivery's immutable verification receipt.
+
+    ``None`` means this is a legacy/manual landing without delivery evidence, so
+    the caller may use its configured legacy verification command. Once a
+    current converged delivery publishes evidence, invalid or stale evidence is
+    authoritative and fails closed instead of silently rerunning on the host.
+    """
+    if harness_root is None:
+        return None, "no harness runtime root"
+
+    root = Path(harness_root)
+    markers = [
+        current_build_marker(root, alias)
+        for alias in spec_identity_aliases(spec_id)
+        if current_build_marker(root, alias).is_file()
+    ]
+    if not markers:
+        return None, "no current delivery build"
+    if len(markers) != 1:
+        return False, "multiple current delivery builds match the spec"
+
+    try:
+        build_id = markers[0].read_text(encoding="utf-8").strip()
+    except OSError:
+        return False, "current delivery build marker is unreadable"
+    if not build_id:
+        return False, "current delivery build marker has no build identity"
+
+    state_root = build_dir(root, build_id) / "state"
+    matching: list[dict[str, Any]] = []
+    try:
+        state_files = sorted(state_root.glob("*.json"))
+    except OSError:
+        return False, "current delivery state is unreadable"
+    for state_file in state_files:
+        try:
+            payload = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False, "current delivery state is unreadable or invalid"
+        if (
+            isinstance(payload, dict)
+            and payload.get("status") == "converged"
+            and _spec_id_matches(str(payload.get("spec_id") or ""), spec_id)
+        ):
+            matching.append(payload)
+    if len(matching) != 1:
+        return None, "current build has no single converged delivery receipt"
+
+    state = matching[0]
+    raw_evidence = state.get("verified_evidence")
+    expected_fingerprint = str(state.get("verified_product_fingerprint") or "")
+    if not isinstance(raw_evidence, dict) or not expected_fingerprint:
+        return None, "converged delivery predates authoritative verification receipts"
+
+    try:
+        ref = VerificationEvidenceRef.from_mapping(raw_evidence)
+        current_fingerprint = product_evidence_fingerprint(project_dir)
+    except (OSError, RuntimeError, ValueError):
+        return False, "could not validate the landing candidate product content fingerprint"
+    if expected_fingerprint != ref.candidate_fingerprint:
+        return False, "delivery state and verification receipt fingerprints disagree"
+    if current_fingerprint != expected_fingerprint:
+        return False, "landing candidate content fingerprint differs from the verified delivery"
+
+    validation = validate_verification_receipt(
+        ref,
+        candidate_commit=ref.candidate_commit,
+        candidate_fingerprint=current_fingerprint,
+    )
+    if not validation.valid:
+        return False, f"authoritative delivery receipt is invalid: {validation.reason}"
+    return True, f"verified product content from {ref.candidate_commit[:12]}"
 
 
 def _check_fulfillment_before_land(
@@ -2017,10 +2441,10 @@ def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
                     check=True,
                     cwd=str(project_dir),
                 )
-                logger.info("land: deleted legacy branch %s", branch)
+                logger.info("land: deleted delivery branch %s", branch)
             except subprocess.CalledProcessError as e:
                 logger.warning(
-                    "land: preserved unmerged legacy branch %s for review: %s",
+                    "land: preserved unmerged delivery branch %s for review: %s",
                     branch,
                     e,
                 )
