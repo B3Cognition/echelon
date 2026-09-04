@@ -213,8 +213,7 @@ from echelon.product_inputs import (
     immutable_product_input_tree_digest,
     validate_immutable_product_input_package,
 )
-from harness.prompt_markdown import read_prompt_markdown
-from harness.terminal import color_text
+from harness.phase_display import format_phase_dispatch_line, format_phase_transition_line
 from harness.understanding_gate import has_current_understanding_evidence
 
 
@@ -728,38 +727,6 @@ def _resolve_human_input_option_answer(
     if len(label_matches) > 1:
         raise HumanInputPolicyError("sealed decision option labels are ambiguous")
     return None
-
-
-def _format_phase_dispatch_line(
-    node: PhaseNode,
-    graph: PhaseGraph,
-    ext_dir: Path,
-    *,
-    file: object = None,
-    suffix: str = "",
-) -> str:
-    """Render a squad phase dispatch line, using agent frontmatter color."""
-    label = node.label or node.id
-    target = file if file is not None else sys.stdout
-    phase_id = color_text(
-        node.id,
-        _agent_frontmatter_color(node, graph, ext_dir),
-        file=target,
-    )
-    return f"\n[squad] ▶ {phase_id}  {label}{suffix}"
-
-
-def _agent_frontmatter_color(node: PhaseNode, graph: PhaseGraph, ext_dir: Path) -> str:
-    if not node.agent:
-        return ""
-    rel = graph.agent_file(node.agent)
-    if not rel:
-        return ""
-    path = ext_dir / rel
-    if not path.exists():
-        return ""
-    color = read_prompt_markdown(path).metadata.get("color")
-    return color if isinstance(color, str) else ""
 
 
 @dataclass
@@ -6414,7 +6381,7 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             print(
-                _format_phase_dispatch_line(node, self._graph, self._ext_dir),
+                format_phase_dispatch_line(node, self._graph, self._ext_dir),
                 flush=True,
             )
 
@@ -6680,7 +6647,12 @@ class SquadController:
                     run_id=state_now.get("run_id", ""),
                 )
             else:
-                print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
+                print(
+                    format_phase_transition_line(
+                        node.id, next_phase, self._graph, self._ext_dir
+                    ),
+                    flush=True,
+                )
                 continue
 
     def _guard_understanding_evidence(
@@ -7043,7 +7015,7 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
         self._start_declared_phase_timing(node)
         print(
-            _format_phase_dispatch_line(
+            format_phase_dispatch_line(
                 node,
                 self._graph,
                 self._ext_dir,
@@ -7251,7 +7223,12 @@ class SquadController:
         )
         if receipt is None:
             return SquadResult.from_state(self._state_store.load())
-        print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
+        print(
+            format_phase_transition_line(
+                node.id, next_phase, self._graph, self._ext_dir, suffix="  (stopped)"
+            ),
+            flush=True,
+        )
         return SquadResult.from_state(self._state_store.load())
 
     def _isolate_manual_phase_spec_dir(self) -> None:

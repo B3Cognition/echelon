@@ -19,6 +19,7 @@ from harness.governance_structural_gate import (
 )
 from harness.prompt_companions import append_prompt_companions, prompt_package_roots
 from harness.prompt_markdown import read_prompt_markdown
+from harness.phase_display import color_phase_id
 from harness.quality_scores import (
     normalize_why_quality_scores,
     render_quality_gate_context,
@@ -2033,7 +2034,12 @@ class PhaseExecutor(ABC):
             print(f"[squad] context budget report unavailable for {node.id}: {exc}", flush=True)
         else:
             if report["bounded"]["bytes"] < report["legacy"]["bytes"]:
-                print(f"[squad] context bounded for {node.id}; report={report_path}", flush=True)
+                print(
+                    "[squad] context bounded for "
+                    f"{color_phase_id(node, self._graph, self._ext_dir)}; "
+                    f"report={report_path}",
+                    flush=True,
+                )
 
         return _shared_agent_contract() + prompt
 

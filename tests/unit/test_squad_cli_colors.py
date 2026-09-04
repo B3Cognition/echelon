@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from harness.phase_graph import PhaseNode
-from harness.squad import _format_phase_dispatch_line
+from harness.phase_display import format_phase_dispatch_line, format_phase_transition_line
 
 
 class _TTYBuffer(io.StringIO):
@@ -34,7 +34,7 @@ def test_phase_dispatch_line_uses_agent_frontmatter_color(tmp_path: Path, monkey
         agent="echelon-chief",
     )
 
-    line = _format_phase_dispatch_line(node, graph, ext_dir, file=_TTYBuffer())
+    line = format_phase_dispatch_line(node, graph, ext_dir, file=_TTYBuffer())
 
     assert line == "\n[squad] ▶ \033[34mphase1-constitution\033[0m  Constitution"
 
@@ -45,6 +45,51 @@ def test_phase_dispatch_line_is_plain_without_agent_color(tmp_path: Path, monkey
     graph.agent_file.return_value = None
     node = PhaseNode(id="phase1-what", type="agent", label="What", agent="echelon-scout")
 
-    line = _format_phase_dispatch_line(node, graph, tmp_path / "ext", file=_TTYBuffer())
+    line = format_phase_dispatch_line(node, graph, tmp_path / "ext", file=_TTYBuffer())
 
     assert line == "\n[squad] ▶ phase1-what  What"
+
+
+def test_phase_transition_colors_each_agent_phase_on_tty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Catches progress output bypassing the Prosaic agent-color resolver."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "source.md").write_text("---\ncolor: blue\n---\n", encoding="utf-8")
+    (agent_dir / "target.md").write_text("---\ncolor: green\n---\n", encoding="utf-8")
+    graph = MagicMock()
+    graph.get.side_effect = [
+        PhaseNode(id="phase-source", type="agent", agent="echelon-source"),
+        PhaseNode(id="phase-target", type="agent", agent="echelon-target"),
+    ]
+    graph.agent_file.side_effect = ["agents/source.md", "agents/target.md"]
+
+    line = format_phase_transition_line(
+        "phase-source", "phase-target", graph, ext_dir, file=_TTYBuffer()
+    )
+
+    assert line == "[squad] ✓ \033[34mphase-source\033[0m  → \033[32mphase-target\033[0m"
+
+
+def test_phase_transition_leaves_terminal_target_plain(tmp_path: Path, monkeypatch) -> None:
+    """Catches coloring a terminal pseudo-phase by looking it up as an agent node."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "source.md").write_text("---\ncolor: blue\n---\n", encoding="utf-8")
+    graph = MagicMock()
+    graph.get.side_effect = [
+        PhaseNode(id="phase-source", type="agent", agent="echelon-source"),
+        KeyError("DONE"),
+    ]
+    graph.agent_file.return_value = "agents/source.md"
+
+    line = format_phase_transition_line(
+        "phase-source", "DONE", graph, ext_dir, file=_TTYBuffer()
+    )
+
+    assert line == "[squad] ✓ \033[34mphase-source\033[0m  → DONE"

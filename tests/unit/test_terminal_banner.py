@@ -90,6 +90,20 @@ class TestColorText:
 
         assert styled == "\033[34mCHIEF\033[0m"
 
+    @pytest.mark.parametrize(
+        ("prosaic_color", "ansi_code"),
+        [("purple", "35"), ("orange", "33")],
+    )
+    def test_prosaic_color_alias_styles_text_on_tty(
+        self, monkeypatch: pytest.MonkeyPatch, prosaic_color: str, ansi_code: str
+    ) -> None:
+        """Catches a declared Prosaic color silently rendering as plain text."""
+        monkeypatch.delenv("NO_COLOR", raising=False)
+
+        styled = color_text("AGENT", prosaic_color, file=_TTYBuffer())
+
+        assert styled == f"\033[{ansi_code}mAGENT\033[0m"
+
     def test_no_color_disables_styling(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NO_COLOR", "1")
 
