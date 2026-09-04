@@ -407,8 +407,15 @@ If `coverage-map.md` exists, read it and check every row:
 1. **Any row with `coverage_type: manual` or `coverage_type: none`** — raise a CRITICAL blocking issue:
    > "Requirement {ID} ({title}) has no automated test coverage. Manual testing is not accepted in an agentic pipeline. echelon-sentinel (SENTINEL) must either automate this requirement, create a `deferred-automation` task for it, or escalate to the user for an explicit deferral acceptance. WHY3 cannot PASS until this is resolved."
 
-2. **Any row with `coverage_type: deferred-automation`** — raise a HIGH issue:
-   > "Requirement {ID} is deferred-automation. Verify a task exists in `tasks.md` to implement this test before merge. If no task exists, this is effectively unverified."
+2. **Any row with `coverage_type: deferred-automation`** — this is a
+   **planning-time obligation**, not implemented test evidence. Verify that a
+   canonical task in `tasks.md` owns the named test and explicitly requires it
+   before merge. When both conditions hold, the row is valid Phase A planning
+   evidence. Do not raise a Phase A issue or lower the WHY3 verdict: the
+   delivery evidence gate must execute the mapped
+   test and prove its result before landing. Raise a HIGH issue only when the
+   mapped implementation task is absent, ambiguous, or does not require the
+   deferred test before merge.
 
 3. **Any row with `coverage_type: escalated`** — check `state.json` for an explicit `deferred_risky_accepted` entry. If the entry is absent, raise CRITICAL: "Requirement {ID} was escalated but no user acceptance is recorded in state.json."
 

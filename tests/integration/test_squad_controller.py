@@ -2563,6 +2563,59 @@ class TestConsensusCannotBeSkipped:
             for call in provider.exec_agent.call_args_list
         )
 
+    def test_banzai_consensus_block_routes_first_eligible_issue_to_its_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-consensus",
+            max_iterations=5,
+        )
+        spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text(
+            "\n".join(
+                [
+                    "# Issues — WHY3",
+                    "",
+                    "### ISS-001: Architecture contradicts the accepted boundary",
+                    "- **Responsible agent:** HOW",
+                    "- **Action Required:** Remove the extra architecture invariant.",
+                    "",
+                    "### Resolution Guidance",
+                    "- **Decision required:** No user decision — agent repair",
+                    "- **Suggested option:** Remove the extra invariant.",
+                    "- **Evidence basis:** FR-001 constrains only the accepted boundary.",
+                    "- **Banzai eligible:** yes",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-consensus"
+        )
+
+        assert ctrl._route_banzai_consensus_issue_repair(
+            ctrl._graph.get("phase3-consensus"),
+            snapshot,
+        )
+
+        persisted = store.load()
+        assert persisted["status"] == "running"
+        assert persisted["phase"] == "phase3-how"
+        assert persisted["selected_issue_resolution"] == "ISS-001"
+        assert persisted["blocked_decision"]["resolved_by"] == "controller"
+        assert persisted["issue_resolution_ledger"]["ISS-001"]["status"] == "selected"
+
 
 class TestSolutionPhaseOrdering:
     def test_specialists_feed_architect_before_sentinel(self):

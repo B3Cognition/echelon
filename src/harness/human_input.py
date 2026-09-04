@@ -1867,8 +1867,16 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
             semi_policy="require_human",
             resolution_handler="banzai_issue_resolution",
             allow_free_text=False,
-            allowed_phase_ids=frozenset({"phase1-why2"}),
-            allowed_target_phases=frozenset({"phase1-what"}),
+            allowed_phase_ids=frozenset({
+                "phase1-why2",
+                "phase3-consensus",
+            }),
+            allowed_target_phases=frozenset({
+                "phase1-what",
+                "phase3-how",
+                "phase3-sentinel",
+                "phase3-plan",
+            }),
             context_state_keys=(
                 "phase",
                 "issue_resolution_ledger",

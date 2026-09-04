@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_
 from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+from echelon.spec_lifecycle import SpecRunExecutionLock
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -910,8 +912,82 @@ def test_status_uses_phase_instead_of_stale_last_dispatch(tmp_path: Path, capsys
     _cmd_status(tmp_path)
 
     out = capsys.readouterr().out
-    assert "Phase   phase1-what" in out
-    assert "Phase   phase2-decide" not in out
+    assert re.search(r"^  Phase\s+phase1-what$", out, flags=re.MULTILINE)
+    assert not re.search(r"^  Phase\s+phase2-decide$", out, flags=re.MULTILINE)
+    assert re.search(
+        r"^  Execution\s+inactive \(running state may be stale\)$",
+        out,
+        flags=re.MULTILINE,
+    )
+    assert "echelon spec continue" in out
+
+
+def test_status_does_not_suggest_continue_while_the_run_execution_lease_is_live(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_id = "spec-20260904-062901-960244"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "running",
+                "phase": "phase3-sentinel",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with SpecRunExecutionLock.acquire(run_dir, "squad-exec-live"):
+        _cmd_status(tmp_path)
+
+    out = capsys.readouterr().out
+    assert re.search(
+        r"^  Execution\s+active \(squad-exec-live\)$",
+        out,
+        flags=re.MULTILINE,
+    )
+    assert "Wait for the active run to finish; do not start a second continuation." in out
+    assert "echelon spec continue" not in out
+
+
+def test_status_explains_banzai_consensus_retry_is_autonomous(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_id = "spec-20260904-062901-960244"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "agent_blocked",
+                "autonomy_mode": "banzai",
+                "recovery_instruction": {
+                    "schema_version": 1,
+                    "kind": "retry_phase",
+                    "reason_code": "agent_blocked",
+                    "phase": "phase3-consensus",
+                    "requires_human_input": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "echelon spec continue" in out
+    assert "Banzai-eligible SAGE issue" in out
+    assert "automatically" in out
 
 
 def test_status_lists_active_spec_checkpoint_stash_and_other_runs(

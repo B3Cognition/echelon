@@ -2150,6 +2150,43 @@ class SquadStateStore:
             )
             return self._commit_human_input_state_unlocked(before, desired)
 
+    def set_consensus_banzai_issue_decision(
+        self,
+        request: PreparedHumanInput,
+    ) -> dict[str, Any]:
+        """Seal a completed Phase 3 Banzai issue through its exact authority."""
+        if (
+            type(request) is not PreparedHumanInput
+            or request.schema_version != 2
+            or request.source_kind != "controller_safeguard"
+            or request.producer_id != "banzai_issue_resolution"
+            or request.reason_code != "banzai_issue_resolution"
+            or request.phase_id != "phase3-consensus"
+        ):
+            raise StateAdvanceError(
+                "consensus Banzai issue decision has an invalid authority",
+                json_path="$.human_input",
+                validator="human_input_authority",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if (
+                before.get("status") not in {"running", "in_progress"}
+                or before.get("phase") != "phase3-consensus"
+            ):
+                raise StateAdvanceError(
+                    "consensus Banzai issue decision is stale",
+                    json_path="$.phase",
+                    validator="stale_state",
+                )
+            desired = deepcopy(before)
+            self._seal_human_input_decision_unlocked(
+                desired,
+                request,
+                initial_status="pending",
+            )
+            return self._commit_human_input_state_unlocked(before, desired)
+
     def _human_input_decision_for_cas_unlocked(
         self,
         state: dict[str, Any],

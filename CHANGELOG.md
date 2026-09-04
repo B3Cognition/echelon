@@ -45,6 +45,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Live Phase A status and Banzai consensus recovery** — `echelon spec status`
+  now detects a live controller lease and tells operators to wait rather than
+  suggesting a concurrent continuation. A completed, explicitly
+  Banzai-eligible WHY3 issue now seals the existing controller-owned repair
+  route, while task-backed `deferred-automation` remains a valid Phase A
+  planning obligation and is enforced as execution evidence during delivery.
+
 - **EGR-168 deferred RE workspace synthesis** — Opt-in RE v2 protocol `2.7`
   and schema `6` now synthesize only an authenticated set of accepted complete
   or source-specifically accepted partial outcomes. Granular source, domain,

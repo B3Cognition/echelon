@@ -3836,6 +3836,51 @@ class SquadController:
                 return False
         return self.resume_pending_human_input()
 
+    def _route_banzai_consensus_issue_repair(
+        self,
+        node: PhaseNode,
+        snapshot: RoutingStateSnapshot,
+    ) -> bool:
+        """Route one completed WHY3 issue through sealed Banzai authority.
+
+        Bare agent blocks remain retryable. This exception is limited to the
+        completed consensus stage, which has just written the authoritative
+        SAGE issue register needed to choose a documented repair safely.
+        """
+        if (
+            node.id != "phase3-consensus"
+            or snapshot.state.get("autonomy_mode") != "banzai"
+        ):
+            return False
+        try:
+            candidates = self._banzai_issue_resolution_candidates(
+                dict(snapshot.state)
+            )
+            options = self._dispatch_cap_options(candidates)
+            request = self._human_input_registry.prepare_controller(
+                source_kind="controller_safeguard",
+                producer_id="banzai_issue_resolution",
+                reason_code="banzai_issue_resolution",
+                phase_id=node.id,
+                question=(
+                    "Apply the first unresolved Banzai-eligible SAGE resolution "
+                    "from the completed Phase 3 consensus review."
+                ),
+                source_state_revision=snapshot.state_revision,
+                option_contract=options,
+            )
+            self._validate_prepared_human_input(request)
+            self._state_store.set_consensus_banzai_issue_decision(request)
+        except (
+            _DispatchCapEvidenceError,
+            HumanInputPolicyError,
+            StateAdvanceError,
+            StateDurabilityError,
+        ):
+            return False
+        self._record_blocker_event(node.id, "banzai_issue_resolution")
+        return self.resume_pending_human_input()
+
     def _semi_human_input_resolution(
         self,
         decision: Mapping[str, object],
@@ -6480,6 +6525,14 @@ class SquadController:
                 # retryable dispatch failure (and is a common provider shape
                 # after an interrupted turn), not a reason to manufacture a
                 # clarification request.
+                if (
+                    blocked_result == "agent_blocked"
+                    and self._route_banzai_consensus_issue_repair(
+                        node,
+                        snapshot,
+                    )
+                ):
+                    continue
                 if (
                     node.type == "agent"
                     and blocked_result != "agent_blocked"

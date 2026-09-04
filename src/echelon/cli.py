@@ -66,7 +66,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.14"
+CLI_VERSION = "4.0.15"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -3547,6 +3547,12 @@ def _recovery_action_from_instruction(
             note="runtime contracts are compatible; the blocked phase will retry without rewind",
         )
     if kind in {RecoveryKind.RETRY_PHASE, RecoveryKind.WAIT_FOR_PROVIDER}:
+        is_banzai_consensus_repair = (
+            kind == RecoveryKind.RETRY_PHASE
+            and instruction.reason_code == "agent_blocked"
+            and instruction.phase == "phase3-consensus"
+            and run_state.get("autonomy_mode") == "banzai"
+        )
         return _RunRecoveryAction(
             "retry_phase",
             reason=reason,
@@ -3555,7 +3561,13 @@ def _recovery_action_from_instruction(
             note=(
                 "wait for the provider reset, then retry the blocked phase"
                 if kind == RecoveryKind.WAIT_FOR_PROVIDER
-                else "will retry the blocked phase without rewind"
+                else (
+                    "will retry Phase 3 consensus; any explicit Banzai-eligible "
+                    "SAGE issue will be sealed and routed to its owning repair "
+                    "phase automatically"
+                    if is_banzai_consensus_repair
+                    else "will retry the blocked phase without rewind"
+                )
             ),
         )
     if kind == RecoveryKind.RESOLVE_DECISION:
@@ -9431,7 +9443,26 @@ def _cmd_status(project_root: Path) -> None:
             fields.append(("Provider limit", provider_limit_message))
         action = _RunRecoveryAction("advance")
         if run_status in ("running", "in_progress"):
-            fields.append(("Next", "echelon spec continue"))
+            from echelon.spec_lifecycle import (
+                active_phase_a_execution_owner,
+                active_spec_run_execution_owner,
+            )
+
+            execution_owner = (
+                active_spec_run_execution_owner(run_dir)
+                or active_phase_a_execution_owner(project_root)
+            )
+            if execution_owner is not None:
+                fields.append(("Execution", f"active ({execution_owner})"))
+                fields.append(
+                    (
+                        "Next",
+                        "Wait for the active run to finish; do not start a second continuation.",
+                    )
+                )
+            else:
+                fields.append(("Execution", "inactive (running state may be stale)"))
+                fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
             action = _classify_run_recovery(state, project_root=project_root)
             if action.reason == "phase_dispatch_limit":

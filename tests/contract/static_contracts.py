@@ -908,9 +908,9 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
 
     checks = [
         PatternCheck(
-            "CHIEF owns the canonical constitution",
+            "CHIEF owns the staged constitution draft",
             chief,
-            r"sole author of the project constitution.*create and amend `\.echelon/constitution\.md`",
+            r"sole author of the project constitution draft.*create and amend .*constitution\.draft\.md.*controller alone validates and publishes the draft to the canonical workspace\s+constitution",
             flags,
         ),
         PatternCheck(
