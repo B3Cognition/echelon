@@ -29,9 +29,16 @@ def agent_frontmatter_color(node: "PhaseNode", graph: "PhaseGraph", ext_dir: Pat
 def color_phase_id(
     node: "PhaseNode", graph: "PhaseGraph", ext_dir: Path, *, file: object = None
 ) -> str:
-    """Render one phase ID with its agent's declared terminal color."""
+    """Preserve agent colors; distinguish multi-agent groups and controller steps."""
     target = file if file is not None else sys.stdout
-    return color_text(node.id, agent_frontmatter_color(node, graph, ext_dir), file=target)
+    if node.agent:
+        color = agent_frontmatter_color(node, graph, ext_dir)
+    elif node.agents:
+        # A group must not impersonate one of its participating agents.
+        color = "cyan"
+    else:
+        color = "gray"
+    return color_text(node.id, color, file=target)
 
 
 def format_phase_dispatch_line(
@@ -42,7 +49,7 @@ def format_phase_dispatch_line(
     file: object = None,
     suffix: str = "",
 ) -> str:
-    """Render a squad phase dispatch line using the agent's Prosaic color."""
+    """Render a dispatch with the phase's agent, group, or controller color."""
     label = node.label or node.id
     return f"\n[squad] ▶ {color_phase_id(node, graph, ext_dir, file=file)}  {label}{suffix}"
 
@@ -56,7 +63,7 @@ def format_phase_transition_line(
     file: object = None,
     suffix: str = "",
 ) -> str:
-    """Render a transition, coloring each endpoint by its own declared agent."""
+    """Render a transition with the same endpoint colors used for dispatches."""
     phase = _color_phase_reference(phase_id, graph, ext_dir, file=file)
     target = _color_phase_reference(next_phase, graph, ext_dir, file=file)
     return f"[squad] ✓ {phase}  → {target}{suffix}"
