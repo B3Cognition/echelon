@@ -25,7 +25,6 @@ from harness.re_v2.protocol_22.model import WorkItemV2
 from harness.re_v2.protocol_22.recovery import Protocol22RunContext
 from harness.re_v2.protocol_22.schema import Protocol22SchemaError, load_canonical_object
 from harness.re_v2.protocol_24.controller import Protocol24Controller
-from harness.re_v2.run_store import load_run_manifest
 
 from .artifacts import (
     AuditCandidateV1,
@@ -33,7 +32,7 @@ from .artifacts import (
     SourceCompositionAssessmentV1,
     TargetClosureAssessmentV1,
 )
-from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .events import Protocol25ReplayState
 from .runtime import (
     Protocol25RuntimeError,
     SemanticCandidateInputV1,
@@ -61,6 +60,35 @@ TerminalStateV1 = Literal[
     "blocked_incomplete",
     "blocked_plateau",
 ]
+
+
+_SEMANTIC_AUTHORIAL_DIAGNOSTICS = (
+    (
+        "subject_kind does not match",
+        "finding_subject_kind_must_match_controller_issued_subject_ref",
+    ),
+    (
+        "outside authorized evidence ranges",
+        "finding_evidence_must_be_within_authorized_ranges",
+    ),
+    ("requires authorized evidence", "finding_requires_authorized_evidence"),
+    ("not controller-issued", "finding_must_use_controller_issued_authority"),
+    ("does not match bounded context", "audit_target_must_match_bounded_context"),
+    ("closed response schema", "semantic_response_must_match_closed_schema"),
+    ("candidate inventory", "semantic_candidate_inventory_invalid"),
+    ("byte ceiling", "semantic_candidate_byte_ceiling_exceeded"),
+    ("bounded normalized prose", "finding_prose_must_be_bounded_and_normalized"),
+)
+
+
+def _semantic_authorial_rejection_diagnostics(exc: Exception) -> tuple[str, ...]:
+    """Return safe, stable retry feedback for a rejected semantic candidate."""
+    detail = str(exc).lower()
+    specific = next(
+        (code for fragment, code in _SEMANTIC_AUTHORIAL_DIAGNOSTICS if fragment in detail),
+        "semantic_authorial_contract_invalid",
+    )
+    return ("authorial_schema_invalid", specific)
 ActionKindV1 = Literal[
     "run_prerequisite",
     "audit_target",
@@ -782,12 +810,13 @@ class Protocol25Controller(Protocol24Controller):
                     target_assessments=target_assessments,
                     composed_view=composed,
                 )
-        except (Protocol22SchemaError, Protocol25RuntimeError):
+        except (Protocol22SchemaError, Protocol25RuntimeError) as exc:
             self._reject_candidate_before_artifact(
                 item,
                 committed,
                 candidate_id,
                 "authorial_schema_invalid",
+                diagnostics=_semantic_authorial_rejection_diagnostics(exc),
             )
             return
         self._record_semantic_result(item, candidate_id, result)
@@ -887,9 +916,14 @@ class Protocol25Controller(Protocol24Controller):
                 "audit_target_id": artifact.audit_target_id,
             }
         else:
-            replay = Protocol25ReplayState()
+            replay_state = self.context.event_store.protocol.new_state()
             for event in self.context.event_store.replay():
-                replay.consume(event)
+                replay_state.consume(event)
+            replay = getattr(replay_state, "delegate", replay_state)
+            if not isinstance(replay, Protocol25ReplayState):
+                raise Protocol25ControllerError(
+                    "semantic event protocol has no protocol-2.5 delegate"
+                )
             operation = replay.semantic_operation
             if operation is None or operation.work_item_id != item.work_item_id:
                 raise Protocol25ControllerError(
@@ -973,13 +1007,13 @@ class Protocol25Controller(Protocol24Controller):
     ) -> None:
         """Account a semantic retry against the protocol-2.5 event vocabulary."""
         events = self.context.event_store.replay()
-        manifest = load_run_manifest(self.context.paths.root.parent)
+        manifest = self.context.semantic_graph.manifest
         budget = evaluate_budget_v22(
             manifest.initial_budget_policy,
             events,
             (),
             self.context.clock(),
-            event_protocol=PROTOCOL_25_EVENTS,
+            event_protocol=self.context.event_store.protocol,
         )
         if budget.item_attempt_available(item):
             return

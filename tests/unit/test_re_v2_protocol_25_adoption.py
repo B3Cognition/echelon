@@ -80,6 +80,13 @@ def _parent(
             ),
         ),
         (
+            "closure-successor",
+            lambda: _parent(
+                "blocked_incomplete",
+                semantic=_semantic(epoch=True, unresolved_findings=True),
+            ),
+        ),
+        (
             "new-audit-epoch",
             lambda: _parent("complete", semantic=_semantic(epoch=True)),
         ),
@@ -204,6 +211,24 @@ def test_closure_successor_retains_epoch_progress_and_only_open_findings() -> No
     assert validated.closure_root_hash == digest("closure-root")
     assert validated.unresolved_finding_ids == (digest("open-finding"),)
     assert validated.adopted_semantic_object_ids == semantic.object_ids
+
+
+def test_incomplete_closure_successor_does_not_require_final_root() -> None:
+    semantic = replace(
+        _semantic(epoch=True, unresolved_findings=True),
+        closure_root_hash=None,
+        l3_source_root_hashes=(),
+    )
+    parent = _parent("blocked_incomplete", semantic=semantic)
+
+    validated = _adoption().validate_protocol_25_parent(
+        parent,
+        mode="closure-successor",
+    )
+
+    assert validated.audit_epoch_id == digest("audit-epoch")
+    assert validated.closure_root_hash is None
+    assert validated.unresolved_finding_ids == (digest("open-finding"),)
 
 
 def test_next_epoch_rejects_open_frozen_finding() -> None:

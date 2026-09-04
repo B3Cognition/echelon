@@ -246,6 +246,77 @@ def import_typed_acceptance(
     return ImportedAcceptanceV1.from_package(package)
 
 
+def import_typed_acceptance_batch(
+    packages: tuple[FrozenAcceptancePackageV1, ...],
+    destination_objects: ObjectStore,
+    destination_ledger: Protocol22Ledger,
+) -> tuple[ImportedAcceptanceV1, ...]:
+    """Import many frozen acceptances with one authenticated ledger replay."""
+    if not isinstance(packages, tuple) or any(
+        not isinstance(package, FrozenAcceptancePackageV1)
+        for package in packages
+    ):
+        raise Protocol26AdoptionError("typed acceptance batch is invalid")
+    if not isinstance(destination_objects, ObjectStore) or not isinstance(
+        destination_ledger, Protocol22Ledger
+    ):
+        raise Protocol26AdoptionError(
+            "typed acceptance batch requires object-store and ledger facades"
+        )
+    records: list[tuple[str, object]] = []
+    try:
+        for package in packages:
+            for object_hash, payload in package.required_objects.items():
+                if destination_objects.put_blob(payload) != object_hash:
+                    raise Protocol26AdoptionError(
+                        f"copied object changed identity: {object_hash}"
+                    )
+            if isinstance(package.certification, SemanticCertificationReceiptV1):
+                if not isinstance(destination_ledger, Protocol25Ledger):
+                    raise Protocol26AdoptionError(
+                        "semantic acceptance requires a protocol-2.5 ledger"
+                    )
+                records.append(
+                    (
+                        "semantic_certification",
+                        package.certification.to_json_dict(),
+                    )
+                )
+            else:
+                records.append(
+                    (
+                        "certification",
+                        {
+                            "receipt": package.certification.to_json_dict(),
+                            "work_item": package.work_item.to_json_dict(),
+                        },
+                    )
+                )
+            if package.candidate_assessment is not None:
+                records.append(
+                    (
+                        "candidate_assessment",
+                        package.candidate_assessment.to_json_dict(),
+                    )
+                )
+            records.append(("artifact", package.acceptance.to_json_dict()))
+        destination_ledger._append_batch(records)
+        replayed = destination_ledger.replay()
+        for package in packages:
+            _verify_imported_acceptance(
+                package,
+                destination_ledger,
+                replayed=replayed,
+            )
+    except Protocol26AdoptionError:
+        raise
+    except ReV2LedgerError as exc:
+        raise Protocol26AdoptionError(
+            f"typed acceptance batch import conflict: {exc}"
+        ) from exc
+    return tuple(ImportedAcceptanceV1.from_package(item) for item in packages)
+
+
 def import_frozen_checkpoint_closure(
     inputs: ValidatedProtocol26Inputs,
     objects: ObjectStore,
@@ -342,6 +413,7 @@ def initialize_protocol_26_run_store(
     from harness.re_v2.events import EventStore
     from harness.re_v2.ledger import ObjectStore
     from harness.re_v2.protocol_22.ledger import Protocol22Ledger
+    from harness.re_v2.protocol_25.ledger import Protocol25Ledger
     from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
     from harness.re_v2.protocol_26.events import protocol_26_events_for
     from harness.re_v2.protocol_26.model import RunManifestV5
@@ -354,7 +426,11 @@ def initialize_protocol_26_run_store(
             "checkpoint initialization requires schema-5 protocol 2.6"
         )
     objects = ObjectStore(paths.objects)
-    ledger = Protocol22Ledger(paths, objects)
+    ledger = (
+        Protocol25Ledger(paths, objects)
+        if manifest.target_layer == "L3"
+        else Protocol22Ledger(paths, objects)
+    )
     events = EventStore(paths, protocol=protocol_26_events_for(manifest.target_layer))
     clock = lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with protocol_22_run_lock(paths):
@@ -484,8 +560,11 @@ def _load_certification(payload: bytes) -> CertificationAuthorityV1:
 def _verify_imported_acceptance(
     package: FrozenAcceptancePackageV1,
     ledger: Protocol22Ledger,
+    *,
+    replayed: object | None = None,
 ) -> None:
-    replayed = ledger.replay()
+    if replayed is None:
+        replayed = ledger.replay()
     certification = package.certification
     if isinstance(certification, SemanticCertificationReceiptV1):
         certifications = getattr(replayed, "semantic_certifications", {})
@@ -522,4 +601,5 @@ __all__ = (
     "initialize_protocol_26_run",
     "import_frozen_checkpoint_closure",
     "import_typed_acceptance",
+    "import_typed_acceptance_batch",
 )

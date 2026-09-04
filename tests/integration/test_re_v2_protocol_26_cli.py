@@ -61,6 +61,8 @@ def test_new_layered_runs_use_protocol_26_and_exact_l3_reuse_is_no_call(
     from echelon.cli_app import app
     from echelon import cli as legacy_cli
     from harness.re_v2.protocol_26.model import RunManifestV5
+    from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+    from harness.re_v2.run_store import ReV2Paths
     from harness.re_v2.protocol_26.status import protocol_26_status_document
     from harness.re_v2.run_store import load_run_manifest
 
@@ -103,4 +105,8 @@ def test_new_layered_runs_use_protocol_26_and_exact_l3_reuse_is_no_call(
     assert all(isinstance(manifest, RunManifestV5) for manifest in manifests)
     assert [manifest.target_layer for manifest in manifests] == ["L1", "L2", "L3"]
     assert all(manifest.engine_protocol_version == "2.6" for manifest in manifests)
+    l3_inputs = load_protocol_26_inputs(ReV2Paths.for_run(l3), manifests[-1])
+    assert l3_inputs.layer_execution_contract.layer_manifest.engine_protocol_version == (
+        "2.5.1"
+    )
     assert protocol_26_status_document(l3)["status"] == "in_progress"

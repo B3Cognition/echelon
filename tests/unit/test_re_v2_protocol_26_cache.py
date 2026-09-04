@@ -7,10 +7,14 @@ import shutil
 
 import pytest
 
-from harness.re_v2.canonical import content_digest
-from harness.re_v2.protocol_26.cache import rebuild_checkpoint_cache
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.protocol_26.cache import (
+    load_checkpoint_candidates,
+    rebuild_checkpoint_cache,
+)
 from harness.re_v2.protocol_26.model import CheckpointManifestV1
 from tests.re_v2_protocol_26_fixtures import CheckpointWorkspace
+from tests.re_v2_protocol_28_fixtures import exhaustive_manifest_v7
 
 
 @pytest.fixture
@@ -29,6 +33,44 @@ def test_cache_rebuild_is_deterministic_and_disposable(
 
     assert second.index.identity == first.index.identity
     assert second.index.manifest_ids == first.index.manifest_ids
+
+
+def test_cache_rebuild_reports_origin_reconstruction_progress(
+    checkpoint_workspace: CheckpointWorkspace,
+) -> None:
+    checkpoint_workspace.origin_with_one_accepted_domain("active")
+    updates: list[tuple[str, int, int]] = []
+
+    rebuild_checkpoint_cache(
+        checkpoint_workspace.root,
+        progress=lambda stage, completed, total: updates.append(
+            (stage, completed, total)
+        ),
+    )
+
+    assert updates[0] == ("origin-reconstruction", 0, 1)
+    assert updates[-1] == ("origin-reconstruction", 1, 1)
+
+
+def test_v1_cache_bytes_ignore_adjacent_schema7_origin(
+    checkpoint_workspace: CheckpointWorkspace,
+) -> None:
+    checkpoint_workspace.origin_with_one_accepted_domain("active")
+    first = rebuild_checkpoint_cache(checkpoint_workspace.root)
+    original_index = first.paths.index.read_bytes()
+    original_quarantine = first.paths.quarantine.read_bytes()
+
+    adjacent = checkpoint_workspace.root / "runs" / "re-l4-adjacent" / "v2"
+    adjacent.mkdir(parents=True)
+    adjacent.joinpath("run.json").write_bytes(
+        canonical_json_bytes(
+            exhaustive_manifest_v7(run_id="re-l4-adjacent").to_json_dict()
+        )
+    )
+    second = rebuild_checkpoint_cache(checkpoint_workspace.root)
+
+    assert second.paths.index.read_bytes() == original_index
+    assert second.paths.quarantine.read_bytes() == original_quarantine
 
 
 def test_malformed_cache_is_rebuilt_not_authorized(
@@ -56,6 +98,23 @@ def test_published_manifest_projection_is_canonical_and_revalidated(
     decoded = CheckpointManifestV1.from_json_dict(json.loads(payload))
     assert decoded.identity == manifest_id == content_digest(payload)
     assert generation.manifests[manifest_id] == decoded
+
+
+def test_candidate_loader_prefilters_index_before_loading_manifests(
+    checkpoint_workspace: CheckpointWorkspace,
+) -> None:
+    checkpoint_workspace.origin_with_one_accepted_domain("active")
+    generation = rebuild_checkpoint_cache(checkpoint_workspace.root)
+    expected = next(iter(generation.manifests.values()))
+
+    assert load_checkpoint_candidates(
+        checkpoint_workspace.root,
+        expected_work_item_ids=(expected.work_item.work_item_id,),
+    ) == (expected,)
+    assert load_checkpoint_candidates(
+        checkpoint_workspace.root,
+        expected_work_item_ids=(content_digest(b"unrelated-work-item"),),
+    ) == ()
 
 
 def test_concurrent_rebuilds_publish_one_complete_generation(

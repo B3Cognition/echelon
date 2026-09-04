@@ -581,49 +581,73 @@ class EventStore:
     def append(
         self, event_type: str, payload: Mapping[str, object], *, occurred_at: str
     ) -> EventRecord:
-        timestamp = _validate_rfc3339(occurred_at)
-        canonical_payload = self.protocol.canonical_payload(event_type, payload)
+        return self.append_batch(((event_type, payload, occurred_at),))[0]
+
+    def append_batch(
+        self,
+        values: Iterable[tuple[str, Mapping[str, object], str]],
+    ) -> tuple[EventRecord, ...]:
+        """Append a replay-valid sequence under one lock and initial replay.
+
+        Each event remains independently fsynced, so interruption leaves a
+        valid prefix that an idempotent initializer can compare and resume.
+        """
+        prepared = tuple(
+            (
+                event_type,
+                self.protocol.canonical_payload(event_type, payload),
+                _validate_rfc3339(occurred_at),
+            )
+            for event_type, payload, occurred_at in values
+        )
+        if not prepared:
+            return ()
         self._validate_parent()
 
         lock_fd = self._open_lock()
+        fd: int | None = None
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            history = self._read_replay()
-            previous = history[-1].event_hash if history else None
-            identity: dict[str, object] = {
-                "occurred_at": timestamp,
-                "payload": _thaw_json(canonical_payload),
-                "previous_event_hash": previous,
-                "schema_version": EVENT_SCHEMA_VERSION,
-                "seq": len(history) + 1,
-                "type": event_type,
-            }
-            event = EventRecord(
-                event_hash=_event_hash(identity),
-                occurred_at=timestamp,
-                payload=canonical_payload,
-                previous_event_hash=previous,
-                schema_version=EVENT_SCHEMA_VERSION,
-                seq=len(history) + 1,
-                type=event_type,
-            )
-            state = _replay_state(history, protocol=self.protocol)
-            state.consume(event)
+            history = list(self._read_replay())
+            state = _replay_state(tuple(history), protocol=self.protocol)
             existed = self.path.exists()
-            fd = self._open_events_for_append()
-            try:
+            results: list[EventRecord] = []
+            for event_type, canonical_payload, timestamp in prepared:
+                previous = history[-1].event_hash if history else None
+                identity: dict[str, object] = {
+                    "occurred_at": timestamp,
+                    "payload": _thaw_json(canonical_payload),
+                    "previous_event_hash": previous,
+                    "schema_version": EVENT_SCHEMA_VERSION,
+                    "seq": len(history) + 1,
+                    "type": event_type,
+                }
+                event = EventRecord(
+                    event_hash=_event_hash(identity),
+                    occurred_at=timestamp,
+                    payload=canonical_payload,
+                    previous_event_hash=previous,
+                    schema_version=EVENT_SCHEMA_VERSION,
+                    seq=len(history) + 1,
+                    type=event_type,
+                )
+                state.consume(event)
+                if fd is None:
+                    fd = self._open_events_for_append()
                 _write_all(fd, canonical_json_bytes(event.to_json_dict()))
                 _fsync(fd)
-            finally:
-                os.close(fd)
+                history.append(event)
+                results.append(event)
             if not existed:
                 _fsync_directory(self.path.parent)
-            return event
+            return tuple(results)
         except ReV2EventError:
             raise
         except OSError as exc:
             raise ReV2EventError(f"cannot append durable event: {exc}") from exc
         finally:
+            if fd is not None:
+                os.close(fd)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:

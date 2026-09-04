@@ -34,6 +34,7 @@ from tests.unit.test_re_v2_protocol_22_context import _domain_fixture
 class _ProviderSpy:
     def __init__(self, result: SquadAgentResult) -> None:
         self.result = result
+        self.cli = result.provider_name
         self.calls: list[dict[str, object]] = []
 
     def exec_agent(

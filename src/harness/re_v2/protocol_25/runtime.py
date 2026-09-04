@@ -154,7 +154,22 @@ def _finding_schema(*, deferred: bool = False) -> dict[str, object]:
             }
         )
         required = tuple(properties)
-    return _closed(required, properties)
+    schema = _closed(required, properties)
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"subject_kind": {"const": subject_kind}},
+                "required": ["subject_kind"],
+            },
+            "then": {
+                "properties": {
+                    "subject_ref": {"pattern": f"^{subject_kind}:"},
+                }
+            },
+        }
+        for subject_kind in sorted(SUBJECT_KINDS)
+    ]
+    return schema
 
 
 def _audit_schema() -> dict[str, object]:

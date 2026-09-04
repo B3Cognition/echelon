@@ -95,6 +95,53 @@ from echelon.workspace_model import discover_workspace  # noqa: E402  (after std
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 
 
+_RE_V2_MAX_CLI_DISPATCH_ACTIVE_MS = 30 * 60_000
+
+
+def _bound_re_v2_executor_active_ms(
+    catalog: object,
+    *,
+    preserve_contract_hashes: object = (),
+) -> object:
+    """Bound one RE provider call independently of the cumulative run budget."""
+    from dataclasses import replace
+
+    preserved = frozenset(preserve_contract_hashes)
+
+    def bounded_entry(entry: object) -> object:
+        if getattr(entry, "executor_contract_hash", None) in preserved:
+            return entry
+        if getattr(entry, "execution_mode", None) != "cli":
+            return entry
+        limits = getattr(entry, "limits", None)
+        current = getattr(limits, "max_active_ms_per_dispatch", None)
+        if not isinstance(current, int) or current <= _RE_V2_MAX_CLI_DISPATCH_ACTIVE_MS:
+            return entry
+        return replace(
+            entry,
+            limits=replace(
+                limits,
+                max_active_ms_per_dispatch=_RE_V2_MAX_CLI_DISPATCH_ACTIVE_MS,
+            ),
+        )
+
+    inherited = getattr(catalog, "inherited_catalog", None)
+    semantic = getattr(catalog, "semantic_entries", None)
+    if inherited is not None and isinstance(semantic, tuple):
+        return replace(
+            catalog,
+            inherited_catalog=_bound_re_v2_executor_active_ms(
+                inherited,
+                preserve_contract_hashes=preserved,
+            ),
+            semantic_entries=tuple(bounded_entry(item) for item in semantic),
+        )
+    entries = getattr(catalog, "entries", None)
+    if isinstance(entries, tuple):
+        return replace(catalog, entries=tuple(bounded_entry(item) for item in entries))
+    return catalog
+
+
 USAGE = f"""\
 echelon {CLI_VERSION}
 
@@ -12040,10 +12087,18 @@ def _cmd_re_status(args: list[str]) -> None:
     try:
         engine = _detect_re_engine_for_cli(run_dir)
         if engine == "v2":
-            print(render_v2_status(run_dir, as_json=as_json), end="")
+            if as_json:
+                print(render_v2_status(run_dir, as_json=True), end="")
+            else:
+                from echelon.re_ui import print_re_status_card
+
+                document = json.loads(render_v2_status(run_dir, as_json=True))
+                print_re_status_card(document)
             return
     except (ReV2StatusError, ValueError) as exc:
-        print(f"echelon re status: {exc}", file=sys.stderr)
+        from echelon.re_ui import print_re_error
+
+        print_re_error("echelon re status", exc)
         raise SystemExit(2) from exc
     if as_json:
         print(
@@ -12891,15 +12946,26 @@ def _prepare_re_v26_creation(
     deepen_options: object | None,
     token_limit: int | None,
     time_limit_minutes: int | None,
+    checkpoint_progress: Callable[[str, int, int], None] | None = None,
 ) -> _Protocol26Creation:
     """Compose protocol 2.6 over the existing pure layer preparation paths."""
     from types import SimpleNamespace
 
     from harness.re_v2.canonical import content_digest
     from harness.re_v2.protocol_22.graph import build_protocol_22_graph
-    from harness.re_v2.protocol_26.cache import rebuild_checkpoint_cache
+    from harness.re_v2.protocol_26.cache import (
+        CheckpointCacheError,
+        load_checkpoint_candidates,
+        rebuild_checkpoint_cache,
+    )
     from harness.re_v2.protocol_26.model import LayerExecutionContractV1
-    from harness.re_v2.protocol_26.selection import select_checkpoints
+    from harness.re_v2.protocol_26.reconstruction import (
+        reconstruct_origin_checkpoints,
+    )
+    from harness.re_v2.protocol_26.selection import (
+        compatibility_mismatches,
+        select_checkpoints,
+    )
 
     if target_layer == "L1":
         if parent_run is not None or deepen_options is not None:
@@ -12922,10 +12988,6 @@ def _prepare_re_v26_creation(
         from dataclasses import replace
 
         from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
-        from harness.re_v2.protocol_26.reconstruction import (
-            reconstruct_origin_checkpoints,
-        )
-
         if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
             raise ValueError("protocol-2.6 L2 creation requires deepening authority")
         direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
@@ -12957,10 +13019,6 @@ def _prepare_re_v26_creation(
         from dataclasses import replace
 
         from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
-        from harness.re_v2.protocol_26.reconstruction import (
-            reconstruct_origin_checkpoints,
-        )
-
         if parent_run is None or not isinstance(deepen_options, _ReDeepenOptions):
             raise ValueError("protocol-2.6 L3 creation requires deepening authority")
         direct_parent = validate_parent_for_deepening(parent_run, workspace_root)
@@ -12987,15 +13045,6 @@ def _prepare_re_v26_creation(
         }
     else:
         raise ValueError(f"unsupported protocol-2.6 target layer: {target_layer!r}")
-    cache = rebuild_checkpoint_cache(workspace_root)
-    layer = _LayerCreationAuthorityV1(
-        snapshot,
-        layer_manifest,
-        layer_inputs,
-        graph,
-        direct_candidates,
-        {**dict(cache.authority_objects), **direct_objects},
-    )
     contract = LayerExecutionContractV1.from_layer_manifest(layer_manifest)
     target_selection_id = (
         layer_manifest.selection.identity
@@ -13012,8 +13061,88 @@ def _prepare_re_v26_creation(
         if target_layer == "L3"
         else graph.templates
     )
+    expected_work_items = (
+        _re_v25_expected_checkpoint_work_items(
+            graph,
+            direct_parent,
+            direct_candidates,
+        )
+        if target_layer == "L3"
+        else None
+    )
+    if target_layer == "L3":
+        expected_ids = tuple(
+            item.work_item_id for item in (expected_work_items or ())
+        )
+        try:
+            candidate_hints = load_checkpoint_candidates(
+                workspace_root,
+                expected_work_item_ids=expected_ids,
+            )
+        except CheckpointCacheError:
+            candidate_hints = ()
+        expected_by_key = {
+            item.output_key.identity: item for item in (expected_work_items or ())
+        }
+        candidate_hints = tuple(
+            candidate
+            for candidate in candidate_hints
+            if (
+                (expected := expected_by_key.get(candidate.artifact_key_id))
+                is not None
+                and not compatibility_mismatches(expected, candidate)
+            )
+        )
+        hints_by_origin: dict[str, list[object]] = {}
+        for candidate in candidate_hints:
+            hints_by_origin.setdefault(candidate.origin_run_id, []).append(candidate)
+        cache_candidates: list[object] = []
+        cache_objects: dict[str, Mapping[str, bytes]] = {}
+        origins = tuple(sorted(hints_by_origin))
+        if checkpoint_progress is not None:
+            checkpoint_progress("candidate-authentication", 0, len(origins))
+        for completed, origin_run_id in enumerate(origins, start=1):
+            reconstructed = reconstruct_origin_checkpoints(
+                workspace_root,
+                workspace_root / "runs" / origin_run_id,
+            )
+            authenticated = {
+                item.identity: item for item in reconstructed.manifests
+            }
+            for hint in hints_by_origin[origin_run_id]:
+                observed = authenticated.get(hint.identity)
+                if observed != hint:
+                    continue
+                cache_candidates.append(observed)
+                cache_objects[observed.identity] = reconstructed.authority_objects[
+                    observed.identity
+                ]
+            if checkpoint_progress is not None:
+                checkpoint_progress(
+                    "candidate-authentication", completed, len(origins)
+                )
+        workspace_candidates = tuple(
+            sorted(cache_candidates, key=lambda item: item.identity)
+        )
+        workspace_objects = cache_objects
+    else:
+        cache = rebuild_checkpoint_cache(
+            workspace_root,
+            progress=checkpoint_progress,
+        )
+        workspace_candidates = tuple(cache.manifests.values())
+        workspace_objects = dict(cache.authority_objects)
+    layer = _LayerCreationAuthorityV1(
+        snapshot,
+        layer_manifest,
+        layer_inputs,
+        graph,
+        direct_candidates,
+        {**workspace_objects, **direct_objects},
+    )
     selection_graph = SimpleNamespace(
         templates=selection_templates,
+        expected_work_items=expected_work_items,
         _inputs=layer_inputs,
         source_snapshot_id=layer_manifest.source_snapshot_id,
         partition_manifest_id=layer_manifest.partition_manifest_id,
@@ -13036,10 +13165,53 @@ def _prepare_re_v26_creation(
     )
     bundle = select_checkpoints(
         selection_graph,
-        cache.manifests.values(),
+        workspace_candidates,
         direct_parent=direct_candidates,
     )
     return _build_protocol_26_creation(layer, contract, bundle, direct_parent)
+
+
+def _re_v25_expected_checkpoint_work_items(
+    graph: object,
+    parent: object,
+    direct_candidates: tuple[object, ...],
+) -> tuple[object, ...]:
+    """Build L3 checkpoint expectations independently of sibling candidates."""
+    accepted_parent = getattr(parent, "accepted_parent", None)
+    if not isinstance(accepted_parent, Mapping):
+        raise ValueError("L3 checkpoint selection requires accepted L2 parent authority")
+    accepted = {
+        template_id: pair[1]
+        for template_id, pair in accepted_parent.items()
+    }
+    targets = graph.ready_audit_targets(accepted)
+    templates = tuple(graph.audit_templates)
+    # An L1 parent may still need to generate L2 before any L3 work can be
+    # instantiated. In that case no sibling L3 checkpoint is yet exact.
+    if len(targets) != len(templates):
+        targets = ()
+        templates = ()
+    audit_items = tuple(
+        graph.instantiate_audit_item(
+            template,
+            target,
+            {
+                template_id: accepted[template_id]
+                for template_id in template.required_template_ids
+            },
+        )
+        for target, template in zip(targets, templates, strict=True)
+    )
+    lower_items = tuple(
+        candidate.work_item
+        for candidate in direct_candidates
+        if candidate.work_item.output_key.layer != "L3"
+    )
+    by_key = {
+        item.output_key.identity: item
+        for item in (*lower_items, *audit_items)
+    }
+    return tuple(by_key[key] for key in sorted(by_key))
 
 
 def _prepare_re_v22_creation(
@@ -13132,6 +13304,7 @@ def _prepare_re_v22_creation(
         registry,
         provider_mode="api" if selected_protocol == "2.2" else "cli",
     )
+    executor_contract = _bound_re_v2_executor_active_ms(executor_contract)
     mismatches = validate_installed_authorities(executor_contract, registry)
     if mismatches:
         details = ", ".join(
@@ -13857,6 +14030,37 @@ def _re_v24_context(project_root: Path, run_dir: Path, manifest: object) -> obje
     return context
 
 
+def _re_l3_authority_mismatch_message(run_dir: Path, manifest: object) -> str:
+    """Explain an immutable L3 authority mismatch without protocol jargon."""
+    selection = getattr(manifest, "selection", None)
+    arguments = ["echelon", "re", "deepen", "--to", "L3"]
+    if bool(getattr(selection, "all_sources", False)):
+        arguments.append("--all")
+    else:
+        for source_id in getattr(selection, "source_ids", ()):
+            arguments.extend(("--source", str(source_id)))
+        for domain_key in getattr(selection, "domain_keys", ()):
+            arguments.extend(("--domain", str(domain_key)))
+    lineage = getattr(manifest, "parent_lineage", None)
+    parent_run_id = getattr(lineage, "direct_parent_run_id", None)
+    if parent_run_id:
+        arguments.extend(("--from-run", str(parent_run_id)))
+    successor_command = " ".join(shlex.quote(argument) for argument in arguments)
+    status_command = (
+        "echelon re status "
+        f"{shlex.quote(run_dir.name)} --json"
+    )
+    return (
+        "This run was created with a different RE implementation and cannot "
+        "be continued safely.\n"
+        "Its accepted artifacts remain unchanged.\n"
+        "Create a compatible successor with:\n"
+        f"{successor_command}\n"
+        "For internal authority details, run:\n"
+        f"{status_command}"
+    )
+
+
 def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> object:
     """Reconstruct schema-4 execution solely from authenticated child authority."""
     from dataclasses import replace
@@ -13983,6 +14187,13 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         snapshot_reader=snapshot_reader,
         artifact_policy=semantic_inputs.artifact_policy,
     )
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(
+        semantic_inputs.executor_contract.inherited_catalog
+    )
 
     baseline_entry = inputs.executor_contract.entry_for("compact-baseline")
     baseline_renderer = baseline_entry.request_renderer
@@ -14045,8 +14256,17 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
             SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
@@ -14073,10 +14293,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         registry,
     )
     if mismatches:
-        details = ", ".join(
-            f"{item.authority_kind}:{item.authority_id}" for item in mismatches
-        )
-        raise ValueError(f"protocol-2.5 installed authority mismatch: {details}")
+        raise ValueError(_re_l3_authority_mismatch_message(run_dir, manifest))
 
     context_ref: dict[str, object] = {}
     workspace_bytes = canonical_json_bytes(
@@ -14222,6 +14439,10 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.protocol_25.model import RunManifestV4
     from harness.re_v2.protocol_26.model import RunManifestV5
     from harness.re_v2.protocol_27.model import RunManifestV6
+    from harness.re_v2.protocol_28.model import (
+        ExhaustiveRunManifestV7,
+        L4ClosureRunManifestV7,
+    )
 
     if isinstance(manifest, RunManifestV2):
         return _re_v22_context(project_root, run_dir, manifest)
@@ -14241,6 +14462,10 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
         from harness.re_v2.protocol_27.recovery import load_protocol_27_run_context
 
         return load_protocol_27_run_context(run_dir)
+    if isinstance(manifest, (ExhaustiveRunManifestV7, L4ClosureRunManifestV7)):
+        from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+
+        return load_protocol_28_run_context(run_dir)
     paths = ReV2Paths.for_run(run_dir)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
@@ -14575,6 +14800,7 @@ def _re_v22_dependency_role(template: object) -> str:
 
 def _run_re_v2_live(context: object) -> None:
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
+    from echelon.re_ui import print_re_status_card, re_progress_session
 
     if isinstance(context, Protocol22RunContext):
         from harness.re_v2.protocol_24.model import RunManifestV3
@@ -14591,89 +14817,114 @@ def _run_re_v2_live(context: object) -> None:
             from harness.re_v2.protocol_25.materialization import (
                 materialize_accepted_l3,
             )
-            from harness.re_v2.protocol_25.status import render_protocol_25_status
+            from harness.re_v2.protocol_25.status import protocol_25_status_document
 
             controller_type = Protocol25Controller
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.controller import Protocol26L3Controller
 
                 controller_type = Protocol26L3Controller
-            controller_type(context).run_until_stopped()
-            materialize_accepted_l3(context)
+            run_dir = context.paths.root.parent
             if isinstance(manifest, RunManifestV5):
-                from harness.re_v2.protocol_26.status import render_protocol_26_status
+                from harness.re_v2.protocol_26.status import protocol_26_status_document
 
-                print(
-                    render_protocol_26_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
                 )
             else:
-                print(
-                    render_protocol_25_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_25_status_document(
+                    run_dir,
+                    context=context,
                 )
+            with re_progress_session(run_dir, initial_document):
+                controller_type(context).run_until_stopped()
+            materialize_accepted_l3(context)
+            if isinstance(manifest, RunManifestV5):
+                from harness.re_v2.protocol_26.status import protocol_26_status_document
+
+                final_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
+                )
+            else:
+                final_document = protocol_25_status_document(
+                    run_dir,
+                    context=context,
+                )
+            print_re_status_card(final_document)
         elif isinstance(manifest, RunManifestV3) or target_layer == "L2":
             from harness.re_v2.protocol_24.controller import Protocol24Controller
-            from harness.re_v2.protocol_24.status import render_protocol_24_status
+            from harness.re_v2.protocol_24.status import protocol_24_status_document
 
             controller_type = Protocol24Controller
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.controller import Protocol26L2Controller
 
                 controller_type = Protocol26L2Controller
-            controller_type(context).run_until_stopped()
+            run_dir = context.paths.root.parent
             if isinstance(manifest, RunManifestV5):
-                from harness.re_v2.protocol_26.status import render_protocol_26_status
+                from harness.re_v2.protocol_26.status import protocol_26_status_document
 
-                print(
-                    render_protocol_26_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
                 )
             else:
-                print(
-                    render_protocol_24_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_24_status_document(
+                    run_dir,
+                    context=context,
                 )
+            with re_progress_session(run_dir, initial_document):
+                controller_type(context).run_until_stopped()
+            if isinstance(manifest, RunManifestV5):
+                from harness.re_v2.protocol_26.status import protocol_26_status_document
+
+                final_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
+                )
+            else:
+                final_document = protocol_24_status_document(
+                    run_dir,
+                    context=context,
+                )
+            print_re_status_card(final_document)
         else:
             from harness.re_v2.protocol_22.controller import Protocol22Controller
-            from harness.re_v2.protocol_22.status import render_protocol_22_status
+            from harness.re_v2.protocol_22.status import protocol_22_status_document
 
             controller_type = Protocol22Controller
             if isinstance(manifest, RunManifestV5):
                 from harness.re_v2.protocol_26.controller import Protocol26L1Controller
 
                 controller_type = Protocol26L1Controller
-            controller_type(context).run_until_stopped()
+            run_dir = context.paths.root.parent
             if isinstance(manifest, RunManifestV5):
-                from harness.re_v2.protocol_26.status import render_protocol_26_status
+                from harness.re_v2.protocol_26.status import protocol_26_status_document
 
-                print(
-                    render_protocol_26_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
                 )
             else:
-                print(
-                    render_protocol_22_status(
-                        context.paths.root.parent,
-                        context=context,
-                    ),
-                    end="",
+                initial_document = protocol_22_status_document(
+                    run_dir,
+                    context=context,
                 )
+            with re_progress_session(run_dir, initial_document):
+                controller_type(context).run_until_stopped()
+            if isinstance(manifest, RunManifestV5):
+                final_document = protocol_26_status_document(
+                    run_dir,
+                    context=context,
+                )
+            else:
+                final_document = protocol_22_status_document(
+                    run_dir,
+                    context=context,
+                )
+            print_re_status_card(final_document)
         return
     from harness.re_v2.controller import ReV2Controller
     from harness.re_v2.status import render_v2_status
@@ -14742,9 +14993,75 @@ def _run_re_v2_continue(
     from harness.re_v2.protocol_22.recovery import Protocol22RunContext
     from harness.re_v2.protocol_25.recovery import Protocol25RunContext
     from harness.re_v2.protocol_27.recovery import Protocol27RunContext
+    from harness.re_v2.protocol_28.context import (
+        Protocol28ClosureRunContext,
+        Protocol28RunContext,
+    )
 
     project_root = run_dir.resolve().parent.parent
     context = _re_v2_context(project_root, run_dir)
+    if isinstance(context, Protocol28ClosureRunContext):
+        if any(
+            value is not None
+            for value in (
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
+        ):
+            raise ValueError(
+                "protocol-2.8 closure continuation rejects resource authorization"
+            )
+        from harness.re_v2.protocol_28.closure import (
+            complete_l4_closure_successor,
+        )
+        from harness.re_v2.protocol_28.status import protocol_28_status_document
+        from echelon.re_ui import print_re_status_card
+
+        complete_l4_closure_successor(run_dir)
+        if not _advance_re_v28_open_intent(project_root, run_dir.name):
+            print_re_status_card(protocol_28_status_document(run_dir))
+        return
+    if isinstance(context, Protocol28RunContext):
+        if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
+            raise ValueError(
+                "semantic resource authorization is valid only for protocol 2.5"
+            )
+        from harness.config import load_config
+        from harness.re_v2.protocol_28.lifecycle import continue_protocol_28_run
+        from harness.re_v2.protocol_28.status import protocol_28_status_document
+        from harness.squad_provider import SquadCliProvider
+        from echelon.re_ui import print_re_status_card, re_progress_session
+
+        _installed_re_runtime_or_exit(project_root)
+        config = load_config(project_root, squad_only=True)
+        initial_document = protocol_28_status_document(run_dir)
+        with re_progress_session(run_dir, initial_document):
+            result = continue_protocol_28_run(
+                run_dir,
+                token_limit=token_limit,
+                active_ms_limit=(
+                    time_limit_minutes * 60_000
+                    if time_limit_minutes is not None
+                    else None
+                ),
+                provider_factory=lambda: SquadCliProvider(config),
+            )
+        if result.run_root_id is not None:
+            from harness.re_v2.protocol_28.materialization import (
+                materialize_l4_closure,
+            )
+
+            materialize_l4_closure(context)
+            if not context.inputs.parent_authority_bundle.unresolved_deeper_finding_ids:
+                context.controller.complete_run(
+                    result.run_root_id, closure_required=False
+                )
+            if _advance_re_v28_open_intent(project_root, result.run_id):
+                return
+        print_re_status_card(protocol_28_status_document(run_dir))
+        return
     if isinstance(context, Protocol27RunContext):
         if any(
             value is not None
@@ -14760,16 +15077,19 @@ def _run_re_v2_continue(
             )
         from harness.config import load_config
         from harness.re_v2.protocol_27.lifecycle import run_protocol_27_synthesis
-        from harness.re_v2.protocol_27.status import render_protocol_27_status
+        from harness.re_v2.protocol_27.status import protocol_27_status_document
         from harness.squad_provider import SquadCliProvider
+        from echelon.re_ui import print_re_status_card, re_progress_session
 
         _installed_re_runtime_or_exit(project_root)
         config = load_config(project_root, squad_only=True)
-        run_protocol_27_synthesis(
-            run_dir,
-            lambda: SquadCliProvider(config),
-        )
-        print(render_protocol_27_status(run_dir), end="")
+        initial_document = protocol_27_status_document(run_dir)
+        with re_progress_session(run_dir, initial_document):
+            run_protocol_27_synthesis(
+                run_dir,
+                lambda: SquadCliProvider(config),
+            )
+        print_re_status_card(protocol_27_status_document(run_dir))
         return
     if isinstance(context, Protocol25RunContext):
         _run_re_v25_continue(
@@ -14779,6 +15099,11 @@ def _run_re_v2_continue(
             semantic_token_limit=semantic_token_limit,
             semantic_time_limit_minutes=semantic_time_limit_minutes,
         )
+        events = context.event_store.replay()
+        if events and events[-1].type in {"run_completed", "run_failed"}:
+            _advance_re_v28_open_intent(
+                project_root, context.paths.root.parent.name
+            )
         return
     if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
         raise ValueError("semantic resource authorization is valid only for protocol 2.5")
@@ -15052,6 +15377,59 @@ def _run_re_v25_continue(
         ),
     }
 
+    def budget_decisions(recovered: object) -> tuple[object, object]:
+        active_manifest = load_run_manifest(context.paths.root.parent)
+        manifest = (
+            context.semantic_graph.manifest
+            if isinstance(active_manifest, RunManifestV5)
+            else active_manifest
+        )
+        event_protocol = (
+            protocol_26_events_for("L3")
+            if isinstance(active_manifest, RunManifestV5)
+            else PROTOCOL_25_EVENTS
+        )
+        return (
+            evaluate_budget_v22(
+                manifest.initial_budget_policy,
+                recovered.events,
+                (),
+                _re_v2_now(),
+                event_protocol=event_protocol,
+            ),
+            evaluate_semantic_budget(
+                manifest.semantic_closure_policy,
+                recovered.events,
+                event_protocol=event_protocol,
+            ),
+        )
+
+    def stale_accounting_pause(recovered: object) -> bool:
+        last_control = next(
+            (
+                event
+                for event in reversed(recovered.events)
+                if event.type in {"run_paused", "run_resumed"}
+            ),
+            None,
+        )
+        if (
+            last_control is None
+            or last_control.type != "run_paused"
+            or last_control.payload["reason_code"]
+            != "semantic_budget_authorization_required"
+        ):
+            return False
+        run_budget, semantic_budget = budget_decisions(recovered)
+        return not any(
+            (
+                run_budget.resources_exhausted,
+                run_budget.reservation_breaches,
+                semantic_budget.resources_exhausted,
+                semantic_budget.reservation_breaches,
+            )
+        )
+
     def validate(recovered: object) -> list[tuple[str, str, int, int | None]]:
         state = recovered.controller_state
         changes = [
@@ -15072,33 +15450,13 @@ def _run_re_v25_continue(
                 )
             return []
         if not changes:
+            if stale_accounting_pause(recovered):
+                return []
             raise ValueError(
                 "paused protocol-2.5 continuation requires a strictly higher "
                 "run-wide or semantic ceiling"
             )
-        active_manifest = load_run_manifest(context.paths.root.parent)
-        manifest = (
-            context.semantic_graph.manifest
-            if isinstance(active_manifest, RunManifestV5)
-            else active_manifest
-        )
-        event_protocol = (
-            protocol_26_events_for("L3")
-            if isinstance(active_manifest, RunManifestV5)
-            else PROTOCOL_25_EVENTS
-        )
-        run_budget = evaluate_budget_v22(
-            manifest.initial_budget_policy,
-            recovered.events,
-            (),
-            _re_v2_now(),
-            event_protocol=event_protocol,
-        )
-        semantic_budget = evaluate_semantic_budget(
-            manifest.semantic_closure_policy,
-            recovered.events,
-            event_protocol=event_protocol,
-        )
+        run_budget, semantic_budget = budget_decisions(recovered)
         validated: list[tuple[str, str, int, int | None]] = []
         for pool, dimension, value in changes:
             if pool == "run":
@@ -15135,6 +15493,30 @@ def _run_re_v25_continue(
         )
         return
     if not changes:
+        if not recovered.controller_state.paused_resource:
+            _run_re_v2_live(context)
+            return
+        with protocol_22_run_lock(context.paths):
+            recovered = recover_protocol_25_run(context)
+            changes = validate(recovered)
+            if changes:
+                raise ValueError(
+                    "stale protocol-2.5 accounting pause unexpectedly requires "
+                    "resource authorization"
+                )
+            context.event_store.append(
+                "operator_pause_requested",
+                {
+                    "reason": "CLI accounting-pause revalidation requested",
+                    "requested_by": "echelon-cli",
+                },
+                occurred_at=_re_v2_now(),
+            )
+            context.event_store.append(
+                "run_resumed",
+                {"reason": "CLI continuation after accounting-pause revalidation"},
+                occurred_at=_re_v2_now(),
+            )
         _run_re_v2_live(context)
         return
     with protocol_22_run_lock(context.paths):
@@ -15269,6 +15651,47 @@ class _ReDeepenOptions:
     semantic_token_limit: int | None
     semantic_active_ms_limit: int | None
     new_audit_epoch: bool
+    shadow: bool
+
+
+def _advance_re_v28_open_intent(workspace_root: Path, child_run_id: str) -> bool:
+    """Advance the unique durable L4 intent linked to a continued child."""
+    from harness.re_v2.protocol_28.orchestration import (
+        DeepenOrchestrationController,
+        find_open_orchestrations_for_child,
+        load_orchestration,
+    )
+
+    matches = find_open_orchestrations_for_child(
+        workspace_root,
+        child_run_id,
+        require_unique=True,
+    )
+    if not matches:
+        return False
+    intent = load_orchestration(matches[0])
+    projection = DeepenOrchestrationController(
+        intent,
+        clock=_re_v2_now,
+    ).rebuild_projection()
+    selection = intent.request.selection
+    _run_re_v28_deepen(
+        workspace_root,
+        _ReDeepenOptions(
+            target_layer="L4",
+            all_sources=selection.all_sources,
+            source_ids=selection.source_ids,
+            domain_ids=selection.domain_keys,
+            from_run=intent.request.input_run_id,
+            token_limit=projection.token_limit,
+            active_ms_limit=projection.active_ms_limit,
+            semantic_token_limit=None,
+            semantic_active_ms_limit=None,
+            new_audit_epoch=False,
+            shadow=False,
+        ),
+    )
+    return True
 
 
 def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
@@ -15283,6 +15706,7 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         "semantic_token_limit": None,
         "semantic_active_ms_limit": None,
         "new_audit_epoch": False,
+        "shadow": False,
     }
     scalar = {
         "--to": "target_layer",
@@ -15306,6 +15730,12 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
             if values["new_audit_epoch"]:
                 raise ValueError("--new-audit-epoch may be supplied only once")
             values["new_audit_epoch"] = True
+            index += 1
+            continue
+        if option == "--shadow":
+            if values["shadow"]:
+                raise ValueError("--shadow may be supplied only once")
+            values["shadow"] = True
             index += 1
             continue
         name = option
@@ -15350,8 +15780,8 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         else:
             values[field] = value
     target = values["target_layer"]
-    if target not in {"L2", "L3"}:
-        raise ValueError("--to requires one of L2 or L3; L4 is not registered")
+    if target not in {"L2", "L3", "L4"}:
+        raise ValueError("--to requires one of L2, L3, or L4")
     sources = tuple(values["source_ids"])
     domains = tuple(values["domain_ids"])
     all_sources = bool(values["all_sources"])
@@ -15367,6 +15797,12 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
         or bool(values["new_audit_epoch"])
     ):
         raise ValueError("semantic limits and --new-audit-epoch are valid only for L3")
+    if bool(values["shadow"]) and target != "L4":
+        raise ValueError("--shadow is valid only for L4")
+    if bool(values["shadow"]) and (
+        values["token_limit"] is not None or values["active_ms_limit"] is not None
+    ):
+        raise ValueError("L4 --shadow cannot be combined with resource authorization")
     return _ReDeepenOptions(
         target_layer=target,
         all_sources=all_sources,
@@ -15390,6 +15826,7 @@ def _parse_re_deepen_options(args: list[str]) -> _ReDeepenOptions:
             else None
         ),
         new_audit_epoch=bool(values["new_audit_epoch"]),
+        shadow=bool(values["shadow"]),
     )
 
 
@@ -15551,13 +15988,19 @@ def _prepare_re_v24_creation(
         artifacts_module,
     )
     policy = build_deepening_v1_policy_catalog()
-    executors = upgrade_source_root_executor_catalog_v2(
-        build_deepening_executor_catalog(
-            parent.inputs.executor_contract,
-            deepener_hash,
-            implementation_digest,
+    executors = _bound_re_v2_executor_active_ms(
+        upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                parent.inputs.executor_contract,
+                deepener_hash,
+                implementation_digest,
+            ),
+            source_root_v2_digest,
         ),
-        source_root_v2_digest,
+        preserve_contract_hashes={
+            entry.executor_contract_hash
+            for entry in parent.inputs.executor_contract.entries
+        },
     )
     compact = parent.inputs.executor_contract.entry_for("compact-baseline")
     (
@@ -15902,10 +16345,13 @@ def _run_or_report_re_v25_child(
     run_dir: Path,
     *,
     execute: bool,
+    report_existing: bool = True,
 ) -> None:
     """Execute a new child or report an exact immutable child without execution."""
     if execute:
         _run_re_v2_live(_re_v2_context(workspace, run_dir))
+        return
+    if not report_existing:
         return
     from harness.re_v2.status import render_v2_status
 
@@ -15915,6 +16361,9 @@ def _run_or_report_re_v25_child(
 def _run_re_v25_deepen(
     workspace_root: Path,
     options: _ReDeepenOptions,
+    *,
+    report_existing: bool = True,
+    checkpoint_progress: Callable[[str, int, int], None] | None = None,
 ) -> Path:
     """Create or reuse an authenticated protocol-2.5 semantic child."""
     from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
@@ -15962,6 +16411,7 @@ def _run_re_v25_deepen(
                     if options.active_ms_limit is not None
                     else None
                 ),
+                checkpoint_progress=checkpoint_progress,
             )
             run_dir = workspace / "runs" / prepared.manifest.run_id
             create_protocol_26_run_store(
@@ -15981,8 +16431,580 @@ def _run_re_v25_deepen(
             if isinstance(existing_manifest, RunManifestV5):
                 initialize_protocol_26_run_store(run_dir)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
+    _run_or_report_re_v25_child(
+        workspace,
+        run_dir,
+        execute=created,
+        report_existing=report_existing,
+    )
     return run_dir
+
+
+def _re_v28_analysis_parent_path(workspace: Path, input_run: Path) -> Path:
+    """Traverse synthesis envelopes to the immutable analysis run."""
+    from harness.re_v2.protocol_27.model import RunManifestV6
+    from harness.re_v2.run_store import load_run_manifest
+
+    current = input_run.resolve()
+    seen: set[str] = set()
+    while True:
+        manifest = load_run_manifest(current)
+        if manifest.run_id in seen:
+            raise ValueError("L4 input lineage contains a cycle")
+        seen.add(manifest.run_id)
+        if not isinstance(manifest, RunManifestV6):
+            return current
+        current = workspace / "runs" / manifest.parent_run_id
+        if current.is_symlink() or not current.is_dir():
+            raise ValueError("synthesis analysis parent is unavailable")
+
+
+def _re_v28_orchestration_input_path(workspace: Path, input_run: Path) -> Path:
+    """Resolve a completed L4 anchor to its authenticated orchestration input."""
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_28.model import (
+        ExhaustiveRunManifestV7,
+        L4ClosureRunManifestV7,
+    )
+    from harness.re_v2.protocol_28.orchestration import (
+        load_orchestration,
+        recover_orchestration,
+    )
+    from harness.re_v2.run_store import load_run_manifest
+
+    manifest = load_run_manifest(input_run)
+    if not isinstance(
+        manifest, (ExhaustiveRunManifestV7, L4ClosureRunManifestV7)
+    ):
+        return input_run
+    namespace = workspace.resolve() / "runs" / ".re-v2-orchestrations"
+    if not namespace.is_dir() or namespace.is_symlink():
+        raise ValueError(
+            "L4 input has no authenticated orchestration origin; "
+            "use --from-run with its lower analysis input"
+        )
+    manifest_hash = content_digest(canonical_json_bytes(manifest.to_json_dict()))
+    matches: list[tuple[object, object]] = []
+    for path in sorted(namespace.iterdir(), key=lambda item: item.name):
+        if path.is_symlink() or not path.is_dir():
+            continue
+        intent = load_orchestration(path)
+        projection = recover_orchestration(path)
+        expected_hash = (
+            projection.l4_manifest_hash
+            if manifest.run_id == projection.l4_run_id
+            else projection.closure_manifest_hash
+            if manifest.run_id == projection.closure_run_id
+            else None
+        )
+        if expected_hash is None:
+            continue
+        if expected_hash != manifest_hash:
+            raise ValueError("L4 orchestration child manifest binding is invalid")
+        matches.append((intent, projection))
+    if len(matches) != 1:
+        raise ValueError(
+            "L4 input has no unique authenticated orchestration origin; "
+            "use --from-run with its lower analysis input"
+        )
+    intent, _projection = matches[0]
+    origin = workspace.resolve() / "runs" / intent.request.input_run_id
+    if origin.is_symlink() or not origin.is_dir():
+        raise ValueError("L4 orchestration analysis input is unsafe or missing")
+    origin_manifest = load_run_manifest(origin)
+    origin_hash = content_digest(
+        canonical_json_bytes(origin_manifest.to_json_dict())
+    )
+    if origin_hash != intent.request.input_manifest_hash:
+        raise ValueError("L4 orchestration analysis input binding is invalid")
+    return origin
+
+
+def _re_v28_event_boundary(context: object) -> object:
+    store = getattr(context, "events", None)
+    if store is None:
+        store = getattr(context, "event_store", None)
+    if store is None or not callable(getattr(store, "replay", None)):
+        raise ValueError("L4 input run has no authenticated event store")
+    events = store.replay()
+    if not events or getattr(events[-1], "type", None) not in {
+        "run_completed",
+        "run_failed",
+        "run_finalized_partial",
+    }:
+        raise ValueError("L4 input run has no terminal boundary")
+    return events[-1]
+
+
+def _re_v28_l3_options(
+    options: _ReDeepenOptions,
+    parent_run: Path,
+) -> _ReDeepenOptions:
+    """Map an L4 request to the fixed-default automatic L3 prerequisite."""
+    from dataclasses import replace
+
+    return replace(
+        options,
+        target_layer="L3",
+        from_run=parent_run.name,
+        token_limit=None,
+        active_ms_limit=None,
+        semantic_token_limit=None,
+        semantic_active_ms_limit=None,
+        new_audit_epoch=False,
+        shadow=False,
+    )
+
+
+def _re_v28_semantic_authority(
+    workspace: Path,
+    analysis_run: Path,
+    options: _ReDeepenOptions,
+) -> tuple[object, object, bytes, object]:
+    """Return partition, semantic manifest, executor bytes, and optional prep."""
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.protocol_25.recovery import Protocol25RunContext
+
+    context = _re_v2_context(workspace, analysis_run)
+    if isinstance(context, Protocol25RunContext):
+        manifest = context.semantic_graph.manifest
+        return (
+            context.semantic_inputs.workspace_partition,
+            manifest,
+            canonical_json_bytes(
+                context.semantic_inputs.executor_contract.to_json_dict()
+            ),
+            None,
+        )
+
+    from harness.re_v2.protocol_24.adoption import validate_parent_for_deepening
+
+    parent = validate_parent_for_deepening(analysis_run, workspace)
+    l3_options = _re_v28_l3_options(options, analysis_run)
+    prepared = _prepare_re_v25_creation(workspace, parent, l3_options)
+    return (
+        prepared.inputs.workspace_partition,
+        prepared.manifest,
+        canonical_json_bytes(prepared.inputs.executor_contract.to_json_dict()),
+        prepared,
+    )
+
+
+def _re_v28_preparation_options(
+    workspace: Path,
+    resolved: object,
+    options: _ReDeepenOptions,
+    *,
+    producer_agent_bytes: bytes,
+    verifier_agent_bytes: bytes,
+) -> object:
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.protocol_25.recovery import Protocol25RunContext
+    from harness.re_v2.protocol_28.orchestration import ResolvedL4ParentV1
+    from harness.re_v2.protocol_28.preparation import Protocol28PreparationOptions
+    from harness.re_v2.run_store import load_run_manifest
+
+    if not isinstance(resolved, ResolvedL4ParentV1) or resolved.selected_l3 is None:
+        raise ValueError("L4 preparation requires eligible L3 authority")
+    context = _re_v2_context(workspace, resolved.analysis_run_dir)
+    if not isinstance(context, Protocol25RunContext):
+        raise ValueError("L4 analysis parent has no protocol-2.5 authority")
+    semantic_manifest = context.semantic_graph.manifest
+    lineage = semantic_manifest.parent_lineage
+    active_manifest = load_run_manifest(resolved.analysis_run_dir)
+    return Protocol28PreparationOptions(
+        run_id=_new_re_v2_run_id(workspace),
+        created_at=_re_v2_now(),
+        snapshot=_load_re_v2_snapshot(workspace, active_manifest),
+        workspace_partition=context.semantic_inputs.workspace_partition,
+        inherited_executor_contract_bytes=canonical_json_bytes(
+            context.semantic_inputs.executor_contract.to_json_dict()
+        ),
+        lineage_root_run_id=lineage.lineage_root_run_id,
+        lineage_root_manifest_hash=lineage.lineage_root_manifest_hash,
+        authority_objects=resolved.authority_objects,
+        token_limit=options.token_limit,
+        active_ms_limit=options.active_ms_limit,
+        producer_agent_bytes=producer_agent_bytes,
+        verifier_agent_bytes=verifier_agent_bytes,
+    )
+
+
+def _re_v28_checkpoint_adoption(
+    workspace: Path,
+    inputs: object,
+) -> tuple[object | None, frozenset[str], int]:
+    """Select authenticated immediately-realizable V2 checkpoints read-only."""
+    from harness.re_v2.ledger import ObjectStore
+    from harness.re_v2.protocol_28.checkpoint_cache import (
+        load_checkpoint_cache_v2,
+        select_checkpoints_v2,
+    )
+    from harness.re_v2.protocol_28.checkpoints import (
+        L4CheckpointExpectationV1,
+        Protocol28CheckpointError,
+    )
+    from harness.re_v2.protocol_28.lifecycle import Protocol28CheckpointAdoptionV1
+    from harness.re_v2.protocol_28.planning import realize_slice
+    from harness.re_v2.run_store import ReV2Paths
+
+    try:
+        index, manifests, _quarantine = load_checkpoint_cache_v2(workspace)
+    except Protocol28CheckpointError:
+        return None, frozenset(), 0
+    plan = getattr(inputs, "exhaustive_plan")
+    manifest = getattr(inputs, "manifest")
+    policy = getattr(inputs, "exhaustive_policy")
+    entries = tuple(
+        entry for target in plan.target_plans for entry in target.entries
+    )
+    immediate = tuple(
+        entry for entry in entries if not entry.planned_dependency_root_ids
+    )
+    deferred = tuple(entry for entry in entries if entry.planned_dependency_root_ids)
+    expectations = tuple(
+        L4CheckpointExpectationV1(
+            1,
+            realize_slice(entry, {}),
+            entry,
+            policy.identity,
+            manifest.inherited_artifact_policy_catalog_id,
+        )
+        for entry in immediate
+    )
+    immediate_output_ids = {
+        expectation.output_artifact_key_id for expectation in expectations
+    }
+    authority: dict[str, dict[str, bytes]] = {}
+    for checkpoint in manifests.values():
+        object_root = ReV2Paths.for_run(
+            workspace / "runs" / checkpoint.origin_run_id
+        ).objects
+        if not object_root.is_dir() or object_root.is_symlink():
+            continue
+        store = ObjectStore(object_root)
+        try:
+            authority[checkpoint.identity] = {
+                object_id: store.read_blob(object_id)
+                for object_id in checkpoint.immutable_object_hashes
+            }
+        except Exception:
+            continue
+    selection = select_checkpoints_v2(
+        expectations,
+        tuple(
+            checkpoint
+            for checkpoint in manifests.values()
+            if checkpoint.slice_spec.output_artifact_key_id in immediate_output_ids
+        ),
+        authority,
+    )
+    deferred_ids = {entry.identity for entry in deferred}
+    conditional = frozenset(
+        {
+            checkpoint.slice_spec.output_artifact_key_id
+            for checkpoint in manifests.values()
+            if checkpoint.plan_entry.identity in deferred_ids
+            and checkpoint.exhaustive_policy_id == policy.identity
+            and checkpoint.artifact_policy_catalog_id
+            == manifest.inherited_artifact_policy_catalog_id
+            and checkpoint.identity in authority
+        }
+    )
+    adoption = Protocol28CheckpointAdoptionV1(selection, manifests, authority)
+    return adoption, conditional, len(index.entries)
+
+
+def _render_re_v28_shadow(
+    inputs: object,
+    *,
+    checkpoint_adoption: object | None,
+    conditional_checkpoint_ids: frozenset[str],
+    checkpoint_candidates: int,
+) -> str:
+    plan = getattr(inputs, "exhaustive_plan")
+    entries = tuple(
+        entry for target in plan.target_plans for entry in target.entries
+    )
+    immediately_realizable = sum(
+        not entry.planned_dependency_root_ids for entry in entries
+    )
+    deferred = len(entries) - immediately_realizable
+    selected_checkpoints = (
+        len(checkpoint_adoption.selection.selected)
+        if checkpoint_adoption is not None
+        else 0
+    )
+    selected_ids = (
+        {
+            item.output_artifact_key_id
+            for item in checkpoint_adoption.selection.selected
+        }
+        if checkpoint_adoption is not None
+        else set()
+    )
+    from harness.re_v2.canonical import content_digest
+
+    output_id = lambda entry: content_digest(  # noqa: E731
+        {"plan_entry_id": entry.identity, "kind": "l4-evidence-slice"}
+    )
+    minimum_entries = tuple(
+        entry
+        for entry in entries
+        if output_id(entry) not in selected_ids | set(conditional_checkpoint_ids)
+    )
+    maximum_entries = tuple(
+        entry for entry in entries if output_id(entry) not in selected_ids
+    )
+    maximum_dispatches = len(maximum_entries) * 9
+    minimum_dispatches = len(minimum_entries) * 2
+    minimum_tokens = sum(entry.conservative_tokens * 2 for entry in minimum_entries)
+    maximum_tokens = sum(entry.conservative_tokens * 9 for entry in maximum_entries)
+    return (
+        "RE V2 — PROTOCOL 2.8 SHADOW\n"
+        f"targets: {len(plan.target_plans)}\n"
+        f"entries: {len(entries)}\n"
+        f"immediately realizable: {immediately_realizable}\n"
+        f"deferred source-composition entries: {deferred}\n"
+        f"checkpoint reuse: realized={selected_checkpoints} "
+        f"conditional={len(conditional_checkpoint_ids)} "
+        f"candidates={checkpoint_candidates}\n"
+        f"dispatch interval: {minimum_dispatches}..{maximum_dispatches}\n"
+        f"conservative token interval: {minimum_tokens}..{maximum_tokens}\n"
+        "mutation: none\n"
+    )
+
+
+def _run_re_v28_deepen(
+    workspace_root: Path,
+    options: _ReDeepenOptions,
+) -> object:
+    """Create/reuse and advance one durable L3 -> L4 -> closure intent."""
+    from harness.config import load_config
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.protocol_28.closure import prepare_l4_closure_inputs
+    from harness.re_v2.protocol_28.executors import build_l4_executor_catalog
+    from harness.re_v2.protocol_28.orchestration import (
+        DeepenOrchestrationRequestV1,
+        Protocol28OrchestrationOptions,
+        execute_deepen_orchestration,
+        resolve_l4_parent,
+    )
+    from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
+    from harness.re_v2.protocol_28.preparation import (
+        load_protocol_28_role_bytes,
+        prepare_protocol_28_request,
+    )
+    from harness.re_v2.run_store import load_run_manifest
+    from harness.squad_provider import SquadCliProvider
+
+    if options.target_layer != "L4":
+        raise ValueError("protocol-2.8 deepening requires --to L4")
+    scope_label = "all-scope" if options.all_sources else "selected-scope"
+    print(
+        f"[re] preparing L4 {scope_label} request; provider dispatch has not started",
+        file=sys.stderr,
+        flush=True,
+    )
+    workspace = workspace_root.resolve()
+    selected_input = _resolve_re_v24_parent_path(workspace, options.from_run)
+    if selected_input.is_symlink() or not selected_input.is_dir():
+        raise ValueError("L4 input run is unsafe or missing")
+    input_run = _re_v28_orchestration_input_path(workspace, selected_input)
+    analysis_run = _re_v28_analysis_parent_path(workspace, input_run)
+    partition, semantic_manifest, inherited_bytes, _prepared_l3 = (
+        _re_v28_semantic_authority(workspace, analysis_run, options)
+    )
+    selection = _resolve_re_v24_selection(partition, options)
+    resolved = resolve_l4_parent(workspace, input_run, selection)
+
+    if options.shadow and resolved.prerequisite_required:
+        print(
+            "RE V2 — PROTOCOL 2.8 SHADOW\n"
+            "status: L3 prerequisite required\n"
+            f"analysis parent: {analysis_run.name}\n"
+            f"L3 prerequisite request: {semantic_manifest.semantic_request_id}\n"
+            "mutation: none\n"
+        )
+        return None
+
+    producer_agent, verifier_agent = load_protocol_28_role_bytes(workspace)
+    executors = build_l4_executor_catalog(
+        inherited_executor_contract_hash=content_digest(inherited_bytes),
+        producer_agent_contract_hash=content_digest(producer_agent),
+        verifier_agent_contract_hash=content_digest(verifier_agent),
+    )
+    policy = build_initial_exhaustive_policy(
+        producer_contract_hash=content_digest(producer_agent),
+        verifier_contract_hash=content_digest(verifier_agent),
+    )
+    input_manifest = load_run_manifest(input_run)
+    input_manifest_bytes = canonical_json_bytes(input_manifest.to_json_dict())
+    terminal = _re_v28_event_boundary(_re_v2_context(workspace, input_run))
+    request = DeepenOrchestrationRequestV1(
+        1,
+        input_manifest.run_id,
+        content_digest(input_manifest_bytes),
+        terminal.event_hash,
+        input_manifest.source_snapshot_id,
+        input_manifest.partition_manifest_id,
+        selection,
+        policy.identity,
+        executors.identity,
+        semantic_manifest.semantic_request_id,
+    )
+
+    def create_l4(parent, intent):  # type: ignore[no-untyped-def]
+        prepared = _re_v28_preparation_options(
+            workspace,
+            parent,
+            options,
+            producer_agent_bytes=producer_agent,
+            verifier_agent_bytes=verifier_agent,
+        )
+        assert parent.selected_l3 is not None
+        return prepare_protocol_28_request(
+            workspace, intent.request, parent.selected_l3, prepared
+        )
+
+    if options.shadow:
+        if resolved.selected_l3 is None:
+            raise ValueError("L4 shadow cannot resolve selected L3 authority")
+        prepared = _re_v28_preparation_options(
+            workspace,
+            resolved,
+            options,
+            producer_agent_bytes=producer_agent,
+            verifier_agent_bytes=verifier_agent,
+        )
+        preview = prepare_protocol_28_request(
+            workspace,
+            request,
+            resolved.selected_l3,
+            prepared,
+        )
+        adoption, conditional_ids, candidates = _re_v28_checkpoint_adoption(
+            workspace, preview
+        )
+        print(
+            _render_re_v28_shadow(
+                preview,
+                checkpoint_adoption=adoption,
+                conditional_checkpoint_ids=conditional_ids,
+                checkpoint_candidates=candidates,
+            ),
+            end="",
+        )
+        return preview
+
+    def create_l3(root, parent_run, requested_selection):  # type: ignore[no-untyped-def]
+        del requested_selection
+        print(
+            "[re] preparing automatic L3 prerequisite and reusable checkpoints",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        def report_checkpoint_progress(
+            stage: str,
+            completed: int,
+            total: int,
+        ) -> None:
+            if stage != "origin-reconstruction":
+                return
+            interval = max(1, total // 10)
+            if completed not in {0, total} and completed % interval:
+                return
+            print(
+                "[re] checkpoint reconstruction: "
+                f"{completed}/{total} prior RE runs inspected",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        return _run_re_v25_deepen(
+            root,
+            _re_v28_l3_options(options, Path(parent_run)),
+            report_existing=False,
+            checkpoint_progress=report_checkpoint_progress,
+        )
+
+    def create_closure(parent, l4_run):  # type: ignore[no-untyped-def]
+        if parent.selected_l3 is None:
+            raise ValueError("closure preparation lost selected L3 authority")
+        return prepare_l4_closure_inputs(
+            parent.selected_l3,
+            l4_run,
+            run_id=_new_re_v2_run_id(workspace),
+            created_at=_re_v2_now(),
+        )
+
+    @contextmanager
+    def show_l4_progress(l4_run: Path):
+        from echelon.re_ui import re_progress_session
+        from harness.re_v2.protocol_28.status import protocol_28_status_document
+
+        with re_progress_session(l4_run, protocol_28_status_document(l4_run)):
+            yield
+
+    _installed_re_runtime_or_exit(workspace)
+    config = load_config(workspace, squad_only=True)
+    result = execute_deepen_orchestration(
+        workspace,
+        Protocol28OrchestrationOptions(
+            from_run=input_run,
+            selection=selection,
+            request=request,
+            l4_inputs_factory=create_l4,
+            l3_prerequisite_factory=create_l3,
+            closure_inputs_factory=create_closure,
+            checkpoint_adoption_factory=lambda inputs: (
+                _re_v28_checkpoint_adoption(workspace, inputs)[0]
+            ),
+            l4_progress_factory=show_l4_progress,
+            token_limit=options.token_limit,
+            active_ms_limit=options.active_ms_limit,
+            clock=_re_v2_now,
+        ),
+        lambda: SquadCliProvider(config),
+    )
+    from harness.re_v2.protocol_28.orchestration import find_exact_orchestration
+    from echelon.re_ui import print_re_status_card
+    from harness.re_v2.protocol_28.status import (
+        protocol_28_orchestration_status_document,
+        protocol_28_status_document,
+    )
+
+    intent_path = find_exact_orchestration(workspace, result.request_id)
+    if intent_path is None:
+        raise ValueError("protocol-2.8 orchestration authority disappeared")
+    final_run_id = result.closure_run_id or result.l4_run_id
+    if final_run_id is None:
+        orchestration_document = protocol_28_orchestration_status_document(
+            intent_path
+        )
+        state = str(orchestration_document["state"])
+        print_re_status_card(
+            {
+                **orchestration_document,
+                "engine_protocol_version": "2.8",
+                "run_id": str(orchestration_document["request_id"]),
+                "status": (
+                    "complete"
+                    if state == "complete"
+                    else "blocked"
+                    if state == "blocked"
+                    else "in_progress"
+                ),
+            }
+        )
+    else:
+        print_re_status_card(
+            protocol_28_status_document(
+                workspace / "runs" / final_run_id, intent_path
+            )
+        )
+    return result
 
 
 def _run_re_v25_next_epoch(
@@ -15999,6 +17021,10 @@ def _run_re_v25_next_epoch(
         find_exact_protocol_25_child,
         initialize_protocol_25_successor,
         prepare_next_audit_epoch,
+    )
+    from harness.re_v2.protocol_25.policies import (
+        build_semantic_v1_policy_catalog,
+        with_current_semantic_executor_capacities,
     )
 
     context = _re_v2_context(workspace, parent_run)
@@ -16038,6 +17064,10 @@ def _run_re_v25_next_epoch(
             options.semantic_active_ms_limit
             if options.semantic_active_ms_limit is not None
             else parent_manifest.semantic_closure_policy.active_ms_limit
+        ),
+        successor_artifact_policy=build_semantic_v1_policy_catalog(),
+        successor_executor_contract=with_current_semantic_executor_capacities(
+            exported.inputs.executor_contract
         ),
     )
     created = False
@@ -16081,6 +17111,10 @@ def _run_re_v25_resume(
         initialize_protocol_25_successor,
         prepare_guided_successor,
     )
+    from harness.re_v2.protocol_25.policies import (
+        build_semantic_v1_policy_catalog,
+        with_current_semantic_executor_capacities,
+    )
 
     workspace = workspace_root.resolve()
     parent_dir = parent_run.resolve()
@@ -16107,6 +17141,10 @@ def _run_re_v25_resume(
         ),
         semantic_token_limit=parent_manifest.semantic_closure_policy.token_limit,
         semantic_active_ms_limit=parent_manifest.semantic_closure_policy.active_ms_limit,
+        successor_artifact_policy=build_semantic_v1_policy_catalog(),
+        successor_executor_contract=with_current_semantic_executor_capacities(
+            exported.inputs.executor_contract
+        ),
     )
     created = False
     with _re_v24_creation_lock(workspace):
@@ -16203,13 +17241,19 @@ def _prepare_re_v25_creation(
         l2_source_root_v2_module,
         l2_artifacts_module,
     )
-    l2_executors = upgrade_source_root_executor_catalog_v2(
-        build_deepening_executor_catalog(
-            parent.inputs.executor_contract,
-            content_digest(role_bytes[DEEPENER_AGENT_ID]),
-            l2_implementation,
+    l2_executors = _bound_re_v2_executor_active_ms(
+        upgrade_source_root_executor_catalog_v2(
+            build_deepening_executor_catalog(
+                parent.inputs.executor_contract,
+                content_digest(role_bytes[DEEPENER_AGENT_ID]),
+                l2_implementation,
+            ),
+            l2_source_root_v2_implementation,
         ),
-        l2_source_root_v2_implementation,
+        preserve_contract_hashes={
+            entry.executor_contract_hash
+            for entry in parent.inputs.executor_contract.entries
+        },
     )
     l3_implementation = _re_v22_implementation_digest(
         l3_artifacts_module,
@@ -16246,10 +17290,22 @@ def _prepare_re_v25_creation(
         )
         for family in SEMANTIC_EXECUTOR_FAMILIES
     )
-    executors = build_semantic_executor_catalog(
-        l2_executors,
-        authorities,
-        l3_implementation,
+    executors = _bound_re_v2_executor_active_ms(
+        build_semantic_executor_catalog(
+            l2_executors,
+            authorities,
+            l3_implementation,
+        ),
+        preserve_contract_hashes={
+            entry.executor_contract_hash for entry in l2_executors.entries
+        },
+    )
+    (
+        inherited_executors,
+        inherited_calculators,
+        inherited_normalizers,
+    ) = _re_v24_inherited_in_process_authorities(
+        parent.inputs.executor_contract
     )
     baseline = parent.inputs.executor_contract.entry_for("compact-baseline")
     renderer = baseline.request_renderer
@@ -16266,8 +17322,17 @@ def _prepare_re_v25_creation(
         registry,
         executor_implementations={
             **dict(registry.executor_implementations),
+            **inherited_executors,
             DEEPENING_IN_PROCESS_ADAPTER_ID: l2_implementation,
             SOURCE_ROOT_V2_ADAPTER_ID: l2_source_root_v2_implementation,
+        },
+        calculator_implementations={
+            **dict(registry.calculator_implementations),
+            **inherited_calculators,
+        },
+        normalizer_implementations={
+            **dict(registry.normalizer_implementations),
+            **inherited_normalizers,
         },
         verifier_implementations={
             **dict(registry.verifier_implementations),
@@ -16324,6 +17389,7 @@ def _prepare_re_v25_creation(
         semantic_active_ms_limit=(
             options.semantic_active_ms_limit or 30 * 60_000
         ),
+        engine_protocol_version="2.5.1",
     )
 
 
@@ -16589,10 +17655,14 @@ def _cmd_re_deepen(args: list[str]) -> None:
         options = _parse_re_deepen_options(args)
         if options.target_layer == "L2":
             _run_re_v24_deepen(Path.cwd(), options)
-        else:
+        elif options.target_layer == "L3":
             _run_re_v25_deepen(Path.cwd(), options)
+        else:
+            _run_re_v28_deepen(Path.cwd(), options)
     except (RuntimeError, ValueError) as exc:
-        print(f"echelon re deepen: {exc}", file=sys.stderr)
+        from echelon.re_ui import print_re_error
+
+        print_re_error("echelon re deepen", exc)
         raise SystemExit(2) from exc
 
 
@@ -16620,14 +17690,6 @@ def _cmd_re_continue(args: list[str]) -> None:
             else resolve_current_re_run(project_root)
         )
         if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
-            if positional:
-                from harness.re_v2.protocol_27.model import RunManifestV6
-                from harness.re_v2.run_store import load_run_manifest
-
-                if not isinstance(load_run_manifest(run_dir), RunManifestV6):
-                    raise ValueError(
-                        "an explicit RE run ID is supported only for protocol 2.7"
-                    )
             if re_max_inner is not None:
                 raise ValueError(
                     "v2 has independent attempt budgets; this option is valid only for v1"
@@ -16649,7 +17711,7 @@ def _cmd_re_continue(args: list[str]) -> None:
             return
         if positional:
             raise ValueError(
-                "an explicit RE run ID is supported only for protocol 2.7"
+                "an explicit RE run ID is supported only for RE v2 runs"
             )
         if semantic_token_limit is not None or semantic_time_limit_minutes is not None:
             raise ValueError(
@@ -16666,7 +17728,9 @@ def _cmd_re_continue(args: list[str]) -> None:
             **overrides,
         )
     except (ReLifecycleError, ValueError) as exc:
-        print(f"echelon re continue: {exc}", file=sys.stderr)
+        from echelon.re_ui import print_re_error
+
+        print_re_error("echelon re continue", exc)
         raise SystemExit(2) from exc
     _print_re_lifecycle_result(result)
 
@@ -16691,12 +17755,20 @@ def _cmd_re_resume(args: list[str]) -> None:
                     "v2 has independent attempt budgets; this option is valid only for v1"
                 )
             from harness.re_v2.protocol_25.model import RunManifestV4
-            from harness.re_v2.run_store import load_run_manifest
+            from harness.re_v2.protocol_26.inputs import load_protocol_26_inputs
+            from harness.re_v2.protocol_26.model import RunManifestV5
+            from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
             manifest = load_run_manifest(run_dir)
-            if not isinstance(manifest, RunManifestV4):
+            semantic_manifest = manifest
+            if isinstance(manifest, RunManifestV5) and manifest.target_layer == "L3":
+                semantic_manifest = load_protocol_26_inputs(
+                    ReV2Paths.for_run(run_dir),
+                    manifest,
+                ).layer_execution_contract.layer_manifest
+            if not isinstance(semantic_manifest, RunManifestV4):
                 raise ValueError(
-                    "immutable guidance resume is valid only for protocol 2.5"
+                    "immutable guidance resume requires an L3 RE run"
                 )
             _run_re_v25_resume(
                 project_root,

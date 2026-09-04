@@ -162,6 +162,7 @@ class ReGoal(str, Enum):
 class ReDeepeningLayer(str, Enum):
     L2 = "L2"
     L3 = "L3"
+    L4 = "L4"
 
 
 re_memory_app = typer.Typer(
@@ -978,7 +979,7 @@ def re_deepen(
         ...,
         "--to",
         case_sensitive=True,
-        help="Registered deeper layer to generate: L2 or L3.",
+        help="Registered deeper layer to generate: L2, L3, or L4.",
     ),
     all_sources: bool = typer.Option(
         False,
@@ -1029,8 +1030,18 @@ def re_deepen(
         "--new-audit-epoch",
         help="For L3, explicitly create the next audit epoch from an eligible parent.",
     ),
+    shadow: bool = typer.Option(
+        False,
+        "--shadow",
+        help="For L4, validate and preview exact work without mutation or dispatch.",
+    ),
 ) -> None:
-    """Create or reuse a self-contained selected-scope RE v2 child run."""
+    """Deepen a completed RE v2 run to L2, L3, or L4.
+
+    L4 automatically creates or reuses its required L3 prerequisite. If that
+    prerequisite pauses, run the copy-paste continuation command shown in the
+    status output, then rerun the same deepen command after L3 completes.
+    """
     if all_sources and (source or domain):
         raise typer.BadParameter(
             "--all cannot be combined with --source or --domain",
@@ -1055,6 +1066,13 @@ def re_deepen(
             "semantic limits and --new-audit-epoch are valid only for L3",
             param_hint="--to",
         )
+    if shadow and target_layer is not ReDeepeningLayer.L4:
+        raise typer.BadParameter("--shadow is valid only for L4", param_hint="--shadow")
+    if shadow and (token_limit is not None or active_ms_limit is not None):
+        raise typer.BadParameter(
+            "L4 --shadow cannot be combined with resource authorization",
+            param_hint="--shadow",
+        )
     args = ["--to", target_layer.value]
     if all_sources:
         args.append("--all")
@@ -1069,6 +1087,8 @@ def re_deepen(
     _extend_option(args, "--semantic-active-ms-limit", semantic_active_ms_limit)
     if new_audit_epoch:
         args.append("--new-audit-epoch")
+    if shadow:
+        args.append("--shadow")
     _legacy_cli()._cmd_re_deepen(args)
 
 
@@ -1095,7 +1115,7 @@ def re_status(
 def re_continue(
     run_id: Optional[str] = typer.Argument(
         None,
-        help="Protocol-2.7 run id below runs/; defaults to the active RE run.",
+        help="RE v2 run ID below runs/; defaults to the active RE run.",
     ),
     re_max_inner: Optional[int] = typer.Option(
         None,
@@ -1107,25 +1127,37 @@ def re_continue(
         None,
         "--re-token-limit",
         min=1,
-        help="Raise the active run's token ceiling without resetting it.",
+        help=(
+            "Set a higher absolute total token ceiling for the active run; "
+            "this is not an increment."
+        ),
     ),
     re_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-time-limit-minutes",
         min=1,
-        help="Raise the active run's active-time ceiling without resetting it.",
+        help=(
+            "Set a higher absolute total active-time ceiling in minutes; "
+            "this is not an increment."
+        ),
     ),
     re_semantic_token_limit: Optional[int] = typer.Option(
         None,
         "--re-semantic-token-limit",
         min=1,
-        help="Raise the active L3 run's independent semantic token ceiling.",
+        help=(
+            "Set a higher absolute total token ceiling for the active L3 "
+            "semantic pool."
+        ),
     ),
     re_semantic_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-semantic-time-limit-minutes",
         min=1,
-        help="Raise the active L3 run's independent semantic time ceiling.",
+        help=(
+            "Set a higher absolute total active-time ceiling in minutes for "
+            "the active L3 semantic pool."
+        ),
     ),
 ) -> None:
     """Continue the active RE run without a human answer."""

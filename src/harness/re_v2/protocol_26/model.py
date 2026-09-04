@@ -55,6 +55,7 @@ _ORIGIN_SCHEMA_PROTOCOLS = frozenset(
         (2, "2.3"),
         (3, "2.4"),
         (4, "2.5"),
+        (4, "2.5.1"),
         (5, "2.6"),
     }
 )
@@ -119,7 +120,7 @@ def _decode_layer_manifest(value: object) -> LayerManifestV1:
             return RunManifestV2.from_json_dict(value)
         if pair == (3, "2.4"):
             return RunManifestV3.from_json_dict(value)
-        if pair == (4, "2.5"):
+        if pair[0] == 4 and pair[1] in {"2.5", "2.5.1"}:
             return RunManifestV4.from_json_dict(value)
     except Protocol22SchemaError as exc:
         raise Protocol26SchemaError(str(exc)) from exc

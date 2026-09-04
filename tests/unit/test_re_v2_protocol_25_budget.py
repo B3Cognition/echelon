@@ -151,6 +151,44 @@ def test_semantic_usage_reuses_shared_conservative_charging(
 
 
 @pytest.mark.unit
+def test_untrusted_semantic_usage_above_reservation_is_not_a_breach(
+    tmp_path: Path,
+) -> None:
+    store = _semantic_observation_store(
+        tmp_path,
+        token_usage=550,
+        token_status="untrusted",
+        active_usage=2_500,
+        active_status="untrusted",
+    )
+
+    decision = evaluate_semantic_budget(_policy(), store.replay())
+
+    assert decision.charged_tokens == 550
+    assert decision.charged_active_ms == 2_500
+    assert decision.reservation_breaches == ()
+    assert decision.can_reserve(DispatchReservationV1(50, 100, 1_000)) is True
+
+
+@pytest.mark.unit
+def test_trusted_semantic_usage_above_reservation_remains_a_breach(
+    tmp_path: Path,
+) -> None:
+    store = _semantic_observation_store(
+        tmp_path,
+        token_usage=550,
+        token_status="trusted_exact",
+        active_usage=2_500,
+        active_status="trusted_exact",
+    )
+
+    decision = evaluate_semantic_budget(_policy(), store.replay())
+
+    assert decision.reservation_breaches == ("resolution-1",)
+    assert decision.can_reserve(DispatchReservationV1(50, 100, 1_000)) is False
+
+
+@pytest.mark.unit
 def test_open_semantic_dispatch_charges_its_reservation(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _run(store)

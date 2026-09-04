@@ -80,7 +80,7 @@ Add schema-7 routing only in `src/harness/re_v2/model.py`, `src/harness/re_v2/__
 - Exposes `RunManifestV7` and `decode_run_manifest_v7(value)`, dispatching by `run_mode` before exact decoding.
 - Extends the run store only for `(7, "2.8")`.
 
-- [ ] **Step 1: Record the compatibility baseline**
+- [x] **Step 1: Record the compatibility baseline**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_compatibility.py tests/unit/test_re_v2_run_store.py
@@ -89,7 +89,7 @@ git diff --exit-code -- src/harness/re_v2/protocol_22 src/harness/re_v2/protocol
 
 Expected: tests pass and every frozen protocol directory is clean.
 
-- [ ] **Step 2: Write failing manifest tests**
+- [x] **Step 2: Write failing manifest tests**
 
 ```python
 def test_manifest_v7_dispatches_closed_variants() -> None:
@@ -112,13 +112,13 @@ def test_run_store_rejects_schema_7_with_protocol_2_7(tmp_path: Path) -> None:
         load_run_manifest(tmp_path / "runs" / "re-l4")
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_store.py`
 
 Expected: collection fails because `protocol_28` and schema-7 routing do not exist.
 
-- [ ] **Step 4: Implement the closed union and additive router**
+- [x] **Step 4: Implement the closed union and additive router**
 
 ```python
 def decode_run_manifest_v7(value: object) -> RunManifestV7:
@@ -133,7 +133,7 @@ def decode_run_manifest_v7(value: object) -> RunManifestV7:
 
 The closure `FIELDS` tuple must exclude `budget_policy`, `executor_catalog_id`, `attempt_policy_id`, `exhaustive_plan_id`, and `snapshot_evidence_catalog_id`.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py
@@ -141,7 +141,7 @@ pytest -q tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_s
 
 Expected: PASS and schemas 2 through 6 retain their canonical fixtures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28 src/harness/re_v2/model.py src/harness/re_v2/__init__.py src/harness/re_v2/run_store.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_model.py tests/unit/test_re_v2_run_store.py tests/unit/test_re_v2_protocol_compatibility.py
@@ -162,7 +162,7 @@ git commit -m "feat(re): register protocol 2.8 authority"
 - Produces `stage_snapshot_evidence(snapshot, partition, selection, policy, object_store)`.
 - Produces `validate_snapshot_evidence_closure(catalog, snapshot, partition, selection)`.
 
-- [ ] **Step 1: Write failing exact-byte tests**
+- [x] **Step 1: Write failing exact-byte tests**
 
 ```python
 def test_utf8_shards_cover_exact_raw_bytes_without_gaps(tmp_path: Path) -> None:
@@ -185,13 +185,13 @@ def test_behavioral_binary_blocks_before_publication(tmp_path: Path) -> None:
         )
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_evidence.py`
 
 Expected: FAIL because evidence authority is absent.
 
-- [ ] **Step 3: Implement deterministic sharding and dispositions**
+- [x] **Step 3: Implement deterministic sharding and dispositions**
 
 ```python
 def split_utf8_ranges(payload: bytes, byte_limit: int) -> tuple[tuple[int, int], ...]:
@@ -217,17 +217,17 @@ def split_utf8_ranges(payload: bytes, byte_limit: int) -> tuple[tuple[int, int],
 
 Validate mode, byte count, content digest, ownership, no gaps/overlaps, unique primary assignment, empty-file receipts, and exact round trips.
 
-- [ ] **Step 4: Add selection and changed-source tests**
+- [x] **Step 4: Add selection and changed-source tests**
 
 Prove domain selection includes selected-domain plus source-unowned records, unselected supporting paths never count as primary, `--all` assigns every record exactly once, and source mutation raises `source_snapshot_changed`.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_evidence.py tests/unit/test_re_v2_workspace_snapshot.py tests/unit/test_re_v2_snapshot.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/evidence.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_evidence.py
@@ -246,7 +246,7 @@ git commit -m "feat(re): stage complete L4 snapshot evidence"
 - Produces `ParentAuthorityBundleV3` and zero-provider `L4ClosureParentBundleV1`.
 - Produces `build_l3_target_projections(validated_l3_parent, selection)`.
 
-- [ ] **Step 1: Write failing local-identity tests**
+- [x] **Step 1: Write failing local-identity tests**
 
 ```python
 def test_target_projection_survives_unrelated_selection_expansion() -> None:
@@ -265,11 +265,11 @@ def test_projection_rejects_mixed_epoch_authority() -> None:
         build_l3_target_projections(fixture.parent, fixture.selection)
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_authority.py`
 
-- [ ] **Step 3: Implement projections and bundles**
+- [x] **Step 3: Implement projections and bundles**
 
 Projection identity includes only target candidate authority, findings, overlays, closure state, relevant L2 roots, and audit/executor policies. Epoch membership lives outside that identity:
 
@@ -283,17 +283,17 @@ class L3TargetEpochMembershipV1:
 
 Reject unfinished targets, mixed epochs, mismatched snapshots/partitions, unsupported blocker classes, and missing source projections.
 
-- [ ] **Step 4: Add closure-bundle negative tests**
+- [x] **Step 4: Add closure-bundle negative tests**
 
 Reject incomplete L4 roots, mismatched selection/terminal hashes, checkpoint provenance, executor authority, and resource policy.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_authority.py tests/unit/test_re_v2_protocol_25_model.py tests/unit/test_re_v2_protocol_25_findings.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/authority.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_authority.py
@@ -311,11 +311,16 @@ git commit -m "feat(re): freeze target-local L3 authority"
 
 **Interfaces:**
 - Produces `ExhaustivePolicyV1` with the design's fixed category and size bounds.
+- Produces `ExhaustiveSubjectV1` and `ExhaustiveSubjectCatalogV1` as the
+  canonical, target-local normalization of authenticated L0-L3 subjects,
+  evidence anchors, and finding assignments; the catalog is an immutable plan
+  input and contains no model-discovered work.
 - Produces `CategoryVacancyReceiptV1`, `SlicePlanEntryV1`, `SliceSpecV1`, `TargetCoverageLedgerV1`, domain/source plans, and `ExhaustivePlanV1`.
-- Produces `build_exhaustive_plan(parent_bundle, l3_projections, evidence_catalog, policy, selection)`.
+- Produces `build_exhaustive_plan(parent_bundle, l3_projections,
+  evidence_catalog, subject_catalog, policy, selection)`.
 - Produces `realize_slice(plan_entry, accepted_dependencies)`.
 
-- [ ] **Step 1: Write failing deterministic coverage tests**
+- [x] **Step 1: Write failing deterministic coverage tests**
 
 ```python
 def test_plan_assigns_every_primary_shard_once() -> None:
@@ -338,11 +343,11 @@ def test_plan_is_independent_of_input_iteration_order() -> None:
     assert forward.identity == reverse.identity
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py`
 
-- [ ] **Step 3: Implement fixed categories and canonical bin packing**
+- [x] **Step 3: Implement fixed categories and canonical bin packing**
 
 ```python
 DOMAIN_CATEGORIES = (
@@ -365,17 +370,17 @@ SOURCE_CATEGORIES = (
 
 Sort target/category/subject/shard/record tuples by UTF-8 identity. Greedily stop before 16 primary subjects, 32 supporting subjects, 64 primary records, 128 supporting records, 128 KiB canonical context, or 131,072 conservative tokens. Reject over 512 entries per target or 16,384 per run.
 
-- [ ] **Step 4: Add blocker, vacancy, and deferred-realization tests**
+- [x] **Step 4: Add blocker, vacancy, and deferred-realization tests**
 
 Test missing/repeated shards, unsupported content, unassigned findings, unsplittable context, caps, literal category vacancy, semantic inapplicability requiring work, and source-composition realization waiting for named domain roots.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 pytest -q tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py tests/unit/test_re_v2_protocol_24_graph.py tests/unit/test_re_v2_protocol_25_graph.py
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/policies.py src/harness/re_v2/protocol_28/planning.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_policies.py tests/unit/test_re_v2_protocol_28_planning.py
@@ -394,7 +399,7 @@ git commit -m "feat(re): freeze deterministic L4 plans"
 - Produces `L4FindingClosureReceiptV1` and `L4SemanticClosureRootV1`.
 - Produces `build_target_root`, `build_source_root`, `build_run_root`, and `build_l4_semantic_closure`.
 
-- [ ] **Step 1: Write failing exact-root tests**
+- [x] **Step 1: Write failing exact-root tests**
 
 ```python
 def test_target_root_rejects_one_missing_plan_entry() -> None:
@@ -413,25 +418,25 @@ def test_closure_missing_verifier_is_integrity_failure() -> None:
     assert raised.value.reason_code == "closure_verifier_receipt_missing"
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_graph.py`
 
-- [ ] **Step 3: Implement exact constructors**
+- [x] **Step 3: Implement exact constructors**
 
 Compare exact planned and accepted key sets, authenticate candidate/verifier/certification/acceptance hashes, re-run coverage closure, and reject extras. The run root stores only `selected-scope` or `all-scope`.
 
 Closure maps each finding to one primary accepted slice plus supporting slices, requires source-composition authority for source/cross-domain findings, and returns authority-ID diagnostics on mismatch.
 
-- [ ] **Step 4: Add mutation tests**
+- [x] **Step 4: Add mutation tests**
 
 Mutate one shard, L3 projection, verifier receipt, slice key, selected-domain root, composition root, finding assignment, and selection mode. Each mutation blocks the narrowest constructor without returning a partial root.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_graph.py tests/unit/test_re_v2_protocol_28_planning.py`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/re_v2/protocol_28/graph.py tests/re_v2_protocol_28_fixtures.py tests/unit/test_re_v2_protocol_28_graph.py
@@ -452,7 +457,7 @@ git commit -m "feat(re): enforce exact L4 root closure"
 - Produces `publish_protocol_28_run(private_stage, final_run_dir, manifest)`.
 - Produces `load_protocol_28_inputs(run_dir)` using run-local objects only.
 
-- [ ] **Step 1: Write failing publication tests**
+- [x] **Step 1: Write failing publication tests**
 
 ```python
 def test_failed_private_staging_publishes_no_run_or_pointer(tmp_path: Path) -> None:
@@ -472,25 +477,25 @@ def test_loaded_inputs_need_no_source_or_parent(tmp_path: Path) -> None:
     assert loaded.snapshot_evidence_catalog.identity == fixture.evidence.identity
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest -q tests/unit/test_re_v2_protocol_28_inputs.py`
 
-- [ ] **Step 3: Implement staging and publication**
+- [x] **Step 3: Implement staging and publication**
 
 Write every canonical object through the existing object store, authenticate the transitive closure, write the schema-7 manifest last, fsync files/directories, atomically rename the private directory, and only then permit active-pointer update. Reject symlinks, missing objects, hash mismatches, cross-mode fields, unsafe paths, and changed manifests.
 
-- [ ] **Step 4: Add crash and corruption tests**
+- [x] **Step 4: Add crash and corruption tests**
 
 Inject failure after each authority group and before manifest publication. Delete source and parent after success and reconstruct. Remove/mutate one shard, projection, plan, parent bundle, or closure object and require corruption rather than source reread.
 
-- [ ] **Step 5: Run the foundation gate**
+- [x] **Step 5: Run the foundation gate**
 
 ```bash
 pytest -q   tests/unit/test_re_v2_protocol_28_model.py   tests/unit/test_re_v2_protocol_28_authority.py   tests/unit/test_re_v2_protocol_28_evidence.py   tests/unit/test_re_v2_protocol_28_policies.py   tests/unit/test_re_v2_protocol_28_planning.py   tests/unit/test_re_v2_protocol_28_graph.py   tests/unit/test_re_v2_protocol_28_inputs.py   tests/unit/test_re_v2_protocol_compatibility.py   tests/unit/test_re_v2_run_store.py
 ```
 
-- [ ] **Step 6: Verify frozen code and commit**
+- [x] **Step 6: Verify frozen code and commit**
 
 ```bash
 git diff --exit-code -- src/harness/re_v2/protocol_22 src/harness/re_v2/protocol_24 src/harness/re_v2/protocol_25 src/harness/re_v2/protocol_26 src/harness/re_v2/protocol_27
@@ -507,4 +512,3 @@ bash scripts/bash/dry-run.sh
 ```
 
 The foundation is complete only when schema-7 variants are closed, selected source bytes reconstruct from the run-local store, target-local identities survive unrelated selection expansion, plans reproduce byte-for-byte, incomplete plan/byte closure cannot create a root, zero-provider closure mismatches are integrity failures, and protocol-2.2-through-2.7 compatibility remains green.
-

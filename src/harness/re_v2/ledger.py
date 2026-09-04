@@ -524,51 +524,76 @@ class DurableLedger(Generic[LedgerViewT]):
         record_type: str,
         value: object,
     ) -> LedgerRecord:
-        payload = self.protocol.canonical_payload(record_type, value)
+        return self._append_batch(((record_type, value),))[0]
+
+    def _append_batch(
+        self,
+        values: Iterable[tuple[str, object]],
+    ) -> tuple[LedgerRecord, ...]:
+        """Append a replay-valid sequence under one lock and one initial replay.
+
+        Every newly written record is still fsynced independently, so a crash
+        leaves a valid prefix that an idempotent retry can complete.
+        """
+        prepared = tuple(
+            (record_type, self.protocol.canonical_payload(record_type, value))
+            for record_type, value in values
+        )
+        if not prepared:
+            return ()
         self._validate_parent()
         lock_fd = self._open_lock()
+        ledger_fd: int | None = None
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            history, state = self._read_replay()
-            duplicate = state.idempotent_record(
-                history, record_type, payload
-            )
-            if duplicate is not None:
-                return duplicate
-
-            previous = history[-1].record_hash if history else None
-            identity: dict[str, object] = {
-                "payload": payload,
-                "previous_record_hash": previous,
-                "schema_version": LEDGER_SCHEMA_VERSION,
-                "seq": len(history) + 1,
-                "type": record_type,
-            }
-            record = LedgerRecord(
-                payload=_freeze_json(payload),  # type: ignore[arg-type]
-                previous_record_hash=previous,
-                record_hash=content_digest(identity),
-                schema_version=LEDGER_SCHEMA_VERSION,
-                seq=len(history) + 1,
-                type=record_type,
-            )
-            state.consume(record, self.object_store)
-
-            existed = self.path.exists()
-            fd = self._open_ledger_for_append()
-            try:
-                _write_all(fd, canonical_json_bytes(record.to_json_dict()))
-                _fsync(fd)
-            finally:
-                os.close(fd)
-            if not existed:
-                _fsync_directory(self.path.parent)
-            return record
+            replayed, state = self._read_replay()
+            history = list(replayed)
+            results: list[LedgerRecord] = []
+            directory_synced = self.path.exists()
+            for record_type, payload in prepared:
+                duplicate = state.idempotent_record(
+                    tuple(history), record_type, payload
+                )
+                if duplicate is not None:
+                    results.append(duplicate)
+                    continue
+                previous = history[-1].record_hash if history else None
+                identity: dict[str, object] = {
+                    "payload": payload,
+                    "previous_record_hash": previous,
+                    "schema_version": LEDGER_SCHEMA_VERSION,
+                    "seq": len(history) + 1,
+                    "type": record_type,
+                }
+                record = LedgerRecord(
+                    payload=_freeze_json(payload),  # type: ignore[arg-type]
+                    previous_record_hash=previous,
+                    record_hash=content_digest(identity),
+                    schema_version=LEDGER_SCHEMA_VERSION,
+                    seq=len(history) + 1,
+                    type=record_type,
+                )
+                state.consume(record, self.object_store)
+                if ledger_fd is None:
+                    ledger_fd = self._open_ledger_for_append()
+                _write_all(
+                    ledger_fd,
+                    canonical_json_bytes(record.to_json_dict()),
+                )
+                _fsync(ledger_fd)
+                if not directory_synced:
+                    _fsync_directory(self.path.parent)
+                    directory_synced = True
+                history.append(record)
+                results.append(record)
+            return tuple(results)
         except ReV2LedgerError:
             raise
         except OSError as exc:
             raise ReV2LedgerError(f"cannot append durable ledger record: {exc}") from exc
         finally:
+            if ledger_fd is not None:
+                os.close(ledger_fd)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:

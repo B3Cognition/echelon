@@ -150,6 +150,23 @@ def test_post_freeze_context_exposes_exact_output_binding() -> None:
 
 
 @pytest.mark.unit
+def test_source_guard_accepts_realistic_aggregate_above_single_target_ceiling() -> None:
+    aggregate = b"x" * 200_000
+    aggregate_hash = content_digest(aggregate)
+    context = _context(
+        mode="SOURCE_COMPOSITION_GUARD",
+        overlays=(aggregate_hash,),
+        extra_authority={aggregate_hash: aggregate},
+        audit_epoch_id=digest("semantic-epoch"),
+        semantic_round=1,
+    )
+
+    measured = len(canonical_json_bytes(context.to_json_dict()))
+    assert 192 * 1024 < measured <= 512 * 1024
+    assert context.max_canonical_json_bytes == 512 * 1024
+
+
+@pytest.mark.unit
 def test_post_freeze_context_pairs_each_finding_with_its_frozen_id() -> None:
     finding = _certified_audit().normalized_findings[0]
     context = _context(
@@ -424,6 +441,17 @@ def test_audit_schema_exposes_the_closed_certifier_taxonomy(
 ) -> None:
     payload = _audit_payload()
     payload["findings"][0][field] = value  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        Draft202012Validator(
+            semantic_response_schema("semantic-audit-findings")
+        ).validate(payload)
+
+
+@pytest.mark.unit
+def test_audit_schema_binds_subject_kind_to_subject_ref_prefix() -> None:
+    payload = _audit_payload()
+    payload["findings"][0]["subject_kind"] = "surface"  # type: ignore[index]
 
     with pytest.raises(ValidationError):
         Draft202012Validator(

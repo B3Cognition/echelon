@@ -25,6 +25,7 @@ from harness.re_v2.protocol_25.artifacts import (
     build_finding_closure_receipt,
 )
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
+from harness.re_v2.protocol_25.preflight import AuditContextPreflightFailureV1
 from tests.re_v2_protocol_22_fixtures import digest
 from tests.re_v2_protocol_25_fixtures import (
     audit_candidate_v1,
@@ -330,7 +331,23 @@ def test_finding_close_requires_assessments_and_passing_source(tmp_path: Path) -
         ledger.record_finding_closure(receipt)
 
 
-def test_non_epoch_finding_and_out_of_order_receipt_fail_closed(tmp_path: Path) -> None:
+def test_first_finding_closure_may_be_recorded_after_an_earlier_failed_round(
+    tmp_path: Path,
+) -> None:
+    ledger, objects = _ledger(tmp_path)
+    closure = _record_closure_prerequisites(ledger, objects)
+    delayed = replace(closure.receipt, semantic_round=2)
+    _put(objects, delayed)
+
+    ledger.record_finding_closure(delayed)
+
+    replayed = ledger.replay()
+    assert replayed.latest_finding_closures[delayed.finding_key_id] == delayed
+
+
+def test_finding_receipt_chain_allows_failed_round_gaps_and_rejects_bad_links(
+    tmp_path: Path,
+) -> None:
     ledger, objects = _ledger(tmp_path)
     closure = _record_closure_prerequisites(ledger, objects)
     outside = replace(closure.receipt, finding_key_id=digest("outside-finding"))
@@ -345,12 +362,15 @@ def test_non_epoch_finding_and_out_of_order_receipt_fail_closed(tmp_path: Path) 
         previous_closure_receipt_id=closure.receipt.identity,
     )
     _put(objects, skipped)
-    with pytest.raises(ReV2LedgerError, match="consecutive|preceding receipt"):
-        ledger.record_finding_closure(skipped)
+    ledger.record_finding_closure(skipped)
+    assert (
+        ledger.replay().latest_finding_closures[skipped.finding_key_id]
+        == skipped
+    )
 
     missing_previous = replace(
-        closure.receipt,
-        semantic_round=2,
+        skipped,
+        semantic_round=4,
         previous_closure_receipt_id=digest("missing-receipt"),
     )
     _put(objects, missing_previous)
@@ -407,3 +427,28 @@ def test_protocol_package_exports_semantic_ledger_contract() -> None:
     protocol = importlib.import_module("harness.re_v2.protocol_25")
 
     assert protocol.Protocol25Ledger is Protocol25Ledger
+
+
+def test_preflight_failure_round_trips_as_protocol_25_owned_authority(
+    tmp_path: Path,
+) -> None:
+    ledger, _objects = _ledger(tmp_path)
+    failure = AuditContextPreflightFailureV1(
+        schema_version=1,
+        audit_target_id=digest("target:source"),
+        work_item_id=digest("work:source"),
+        scope_kind="source",
+        source_id="api",
+        domain_key=None,
+        reason_code="semantic_context_byte_ceiling_exceeded",
+        projection_class="semantic-audit-context",
+        measured_canonical_json_bytes=300_000,
+        max_canonical_json_bytes=196_608,
+        provider_dispatch_count=0,
+    )
+
+    ledger.record_audit_context_preflight_failure(failure)
+
+    assert ledger.replay().audit_context_preflight_failures == {
+        failure.identity: failure
+    }

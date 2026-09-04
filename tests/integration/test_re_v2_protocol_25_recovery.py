@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from types import MappingProxyType
 
 import pytest
@@ -19,9 +20,11 @@ from harness.re_v2.protocol_22.baseline import (
 )
 from harness.re_v2.protocol_22.artifacts import DeterministicAssessmentInputV2
 from harness.re_v2.protocol_22.execution import (
+    Protocol22ExecutionError,
     Protocol22ExecutionStore,
     ProviderExecutionDependenciesV1,
 )
+from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.graph import (
     AcceptedArtifactV2,
     plan_next_v2,
@@ -56,7 +59,10 @@ from harness.re_v2.protocol_25.controller import (
 )
 from harness.re_v2.protocol_22.model import WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
-from harness.re_v2.protocol_25.runtime import Protocol25DeterministicRuntime
+from harness.re_v2.protocol_25.runtime import (
+    Protocol25DeterministicRuntime,
+    Protocol25RuntimeError,
+)
 from harness.re_v2.run_store import ReV2Paths
 from tests.re_v2_protocol_25_fixtures import lower_parent_authority_bundle_v1
 from tests.re_v2_protocol_25_fixtures import audit_target_v1
@@ -113,6 +119,55 @@ def test_active_target_stage_ignores_completed_cycle_assessment() -> None:
 
 
 @pytest.mark.integration
+def test_active_source_cycle_excludes_plateaued_targets_from_reconstructed_batch() -> None:
+    active_target_id = digest("active-round-three-target")
+    plateau_target_id = digest("plateaued-round-two-target")
+    cycle = _SourceCycle(
+        source_cycle_id="active-round-three-cycle",
+        source_id="api",
+        semantic_round=3,
+        resolution_targets={active_target_id},
+        accepted_resolution_targets={active_target_id},
+        target_assessments={active_target_id: digest("active-assessment")},
+    )
+    replay = Protocol25ReplayState(
+        source_cycles={cycle.source_cycle_id: cycle},
+        plateau_targets={plateau_target_id},
+    )
+    targets = tuple(
+        sorted(
+            (
+                SemanticTargetControllerStateV1(
+                    audit_target_id=active_target_id,
+                    source_id="api",
+                    audit_state="accepted",
+                    frozen_finding_ids=(digest("active-finding"),),
+                    unresolved_finding_ids=(digest("active-finding"),),
+                    semantic_round=2,
+                    stage="assessment_accepted",
+                ),
+                SemanticTargetControllerStateV1(
+                    audit_target_id=plateau_target_id,
+                    source_id="api",
+                    audit_state="accepted",
+                    frozen_finding_ids=(digest("plateau-finding"),),
+                    unresolved_finding_ids=(digest("plateau-finding"),),
+                    semantic_round=2,
+                    no_reduction_rounds=2,
+                    stage="plateau_recorded",
+                ),
+            ),
+            key=lambda item: item.audit_target_id,
+        )
+    )
+
+    reconstructed = recovery_module._source_cycle_states(replay, targets)
+
+    assert len(reconstructed) == 1
+    assert reconstructed[0].participating_target_ids == (active_target_id,)
+
+
+@pytest.mark.integration
 def test_unresolved_projection_waits_for_semantic_progress_event() -> None:
     target_id = digest("target-awaiting-progress")
     frozen = tuple(sorted((digest("finding-a"), digest("finding-b"))))
@@ -133,6 +188,185 @@ def test_unresolved_projection_waits_for_semantic_progress_event() -> None:
         target_id,
         frozen,
     ) == (frozen[1],)
+
+
+@pytest.mark.integration
+def test_committed_overlay_lineage_ignores_accepted_retry_debris(tmp_path) -> None:
+    context = _context(tmp_path)
+    _audit, epoch, _semantic_context_value, result = _certified_resolution()
+    selected = result.artifact
+    guidance_hash = digest("superseded-guidance")
+    duplicate = replace(
+        selected,
+        artifact_key=replace(
+            selected.artifact_key,
+            dependency_hashes=tuple(
+                sorted((epoch.identity, selected.audit_target_id, guidance_hash))
+            ),
+        ),
+        guidance_hash=guidance_hash,
+    )
+    for overlay in (selected, duplicate):
+        assert context.object_store.put_blob(
+            canonical_json_bytes(overlay.to_json_dict())
+        ) == overlay.identity
+    ledger = SimpleNamespace(
+        accepted_artifacts={
+            overlay.artifact_key.identity: SimpleNamespace(
+                artifact_key=overlay.artifact_key,
+                artifact_hash=overlay.identity,
+            )
+            for overlay in (selected, duplicate)
+        }
+    )
+    replay = Protocol25ReplayState(
+        resolution_overlays_by_target_round={
+            selected.audit_target_id: {1: selected.identity}
+        }
+    )
+
+    prior = recovery_module._committed_prior_resolution_overlays(
+        context,
+        ledger,
+        replay,
+        epoch_id=epoch.identity,
+        audit_target_id=selected.audit_target_id,
+        next_semantic_round=2,
+    )
+
+    assert prior == (selected,)
+
+
+@pytest.mark.integration
+def test_committed_overlay_lineage_returns_canonical_hash_order(tmp_path) -> None:
+    """Catch round-ordered predecessor hashes violating SemanticContextV1."""
+    context = _context(tmp_path)
+    _audit, epoch, _semantic_context_value, result = _certified_resolution()
+    round_one = result.artifact
+    round_two = replace(
+        round_one,
+        artifact_key=replace(
+            round_one.artifact_key,
+            dependency_hashes=tuple(
+                sorted((epoch.identity, round_one.audit_target_id, round_one.identity))
+            ),
+        ),
+        semantic_round=2,
+        prior_overlay_hashes=(round_one.identity,),
+    )
+    assert round_one.identity > round_two.identity
+    for overlay in (round_one, round_two):
+        assert context.object_store.put_blob(
+            canonical_json_bytes(overlay.to_json_dict())
+        ) == overlay.identity
+    ledger = SimpleNamespace(
+        accepted_artifacts={
+            overlay.artifact_key.identity: SimpleNamespace(
+                artifact_key=overlay.artifact_key,
+                artifact_hash=overlay.identity,
+            )
+            for overlay in (round_one, round_two)
+        }
+    )
+    replay = Protocol25ReplayState(
+        resolution_overlays_by_target_round={
+            round_one.audit_target_id: {
+                1: round_one.identity,
+                2: round_two.identity,
+            }
+        }
+    )
+
+    prior = recovery_module._committed_prior_resolution_overlays(
+        context,
+        ledger,
+        replay,
+        epoch_id=epoch.identity,
+        audit_target_id=round_one.audit_target_id,
+        next_semantic_round=3,
+    )
+
+    assert tuple(item.identity for item in prior) == tuple(
+        sorted((round_one.identity, round_two.identity))
+    )
+
+
+@pytest.mark.integration
+def test_source_guard_selects_only_replayed_cycle_authority(tmp_path) -> None:
+    context = _context(tmp_path)
+    _audit, epoch, _semantic_context_value, result = _certified_resolution()
+    selected = result.artifact
+    guidance_hash = digest("superseded-guard-guidance")
+    duplicate = replace(
+        selected,
+        artifact_key=replace(
+            selected.artifact_key,
+            dependency_hashes=tuple(
+                sorted((epoch.identity, selected.audit_target_id, guidance_hash))
+            ),
+        ),
+        guidance_hash=guidance_hash,
+    )
+    for overlay in (selected, duplicate):
+        context.object_store.put_blob(canonical_json_bytes(overlay.to_json_dict()))
+    selected_assessment = SimpleNamespace(
+        audit_epoch_id=epoch.identity,
+        audit_target_id=selected.audit_target_id,
+        identity=digest("selected-assessment"),
+        resolution_overlay_hash=selected.identity,
+    )
+    duplicate_assessment = SimpleNamespace(
+        audit_epoch_id=epoch.identity,
+        audit_target_id=selected.audit_target_id,
+        identity=digest("duplicate-assessment"),
+        resolution_overlay_hash=duplicate.identity,
+    )
+    ledger = SimpleNamespace(
+        accepted_artifacts={
+            overlay.artifact_key.identity: SimpleNamespace(
+                artifact_key=overlay.artifact_key,
+                artifact_hash=overlay.identity,
+            )
+            for overlay in (selected, duplicate)
+        },
+        target_closure_assessments={
+            selected_assessment.identity: selected_assessment,
+            duplicate_assessment.identity: duplicate_assessment,
+        },
+    )
+    cycle = _SourceCycle(
+        source_cycle_id="cycle-exact-authority",
+        source_id="api",
+        semantic_round=1,
+        resolution_overlays_by_target={
+            selected.audit_target_id: selected.identity
+        },
+        target_assessments={
+            selected.audit_target_id: selected_assessment.identity
+        },
+    )
+    replay = Protocol25ReplayState(
+        source_cycles={cycle.source_cycle_id: cycle}
+    )
+    action = Protocol25ControllerActionV1(
+        kind="guard_source",
+        source_id="api",
+        source_cycle_id=cycle.source_cycle_id,
+        semantic_round=1,
+        participating_target_ids=(selected.audit_target_id,),
+    )
+
+    overlays, assessments = recovery_module._current_source_cycle_authorities(
+        context,
+        ledger,
+        replay,
+        action,
+        epoch_id=epoch.identity,
+        participants={selected.audit_target_id},
+    )
+
+    assert overlays == (selected,)
+    assert assessments == (selected_assessment,)
 
 
 def _context(tmp_path):  # type: ignore[no-untyped-def]
@@ -205,6 +439,184 @@ def test_protocol_25_context_accepts_registered_additive_event_protocol(
     context = _context(tmp_path)
 
     assert context.event_store.protocol is PROTOCOL_25_EVENTS
+
+
+@pytest.mark.integration
+def test_oversized_preflight_blocks_without_dispatch_and_recovers_suffix(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    target = context.semantic_graph.ready_audit_targets(accepted)[0]
+    template = context.semantic_graph.audit_templates[0]
+    item = context.semantic_graph.instantiate_audit_item(
+        template,
+        target,
+        {
+            template_id: accepted[template_id]
+            for template_id in template.required_template_ids
+        },
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, _target_id: (item, target, ()),
+    )
+
+    def build_context(runtime, **_kwargs):  # type: ignore[no-untyped-def]
+        ceiling = runtime.artifact_policy.entry_for(
+            "L3", "semantic-audit-findings"
+        ).max_context_bundle_bytes
+        if ceiling == 196_608:
+            raise Protocol25RuntimeError("semantic context exceeds its byte ceiling")
+        return SimpleNamespace(
+            to_json_dict=lambda: {
+                "schema_version": 1,
+                "max_canonical_json_bytes": ceiling,
+                "payload": "x" * 300_000,
+            }
+        )
+
+    monkeypatch.setattr(Protocol25DeterministicRuntime, "build_audit_context", build_context)
+
+    def crash_after_receipt(boundary: str) -> None:
+        if boundary.startswith("audit_context_preflight_failure_receipt:"):
+            raise RuntimeError("injected preflight crash")
+
+    with pytest.raises(RuntimeError, match="injected preflight crash"):
+        recovery_module.ensure_audit_context_preflight(
+            context,
+            fault_hook=crash_after_receipt,
+        )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+    events = context.event_store.replay()
+    failure = result.failure
+
+    assert failure is not None
+    assert failure.reason_code == "semantic_context_byte_ceiling_exceeded"
+    assert failure.measured_canonical_json_bytes is not None
+    assert failure.measured_canonical_json_bytes > 196_608
+    assert not [event for event in events if event.type == "dispatch_leased"]
+    assert [event.type for event in events].count("audit_context_preflight_failed") == 1
+    assert events[-1].type == "run_failed"
+    recovered = recover_protocol_25_run(context)
+    assert recovered.controller_state.terminal_state == "blocked_incomplete"
+    assert recovered.controller_state.work_item_failed is True
+    assert any(item.audit_state == "failed" for item in recovered.controller_state.targets)
+
+
+@pytest.mark.integration
+def test_successful_preflight_publishes_all_contexts_before_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    targets = context.semantic_graph.ready_audit_targets(accepted)
+    items = {}
+    for target, template in zip(
+        targets,
+        context.semantic_graph.audit_templates,
+        strict=True,
+    ):
+        items[target.audit_target_id] = context.semantic_graph.instantiate_audit_item(
+            template,
+            target,
+            {
+                template_id: accepted[template_id]
+                for template_id in template.required_template_ids
+            },
+        )
+
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, target_id: (
+            items[target_id],
+            next(target for target in targets if target.audit_target_id == target_id),
+            (),
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25DeterministicRuntime,
+        "build_audit_context",
+        lambda _runtime, *, audit_target, **_kwargs: SimpleNamespace(
+            to_json_dict=lambda: {
+                "schema_version": 1,
+                "audit_target_id": audit_target.audit_target_id,
+                "max_canonical_json_bytes": 196_608,
+            }
+        ),
+    )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+
+    assert result.passed is True
+    assert tuple(item.audit_target_id for item in result.entries) == tuple(
+        item.audit_target_id for item in targets
+    )
+    assert all(context.object_store.read_blob(item.context_hash) for item in result.entries)
+    events = context.event_store.replay()
+    assert events[-1].type == "audit_context_preflight_completed"
+    assert not [event for event in events if event.type == "dispatch_leased"]
+
+
+@pytest.mark.integration
+def test_missing_preflight_object_uses_distinct_durable_reason(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    ledger = context.ledger.replay()
+    accepted = recovery_module._accepted_prerequisites(context, ledger)
+    target = context.semantic_graph.ready_audit_targets(accepted)[0]
+    template = context.semantic_graph.audit_templates[0]
+    item = context.semantic_graph.instantiate_audit_item(
+        template,
+        target,
+        {
+            template_id: accepted[template_id]
+            for template_id in template.required_template_ids
+        },
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_audit_dispatch_components",
+        lambda _context, _target_id: (item, target, (digest("missing-object"),)),
+    )
+
+    result = recovery_module.ensure_audit_context_preflight(context)
+
+    assert result.failure is not None
+    assert result.failure.reason_code == "immutable_object_missing"
+    assert result.failure.measured_canonical_json_bytes is None
+    assert not [
+        event
+        for event in context.event_store.replay()
+        if event.type == "dispatch_leased"
+    ]
 
 
 @pytest.mark.integration
@@ -578,6 +990,35 @@ def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
     )
 
     exported = export_protocol_25_parent(context)
+    upgraded_policy = replace(
+        exported.inputs.artifact_policy,
+        l3_entries=tuple(
+            replace(
+                item,
+                max_context_bundle_bytes=item.max_context_bundle_bytes + 64 * 1024,
+            )
+            if item.artifact_kind == "source-composition-assessment"
+            else item
+            for item in exported.inputs.artifact_policy.l3_entries
+        ),
+    )
+    upgraded_executor = replace(
+        exported.inputs.executor_contract,
+        semantic_entries=tuple(
+            replace(
+                item,
+                limits=replace(
+                    item.limits,
+                    max_billable_tokens_per_dispatch=(
+                        item.limits.max_billable_tokens_per_dispatch + 64 * 1024
+                    ),
+                ),
+            )
+            if item.producer_family == "source-composition-guard"
+            else item
+            for item in exported.inputs.executor_contract.semantic_entries
+        ),
+    )
     prepared = prepare_guided_successor(
         parent=exported.parent,
         parent_manifest=exported.manifest,
@@ -590,6 +1031,8 @@ def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
         active_ms_limit=10_800_000,
         semantic_token_limit=1_000_000,
         semantic_active_ms_limit=1_800_000,
+        successor_artifact_policy=upgraded_policy,
+        successor_executor_contract=upgraded_executor,
     )
     assert prepared.manifest.run_mode == "audit-successor"
     assert prepared.manifest.parent_run_id == context.semantic_graph.manifest.run_id
@@ -597,6 +1040,14 @@ def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
     assert len(exported.parent.remaining_audit_target_ids) == 1
     assert prepared.inputs.parent_authority_bundle.semantic_authority == (
         exported.parent.candidate.semantic_authority
+    )
+    assert prepared.inputs.artifact_policy == upgraded_policy
+    assert prepared.manifest.artifact_policy_catalog.object_hash == (
+        upgraded_policy.identity
+    )
+    assert prepared.inputs.executor_contract == upgraded_executor
+    assert prepared.manifest.executor_contract_catalog.object_hash == (
+        upgraded_executor.identity
     )
 
 
@@ -951,6 +1402,11 @@ def test_audit_action_enters_inherited_single_dispatch_kernel(
     )
     monkeypatch.setattr(
         recovery_module,
+        "ensure_audit_context_preflight",
+        lambda _context: SimpleNamespace(passed=True),
+    )
+    monkeypatch.setattr(
+        recovery_module,
         "build_semantic_provider_dependencies",
         lambda _context, _item, _semantic_context: dependencies,
     )
@@ -1020,7 +1476,9 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1043,6 +1501,13 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
         lambda _context, _recovered: shared_recovery,
     )
     monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
+    )
+    monkeypatch.setattr(
         Protocol25Controller,
         "_execute_one",
         lambda _self, selected, recovery: observed.append((selected, recovery)),
@@ -1051,6 +1516,105 @@ def test_resolution_action_enters_inherited_single_dispatch_kernel(
     context.apply_controller_action(action)
 
     assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_resolution_pauses_before_next_reservation_exceeds_semantic_pool(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A semantic dispatch must never start when its reservation crosses the pool."""
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    audit, epoch, semantic_context, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    finding_ids = tuple(
+        finding.finding_key_id for finding in audit.normalized_findings
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=epoch.identity,
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=audit.artifact.audit_target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=finding_ids,
+                unresolved_finding_ids=finding_ids,
+            ),
+        ),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "resolve_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        context.event_store.replay(),
+        context.ledger.replay(),
+    )
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "semantic-resolution"
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic resolver\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(
+            generation_attempts={},
+            retry_eligibility={},
+        )
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_resolution_dispatch_authority",
+        lambda _context, _action: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 2_000_000, 1)
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: dispatched.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(action)
+
+    assert dispatched == []
+    pause = context.event_store.replay()[-1]
+    assert pause.type == "run_paused"
+    assert pause.payload["reason_code"] == "semantic_tokens_exhausted"
 
 
 @pytest.mark.integration
@@ -1125,7 +1689,9 @@ def test_recheck_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1146,6 +1712,13 @@ def test_recheck_action_enters_inherited_single_dispatch_kernel(
         recovery_module,
         "_shared_action_recovery",
         lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
     )
     monkeypatch.setattr(
         Protocol25Controller,
@@ -1218,7 +1791,9 @@ def test_source_guard_action_enters_inherited_single_dispatch_kernel(
         tokenizer=None,
     )
     context = replace(context, dependencies_for=lambda *_args: dependencies)
-    shared_recovery = object()
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(generation_attempts={}, retry_eligibility={})
+    )
     observed = []
     monkeypatch.setattr(
         recovery_module,
@@ -1241,6 +1816,13 @@ def test_source_guard_action_enters_inherited_single_dispatch_kernel(
         lambda _context, _recovered: shared_recovery,
     )
     monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            reservation=DispatchReservationV1(1, 1, 1)
+        ),
+    )
+    monkeypatch.setattr(
         Protocol25Controller,
         "_execute_one",
         lambda _self, selected, recovery: observed.append((selected, recovery)),
@@ -1249,6 +1831,443 @@ def test_source_guard_action_enters_inherited_single_dispatch_kernel(
     context.apply_controller_action(action)
 
     assert observed == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_source_guard_retry_binds_diagnostics_before_semantic_reservation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    audit = _certified_audit(verdict="PASS")
+    audit_item = _semantic_audit_work_item(context, audit)
+    source_target = audit_target_v1(target_kind="source")
+    item = recovery_module._semantic_operation_item(
+        context,
+        audit_item,
+        source_target,
+        "source-composition-assessment",
+        tuple(sorted((digest("epoch"), digest("overlay"), digest("assessment")))),
+    )
+    target_id = digest("guard-retry-target")
+    cycle = SemanticSourceCycleStateV1(
+        source_id="api",
+        source_cycle_id="cycle-guard-retry-1",
+        semantic_round=1,
+        participating_target_ids=(target_id,),
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=digest("epoch"),
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=(digest("finding"),),
+                unresolved_finding_ids=(digest("finding"),),
+                stage="assessment_accepted",
+            ),
+        ),
+        source_cycles=(cycle,),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "guard_source"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    semantic_context = _semantic_context()
+    executor = context.semantic_inputs.executor_contract.entry_for(
+        "source-composition-guard"
+    )
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=executor,
+        registry=context.installed_authorities,
+        agent_bytes=b"prosaic validator\n",
+        context_bytes=canonical_json_bytes(semantic_context.to_json_dict()),
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    diagnosed_dependencies = replace(
+        dependencies,
+        retry_diagnostics=("authorial_schema_invalid",),
+    )
+    context = replace(context, dependencies_for=lambda *_args: dependencies)
+    shared_recovery = SimpleNamespace(
+        budget=SimpleNamespace(
+            generation_attempts={item.work_item_id: 1},
+            retry_eligibility={item.work_item_id: "artifact_contract_retry"},
+        )
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_source_guard_dispatch_authority",
+        lambda _context, _action: (item, semantic_context),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_semantic_provider_dependencies",
+        lambda _context, _item, _semantic_context: dependencies,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_shared_action_recovery",
+        lambda _context, _recovered: shared_recovery,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "resolve_execution_dependencies",
+        lambda _context, _item, _attempt_kind: diagnosed_dependencies,
+        raising=False,
+    )
+
+    def prepare_retry(
+        _store,
+        selected,
+        attempt_kind,
+        supplied_dependencies,
+        *_args,
+        **_kwargs,
+    ):
+        assert selected == item
+        assert attempt_kind == "artifact_contract_retry"
+        assert supplied_dependencies.retry_diagnostics == (
+            "authorial_schema_invalid",
+        )
+        return SimpleNamespace(reservation=DispatchReservationV1(1, 1, 1))
+
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        prepare_retry,
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda _self, selected, recovery: dispatched.append((selected, recovery)),
+    )
+
+    context.apply_controller_action(action)
+
+    assert dispatched == [(item, shared_recovery)]
+
+
+@pytest.mark.integration
+def test_source_guard_context_ceiling_failure_records_terminal_without_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    target_id = digest("guard-target")
+    cycle = SemanticSourceCycleStateV1(
+        source_id="api",
+        source_cycle_id="cycle-guard-1",
+        semantic_round=1,
+        participating_target_ids=(target_id,),
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=digest("epoch"),
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=(digest("finding"),),
+                unresolved_finding_ids=(digest("finding"),),
+                stage="assessment_accepted",
+            ),
+        ),
+        source_cycles=(cycle,),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "guard_source"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_source_guard_dispatch_authority",
+        lambda *_args: (_ for _ in ()).throw(
+            Protocol25RuntimeError("semantic context exceeds its byte ceiling")
+        ),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_measure_source_guard_context",
+        lambda *_args: 530_000,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        context.event_store,
+        "append",
+        lambda event_type, payload, **_kwargs: observed.append(
+            (event_type, dict(payload))
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda *_args, **_kwargs: pytest.fail("provider dispatch must not start"),
+    )
+
+    context.apply_controller_action(action)
+
+    assert [event_type for event_type, _payload in observed] == [
+        "semantic_context_projection_failed",
+        "run_failed",
+    ]
+    failure = observed[0][1]
+    assert failure["reason_code"] == "semantic_context_byte_ceiling_exceeded"
+    assert failure["measured_canonical_json_bytes"] == 530_000
+    assert failure["max_canonical_json_bytes"] == 512 * 1024
+    assert failure["provider_dispatch_count"] == 0
+
+
+@pytest.mark.integration
+def test_resolution_runtime_projection_failure_records_terminal_without_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    target_id = digest("resolution-projection-target")
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=digest("epoch"),
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=(digest("finding"),),
+                unresolved_finding_ids=(digest("finding"),),
+            ),
+        ),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "resolve_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_resolution_dispatch_authority",
+        lambda *_args: (_ for _ in ()).throw(
+            Protocol25RuntimeError(
+                "SemanticContextV1.overlay_hashes must be sorted and unique"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        context.event_store,
+        "append",
+        lambda event_type, payload, **_kwargs: observed.append(
+            (event_type, dict(payload))
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda *_args, **_kwargs: pytest.fail("provider dispatch must not start"),
+    )
+
+    context.apply_controller_action(action)
+
+    assert [event_type for event_type, _payload in observed] == [
+        "semantic_context_projection_failed",
+        "run_failed",
+    ]
+    failure = observed[0][1]
+    assert failure["operation"] == "semantic-resolution"
+    assert failure["reason_code"] == "semantic_context_projection_invalid"
+    assert failure["provider_dispatch_count"] == 0
+
+
+@pytest.mark.integration
+def test_recheck_runtime_projection_failure_records_terminal_without_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    target_id = digest("recheck-projection-target")
+    cycle = SemanticSourceCycleStateV1(
+        source_id="api",
+        source_cycle_id="cycle-recheck-projection",
+        semantic_round=1,
+        participating_target_ids=(target_id,),
+    )
+    state = Protocol25ControllerStateV1(
+        prerequisites_complete=True,
+        prerequisites_failed=False,
+        paused_resource=False,
+        audit_epoch_id=digest("epoch"),
+        targets=(
+            SemanticTargetControllerStateV1(
+                audit_target_id=target_id,
+                source_id="api",
+                audit_state="accepted",
+                frozen_finding_ids=(digest("finding"),),
+                unresolved_finding_ids=(digest("finding"),),
+                stage="resolution_accepted",
+            ),
+        ),
+        source_cycles=(cycle,),
+    )
+    action = plan_next_protocol_25(state)
+    assert action is not None and action.kind == "recheck_target"
+    recovered = recovery_module.Protocol25RecoveryResult(
+        state,
+        (),
+        context.ledger.replay(),
+    )
+    observed = []
+    monkeypatch.setattr(
+        recovery_module,
+        "recover_protocol_25_run",
+        lambda _context: recovered,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "build_recheck_dispatch_authority",
+        lambda *_args: (_ for _ in ()).throw(
+            Protocol25RuntimeError("semantic context projection is invalid")
+        ),
+    )
+    monkeypatch.setattr(
+        context.event_store,
+        "append",
+        lambda event_type, payload, **_kwargs: observed.append(
+            (event_type, dict(payload))
+        ),
+    )
+    monkeypatch.setattr(
+        Protocol25Controller,
+        "_execute_one",
+        lambda *_args, **_kwargs: pytest.fail("provider dispatch must not start"),
+    )
+
+    context.apply_controller_action(action)
+
+    assert [event_type for event_type, _payload in observed] == [
+        "semantic_context_projection_failed",
+        "run_failed",
+    ]
+    failure = observed[0][1]
+    assert failure["operation"] == "closure-recheck"
+    assert failure["reason_code"] == "semantic_context_projection_invalid"
+    assert failure["provider_dispatch_count"] == 0
+
+
+@pytest.mark.integration
+def test_semantic_reservation_failure_is_durable_before_dispatch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    context = _context(tmp_path)
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _audit, _epoch, _semantic_context_value, result = _certified_resolution()
+    item = _semantic_result_work_item(context, result)
+    dependencies = ProviderExecutionDependenciesV1(
+        executor=context.semantic_inputs.executor_contract.entry_for(
+            "semantic-resolution"
+        ),
+        registry=context.installed_authorities,
+        agent_bytes=b"agent\n",
+        context_bytes=b"{}\n",
+        response_schema_bytes=b"{}\n",
+        tokenizer=None,
+    )
+    recovered = recover_protocol_25_run(context)
+    monkeypatch.setattr(
+        Protocol22ExecutionStore,
+        "prepare_execution",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            Protocol22ExecutionError(
+                "shared CLI prompt upper bound exceeds the dispatch reservation"
+            )
+        ),
+    )
+
+    recovery_module._execute_semantic_action(
+        context,
+        item,
+        recovered,
+        dependencies,
+    )
+
+    events = context.event_store.replay()
+    assert events[-1].type == "executor_failed"
+    assert not any(event.type == "dispatch_started" for event in events)
+    failures = tuple(context.ledger.replay().executor_failures.values())
+    assert len(failures) == 1
+    assert failures[0].reason_code == "reservation_mismatch"
+
+
+@pytest.mark.integration
+def test_source_guard_projection_merkle_compacts_frozen_authority(tmp_path) -> None:
+    context = _context(tmp_path)
+    target = audit_target_v1(target_kind="source")
+    finding = _certified_audit().normalized_findings[0]
+    vocabulary = replace(_semantic_context().vocabulary, audit_target_id=target.identity)
+
+    projected_target, projected_vocabulary = (
+        recovery_module._source_guard_target_projection(
+            context,
+            target,
+            vocabulary,
+        )
+    )
+    projected_finding = recovery_module._source_guard_finding_projection(finding)
+
+    assert projected_target.audited_artifacts == target.audited_artifacts
+    assert len(projected_target.lower_dependency_hashes) == 1
+    assert len(projected_target.context_object_hashes) == 1
+    assert len(projected_target.evidence_object_hashes) == 1
+    assert projected_vocabulary.audit_target_id == projected_target.identity
+    assert projected_finding.finding_key == finding.finding_key
+    assert projected_finding.finding_key_id == finding.finding_key_id
+    assert projected_finding.title == finding.title
+    assert projected_finding.explanation != finding.explanation
+    for aggregate_hash in (
+        *projected_target.lower_dependency_hashes,
+        *projected_target.context_object_hashes,
+        *projected_target.evidence_object_hashes,
+    ):
+        assert context.object_store.read_blob(aggregate_hash)
 
 
 @pytest.mark.integration

@@ -103,7 +103,7 @@ def test_new_audit_preparation_layers_schema4_over_authenticated_parent(
     )
 
     assert first.manifest.schema_version == 4
-    assert first.manifest.engine_protocol_version == "2.5"
+    assert first.manifest.engine_protocol_version == "2.5.1"
     assert first.manifest.run_mode == "new-audit-epoch"
     assert first.manifest.parent_run_id == parent.manifest.run_id
     assert first.inputs.parent_authority_bundle.semantic_authority.is_empty
@@ -353,6 +353,7 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
         "harness.re_v2.snapshot.validate_source_snapshot",
         lambda _snapshot: None,
     )
+    monkeypatch.setenv("ECHELON_LLM", "codex")
     rebuilt = legacy_cli._re_v25_context(workspace, first, manifest)
 
     assert rebuilt.semantic_graph.manifest == layer_manifest
@@ -399,6 +400,45 @@ def test_l3_deepen_creates_and_exactly_reuses_one_schema5_child(
         semantic_time_limit_minutes=None,
     )
     assert continued == [rebuilt]
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "next semantic dispatch exceeds remaining authorization",
+            "reason_code": "semantic_budget_authorization_required",
+        },
+        occurred_at=manifest.created_at,
+    )
+    continued.clear()
+    legacy_cli._run_re_v25_continue(
+        rebuilt,
+        token_limit=None,
+        time_limit_minutes=None,
+        semantic_token_limit=None,
+        semantic_time_limit_minutes=None,
+    )
+    assert [event.type for event in rebuilt.event_store.replay()[-2:]] == [
+        "operator_pause_requested",
+        "run_resumed",
+    ]
+    assert continued == [rebuilt]
+
+    rebuilt.event_store.append(
+        "run_paused",
+        {
+            "reason": "semantic tokens exhausted",
+            "reason_code": "semantic_tokens_exhausted",
+        },
+        occurred_at=manifest.created_at,
+    )
+    with pytest.raises(ValueError, match="strictly higher"):
+        legacy_cli._run_re_v25_continue(
+            rebuilt,
+            token_limit=None,
+            time_limit_minutes=None,
+            semantic_token_limit=None,
+            semantic_time_limit_minutes=None,
+        )
 
     from harness.re_v2.status import render_v2_status
 
@@ -472,11 +512,29 @@ def test_schema4_live_execution_uses_protocol25_controller(
         "harness.re_v2.protocol_25.materialization.materialize_accepted_l3",
         materialized.append,
     )
+    status_calls = 0
+
+    def status_document(run_dir: Path, *, context: object) -> dict[str, object]:
+        nonlocal status_calls
+        status_calls += 1
+        generated = 0 if status_calls == 1 else 1
+        return {
+            "engine_protocol_version": "2.5",
+            "run_id": run_dir.name,
+            "status": "in_progress" if generated == 0 else "paused",
+            "banner": (
+                "L3 SELECTED SCOPE IN PROGRESS"
+                if generated == 0
+                else "L3 PAUSED - CONTINUABLE"
+            ),
+            "selection": {"selected_sources": 1, "selected_domains": 1},
+            "artifact_counts": {"adopted": 0, "generated": generated},
+            "next_action": "run `echelon re continue run`",
+        }
+
     monkeypatch.setattr(
-        "harness.re_v2.protocol_25.status.render_protocol_25_status",
-        lambda run_dir, *, context: (
-            f"status for {run_dir.name}\nL3 PAUSED - CONTINUABLE\n"
-        ),
+        "harness.re_v2.protocol_25.status.protocol_25_status_document",
+        status_document,
     )
 
     legacy_cli._run_re_v2_live(context)
@@ -484,8 +542,10 @@ def test_schema4_live_execution_uses_protocol25_controller(
     assert calls == [context]
     assert materialized == [context]
     output = capsys.readouterr().out
-    assert "status for run" in output
-    assert output.endswith("L3 PAUSED - CONTINUABLE\n")
+    assert "✈ echelon · RE v2 · L3 SEMANTIC AUDIT" in output
+    assert "[re] L3 · 0/1 accepted · controller started" in output
+    assert "L3 PAUSED - CONTINUABLE" in output
+    assert "protocol" not in output.lower()
 
 
 @pytest.mark.integration

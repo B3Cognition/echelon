@@ -20,6 +20,7 @@ from tests.re_v2_protocol_26_fixtures import (
     l3_checkpoint_manifest_v1,
     manifest_v5,
 )
+from tests.re_v2_protocol_25_fixtures import manifest_v4
 
 
 @pytest.mark.unit
@@ -34,6 +35,14 @@ def test_layer_execution_contract_round_trips_exact_layer_manifest(
     assert decoded == contract
     assert decoded.target_layer == target_layer
     assert decoded.identity == content_digest(contract.to_json_dict())
+
+
+@pytest.mark.unit
+def test_layer_execution_contract_round_trips_protocol_2_5_1_manifest() -> None:
+    manifest = replace(manifest_v4(), engine_protocol_version="2.5.1")
+    contract = LayerExecutionContractV1.from_layer_manifest(manifest)
+
+    assert LayerExecutionContractV1.from_json_dict(contract.to_json_dict()) == contract
 
 
 @pytest.mark.unit

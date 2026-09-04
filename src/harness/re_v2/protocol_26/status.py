@@ -176,6 +176,7 @@ def protocol_26_status_document(
         len(ledger.accepted_artifacts),
     ).document
     decorated = dict(base)
+    decorated["layer_protocol_version"] = base["engine_protocol_version"]
     decorated["engine_protocol_version"] = "2.6"
     decorated["schema_version"] = 5
     decorated["target_layer"] = manifest.target_layer

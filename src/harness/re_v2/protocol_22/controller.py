@@ -941,7 +941,12 @@ class Protocol22Controller:
         committed: Committed,
         candidate_id: str,
         reason_code: Literal["candidate_tree_invalid", "authorial_schema_invalid"],
+        *,
+        diagnostics: tuple[str, ...] | None = None,
     ) -> None:
+        normalized_diagnostics = tuple(
+            sorted({reason_code, *(diagnostics or ())})
+        )
         assessment = CandidateAssessmentReceiptV1(
             schema_version=1,
             candidate_id=candidate_id,
@@ -951,7 +956,7 @@ class Protocol22Controller:
             artifact_hash=None,
             certification_receipt_id=None,
             outcome="rejected_before_artifact",
-            normalized_diagnostics=(reason_code,),
+            normalized_diagnostics=normalized_diagnostics,
         )
         self.context.ledger.record_candidate_assessment(assessment)
         _fault(self.fault_hook, f"candidate_assessment:{assessment.identity}")
@@ -973,7 +978,7 @@ class Protocol22Controller:
             candidate_assessment_id=assessment.identity,
             failure_class="artifact_contract",
             reason_code=reason_code,
-            diagnostics=(reason_code,),
+            diagnostics=normalized_diagnostics,
         )
 
     def _retry_or_fail_work_item(

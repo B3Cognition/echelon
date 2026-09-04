@@ -615,9 +615,8 @@ def _validate_bindings(
     else:
         if (
             parent.parent_layer != "L3"
-            or parent.parent_state != "blocked_plateau"
+            or parent.parent_state not in {"blocked_incomplete", "blocked_plateau"}
             or semantic.audit_epoch_id is None
-            or semantic.closure_root_hash is None
             or not semantic.unresolved_finding_ids
             or epoch is None
             or epoch.identity != semantic.audit_epoch_id

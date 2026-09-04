@@ -14,6 +14,7 @@ from harness.re_v2.protocol_22.authorities import InstalledAuthorityRegistry
 from harness.re_v2.protocol_22.execution import ProviderExecutionDependenciesV1
 from harness.re_v2.protocol_22.model import ExecutionInputV1, WorkItemV2
 from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
+from harness.re_v2.protocol_22.provider import Protocol22ProviderError
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_25.cli_provider import (
     Protocol25ExecutionStore,
@@ -142,6 +143,24 @@ def test_semantic_renderer_reuses_shared_provider_without_baseline_filename(
     assert "baseline.json" not in prompt
     assert provider.calls[0]["prompt_metadata"] == frontmatter
     assert provider.calls[0]["isolated_workspace"] is True
+
+
+@pytest.mark.unit
+def test_semantic_renderer_rejects_provider_that_differs_from_frozen_contract() -> None:
+    catalog, _objects = _executor_fixture()
+    executor = catalog.entry_for("semantic-audit")
+    provider = _ProviderSpy(_result(provider_name="claude"))
+
+    with pytest.raises(
+        Protocol22ProviderError,
+        match='requires provider "codex".*effective provider is "claude"',
+    ):
+        SquadCliSemanticRenderer(
+            (executor,),
+            provider_factory=lambda: provider,  # type: ignore[return-value]
+        )
+
+    assert provider.calls == []
 
 
 @pytest.mark.unit
@@ -430,3 +449,79 @@ def test_semantic_renderer_recovers_exact_candidate_when_only_result_is_missing(
     )
 
     assert result.outcome == "candidate_ready"
+
+
+@pytest.mark.unit
+def test_semantic_renderer_treats_nonzero_auth_exit_as_transport_failure(
+    tmp_path: Path,
+) -> None:
+    catalog, objects = _executor_fixture()
+    executor = catalog.entry_for("semantic-audit")
+    renderer = executor.request_renderer
+    assert renderer is not None
+    agent_bytes = canonical_prosaic_agent_bytes(
+        ProsaicCommandArtifact(
+            body="Write exactly `audit.json`.\n",
+            frontmatter={"name": "echelon.re-validator"},
+        )
+    )
+    executor = replace(
+        executor,
+        request_renderer=replace(
+            renderer,
+            agent_contract_hash=content_digest(agent_bytes),
+        ),
+    )
+    renderer = executor.request_renderer
+    assert renderer is not None
+    schema_bytes = objects[renderer.response_schemas[0].schema_hash]
+    context_bytes = canonical_json_bytes(
+        replace(
+            _context(),
+            response_schema_hash=content_digest(schema_bytes),
+        ).to_json_dict()
+    )
+    execution_input = ExecutionInputV1(
+        schema_version=1,
+        dispatch_id="semantic-dispatch-auth-failure",
+        work_item_id=digest("semantic auth failure"),
+        attempt_kind="initial_generation",
+        executor_contract_hash=executor.executor_contract_hash,
+        agent_contract_hash=content_digest(agent_bytes),
+        context_bundle_hash=content_digest(context_bytes),
+        provider_request_envelope_hash=None,
+        deterministic_invocation=None,
+    )
+    reservation = calculate_shared_cli_dispatch_reservation(
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        executor,
+    )
+    candidate_root = tmp_path / "candidate-auth-failure"
+    candidate_root.mkdir()
+    provider = _ProviderSpy(
+        _result(
+            exit_code=1,
+            echelon_result=None,
+            echelon_result_validation_reason="missing echelon_result",
+            stderr="Failed to authenticate: OAuth session expired",
+        )
+    )
+
+    result = SquadCliSemanticRenderer(
+        (executor,),
+        provider_factory=lambda: provider,  # type: ignore[return-value]
+    ).execute(
+        execution_input,
+        agent_bytes,
+        context_bytes,
+        schema_bytes,
+        reservation,
+        candidate_root,
+        10**12,
+    )
+
+    assert result.outcome == "transport_error"
+    assert result.provider_name == "codex"
+    assert result.stderr == b"Failed to authenticate: OAuth session expired"
