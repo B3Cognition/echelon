@@ -5845,6 +5845,46 @@ class SquadController:
             lambda: self._run_locked(user_message, mode, next_phase_override)
         )
 
+    def _resume_exhausted_lexicon_gate(self) -> bool:
+        """Retry a deterministic Lexicon checkpoint after its evidence changes.
+
+        A terminal gate result records the originating deterministic phase in
+        ``last_dispatch``.  Re-entering that phase lets a corrected validator
+        re-evaluate the immutable artifacts without recreating the entire spec
+        run or dispatching another authoring agent.  If the evidence remains
+        invalid, the gate fails closed again under its existing repair cap.
+        """
+        state = self._state_store.load()
+        reason = str(state.get("blocked_reason") or "")
+        allowed_phases = {
+            "lexicon_gate_exhausted": {"phase1-lexicon"},
+            "tasks_lexicon_gate_exhausted": {
+                "phase3-tasks-lexicon",
+                "phase3-consensus-tasks-lexicon",
+            },
+        }.get(reason)
+        if state.get("status") != "blocked" or not allowed_phases:
+            return False
+
+        last_dispatch = state.get("last_dispatch")
+        last_phase = (
+            str(last_dispatch.get("phase_id") or "")
+            if isinstance(last_dispatch, Mapping)
+            else ""
+        )
+        phase = last_phase if last_phase in allowed_phases else str(
+            state.get("phase") or ""
+        )
+        if phase not in allowed_phases:
+            return False
+
+        state["status"] = "running"
+        state["phase"] = phase
+        state["blocked_reason"] = None
+        state.pop(reason, None)
+        self._state_store.save(state)
+        return True
+
     def _run_locked(
         self,
         user_message: str = "",
@@ -6001,6 +6041,25 @@ class SquadController:
             force_resume = True
             print(
                 f"[squad] deterministic analysis recovery → retrying "
+                f"{state.get('phase')!r}",
+                flush=True,
+            )
+
+        # A Lexicon gate itself is deterministic.  When its artifacts or
+        # validator changed after a terminal finding, retry precisely that
+        # checkpoint rather than treating the run as a fresh spec invocation.
+        elif (
+            existing_status == "blocked"
+            and blocked_reason
+            in {"lexicon_gate_exhausted", "tasks_lexicon_gate_exhausted"}
+        ):
+            if not self._resume_exhausted_lexicon_gate():
+                return SquadResult.from_state(existing)
+            state = self._state_store.load()
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] deterministic Lexicon recovery → retrying "
                 f"{state.get('phase')!r}",
                 flush=True,
             )

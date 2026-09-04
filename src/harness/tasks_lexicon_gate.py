@@ -257,7 +257,10 @@ def _validate_tasks_gate_artifacts(
 
             lexicon_report = validate_tasks(
                 tasks_text,
-                glossary=_load_glossary_terms(glossary_path),
+                glossary=(
+                    _load_glossary_terms(glossary_path)
+                    | _controlled_spec_terms(spec_ref_path)
+                ),
                 spec_text=spec_ref_path.read_text(encoding="utf-8"),
             )
             findings.extend(
@@ -336,3 +339,23 @@ def _load_glossary_terms(glossary_path: Path) -> set[str]:
         terms = re.findall(r"\*\*([^*]+)\*\*", line)
         glossary.update(term.strip() for term in terms or [line])
     return glossary
+
+
+def _controlled_spec_terms(spec_ref_path: Path) -> set[str]:
+    """Return identifier terms owned by a parseable controlled requirements spec.
+
+    Phase 3 follows a passed Phase 1 Lexicon gate, so task artifacts may repeat
+    measurable terms from that controlled requirement projection without adding
+    redundant glossary entries.  Parsing first keeps an arbitrary malformed
+    file from becoming an authority for task vocabulary.
+    """
+    try:
+        from lark.exceptions import LarkError
+        from lexicon.parser import parse
+        from lexicon.resolver import content_terms
+
+        text = spec_ref_path.read_text(encoding="utf-8")
+        parse(text)
+    except (OSError, LarkError):
+        return set()
+    return {term for term, _line in content_terms(text)}

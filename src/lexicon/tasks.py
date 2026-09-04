@@ -27,6 +27,8 @@ _ROW_START = re.compile(rf"^- \[[ xX]\]\s+(?P<id>{TASK_ID_PATTERN})\b")
 _TEST_RE = re.compile(r"^\s*\*\*Test:\*\*\s*(?P<v>.+?)\s*$")
 _ACC_HDR = re.compile(r"^\s*\*\*Acceptance Criteria:\*\*\s*$")
 _ACC_ITEM = re.compile(r"^\s*- \[[ xX]\]\s*(?P<v>.+?)\s*$")
+_SECTION_BOUNDARY_RE = re.compile(r"^\s*(?:#+\s+|\*\*[^*]+:\*\*)")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
 
 def _row_start_lines(lines: list[str]) -> list[int]:
@@ -64,6 +66,9 @@ def extract_tasks(text: str) -> list[TaskRecord]:
             if _ACC_HDR.match(bl):
                 in_acc = True
                 continue
+            if in_acc and _SECTION_BOUNDARY_RE.match(bl):
+                in_acc = False
+                continue
             ma = _ACC_ITEM.match(bl)
             if ma and in_acc:
                 acc.append(ma.group("v"))
@@ -77,7 +82,12 @@ def extract_tasks(text: str) -> list[TaskRecord]:
 def within_doc_findings(text: str, glossary: set[str]) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(banned_word_findings(text))      # vague terms in any field
-    findings.extend(unresolved_terms(text, glossary))  # T: terms bind to glossary
+    # Inline code in task plans carries implementation paths, hash labels and
+    # API syntax rather than product vocabulary.  Resolve only prose terms so
+    # a filename such as ``version_01`` cannot create a false glossary debt.
+    findings.extend(
+        unresolved_terms(_INLINE_CODE_RE.sub("", text), glossary)
+    )  # T: prose terms bind to glossary
     findings.extend(placeholder_findings(text))      # C: no <placeholder>/TBD/TODO
     for t in extract_tasks(text):                    # atomicity: one deliverable
         if len(_COMPOUND_RE.findall(t.acceptance)) >= 2:

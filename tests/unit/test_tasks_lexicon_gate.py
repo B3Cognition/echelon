@@ -126,6 +126,47 @@ def test_valid_tasks_pass_and_reset_attempts(tmp_path: Path) -> None:
     }
 
 
+def test_terms_declared_by_controlled_spec_are_valid_in_tasks(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_valid_plan(spec_dir)
+    (spec_dir / "requirements.lexicon.md").write_text(
+        _valid_spec().replace(
+            "DEPENDS: none\n",
+            "CONSTRAINT: tree_orb_shape_collisions = 0 objects\nDEPENDS: none\n",
+        ),
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        _valid_tasks().replace(
+            "the output is returned",
+            "tree_orb_shape_collisions equals 0 objects",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, spec_dir)
+
+    assert result.action == "proceed"
+    assert result.passed is True
+
+
+def test_file_paths_are_not_checked_as_controlled_terms(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_valid_plan(spec_dir)
+    (spec_dir / "tasks.md").write_text(
+        _valid_tasks().replace(
+            "`sources/app/main.py`",
+            "`runs/spec-001/inputs/reference/version_01`",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, spec_dir)
+
+    assert result.action == "proceed"
+    assert result.passed is True
+
+
 @pytest.mark.parametrize(
     ("global_enabled", "tasks_enabled"),
     [(False, True), (True, False)],

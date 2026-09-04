@@ -84,6 +84,7 @@ class CodexCliBackend:
         operational_roots: tuple[str, ...] = ()
         operational_read_paths: tuple[str, ...] = ()
         operational_metadata_paths: tuple[str, ...] = ()
+        exclusive_write_scope = False
         if isinstance(raw_prompt_metadata, Mapping):
             read_roots = _prompt_scope_paths(
                 request, raw_prompt_metadata, "tool_read_roots"
@@ -102,6 +103,9 @@ class CodexCliBackend:
             )
             operational_metadata_paths = _prompt_scope_paths(
                 request, raw_prompt_metadata, "tool_operational_metadata_paths"
+            )
+            exclusive_write_scope = (
+                raw_prompt_metadata.get("tool_write_scope_exclusive") is True
             )
 
         sandbox_exec = (
@@ -126,17 +130,32 @@ class CodexCliBackend:
                 approval_reason=None,
             )
         unsafe = tool_policy.allow_unsafe_host_execution
+        if exclusive_write_scope and unsafe:
+            # A review role must not be able to escape its artifact boundary
+            # merely because the surrounding project permits host execution.
+            tool_policy = replace(
+                tool_policy,
+                allow_unsafe_host_execution=False,
+                approval_reason=None,
+            )
+            unsafe = False
         permission_profile = None
-        if forbidden_roots and not unsafe and not isolated_workspace:
+        if (
+            (forbidden_roots or exclusive_write_scope)
+            and not unsafe
+            and not isolated_workspace
+        ):
             permission_profile = (
                 _PRODUCT_PLANE_PERMISSION_PROFILE,
                 _codex_product_plane_permission_profile(
+                    workspace_root=str(Path(request.cwd).resolve()),
                     read_roots=read_roots,
                     write_paths=write_paths,
                     forbidden_roots=forbidden_roots,
                     operational_roots=operational_roots,
                     operational_read_paths=operational_read_paths,
                     operational_metadata_paths=operational_metadata_paths,
+                    exclusive_write_scope=exclusive_write_scope,
                 ),
             )
 
@@ -279,15 +298,23 @@ def _prompt_scope_paths(
 
 def _codex_product_plane_permission_profile(
     *,
+    workspace_root: str,
     read_roots: tuple[str, ...],
     write_paths: tuple[str, ...],
     forbidden_roots: tuple[str, ...],
     operational_roots: tuple[str, ...],
     operational_read_paths: tuple[str, ...],
     operational_metadata_paths: tuple[str, ...],
+    exclusive_write_scope: bool = False,
 ) -> str:
     """Build one native Codex profile for workspace and product-plane scope."""
     access: dict[str, str] = {}
+
+    # The profile extends `:workspace`, which is otherwise writable. A root
+    # read rule makes explicitly declared report paths the only writable
+    # product-plane paths while preserving normal read access for review work.
+    if exclusive_write_scope:
+        access[workspace_root] = "read"
 
     for path in (*read_roots, *operational_roots, *operational_read_paths):
         access[path] = "read"

@@ -60,6 +60,10 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
 )
 _JOURNAL_CONTEXT_MAX_BYTES = 24 * 1024
 _DEFAULT_AGENT_TIMEOUT_SECONDS = 60 * 60
+_DECLARED_OUTPUT_FILE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9][A-Za-z0-9_.-]*\.(?:md|json|yaml|yml))(?![A-Za-z0-9_.-])"
+)
+_SAGE_REVIEW_OUTPUTS = ("issues.md", "quality-gates.md")
 _WHY_STATE_CONTEXT_KEYS = (
     "run_id",
     "spec_id",
@@ -1441,6 +1445,57 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _phase_prompt_metadata(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        prompt_metadata: dict[str, object],
+        *,
+        agent_id: str | None = None,
+        outputs: object | None = None,
+    ) -> dict[str, object]:
+        """Attach a narrow provider write scope for a review-only SAGE pass.
+
+        WHY2 and WHY3 review existing artifacts. The role may publish its own
+        reports, but must never mutate the artifact it certifies. Enforcing that
+        boundary in the provider prevents an unauthorized spec edit from
+        invalidating Understanding evidence after the deterministic gate runs.
+        """
+        metadata = dict(prompt_metadata)
+        resolved_agent = str(agent_id or node.agent or "").strip()
+        if resolved_agent != "echelon.sage" or node.id not in {
+            "phase1-why2",
+            "phase3-consensus",
+        }:
+            return metadata
+
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(), self._project_root
+        )
+        if not spec_dir_ref:
+            return metadata
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+
+        declared_outputs = (
+            outputs if outputs is not None else getattr(node, "outputs", [])
+        )
+        filenames = set(_SAGE_REVIEW_OUTPUTS)
+        if isinstance(declared_outputs, list):
+            for declared in declared_outputs:
+                if isinstance(declared, str):
+                    filenames.update(_DECLARED_OUTPUT_FILE_RE.findall(declared))
+
+        metadata["tool_write_paths"] = [
+            str((spec_dir / filename).resolve(strict=False))
+            for filename in sorted(filenames)
+        ]
+        # `:workspace` is normally writable. Codex consumes this explicit flag
+        # to make the declared reports the only writable product paths.
+        metadata["tool_write_scope_exclusive"] = True
+        return metadata
+
     def _result_contract(self, node: "PhaseNode", agent_entry: dict | None = None):
         """Resolve the narrowest contract for this concrete agent dispatch."""
         from harness.echelon_result_schema import EchelonResultContract
@@ -2007,7 +2062,13 @@ class PhaseExecutor(ABC):
                         state_store.load(),
                         result_contract,
                     )
-                    prompt_metadata = _read_prompt_metadata(pre_path)
+                    prompt_metadata = self._phase_prompt_metadata(
+                        node,
+                        state,
+                        _read_prompt_metadata(pre_path),
+                        agent_id=pre_agent,
+                        outputs=entry.get("outputs", getattr(node, "outputs", [])),
+                    )
                     result = self._exec_agent_with_contract(
                         prompt,
                         result_contract,
@@ -2185,6 +2246,7 @@ class AgentExecutor(PhaseExecutor):
                 agent_path = self._ext_dir / rel
                 if agent_path.exists():
                     prompt_metadata = _read_prompt_metadata(agent_path)
+        prompt_metadata = self._phase_prompt_metadata(node, state, prompt_metadata)
         result = self._exec_agent_with_contract(
             prompt,
             result_contract,
@@ -2885,6 +2947,9 @@ class StagedParallelExecutor(PhaseExecutor):
         with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
             futures: dict = {}
             for agent_entry in stage1_agents:
+                agent_id = str(
+                    agent_entry.get("id") or agent_entry.get("agent", "")
+                ).split(" ")[0]
                 mode_label = str(
                     agent_entry.get("mode")
                     or agent_entry.get("id")
@@ -2902,8 +2967,27 @@ class StagedParallelExecutor(PhaseExecutor):
                     phase_id=node.id,
                     controller_context=getattr(node, "controller_context", ""),
                 )
+                prompt_metadata: dict[str, object] = {}
+                if agent_id == "echelon.sage":
+                    rel = self._graph.agent_file(agent_id)
+                    if rel:
+                        agent_path = self._ext_dir / rel
+                        if agent_path.exists():
+                            prompt_metadata = _read_prompt_metadata(agent_path)
+                prompt_metadata = self._phase_prompt_metadata(
+                    node,
+                    state,
+                    prompt_metadata,
+                    agent_id=agent_id,
+                    outputs=agent_entry.get(
+                        "outputs", getattr(node, "outputs", [])
+                    ),
+                )
                 futures[pool.submit(
-                    self._exec_agent_with_contract, prompt, result_contract
+                    self._exec_agent_with_contract,
+                    prompt,
+                    result_contract,
+                    prompt_metadata,
                 )] = (mode_label, result_contract)
 
             for future in as_completed(futures):
@@ -2975,6 +3059,9 @@ class StagedParallelExecutor(PhaseExecutor):
 
         state = state_store.load()
         for agent_entry in stage2_agents:
+            agent_id = str(
+                agent_entry.get("id") or agent_entry.get("agent", "")
+            ).split(" ")[0]
             result_contract = self._result_contract(node, agent_entry)
             prompt = self._build_agent_prompt(
                 agent_entry,
@@ -2988,7 +3075,23 @@ class StagedParallelExecutor(PhaseExecutor):
                 phase_id=node.id,
                 controller_context=getattr(node, "controller_context", ""),
             )
-            stage2_result = self._exec_agent_with_contract(prompt, result_contract)
+            prompt_metadata: dict[str, object] = {}
+            if agent_id == "echelon.sage":
+                rel = self._graph.agent_file(agent_id)
+                if rel:
+                    agent_path = self._ext_dir / rel
+                    if agent_path.exists():
+                        prompt_metadata = _read_prompt_metadata(agent_path)
+            prompt_metadata = self._phase_prompt_metadata(
+                node,
+                state,
+                prompt_metadata,
+                agent_id=agent_id,
+                outputs=agent_entry.get("outputs", getattr(node, "outputs", [])),
+            )
+            stage2_result = self._exec_agent_with_contract(
+                prompt, result_contract, prompt_metadata
+            )
             stage2_result = self._validate_result_state_updates(
                 node,
                 stage2_result,
@@ -3082,8 +3185,19 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         )
                         + _canonical_echelon_result_contract(self._ext_dir)
                     )
+                    prompt_metadata = self._phase_prompt_metadata(
+                        node,
+                        state,
+                        _read_prompt_metadata(path)
+                        if agent_id == "echelon.sage"
+                        else {},
+                        agent_id=agent_id,
+                        outputs=agent_entry.get(
+                            "outputs", getattr(node, "outputs", [])
+                        ),
+                    )
                     result = self._exec_agent_with_contract(
-                        prompt, result_contract
+                        prompt, result_contract, prompt_metadata
                     )
                     result = self._validate_result_state_updates(
                         node,

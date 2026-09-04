@@ -90,6 +90,91 @@ def test_agent_executor_defaults_to_one_hour_timeout(tmp_path: Path) -> None:
     assert executor._provider.exec_agent.call_args.kwargs["timeout_ms"] == 3_600_000
 
 
+def test_agent_phase_metadata_limits_writes_to_declared_outputs(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    node = PhaseNode(
+        id="phase1-why2",
+        type="agent",
+        agent="echelon.sage",
+        outputs=[
+            "quality-gates.md",
+            "issues.md",
+            "issues → state.json.issues_log (severity-tagged)",
+        ],
+    )
+
+    metadata = executor._phase_prompt_metadata(
+        node,
+        {"spec_dir": "specs/001-demo"},
+        {"model_tier": "strong", "tools": "full"},
+    )
+
+    assert metadata["model_tier"] == "strong"
+    assert metadata["tool_write_scope_exclusive"] is True
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
+
+
+def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    agent_path = tmp_path / "ext" / "agents" / "sage.md"
+    agent_path.parent.mkdir(parents=True)
+    agent_path.write_text(
+        "---\nmodel_tier: strong\n---\n# SAGE\n",
+        encoding="utf-8",
+    )
+    executor._graph.agent_file.return_value = "agents/sage.md"
+    executor._provider.exec_agent.return_value = _result(verdict="PASS")
+    store = SquadStateStore(tmp_path / "squad" / "run-test")
+    store.initialize("run", "banzai", "test", 0, "phase1-why2")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    executor.execute(
+        PhaseNode(
+            id="phase1-why2",
+            type="agent",
+            agent="echelon.sage",
+            outputs=["quality-gates.md", "issues.md"],
+            allowed_verdicts=["PASS"],
+        ),
+        store,
+    )
+
+    metadata = executor._provider.exec_agent.call_args.kwargs["prompt_metadata"]
+    assert metadata["tool_write_scope_exclusive"] is True
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
+
+
+def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    metadata = executor._phase_prompt_metadata(
+        PhaseNode(id="phase3-consensus", type="staged_parallel"),
+        {"spec_dir": str(spec_dir)},
+        {},
+        agent_id="echelon.sage",
+        outputs=["issues (CRITICAL | HIGH | MEDIUM)"],
+    )
+
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
+
+
 def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
     blocked = SquadAgentResult(
         exit_code=0,

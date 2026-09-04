@@ -4913,15 +4913,19 @@ def _classify_run_recovery(
     )
     if tasks_lexicon_block:
         return _RunRecoveryAction(
-            "manual_recovery",
+            "retry_phase",
             reason="tasks_lexicon_gate_exhausted",
-            phase="phase3-plan",
-            command="echelon phase run phase3-plan",
+            phase=(
+                last_dispatch_phase
+                if last_dispatch_phase
+                in {"phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"}
+                else "phase3-tasks-lexicon"
+            ),
+            command="echelon spec continue",
             note=(
-                "The hard Tasks Lexicon gate failed. Re-run the Phase 3 planning "
-                "node to repair tasks.md from tasks-lexicon-report.json; the "
-                "controller will revalidate the repaired plan through the "
-                "deterministic Tasks Lexicon gate."
+                "Retry the deterministic Tasks Lexicon gate before requesting "
+                "another planning pass. If the validator still finds debt, it "
+                "will retain the evidence and block without dispatching a provider."
             ),
         )
 

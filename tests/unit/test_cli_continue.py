@@ -605,13 +605,13 @@ THEN: The dashboard is visible
     "blocked_reason",
     ["tasks_lexicon_gate_exhausted", "lexicon_gate_exhausted"],
 )
-def test_continue_routes_exhausted_tasks_lexicon_to_phase3_plan_repair(
+def test_continue_retries_exhausted_tasks_lexicon_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
     blocked_reason: str,
 ) -> None:
-    """Current and legacy Tasks blocks repair planning, not Phase 1 Lexicon."""
+    """Tasks-gate exhaustion retries the deterministic gate before planning."""
     _write_real_constitution(tmp_path)
     run_dir = _write_run_state(
         tmp_path,
@@ -653,17 +653,14 @@ def test_continue_routes_exhausted_tasks_lexicon_to_phase3_plan_repair(
     )
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "terminal-blocked"
-    assert state["status"] == "blocked"
-    assert state["blocked_reason"] == blocked_reason
-    assert calls == []
+    assert state["phase"] == "phase3-tasks-lexicon"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert calls == [["build the dashboard", "--mode", "banzai"]]
     output = capsys.readouterr().out
-    assert "Manual recovery required" in output
-    assert "tasks.md" in output
-    assert "tasks-lexicon-report.json" in output
-    assert "echelon phase run phase3-plan" in output
-    assert "requirements.lexicon.md" not in output
-    assert "phase1-lexicon-derive" not in output
+    assert "Retrying incomplete phase phase3-tasks-lexicon" in output
+    assert "Manual recovery required" not in output
+    assert "echelon phase run phase3-plan" not in output
 
 
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(

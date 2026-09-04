@@ -32,6 +32,22 @@ def test_compound_acceptance_not_atomic():
 
 
 @pytest.mark.unit
+def test_acceptance_stops_before_test_tasks_and_checkpoint_checkboxes():
+    doc = _doc(
+        acc_items=("the list renders and the cost panel updates",),
+    ) + (
+        "\n  **Test Tasks:**\n"
+        "  - [ ] the browser check records a screenshot and a trace\n\n"
+        "## Checkpoint: Foundation Complete\n\n"
+        "- [ ] the build and browser checks pass\n"
+    )
+
+    findings = within_doc_findings(doc, set())
+
+    assert not any(finding.code == "task-not-atomic" for finding in findings)
+
+
+@pytest.mark.unit
 def test_placeholder_flagged():
     f = within_doc_findings(_doc(acc_items=("renders <TBD> rows",)), set())
     assert any(x.code == "incomplete-slot" for x in f)

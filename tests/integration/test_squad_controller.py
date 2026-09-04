@@ -15717,6 +15717,31 @@ THEN: The dashboard is visible
         assert result.state_updates["tasks_lexicon_pass"] is True
         assert result.state_updates["tasks_lexicon_attempts"] == 0
 
+    def test_tasks_gate_exhaustion_retries_its_deterministic_checkpoint(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "tasks_lexicon_gate_exhausted",
+                "tasks_lexicon_gate_exhausted": True,
+                "last_dispatch": {"phase_id": "phase3-tasks-lexicon"},
+            }
+        )
+        store.save(state)
+
+        assert ctrl._resume_exhausted_lexicon_gate() is True
+
+        recovered = store.load()
+        assert recovered["status"] == "running"
+        assert recovered["phase"] == "phase3-tasks-lexicon"
+        assert recovered["blocked_reason"] is None
+        assert "tasks_lexicon_gate_exhausted" not in recovered
+
     def test_tasks_gate_materializes_run_targets_before_validation(
         self,
         tmp_path,
