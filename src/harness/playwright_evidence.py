@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Iterable
+
+from harness.test_execution_evidence import ObservedTestExecution
 
 
 class PlaywrightEvidenceError(ValueError):
@@ -86,6 +89,59 @@ def parse_playwright_json(stdout: str) -> PlaywrightEvidence:
     )
 
 
+def parse_playwright_json_executions(
+    stdout: str,
+    *,
+    observer_id: str,
+    test_type: str,
+) -> tuple[ObservedTestExecution, ...]:
+    """Convert Playwright JSON to source-identity-preserving executions.
+
+    This intentionally leaves :func:`parse_playwright_json` unchanged for its
+    existing visual-evidence callers.
+    """
+    if not stdout.strip():
+        raise PlaywrightEvidenceError("Playwright produced no JSON report")
+    try:
+        report = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise PlaywrightEvidenceError("Playwright output is not valid JSON") from exc
+    if not isinstance(report, dict) or not isinstance(report.get("suites"), list):
+        raise PlaywrightEvidenceError("Playwright JSON report has no suites array")
+
+    executions: list[ObservedTestExecution] = []
+    for spec in _walk_specs(report["suites"]):
+        title = str(spec.get("title") or "").strip()
+        if not title:
+            raise PlaywrightEvidenceError("Playwright spec title must be non-empty")
+        file = _target_relative_file(spec.get("file"))
+        tests = spec.get("tests", [])
+        if not isinstance(tests, list):
+            raise PlaywrightEvidenceError("Playwright spec tests must be an array")
+        for test in tests:
+            if not isinstance(test, dict):
+                raise PlaywrightEvidenceError("Playwright test entry must be an object")
+            results = test.get("results", [])
+            if not isinstance(results, list):
+                raise PlaywrightEvidenceError("Playwright test results must be an array")
+            status, error = _test_status(test)
+            executions.append(
+                ObservedTestExecution(
+                    observer_id=observer_id,
+                    test_type=test_type,
+                    file=file,
+                    title=title,
+                    project=str(test.get("projectName") or "default"),
+                    status=status,
+                    retry_count=max(len(results) - 1, 0),
+                    error=error,
+                )
+            )
+    if not executions:
+        raise PlaywrightEvidenceError("Playwright JSON report has zero executed tests")
+    return tuple(executions)
+
+
 def _walk_specs(suites: Iterable[Any]) -> Iterable[dict[str, Any]]:
     for suite in suites:
         if not isinstance(suite, dict):
@@ -137,3 +193,17 @@ def _test_status(test: dict[str, Any]) -> tuple[str, str]:
     if not message:
         message = f"terminal status was {actual or 'unknown'} (expected {expected})"
     return "failed", message[:1000]
+
+
+def _target_relative_file(value: Any) -> str:
+    file = str(value or "").strip()
+    path = Path(file)
+    if (
+        not file
+        or path.is_absolute()
+        or ".." in path.parts
+        or "." in path.parts
+        or "\\" in file
+    ):
+        raise PlaywrightEvidenceError("Playwright spec file must be target-relative")
+    return file
