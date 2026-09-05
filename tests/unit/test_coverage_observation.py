@@ -153,6 +153,58 @@ def test_coverage_observation_marks_an_untagged_planned_case_unbound(
 
 
 @pytest.mark.unit
+def test_coverage_observation_accepts_each_type_owned_by_one_multi_type_observer(
+    tmp_path: Path,
+) -> None:
+    title = "core behavior [echelon:UT-001, INT-001]"
+    worktree = tmp_path / "candidate"
+    _source(worktree, title=title)
+    obligations = parse_coverage_obligations(
+        "FR-001",
+        "UT-001; INT-001",
+        "unit/integration",
+        "deferred-automation",
+        "deferred-automation",
+        "oracle",
+        "repair",
+        {"FR-001"},
+    )
+    standard = _receipt(tmp_path / "standard")
+    observer = _receipt(tmp_path / "vitest")
+    result = write_coverage_observation(
+        evidence_dir=tmp_path / "verify",
+        candidate_commit=_COMMIT,
+        candidate_fingerprint=_FINGERPRINT,
+        coverage_map_hash=_MAP_HASH,
+        resolved_stack_hash=_STACK_HASH,
+        observer_plan_hash=_OBSERVER_PLAN_HASH,
+        runnability_contract_hash=_CONTRACT_HASH,
+        verification_receipt=standard,
+        observer_receipts={"vitest": observer},
+        observer_test_types={"vitest": ("unit", "integration")},
+        obligations=obligations,
+        executions=(
+            ObservedTestExecution(
+                observer_id="vitest",
+                test_type="unit",
+                file=_FILE,
+                title=title,
+                project="default",
+                status="passed",
+                retry_count=0,
+            ),
+        ),
+        candidate_worktree=worktree,
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+
+    assert result.ref.passed is True
+    assert result.test_cases["UT-001"].status == "passed"
+    assert result.test_cases["INT-001"].status == "passed"
+
+
+@pytest.mark.unit
 def test_coverage_observation_rejects_duplicate_physical_case_bindings(
     tmp_path: Path,
 ) -> None:

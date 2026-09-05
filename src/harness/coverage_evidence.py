@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from harness.coverage_contract import parse_coverage_obligations
+from harness.coverage_contract import CoverageObligation, parse_coverage_obligations
 from harness.coverage_observation import (
     CoverageObservationResult,
     CoverageRequirementObservation,
@@ -183,8 +183,36 @@ def _parse_rows(
     path: Path,
     canonical_ids: set[str],
 ) -> tuple[CoverageEvidenceRow, ...]:
+    return tuple(
+        CoverageEvidenceRow(
+            requirement_ids=tuple(
+                dict.fromkeys(item.requirement_id for item in obligations)
+            ),
+            test_case_ids=tuple(
+                dict.fromkeys(item.test_case_id for item in obligations)
+            ),
+            test_type=(
+                obligations[0].test_type
+                if len({item.test_type for item in obligations}) == 1
+                else "multiple"
+            ),
+            automation_status=obligations[0].automation_status,
+            coverage_type=obligations[0].coverage_status,
+            evidence=obligations[0].evidence,
+            gap_action=obligations[0].gap_action,
+        )
+        for obligations in parse_coverage_map_obligations(path, canonical_ids)
+    )
+
+
+def parse_coverage_map_obligations(
+    path: Path,
+    canonical_ids: Iterable[str],
+) -> tuple[tuple[CoverageObligation, ...], ...]:
+    """Read typed planning obligations without inferring a delivery result."""
+    canonical_set = {str(item).strip() for item in canonical_ids if str(item).strip()}
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    rows: list[CoverageEvidenceRow] = []
+    rows: list[tuple[CoverageObligation, ...]] = []
     active = False
     for line in lines:
         cells = _table_cells(line)
@@ -209,27 +237,11 @@ def _parse_rows(
             cells[4],
             cells[5],
             cells[6],
-            canonical_ids,
+            canonical_set,
         )
         if not obligations:
             continue
-        requirement_ids = tuple(
-            dict.fromkeys(item.requirement_id for item in obligations)
-        )
-        test_case_ids = tuple(
-            dict.fromkeys(item.test_case_id for item in obligations)
-        )
-        rows.append(
-            CoverageEvidenceRow(
-                requirement_ids=requirement_ids,
-                test_case_ids=test_case_ids,
-                test_type=cells[2].strip().lower(),
-                automation_status=cells[3].strip().lower(),
-                coverage_type=cells[4].strip().lower(),
-                evidence=cells[5].strip(),
-                gap_action=cells[6].strip(),
-            )
-        )
+        rows.append(obligations)
     return tuple(rows)
 
 

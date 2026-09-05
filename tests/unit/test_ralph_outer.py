@@ -38,13 +38,24 @@ from harness.provider import (
 )
 from harness import ralph
 from harness.build_result import BuildResult
+from harness.coverage_observer_runner import (
+    CoverageObserverRun,
+    CoverageVerificationBundle,
+)
 from harness.llm_tool_policy import LlmToolPolicy
+from harness.product_inventory import product_evidence_fingerprint
 from harness.ralph import RalphController
 from harness.runnability_contract import LocalBoundaryProbe
 from harness.runnability_evidence import RunnabilityEvidenceRef
 from harness.runnability_runner import RunnabilityRunResult
-from harness.stacks.resolver import ResolvedRunnability
+from harness.stacks.resolver import (
+    ResolvedCoverageObserver,
+    ResolvedRunnability,
+    ResolvedStacks,
+)
+from harness.stacks.schema import StackCoverageObserver
 from harness.state import StateStore
+from harness.verification_evidence import VerificationStage, write_verification_receipt
 
 
 def _valid_plan_conformance_json() -> str:
@@ -366,6 +377,33 @@ def _required_browser_runnability() -> ResolvedRunnability:
     )
 
 
+def _required_coverage_stacks() -> ResolvedStacks:
+    return ResolvedStacks(
+        selected_ids=["browser-game"],
+        resolved_ids=["browser-game"],
+        implied_by={},
+        capabilities={},
+        tools={},
+        required_commands=[],
+        required_registries=[],
+        context_files=[],
+        coverage_observers=[
+            ResolvedCoverageObserver(
+                owner_stack_id="browser-game",
+                observer=StackCoverageObserver(
+                    id="vitest-unit",
+                    test_types=("unit",),
+                    command="pnpm exec vitest run --reporter=json",
+                    report_path=".echelon/coverage-reports/unit.json",
+                    adapter="vitest-json",
+                    mode="isolated",
+                    required=True,
+                ),
+            )
+        ],
+    )
+
+
 def _write_enabled_runnability_contract(worktree: Path) -> None:
     contract = worktree / ".echelon" / "runnability.yml"
     contract.parent.mkdir(parents=True, exist_ok=True)
@@ -437,6 +475,9 @@ def test_post_verify_gates_run_runnability_before_fulfillment_judgment(
     controller._apply_user_runnability_gate = MagicMock(
         side_effect=passthrough("runnability")
     )
+    controller._apply_coverage_observation_gate = MagicMock(
+        side_effect=passthrough("coverage")
+    )
     controller._refresh_fulfillment_report = MagicMock(
         side_effect=passthrough("refresh")
     )
@@ -455,11 +496,89 @@ def test_post_verify_gates_run_runnability_before_fulfillment_judgment(
     assert calls == [
         "tasks",
         "runnability",
+        "coverage",
         "refresh",
         "fulfillment",
         "documentation",
         "tasks",
     ]
+
+
+@pytest.mark.unit
+def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "tests").mkdir()
+    (worktree / "tests" / "feature.test.ts").write_text(
+        "it('untagged test', () => {});\n", encoding="utf-8"
+    )
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-PERSIST-001 | unit | deferred-automation | deferred-automation | test | add tagged test |\n",
+        encoding="utf-8",
+    )
+    fingerprint = product_evidence_fingerprint(worktree)
+    evidence_dir = tmp_path / "evidence"
+    standard_receipt = write_verification_receipt(
+        evidence_dir=evidence_dir / "verification",
+        spec_id="spec-001",
+        target_id="game",
+        strategy_id="default",
+        build_id="build-001",
+        candidate_commit="a" * 40,
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="sandbox",
+        stages=(
+            VerificationStage(
+                name="verify",
+                command=("pnpm", "verify"),
+                exit_code=0,
+                duration_ms=1,
+                stdout=b"ok",
+                stderr=b"",
+            ),
+        ),
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state_store.write(state)
+    bundle = CoverageVerificationBundle(
+        standard_receipt=standard_receipt,
+        observer_runs=(
+            CoverageObserverRun(
+                observer_id="vitest-unit",
+                receipt=standard_receipt,
+                executions=(),
+                status="passed",
+            ),
+        ),
+    )
+
+    with patch.object(ralph, "_current_git_commit", return_value="a" * 40), patch.object(
+        ralph, "run_coverage_observers", return_value=bundle
+    ):
+        result = controller._apply_coverage_observation_gate(
+            VerifyResult(
+                passed=True,
+                verification_evidence=standard_receipt.as_mapping(),
+            ),
+            str(worktree),
+        )
+
+    assert result.passed is False
+    assert result.failures[0].id == "coverage-observation-gaps"
+    assert result.failures[0].details["requirements"] == {"FR-001": "unbound"}
 
 
 @pytest.mark.unit

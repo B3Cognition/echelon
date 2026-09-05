@@ -16,6 +16,7 @@ Per FR-STRATEGY-004b: cancel_requested check between exec calls
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -38,6 +39,12 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     write_not_applicable_documentation_impact_report,
 )
+from harness.coverage_evidence import parse_coverage_map_obligations
+from harness.coverage_observation import (
+    CoverageObservationError,
+    write_coverage_observation,
+)
+from harness.coverage_observer_runner import run_coverage_observers
 from harness.docs_verifier import write_docs_verification_report
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
@@ -75,11 +82,16 @@ from harness.task_progress import (
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from harness.verification_evidence import (
+    VerificationEvidenceRef,
     VerificationStage,
     redact_verification_text,
     write_verification_receipt,
 )
 from harness.verification_plan import build_verification_plan, materialize_services
+from harness.stacks.resolver import (
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
 from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
@@ -2293,6 +2305,10 @@ class RalphController:
             candidate_commit=_current_git_commit(Path(worktree_path)) or "",
             evidence_dir=self._runnability_evidence_dir(),
         )
+        verify_result = self._apply_coverage_observation_gate(
+            verify_result,
+            worktree_path,
+        )
         verify_result = self._refresh_fulfillment_report(
             verify_result,
             worktree_path,
@@ -2307,6 +2323,309 @@ class RalphController:
         )
         return self._apply_task_progress_gate(
             verify_result, worktree_path, require_completion=True
+        )
+
+    def _apply_coverage_observation_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Attach fail-closed per-case execution evidence for required stacks.
+
+        This deliberately runs after the candidate-owned runnability journey:
+        its contract hash is part of the immutable coverage-observation tuple.
+        It runs before fulfillment refresh, where later phases consume the
+        recorded observation rather than a green aggregate verifier.
+        """
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        resolved = getattr(self._config, "resolved_stacks", None)
+        observers = tuple(
+            item
+            for item in getattr(resolved, "coverage_observers", ())
+            if item.observer.required
+        )
+        if not observers:
+            return verify_result
+
+        candidate = Path(worktree_path)
+        candidate_commit = _current_git_commit(candidate)
+        candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
+        if not candidate_commit or not candidate_fingerprint:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-candidate-invalid",
+                error=(
+                    "Required coverage observers could not bind execution to the "
+                    "candidate commit and product fingerprint."
+                ),
+            )
+        standard_receipt = self._verification_receipt_from_result(verify_result)
+        if standard_receipt is None:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-standard-evidence-missing",
+                error=(
+                    "Required coverage observers need the passed Ralph sandbox "
+                    "verification receipt, but none was attached."
+                ),
+            )
+
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-spec-missing",
+                error="Required coverage observers could not find the active spec.",
+            )
+        coverage_map = spec_dir / "coverage-map.md"
+        if not coverage_map.is_file():
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-map-missing",
+                error="Required coverage observers need the spec coverage-map.md.",
+            )
+        try:
+            canonical_ids = {
+                item.id for item in extract_canonical_requirements(spec_dir)
+            }
+            obligation_rows = parse_coverage_map_obligations(
+                coverage_map, canonical_ids
+            )
+            obligations = tuple(
+                obligation
+                for row in obligation_rows
+                for obligation in row
+            )
+            coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
+            runnability_contract_hash = self._runnability_contract_hash(
+                verify_result
+            )
+            if (
+                str(getattr(resolved.runnability, "policy", "not_applicable"))
+                == "required"
+                and runnability_contract_hash is None
+            ):
+                raise CoverageObservationError(
+                    "required runnability contract evidence is missing"
+                )
+        except (OSError, ValueError, CoverageObservationError) as exc:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-contract-invalid",
+                error=f"Coverage observation inputs are invalid: {exc}",
+            )
+
+        evidence_dir = self._coverage_observer_evidence_dir()
+        bundle = run_coverage_observers(
+            provider=self._provider,
+            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
+                str(worktree), 0
+            ),
+            worktree=candidate,
+            config=self._config,
+            observers=observers,
+            standard_receipt=standard_receipt,
+            candidate_commit=candidate_commit,
+            candidate_fingerprint=candidate_fingerprint,
+            evidence_dir=evidence_dir,
+            spec_id=self._spec_id,
+            target_id=_runnability_target_id(self._config.target_repo),
+            strategy_id=self._strategy_id,
+            build_id=(
+                self._build_id
+                or str(self._state_store.read().get("run_id") or "run")
+            ),
+            sensitive_environment=os.environ,
+        )
+        observer_evidence = {
+            run.observer_id: {
+                "status": run.status,
+                "reason": run.reason,
+                "receipt": run.receipt.as_mapping() if run.receipt else None,
+                "execution_count": len(run.executions),
+            }
+            for run in bundle.observer_runs
+        }
+        failed_runs = [run for run in bundle.observer_runs if run.status != "passed"]
+        if failed_runs:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-failed",
+                error="; ".join(
+                    f"{run.observer_id}: {run.reason or 'observer did not pass'}"
+                    for run in failed_runs
+                ),
+                observer_evidence=observer_evidence,
+            )
+        receipts = {
+            run.observer_id: run.receipt
+            for run in bundle.observer_runs
+            if run.receipt is not None
+        }
+        if len(receipts) != len(observers):
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-receipt-missing",
+                error="A required coverage observer did not retain a receipt.",
+                observer_evidence=observer_evidence,
+            )
+        try:
+            observation = write_coverage_observation(
+                evidence_dir=evidence_dir,
+                candidate_commit=candidate_commit,
+                candidate_fingerprint=candidate_fingerprint,
+                coverage_map_hash=coverage_map_hash,
+                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+                runnability_contract_hash=runnability_contract_hash,
+                verification_receipt=bundle.standard_receipt,
+                observer_receipts=receipts,
+                observer_test_types={
+                    item.observer.id: item.observer.test_types
+                    for item in observers
+                },
+                obligations=obligations,
+                executions=tuple(
+                    execution
+                    for run in bundle.observer_runs
+                    for execution in run.executions
+                ),
+                candidate_worktree=candidate,
+                attempt_sequence=self._next_coverage_observation_attempt(
+                    evidence_dir
+                ),
+                sensitive_environment=os.environ,
+            )
+        except (CoverageObservationError, OSError, ValueError) as exc:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observation-invalid",
+                error=f"Coverage observation could not be recorded: {exc}",
+                observer_evidence=observer_evidence,
+            )
+
+        evidence = dict(verify_result.verification_evidence)
+        evidence["coverage_observation"] = observation.ref.as_mapping()
+        evidence["coverage_observers"] = observer_evidence
+        self._record_coverage_observation_state(observation, observer_evidence)
+        if observation.ref.passed:
+            return VerifyResult(
+                passed=True,
+                failures=list(verify_result.failures),
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+                verification_evidence=evidence,
+            )
+        unresolved = [
+            f"{requirement_id}: {item.reason}"
+            for requirement_id, item in sorted(observation.requirements.items())
+            if item.status != "observed"
+        ]
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="coverage-observation-gaps",
+                    error=(
+                        "Required coverage observations did not pass: "
+                        + "; ".join(unresolved[:20])
+                    ),
+                    details={
+                        "observation": observation.ref.as_mapping(),
+                        "requirements": {
+                            item_id: item.status
+                            for item_id, item in observation.requirements.items()
+                            if item.status != "observed"
+                        },
+                    },
+                )
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=evidence,
+        )
+
+    @staticmethod
+    def _verification_receipt_from_result(
+        verify_result: VerifyResult,
+    ) -> VerificationEvidenceRef | None:
+        try:
+            return VerificationEvidenceRef.from_mapping(
+                verify_result.verification_evidence
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _runnability_contract_hash(verify_result: VerifyResult) -> str | None:
+        raw = verify_result.verification_evidence.get("runnability_evidence")
+        if not isinstance(raw, Mapping):
+            return None
+        value = raw.get("contract_hash")
+        return str(value) if isinstance(value, str) and value else None
+
+    def _coverage_observer_evidence_dir(self) -> Path:
+        return (
+            self._state_store.state_dir.parent
+            / "evidence"
+            / self._strategy_id
+        )
+
+    @staticmethod
+    def _next_coverage_observation_attempt(evidence_dir: Path) -> int:
+        root = Path(evidence_dir) / "coverage-observation"
+        highest = 0
+        for path in root.glob("attempt-*.json") if root.exists() else ():
+            match = re.match(r"attempt-(\d+)-", path.name)
+            if match is not None:
+                highest = max(highest, int(match.group(1)))
+        return highest + 1
+
+    def _record_coverage_observation_state(
+        self,
+        observation: object,
+        observer_evidence: Mapping[str, object],
+    ) -> None:
+        ref = getattr(observation, "ref", None)
+        requirements = getattr(observation, "requirements", {})
+        state = self._state_store.read()
+        state["coverage_observation"] = {
+            "status": "passed" if getattr(ref, "passed", False) else "failed",
+            "path": str(getattr(ref, "path", "")),
+            "requirements_observed": sum(
+                item.status == "observed" for item in requirements.values()
+            ) if isinstance(requirements, Mapping) else 0,
+            "requirements_total": len(requirements) if isinstance(requirements, Mapping) else 0,
+            "observers": dict(observer_evidence),
+        }
+        self._state_store.write(state)
+
+    def _coverage_observation_failure(
+        self,
+        verify_result: VerifyResult,
+        *,
+        failure_id: str,
+        error: str,
+        observer_evidence: Mapping[str, object] | None = None,
+    ) -> VerifyResult:
+        evidence = dict(verify_result.verification_evidence)
+        if observer_evidence is not None:
+            evidence["coverage_observers"] = dict(observer_evidence)
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=failure_id,
+                    error=error,
+                )
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=evidence,
         )
 
     def _apply_user_runnability_gate(

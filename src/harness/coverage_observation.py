@@ -131,6 +131,7 @@ def write_coverage_observation(
     candidate_worktree: Path,
     attempt_sequence: int,
     sensitive_environment: Mapping[str, str],
+    observer_test_types: Mapping[str, Sequence[str]] | None = None,
 ) -> CoverageObservationResult:
     """Persist the deterministic result of matching planned cases to executions."""
     if attempt_sequence < 1:
@@ -161,6 +162,7 @@ def write_coverage_observation(
         grouped,
         candidate_worktree=Path(candidate_worktree),
         case_types=case_types,
+        observer_test_types=observer_test_types,
         sensitive_environment=sensitive_environment,
     )
     test_cases = _observe_test_cases(
@@ -503,6 +505,7 @@ def _identity_details(
     *,
     candidate_worktree: Path,
     case_types: Mapping[str, str],
+    observer_test_types: Mapping[str, Sequence[str]] | None,
     sensitive_environment: Mapping[str, str],
 ) -> tuple[dict[PhysicalTestIdentity, _IdentityDetail], set[str]]:
     details: dict[PhysicalTestIdentity, _IdentityDetail] = {}
@@ -527,14 +530,22 @@ def _identity_details(
             sensitive_environment=sensitive_environment,
         )
         if not reason:
+            declared_types = (
+                {
+                    str(value).strip()
+                    for value in observer_test_types.get(identity.observer_id, ())
+                    if str(value).strip()
+                }
+                if observer_test_types is not None
+                else {execution.test_type for execution in executions}
+            )
             type_mismatches = {
-                execution.test_type
-                for execution in executions
+                case_types[tag]
                 for tag in tags
-                if tag in case_types and execution.test_type != case_types[tag]
+                if tag in case_types and case_types[tag] not in declared_types
             }
             if type_mismatches:
-                reason = "execution test type does not match planned coverage type"
+                reason = "observer does not own the planned coverage test type"
         details[identity] = _IdentityDetail(
             tags=tags,
             source_sha256=source_sha256,
