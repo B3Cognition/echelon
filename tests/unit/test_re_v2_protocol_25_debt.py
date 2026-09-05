@@ -208,6 +208,27 @@ def test_banzai_plateau_finalization_is_exact_and_idempotent(
 
 
 @pytest.mark.unit
+def test_banzai_accepts_materialized_targets_when_plan_ids_differ(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir, authority, _guidance = _fixture(tmp_path, monkeypatch)
+    authority.graph.audit_target_plans = (
+        SimpleNamespace(audit_target_id=digest("audit-target-plan")),
+    )
+
+    acceptance = finalize_protocol_25_debt(
+        project_root=tmp_path,
+        run_dir=run_dir,
+        require_banzai=True,
+    )
+
+    assert acceptance.unresolved_finding_ids == (
+        authority.state.targets[0].unresolved_finding_ids
+    )
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "mutation,match",
     (

@@ -27,6 +27,7 @@ from harness.re_v2.workspace_snapshot import (
 from .artifacts import AuditCandidateV1
 from .findings import SemanticFindingV1
 from .guidance import GuidanceDirectiveV1
+from .guidance_status import all_selected_audits_accepted
 
 
 _POLICY_ID = "re-v2-banzai-residual-debt-v1"
@@ -322,14 +323,12 @@ def _derive_acceptance(authority: object, *, require_banzai: bool) -> ResidualDe
     if replay.semantic_context_projection_failure is not None:
         raise Protocol25DebtError("residual debt cannot hide a semantic projection failure")
 
-    selected_targets = {
-        item.audit_target_id for item in authority.graph.audit_target_plans
-    }
-    accepted_targets = {
-        item.audit_target_id for item in state.targets if item.audit_state == "accepted"
-    }
-    if accepted_targets != selected_targets or len(state.targets) != len(selected_targets):
+    if not all_selected_audits_accepted(
+        audit_states=tuple(item.audit_state for item in state.targets),
+        selected_target_count=len(authority.graph.audit_target_plans),
+    ):
         raise Protocol25DebtError("every selected audit target must be accepted")
+    selected_targets = {item.audit_target_id for item in state.targets}
     epoch_id = state.audit_epoch_id
     if epoch_id is None or epoch_id not in ledger.audit_epochs:
         raise Protocol25DebtError("an authenticated frozen audit epoch is required")

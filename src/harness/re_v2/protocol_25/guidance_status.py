@@ -17,6 +17,18 @@ CUSTOM_COMMAND = 'echelon re resume "<your guidance>"'
 GuidanceActionIdV1 = Literal["recommended", "banzai", "custom"]
 
 
+def all_selected_audits_accepted(
+    *,
+    audit_states: tuple[str, ...],
+    selected_target_count: int,
+) -> bool:
+    """Report complete acceptance for graph-materialized audit target state."""
+    return (
+        len(audit_states) == selected_target_count
+        and all(item == "accepted" for item in audit_states)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GuidanceActionV1:
     action_id: GuidanceActionIdV1

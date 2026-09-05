@@ -31,7 +31,11 @@ from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
 from .findings import SemanticFindingV1
 from .graph import Protocol25Graph, build_protocol_25_graph
 from .guidance import GuidanceDirectiveV1
-from .guidance_status import RECOMMENDED_COMMAND, derive_guidance_summary
+from .guidance_status import (
+    RECOMMENDED_COMMAND,
+    all_selected_audits_accepted,
+    derive_guidance_summary,
+)
 from .inputs import ValidatedProtocol25Inputs, load_protocol_25_inputs
 from .ledger import Protocol25Ledger, Protocol25LedgerView
 from .model import RunManifestV4
@@ -311,12 +315,6 @@ def _document(
     source_by_target = {
         item.audit_target_id: item.source_id for item in state.targets
     }
-    selected_target_ids = {
-        item.audit_target_id for item in authority.graph.audit_target_plans
-    }
-    accepted_target_ids = {
-        item.audit_target_id for item in state.targets if item.audit_state == "accepted"
-    }
     accepted_closure_roots = {
         item
         for item in replay.audit_closure_roots
@@ -333,9 +331,9 @@ def _document(
             finding_authorities[item] for item in sorted(finding_authorities)
         ),
         source_by_target=source_by_target,
-        all_selected_audits_accepted=(
-            accepted_target_ids == selected_target_ids
-            and len(state.targets) == len(selected_target_ids)
+        all_selected_audits_accepted=all_selected_audits_accepted(
+            audit_states=tuple(item.audit_state for item in state.targets),
+            selected_target_count=len(authority.graph.audit_target_plans),
         ),
         has_frozen_epoch=(
             state.audit_epoch_id is not None
