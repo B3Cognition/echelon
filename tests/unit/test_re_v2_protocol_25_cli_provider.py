@@ -72,6 +72,28 @@ def test_semantic_prompt_promotes_exact_post_freeze_binding() -> None:
 
 
 @pytest.mark.unit
+def test_semantic_prompt_makes_authenticated_operator_guidance_visible() -> None:
+    from tests.unit.test_re_v2_protocol_25_runtime import _guidance_projection
+
+    context = _context(
+        unresolved=(_certified_audit().normalized_findings[0],),
+        mode="SEMANTIC_RESOLUTION",
+        audit_epoch_id=digest("semantic-epoch"),
+        semantic_round=1,
+        operator_guidance=_guidance_projection(),
+    )
+
+    prompt = _render_semantic_prompt(
+        "Resolve the finding.\n",
+        canonical_json_bytes(context.to_json_dict()).decode("utf-8"),
+        canonical_json_bytes({"type": "object"}).decode("utf-8"),
+    )
+
+    assert "Operator guidance (authenticated" in prompt
+    assert "Prefer the authenticated timeout contract." in prompt
+
+
+@pytest.mark.unit
 def test_semantic_renderer_reuses_shared_provider_without_baseline_filename(
     tmp_path: Path,
 ) -> None:

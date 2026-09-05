@@ -46,7 +46,11 @@ from .policies import (
     SEMANTIC_EXECUTOR_FAMILIES,
     SEMANTIC_RENDERER_ID,
 )
-from .runtime import Protocol25RuntimeError, SemanticContextV1
+from .runtime import (
+    GuidanceProjectionV1,
+    Protocol25RuntimeError,
+    SemanticContextV1,
+)
 
 
 _RESULT_CONTRACT = EchelonResultContract(
@@ -517,6 +521,7 @@ def _render_semantic_prompt(
     retry_diagnostics: tuple[str, ...] = (),
 ) -> str:
     binding = ""
+    guidance = ""
     try:
         raw_context = load_canonical_object(
             context.encode("utf-8"),
@@ -538,11 +543,26 @@ def _render_semantic_prompt(
                 ).decode("utf-8")
                 + "\n"
             )
+        raw_guidance = raw_context.get("operator_guidance")
+        if raw_guidance is not None:
+            try:
+                projection = GuidanceProjectionV1.from_json_dict(raw_guidance)
+            except Protocol25RuntimeError as exc:
+                raise Protocol22ProviderError(
+                    "semantic prompt operator guidance is invalid"
+                ) from exc
+            guidance = (
+                "## Operator guidance (authenticated; obey within the bounded "
+                "authority below)\n"
+                + projection.directive.answer
+                + "\n\n"
+            )
     return (
         body
         + ("" if body.endswith("\n") else "\n")
         + "\nWrite the role-required candidate JSON and required `echelon_result`.\n"
         + binding
+        + guidance
         + "## Bounded context (canonical JSON)\n"
         + context
         + "\n\n## Authorial response schema (canonical JSON)\n"

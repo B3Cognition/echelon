@@ -42,7 +42,10 @@ from harness.re_v2.protocol_25.artifacts import (
 from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
 from harness.re_v2.protocol_25.events import Protocol25ReplayState, _SourceCycle
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
-from harness.re_v2.protocol_25.guidance import custom_guidance_policy
+from harness.re_v2.protocol_25.guidance import (
+    build_guidance_directive,
+    custom_guidance_policy,
+)
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 from harness.re_v2.protocol_25.recovery import (
     Protocol25RunContext,
@@ -58,7 +61,7 @@ from harness.re_v2.protocol_25.controller import (
     SemanticTargetControllerStateV1,
     plan_next_protocol_25,
 )
-from harness.re_v2.protocol_22.model import WorkItemV2
+from harness.re_v2.protocol_22.model import CatalogReferenceV1, WorkItemV2
 from tests.re_v2_protocol_22_fixtures import digest
 from harness.re_v2.protocol_25.runtime import (
     Protocol25DeterministicRuntime,
@@ -442,6 +445,80 @@ def test_protocol_25_context_accepts_registered_additive_event_protocol(
     context = _context(tmp_path)
 
     assert context.event_store.protocol is PROTOCOL_25_EVENTS
+
+
+def _guided_context(context: Protocol25RunContext) -> Protocol25RunContext:
+    directive = build_guidance_directive(
+        policy=custom_guidance_policy("Prefer the authenticated timeout contract."),
+        parent_manifest_hash=digest("guided-parent-manifest"),
+        parent_terminal_event_hash=digest("guided-parent-terminal-event"),
+        accepted_audit_candidate_hashes=(digest("guided-candidate"),),
+        unresolved_audit_target_ids=(),
+        audit_epoch_id=digest("guided-epoch"),
+        closure_root_hash=digest("guided-closure-root"),
+        unresolved_finding_ids=(digest("guided-finding"),),
+    )
+    payload = canonical_json_bytes(directive.to_json_dict())
+    reference = CatalogReferenceV1(
+        object_hash=content_digest(payload),
+        relative_path="human-guidance.json",
+    )
+    return replace(
+        context,
+        semantic_graph=replace(
+            context.semantic_graph,
+            manifest=replace(
+                context.semantic_graph.manifest,
+                run_mode="audit-successor",
+                human_guidance=reference,
+            ),
+        ),
+        semantic_inputs=replace(context.semantic_inputs, human_guidance=payload),
+    )
+
+
+@pytest.mark.integration
+def test_recovery_projects_exact_authenticated_guidance(tmp_path) -> None:
+    context = _guided_context(_context(tmp_path))
+
+    projection = recovery_module._operator_guidance_projection(context)
+
+    assert projection is not None
+    assert projection.directive_hash == (
+        context.semantic_graph.manifest.human_guidance.object_hash
+    )
+    assert canonical_json_bytes(
+        projection.to_json_dict()["directive_payload"]
+    ) == (
+        context.semantic_inputs.human_guidance
+    )
+
+
+@pytest.mark.integration
+def test_recovery_rejects_guidance_substitution_before_provider_resolution(
+    tmp_path,
+) -> None:
+    context = _guided_context(_context(tmp_path))
+    context = replace(
+        context,
+        semantic_inputs=replace(
+            context.semantic_inputs,
+            human_guidance=canonical_json_bytes(
+                {
+                    **recovery_module._operator_guidance_projection(
+                        context
+                    ).directive_payload,
+                    "answer": "Substituted guidance.",
+                }
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        recovery_module.Protocol25RecoveryError,
+        match="guidance payload hash mismatch",
+    ):
+        recovery_module._operator_guidance_projection(context)
 
 
 @pytest.mark.integration

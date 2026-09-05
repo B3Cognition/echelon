@@ -48,6 +48,7 @@ from .graph import Protocol25Graph, Protocol25GraphError
 from .inputs import ValidatedProtocol25Inputs
 from .ledger import Protocol25LedgerView
 from .runtime import (
+    GuidanceProjectionV1,
     Protocol25DeterministicRuntime,
     Protocol25RuntimeError,
     SemanticCertificationResultV1,
@@ -62,6 +63,35 @@ from .preflight import (
 
 class Protocol25RecoveryError(RuntimeError):
     """Raised when schema-4 durable authority cannot be replayed exactly."""
+
+
+def _operator_guidance_projection(
+    context: "Protocol25RunContext",
+) -> GuidanceProjectionV1 | None:
+    """Project authenticated successor guidance into post-freeze provider context."""
+    reference = context.semantic_graph.manifest.human_guidance
+    payload = context.semantic_inputs.human_guidance
+    if reference is None:
+        if payload is not None:
+            raise Protocol25RecoveryError(
+                "human guidance payload exists without manifest authority"
+            )
+        return None
+    if payload is None:
+        raise Protocol25RecoveryError(
+            "manifest human guidance authority has no authenticated payload"
+        )
+    if content_digest(payload) != reference.object_hash:
+        raise Protocol25RecoveryError("human guidance payload hash mismatch")
+    try:
+        return GuidanceProjectionV1.from_payload_bytes(
+            directive_hash=reference.object_hash,
+            payload=payload,
+        )
+    except Protocol25RuntimeError as exc:
+        raise Protocol25RecoveryError(
+            f"invalid authenticated human guidance: {exc}"
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -945,6 +975,7 @@ def build_resolution_dispatch_authority(
         authority_payloads[overlay.identity] = context.object_store.read_blob(
             overlay.identity
         )
+    guidance = _operator_guidance_projection(context)
     semantic_context = context.semantic_runtime.build_context(
         mode="SEMANTIC_RESOLUTION",
         audit_target=candidate.audit_target,
@@ -958,22 +989,17 @@ def build_resolution_dispatch_authority(
         active_sibling_authority_hashes=(),
         audit_epoch_id=epoch.identity,
         semantic_round=action.semantic_round,
+        operator_guidance=guidance,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
 
-    manifest = context.semantic_graph.manifest
-    guidance_hash = (
-        None
-        if manifest.human_guidance is None
-        else manifest.human_guidance.object_hash
-    )
     dependencies = tuple(
         sorted(
             (
                 epoch.identity,
                 action.audit_target_id,
                 *prior_hashes,
-                *((guidance_hash,) if guidance_hash is not None else ()),
+                *((guidance.directive_hash,) if guidance is not None else ()),
             )
         )
     )
@@ -1117,6 +1143,7 @@ def build_recheck_dispatch_authority(
     authority_payloads[overlay.identity] = context.object_store.read_blob(
         overlay.identity
     )
+    guidance = _operator_guidance_projection(context)
     semantic_context = context.semantic_runtime.build_context(
         mode="CLOSURE_RECHECK",
         audit_target=candidate.audit_target,
@@ -1130,6 +1157,7 @@ def build_recheck_dispatch_authority(
         active_sibling_authority_hashes=(),
         audit_epoch_id=epoch.identity,
         semantic_round=action.semantic_round,
+        operator_guidance=guidance,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
     item = _semantic_operation_item(
@@ -1137,7 +1165,11 @@ def build_recheck_dispatch_authority(
         audit_item,
         candidate.audit_target,
         "target-closure-assessment",
-        (epoch.identity, overlay.identity),
+        (
+            epoch.identity,
+            overlay.identity,
+            *((guidance.directive_hash,) if guidance is not None else ()),
+        ),
     )
     return item, semantic_context
 
@@ -1422,6 +1454,7 @@ def build_source_guard_dispatch_authority(
             }
         )
     )
+    guidance = _operator_guidance_projection(context)
     semantic_context = context.semantic_runtime.build_context(
         mode="SOURCE_COMPOSITION_GUARD",
         audit_target=projected_target,
@@ -1439,6 +1472,7 @@ def build_source_guard_dispatch_authority(
         active_sibling_authority_hashes=active_siblings,
         audit_epoch_id=epoch.identity,
         semantic_round=action.semantic_round,
+        operator_guidance=guidance,
     )
     context.object_store.put_blob(canonical_json_bytes(semantic_context.to_json_dict()))
     composed = context.semantic_runtime.build_composed_view(
@@ -1455,6 +1489,7 @@ def build_source_guard_dispatch_authority(
                 epoch.identity,
                 *(item.identity for item in overlays),
                 *(item.identity for item in assessments),
+                *((guidance.directive_hash,) if guidance is not None else ()),
             )
         )
     )
