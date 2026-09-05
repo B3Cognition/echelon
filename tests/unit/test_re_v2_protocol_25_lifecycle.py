@@ -175,12 +175,17 @@ def test_guidance_identity_binds_normalized_answer_and_blocked_parent() -> None:
     assert first == content_digest(
         {
             "accepted_audit_candidate_hashes": [digest("candidate")],
+            "accept_residual_debt": False,
             "answer": normalized,
             "audit_epoch_id": None,
+            "automatic_successor_limit": 0,
+            "automation_root_manifest_hash": None,
             "closure_root_hash": None,
+            "kind": "custom",
             "parent_manifest_hash": digest("parent-manifest"),
             "parent_terminal_event_hash": digest("parent-terminal"),
             "schema_version": 1,
+            "successor_index": 0,
             "unresolved_audit_target_ids": [digest("target")],
             "unresolved_finding_ids": [],
         }

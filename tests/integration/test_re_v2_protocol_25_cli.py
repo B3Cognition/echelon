@@ -23,6 +23,10 @@ from harness.re_v2.protocol_25.adoption import (
     validate_protocol_25_parent,
 )
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
+from harness.re_v2.protocol_25.guidance import (
+    GuidanceDirectiveV1,
+    custom_guidance_policy,
+)
 from harness.re_v2.protocol_25.lifecycle import (
     prepare_guided_successor,
     prepare_new_audit_epoch,
@@ -243,7 +247,9 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
             current_lower.source_ledger_chain_hash: ledger_bytes,
             candidate_hash: candidate_payload,
         },
-        answer="  Retry only the missing audit targets.\r\n",
+        guidance_policy=custom_guidance_policy(
+            "  Retry only the missing audit targets.\r\n"
+        ),
         created_at="2026-08-26T12:02:00Z",
         token_limit=5_000_000,
         active_ms_limit=10_800_000,
@@ -261,6 +267,11 @@ def test_guided_audit_successor_binds_blocked_schema4_parent_and_retains_candida
     assert b'"answer":"Retry only the missing audit targets."' in (
         successor.inputs.human_guidance
     )
+    guidance = GuidanceDirectiveV1.from_json_dict(
+        json.loads(successor.inputs.human_guidance)
+    )
+    assert guidance.kind == "custom"
+    assert guidance.accept_residual_debt is False
     assert successor.graph.manifest == successor.manifest
 
 

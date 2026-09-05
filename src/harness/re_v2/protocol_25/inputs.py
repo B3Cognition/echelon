@@ -37,6 +37,7 @@ from harness.re_v2.run_store import ReV2Paths, ReV2RunStoreError, load_run_manif
 
 from .adoption import ParentAuthorityBundleV2, Protocol25AdoptionError
 from .artifacts import AuditEpochV1
+from .guidance import GuidanceDirectiveV1
 from .model import Protocol25SchemaError, RunManifestV4
 from .policies import (
     AuditTaxonomyV1,
@@ -629,13 +630,9 @@ def _validate_bindings(
             )
 
 
-def _load_guidance(payload: bytes) -> Mapping[str, object]:
-    def decode(value: object) -> Mapping[str, object]:
-        if not isinstance(value, dict) or not value:
-            raise Protocol25InputStoreError(
-                "human guidance must be a nonempty canonical JSON object"
-            )
-        return MappingProxyType(dict(value))
+def _load_guidance(payload: bytes) -> GuidanceDirectiveV1:
+    def decode(value: object) -> GuidanceDirectiveV1:
+        return GuidanceDirectiveV1.from_json_dict(value)
 
     try:
         return load_canonical_object(payload, decode)

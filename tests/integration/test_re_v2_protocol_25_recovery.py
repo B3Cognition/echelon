@@ -42,6 +42,7 @@ from harness.re_v2.protocol_25.artifacts import (
 from harness.re_v2.protocol_25.events import PROTOCOL_25_EVENTS
 from harness.re_v2.protocol_25.events import Protocol25ReplayState, _SourceCycle
 from harness.re_v2.protocol_25.inputs import ValidatedProtocol25Inputs
+from harness.re_v2.protocol_25.guidance import custom_guidance_policy
 from harness.re_v2.protocol_25.ledger import Protocol25Ledger
 from harness.re_v2.protocol_25.recovery import (
     Protocol25RunContext,
@@ -1027,7 +1028,9 @@ def test_blocked_pre_epoch_parent_exports_retained_audit_successor_authority(
         parent_inputs=exported.inputs,
         accepted_parent=exported.accepted_parent,
         parent_objects=exported.immutable_objects,
-        answer="Retry the missing audit target with the retained sibling.",
+        guidance_policy=custom_guidance_policy(
+            "Retry the missing audit target with the retained sibling."
+        ),
         created_at="2026-08-26T13:00:00Z",
         token_limit=5_000_000,
         active_ms_limit=10_800_000,

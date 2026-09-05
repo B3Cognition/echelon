@@ -8,7 +8,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 from typing import Literal
-import unicodedata
 
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.schema import (
@@ -18,6 +17,13 @@ from harness.re_v2.protocol_22.schema import (
     sorted_unique_digests,
 )
 from harness.re_v2.protocol_24.model import SelectionScopeV1
+
+from .guidance import (
+    GuidancePolicyV1,
+    build_guidance_directive,
+    custom_guidance_policy,
+    normalize_guidance_answer,
+)
 
 
 RunModeV1 = Literal[
@@ -66,26 +72,6 @@ class ExportedProtocol25Parent:
         )
 
 
-def normalize_guidance_answer(answer: object) -> str:
-    """Return bounded NFC guidance suitable for immutable publication."""
-    if not isinstance(answer, str):
-        raise ValueError("guidance answer must be text")
-    normalized = unicodedata.normalize(
-        "NFC",
-        answer.replace("\r\n", "\n").replace("\r", "\n"),
-    ).strip()
-    if not normalized:
-        raise ValueError("guidance answer must be nonempty")
-    if len(normalized.encode("utf-8", errors="strict")) > 8192:
-        raise ValueError("guidance answer must be at most 8192 UTF-8 bytes")
-    if any(
-        unicodedata.category(character) == "Cc" and character != "\n"
-        for character in normalized
-    ):
-        raise ValueError("guidance answer contains unsupported control characters")
-    return normalized
-
-
 def guidance_id_for(
     *,
     parent_manifest_hash: str,
@@ -107,7 +93,7 @@ def guidance_id_for(
             audit_epoch_id=audit_epoch_id,
             closure_root_hash=closure_root_hash,
             unresolved_finding_ids=unresolved_finding_ids,
-            answer=answer,
+            policy=custom_guidance_policy(answer),
         )
     )
 
@@ -121,51 +107,19 @@ def _guidance_payload(
     audit_epoch_id: str | None,
     closure_root_hash: str | None,
     unresolved_finding_ids: tuple[str, ...],
-    answer: str,
+    policy: GuidancePolicyV1,
 ) -> dict[str, object]:
     """Return the canonical guidance authority before byte publication."""
-    try:
-        digest_value(parent_manifest_hash, "guidance parent manifest")
-        digest_value(parent_terminal_event_hash, "guidance parent terminal event")
-        candidates = sorted_unique_digests(
-            accepted_audit_candidate_hashes,
-            "guidance accepted audit candidates",
-        )
-        targets = sorted_unique_digests(
-            unresolved_audit_target_ids,
-            "guidance unresolved audit targets",
-        )
-        findings = sorted_unique_digests(
-            unresolved_finding_ids,
-            "guidance unresolved findings",
-        )
-        if audit_epoch_id is not None:
-            digest_value(audit_epoch_id, "guidance audit epoch")
-        if closure_root_hash is not None:
-            digest_value(closure_root_hash, "guidance closure root")
-    except Protocol22SchemaError as exc:
-        raise ValueError(str(exc)) from exc
-    pre_epoch = audit_epoch_id is None and closure_root_hash is None
-    if pre_epoch:
-        if not candidates or not targets or findings:
-            raise ValueError(
-                "pre-epoch guidance requires retained candidates and unresolved targets"
-            )
-    elif audit_epoch_id is None or not findings or targets:
-        raise ValueError(
-            "closure guidance requires an epoch and unresolved findings"
-        )
-    return {
-        "accepted_audit_candidate_hashes": list(candidates),
-        "answer": normalize_guidance_answer(answer),
-        "audit_epoch_id": audit_epoch_id,
-        "closure_root_hash": closure_root_hash,
-        "parent_manifest_hash": parent_manifest_hash,
-        "parent_terminal_event_hash": parent_terminal_event_hash,
-        "schema_version": 1,
-        "unresolved_audit_target_ids": list(targets),
-        "unresolved_finding_ids": list(findings),
-    }
+    return build_guidance_directive(
+        policy=policy,
+        parent_manifest_hash=parent_manifest_hash,
+        parent_terminal_event_hash=parent_terminal_event_hash,
+        accepted_audit_candidate_hashes=accepted_audit_candidate_hashes,
+        unresolved_audit_target_ids=unresolved_audit_target_ids,
+        audit_epoch_id=audit_epoch_id,
+        closure_root_hash=closure_root_hash,
+        unresolved_finding_ids=unresolved_finding_ids,
+    ).to_json_dict()
 
 
 def semantic_request_id_v2(
@@ -901,7 +855,7 @@ def prepare_guided_successor(
     parent_inputs: object,
     accepted_parent: Mapping[str, object],
     parent_objects: Mapping[str, bytes],
-    answer: str,
+    guidance_policy: GuidancePolicyV1,
     created_at: str,
     token_limit: int,
     active_ms_limit: int,
@@ -917,7 +871,7 @@ def prepare_guided_successor(
         parent_inputs=parent_inputs,
         accepted_parent=accepted_parent,
         parent_objects=parent_objects,
-        answer=answer,
+        guidance_policy=guidance_policy,
         created_at=created_at,
         token_limit=token_limit,
         active_ms_limit=active_ms_limit,
@@ -950,7 +904,7 @@ def prepare_next_audit_epoch(
         parent_inputs=parent_inputs,
         accepted_parent=accepted_parent,
         parent_objects=parent_objects,
-        answer=None,
+        guidance_policy=None,
         created_at=created_at,
         token_limit=token_limit,
         active_ms_limit=active_ms_limit,
@@ -968,7 +922,7 @@ def _prepare_protocol_25_l3_child(
     parent_inputs: object,
     accepted_parent: Mapping[str, object],
     parent_objects: Mapping[str, bytes],
-    answer: str | None,
+    guidance_policy: GuidancePolicyV1 | None,
     created_at: str,
     token_limit: int,
     active_ms_limit: int,
@@ -998,10 +952,10 @@ def _prepare_protocol_25_l3_child(
     if not isinstance(parent, ValidatedProtocol25ParentV1):
         raise ValueError("guided successor requires authenticated schema-4 parent")
     if parent.mode == "new-audit-epoch":
-        if answer is not None:
+        if guidance_policy is not None:
             raise ValueError("new audit epoch cannot carry human guidance")
     elif parent.mode in {"audit-successor", "closure-successor"}:
-        if answer is None:
+        if guidance_policy is None:
             raise ValueError("guided successor requires human guidance")
     else:
         raise ValueError("schema-4 child parent mode is invalid")
@@ -1047,7 +1001,15 @@ def _prepare_protocol_25_l3_child(
     semantic = candidate.semantic_authority
     guidance_bytes = None
     guidance_hash = None
-    if answer is not None:
+    if guidance_policy is not None:
+        if not isinstance(guidance_policy, GuidancePolicyV1):
+            raise ValueError("guided successor requires typed guidance policy")
+        if (
+            guidance_policy.kind == "banzai"
+            and guidance_policy.automation_root_manifest_hash
+            != parent_manifest_hash
+        ):
+            raise ValueError("banzai guidance root must equal the blocked parent")
         guidance_payload = _guidance_payload(
             parent_manifest_hash=parent_manifest_hash,
             parent_terminal_event_hash=lower.source_terminal_event_hash,
@@ -1056,7 +1018,7 @@ def _prepare_protocol_25_l3_child(
             audit_epoch_id=semantic.audit_epoch_id,
             closure_root_hash=semantic.closure_root_hash,
             unresolved_finding_ids=semantic.unresolved_finding_ids,
-            answer=answer,
+            policy=guidance_policy,
         )
         guidance_bytes = canonical_json_bytes(guidance_payload)
         guidance_hash = content_digest(guidance_bytes)

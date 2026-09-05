@@ -17125,6 +17125,7 @@ def _run_re_v25_resume(
     """Create or exactly reuse one immutable guided protocol-2.5 successor."""
     from dataclasses import replace
 
+    from harness.re_v2.protocol_25.guidance import custom_guidance_policy
     from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
     from harness.re_v2.protocol_25.lifecycle import (
         export_protocol_25_parent,
@@ -17148,7 +17149,7 @@ def _run_re_v25_resume(
         parent_inputs=exported.inputs,
         accepted_parent=exported.accepted_parent,
         parent_objects=exported.immutable_objects,
-        answer=answer,
+        guidance_policy=custom_guidance_policy(answer),
         created_at=_re_v2_now(),
         token_limit=(
             token_limit
