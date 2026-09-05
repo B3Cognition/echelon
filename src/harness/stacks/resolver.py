@@ -146,23 +146,6 @@ def resolve_stacks(
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
         runnability = _merge_runnability(runnability, stack_id, stack.runnability)
-        for observer in stack.coverage_observers:
-            resolved_observer = ResolvedCoverageObserver(
-                owner_stack_id=stack_id,
-                observer=observer,
-            )
-            if observer.required:
-                for test_type in observer.test_types:
-                    existing = required_observers_by_test_type.get(test_type)
-                    if existing is not None:
-                        raise StackConflictError(
-                            "Stack coverage observer conflict for "
-                            f"test type {test_type}: "
-                            f"{existing.owner_stack_id}/{existing.observer.id} "
-                            f"conflicts with {stack_id}/{observer.id}"
-                        )
-                    required_observers_by_test_type[test_type] = resolved_observer
-            coverage_observers.append(resolved_observer)
         for capability, value in stack.provides.items():
             existing = capabilities.get(capability)
             if existing is None:
@@ -182,6 +165,24 @@ def resolve_stacks(
                 value=value,
                 sources=_append_unique(existing.sources, stack_id),
             )
+
+        for observer in stack.coverage_observers:
+            resolved_observer = ResolvedCoverageObserver(
+                owner_stack_id=stack_id,
+                observer=observer,
+            )
+            if observer.required:
+                for test_type in observer.test_types:
+                    existing = required_observers_by_test_type.get(test_type)
+                    if existing is not None:
+                        raise StackConflictError(
+                            "Stack coverage observer conflict for "
+                            f"test type {test_type}: "
+                            f"{existing.owner_stack_id}/{existing.observer.id} "
+                            f"conflicts with {stack_id}/{observer.id}"
+                        )
+                    required_observers_by_test_type[test_type] = resolved_observer
+            coverage_observers.append(resolved_observer)
 
         for tool_id, tool in stack.tools.items():
             existing = tools.get(tool_id)
