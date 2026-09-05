@@ -45,6 +45,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Provider verification boundary** — Coding providers now reserve the
+  configured full verifier for Ralph's provisioned, authoritative environment.
+  Build and repair prompts instead direct providers to focused service-free
+  checks, preventing unprovisioned database, Docker, browser, Playwright, or
+  external-service attempts from wasting delivery repair cycles.
+
 - **Interrupted delivery visibility** — `echelon delivery status` now checks
   the per-strategy execution lock. A dead or absent owner for a `running`
   record is reported as an interrupted, checkpoint-preserved delivery rather

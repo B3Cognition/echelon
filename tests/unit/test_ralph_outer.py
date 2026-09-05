@@ -1952,7 +1952,48 @@ class TestOuterLoopConvergence:
         context = context_file.read_text(encoding="utf-8")
         assert "## Quality Commands" in context
         assert "- verify_command: `npm test && npm run build`" in context
-        assert "Run this from `worktree` before reporting completed_task_ids" in context
+        assert (
+            "Ralph executes this after your build slice; do not run it from the coding CLI."
+            in context
+        )
+
+    def test_harness_context_reserves_full_verification_for_ralph(
+        self, tmp_path: Path
+    ) -> None:
+        """Providers must not mistake a service-backed verifier for a local prerequisite."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "game"
+        spec_dir = workspace / "specs" / "001-game"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        controller._config.verify_command = "pnpm verify"
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("build slice", str(worktree))
+        context_file = (
+            state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        )
+        context = context_file.read_text(encoding="utf-8")
+
+        assert "## Verification Execution Boundary" in prompt
+        assert "Do not run the configured full verifier from the coding CLI." in prompt
+        assert "database, Docker, browser, Playwright, or external service" in prompt
+        assert "focused, service-free checks" in prompt
+        assert (
+            "Ralph executes this after your build slice; do not run it from the coding CLI."
+            in context
+        )
 
     def test_build_slice_context_includes_last_verify_failures(
         self, tmp_path: Path

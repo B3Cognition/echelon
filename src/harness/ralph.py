@@ -4117,6 +4117,15 @@ class RalphController:
             "Do not read, inspect, recreate, or write `echelon_result.json`; Ralph deliberately removes that legacy fallback at the start of every slice so stale results cannot cross specs.\n"
             "Ignore any generic workflow or agent instruction to return `echelon_result` or `state_updates`; those apply to standalone squad execution, not this delivery build slice.\n"
         )
+        verification_execution_boundary = (
+            "## Verification Execution Boundary\n"
+            "Ralph owns the configured full verifier and its provisioned execution environment.\n"
+            "Do not run the configured full verifier from the coding CLI.\n"
+            "Do not launch or provision database, Docker, browser, Playwright, or external service dependencies from the coding CLI.\n"
+            "Do not report unavailable service credentials or an unavailable browser as a product blocker.\n"
+            "Run focused, service-free checks that help validate your change, such as targeted unit tests, lint, typecheck, or a production build.\n"
+            "Ralph runs the configured full verifier after your build slice and treats that result as authoritative.\n"
+        )
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -4160,6 +4169,7 @@ class RalphController:
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "Ralph state is not a build input; do not read, search for, or infer from state.json/state directories.\n"
             "Do not search for state.json; Ralph provides bounded progress context in this prompt.\n"
+            f"{verification_execution_boundary}"
             f"{delivery_output_contract}"
             f"{progress_ledger_block}"
         )
@@ -4315,7 +4325,7 @@ class RalphController:
             return []
         return [
             f"- verify_command: `{verify_command}`",
-            "- Run this from `worktree` before reporting completed_task_ids when feasible.",
+            "- Ralph executes this after your build slice; do not run it from the coding CLI.",
         ]
 
     def _build_slice_target_manifest_excerpts(
