@@ -1488,12 +1488,20 @@ def initialize_protocol_25_successor(
             key=lambda item: item.artifact_key.identity,
         )
     )
+    semantic_record_hashes: set[str] = set()
+
+    def retain_record(record: object | None, label: str) -> None:
+        if record is None or not hasattr(record, "record_hash"):
+            raise ValueError(f"successor retained {label} ledger record is missing")
+        semantic_record_hashes.add(record.record_hash)  # type: ignore[attr-defined]
+
     for acceptance in semantic_acceptances:
         certification = source_ledger.semantic_certifications[
             acceptance.certification_receipt_id
         ]
-        ledger_records.append(
-            ("semantic_certification", certification.to_json_dict())
+        retain_record(
+            source_ledger.semantic_records.get(certification.identity),
+            "semantic certification",
         )
         assessments = tuple(
             item
@@ -1502,57 +1510,57 @@ def initialize_protocol_25_successor(
         )
         if len(assessments) != 1:
             raise ValueError("successor semantic candidate authority is ambiguous")
-        ledger_records.append(
-            ("candidate_assessment", assessments[0].to_json_dict())
+        retain_record(
+            source_ledger.candidate_assessment_records.get(assessments[0].identity),
+            "semantic candidate assessment",
         )
-        ledger_records.append(("artifact", acceptance.to_json_dict()))
+        retain_record(
+            source_ledger.artifact_acceptance_records.get(acceptance.identity),
+            "semantic artifact acceptance",
+        )
 
     if import_semantic and semantic.audit_epoch_id is not None:
-        ledger_records.append(
-            (
-                "audit_epoch",
-                source_ledger.audit_epochs[semantic.audit_epoch_id].to_json_dict(),
-            )
+        retain_record(
+            source_ledger.semantic_records.get(semantic.audit_epoch_id),
+            "audit epoch",
         )
     for object_id in semantic.target_assessment_hashes if import_semantic else ():
-        ledger_records.append(
-            (
-                "target_closure_assessment",
-                source_ledger.target_closure_assessments[object_id].to_json_dict(),
-            )
+        retain_record(
+            source_ledger.semantic_records.get(object_id),
+            "target closure assessment",
         )
     for object_id in semantic.source_assessment_hashes if import_semantic else ():
-        ledger_records.append(
-            (
-                "source_composition_assessment",
-                source_ledger.source_composition_assessments[
-                    object_id
-                ].to_json_dict(),
-            )
+        retain_record(
+            source_ledger.semantic_records.get(object_id),
+            "source composition assessment",
         )
     for object_id in semantic.closure_receipt_ids if import_semantic else ():
-        ledger_records.append(
-            (
-                "finding_closure",
-                source_ledger.finding_closures[object_id].to_json_dict(),
-            )
+        retain_record(
+            source_ledger.semantic_records.get(object_id),
+            "finding closure",
         )
     if import_semantic and semantic.closure_root_hash is not None:
-        ledger_records.append(
-            (
-                "audit_closure_root",
-                source_ledger.audit_closure_roots[
-                    semantic.closure_root_hash
-                ].to_json_dict(),
-            )
+        retain_record(
+            source_ledger.semantic_records.get(semantic.closure_root_hash),
+            "audit closure root",
         )
     roots_by_identity = {
         item.identity: item for item in source_ledger.l3_source_roots.values()
     }
     for object_id in semantic.l3_source_root_hashes if import_semantic else ():
-        ledger_records.append(
-            ("l3_source_root", roots_by_identity[object_id].to_json_dict())
+        retain_record(
+            source_ledger.semantic_records.get(object_id),
+            "L3 source root",
         )
+
+    imported_record_hashes: set[str] = set()
+    for record in exported.ledger_history:
+        if record.record_hash not in semantic_record_hashes:
+            continue
+        ledger_records.append((record.type, record.payload))
+        imported_record_hashes.add(record.record_hash)
+    if imported_record_hashes != semantic_record_hashes:
+        raise ValueError("successor retained semantic ledger history is incomplete")
     ledger.record_import_batch(ledger_records)
 
     source_replay = _replay_protocol_25_events(

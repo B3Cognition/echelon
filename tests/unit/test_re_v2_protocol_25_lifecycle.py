@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 import unicodedata
 
 import pytest
 
 from harness.re_v2.canonical import content_digest
+from harness.re_v2.ledger import LedgerRecord
 from harness.re_v2.protocol_25.lifecycle import (
+    ExportedProtocol25Parent,
     _validate_monotonic_successor_policy_upgrade,
     guidance_id_for,
+    initialize_protocol_25_successor,
     normalize_guidance_answer,
     semantic_request_id_v2,
     semantic_request_id_v3,
@@ -120,6 +124,130 @@ def test_successor_accepts_only_monotonic_capacity_policy_upgrade() -> None:
     )
     with pytest.raises(ValueError, match="changes semantic rules"):
         _validate_monotonic_successor_policy_upgrade(legacy, changed_semantics)
+
+
+@pytest.mark.unit
+def test_successor_import_preserves_parent_semantic_ledger_order(
+    tmp_path, monkeypatch
+) -> None:
+    """Catch later-round assessments replaying before prior-round closures."""
+
+    class _Authority:
+        def __init__(self, identity: str, marker: str) -> None:
+            self.identity = identity
+            self.marker = marker
+
+        def to_json_dict(self) -> dict[str, object]:
+            return {"marker": self.marker}
+
+    def _record(seq: int, record_type: str, marker: str) -> LedgerRecord:
+        return LedgerRecord(
+            schema_version=1,
+            seq=seq,
+            previous_record_hash=None,
+            type=record_type,
+            payload={"marker": marker},
+            record_hash=digest(f"record:{seq}:{marker}"),
+        )
+
+    first = _Authority(digest("first-assessment"), "first-assessment")
+    closure = _Authority(digest("first-closure"), "first-closure")
+    second = _Authority(digest("second-assessment"), "second-assessment")
+    history = (
+        _record(1, "target_closure_assessment", first.marker),
+        _record(2, "finding_closure", closure.marker),
+        _record(3, "target_closure_assessment", second.marker),
+    )
+    semantic = SimpleNamespace(
+        accepted_audit_candidate_hashes=(),
+        resolution_overlay_hashes=(),
+        source_assessment_hashes=(),
+        target_assessment_hashes=(first.identity, second.identity),
+        closure_receipt_ids=(closure.identity,),
+        audit_epoch_id=None,
+        closure_root_hash=None,
+        l3_source_root_hashes=(),
+    )
+    lower = SimpleNamespace(artifacts=())
+    source_ledger = SimpleNamespace(
+        accepted_artifacts={},
+        semantic_certifications={},
+        candidate_assessments={},
+        target_closure_assessments={first.identity: first, second.identity: second},
+        source_composition_assessments={},
+        finding_closures={closure.identity: closure},
+        audit_epochs={},
+        audit_closure_roots={},
+        l3_source_roots={},
+        semantic_records={
+            first.identity: history[0],
+            closure.identity: history[1],
+            second.identity: history[2],
+        },
+    )
+    candidate = SimpleNamespace(
+        lower_authority_bundle=lower,
+        semantic_authority=semantic,
+    )
+    exported = ExportedProtocol25Parent(
+        parent=SimpleNamespace(candidate=candidate),
+        manifest=manifest_v4(),
+        inputs=SimpleNamespace(),
+        accepted_parent={},
+        immutable_objects={},
+        recovered=SimpleNamespace(ledger=source_ledger),
+        ledger_history=history,
+        source_context=SimpleNamespace(object_store=SimpleNamespace()),
+    )
+    inputs = SimpleNamespace(
+        parent_authority_bundle=SimpleNamespace(
+            lower_authority_bundle=lower,
+            semantic_authority=semantic,
+        )
+    )
+    captured: list[tuple[str, object]] = []
+
+    class _StopImport(Exception):
+        pass
+
+    class _ObjectStore:
+        def __init__(self, _path) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    class _Ledger:
+        def __init__(self, _paths, _objects) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def record_import_batch(self, records) -> None:  # type: ignore[no-untyped-def]
+            captured.extend(records)
+            raise _StopImport
+
+    import harness.re_v2.ledger as ledger_module
+    import harness.re_v2.protocol_25.inputs as inputs_module
+    import harness.re_v2.protocol_25.ledger as semantic_ledger_module
+    import harness.re_v2.run_store as run_store_module
+
+    monkeypatch.setattr(ledger_module, "ObjectStore", _ObjectStore)
+    monkeypatch.setattr(semantic_ledger_module, "Protocol25Ledger", _Ledger)
+    monkeypatch.setattr(
+        run_store_module,
+        "load_run_manifest",
+        lambda _run_dir: manifest_v4(run_mode="closure-successor"),
+    )
+    monkeypatch.setattr(
+        inputs_module,
+        "load_protocol_25_inputs",
+        lambda _paths, _manifest: inputs,
+    )
+
+    with pytest.raises(_StopImport):
+        initialize_protocol_25_successor(tmp_path / "successor", exported)
+
+    assert [payload["marker"] for _kind, payload in captured] == [
+        "first-assessment",
+        "first-closure",
+        "second-assessment",
+    ]
 
 
 @pytest.mark.unit
