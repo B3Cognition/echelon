@@ -168,12 +168,24 @@ The existing immutable human-guidance payload becomes a typed directive:
   "schema_version": 1,
   "kind": "custom | recommended | banzai",
   "answer": "normalized bounded text",
+  "parent_manifest_hash": "sha256:...",
+  "parent_terminal_event_hash": "sha256:...",
+  "accepted_audit_candidate_hashes": [],
+  "unresolved_audit_target_ids": [],
+  "audit_epoch_id": "sha256:... | null",
+  "closure_root_hash": "sha256:... | null",
+  "unresolved_finding_ids": [],
   "accept_residual_debt": false,
   "automatic_successor_limit": 0,
   "automation_root_manifest_hash": null,
   "successor_index": 0
 }
 ```
+
+The parent, candidate, target, epoch, closure-root, and finding fields are the
+existing guidance authority bindings. They remain exact and mandatory; the new
+kind and automation fields are additive policy authority, not a replacement
+for the blocked-state binding.
 
 For `recommended`, the answer is the installed canonical recommendation,
 `accept_residual_debt` is false, and the automatic limit is zero. For `banzai`,
