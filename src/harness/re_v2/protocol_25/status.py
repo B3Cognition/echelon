@@ -27,7 +27,9 @@ from .artifacts import AuditCandidateV1
 from .budget import evaluate_semantic_budget
 from .controller import Protocol25ControllerStateV1
 from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
+from .findings import SemanticFindingV1
 from .graph import Protocol25Graph, build_protocol_25_graph
+from .guidance_status import RECOMMENDED_COMMAND, derive_guidance_summary
 from .inputs import ValidatedProtocol25Inputs, load_protocol_25_inputs
 from .ledger import Protocol25Ledger, Protocol25LedgerView
 from .model import RunManifestV4
@@ -267,6 +269,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
     candidate_by_target = dict(replay.audit_candidates)
     targets = []
     finding_classes: dict[str, str] = {}
+    finding_authorities: dict[str, SemanticFindingV1] = {}
     for target in state.targets:
         candidate_hash = candidate_by_target.get(target.audit_target_id)
         if candidate_hash is not None:
@@ -277,6 +280,9 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             finding_classes.update(
                 (item.finding_key_id, item.finding_key.finding_class)
                 for item in candidate.findings
+            )
+            finding_authorities.update(
+                (item.finding_key_id, item) for item in candidate.findings
             )
         targets.append(
             {
@@ -295,6 +301,44 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
     frozen = {item for target in state.targets for item in target.frozen_finding_ids}
     unresolved = {item for target in state.targets for item in target.unresolved_finding_ids}
     closed = frozen - unresolved
+    source_by_target = {
+        item.audit_target_id: item.source_id for item in state.targets
+    }
+    selected_target_ids = {
+        item.audit_target_id for item in authority.graph.audit_target_plans
+    }
+    accepted_target_ids = {
+        item.audit_target_id for item in state.targets if item.audit_state == "accepted"
+    }
+    accepted_closure_roots = {
+        item
+        for item in replay.audit_closure_roots
+        if item in ledger.audit_closure_roots
+        and ledger.audit_closure_roots[item].audit_epoch_id == state.audit_epoch_id
+    }
+    guidance = derive_guidance_summary(
+        run_id=manifest.run_id,
+        manifest_hash=manifest.run_manifest_id,
+        status=status,
+        frozen_finding_ids=tuple(sorted(frozen)),
+        unresolved_finding_ids=tuple(sorted(unresolved)),
+        findings=tuple(
+            finding_authorities[item] for item in sorted(finding_authorities)
+        ),
+        source_by_target=source_by_target,
+        all_selected_audits_accepted=(
+            accepted_target_ids == selected_target_ids
+            and len(state.targets) == len(selected_target_ids)
+        ),
+        has_frozen_epoch=(
+            state.audit_epoch_id is not None
+            and state.audit_epoch_id in ledger.audit_epochs
+        ),
+        has_final_closure_root=len(accepted_closure_roots) == 1,
+        all_selected_roots_accepted=(
+            set(ledger.l3_source_roots) == set(authority.graph.selected_source_ids)
+        ),
+    )
     adopted_work_ids = {
         str(event.payload["work_item_id"])
         for event in events  # type: ignore[union-attr]
@@ -391,6 +435,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         "continuable": status == "paused",
         "engine": manifest.engine,
         "engine_protocol_version": manifest.engine_protocol_version,
+        "guidance": guidance.to_json_dict(),
         "layer_protocol_version": manifest.engine_protocol_version,
         "lineage": manifest.parent_lineage.to_json_dict(),
         "last_provider_failure": last_provider_failure,
@@ -762,10 +807,7 @@ def _next_action(
             "--new-audit-epoch --all`"
         )
     if status in {"blocked_incomplete", "blocked_plateau"}:
-        return (
-            "run `echelon re resume \"<guidance>\"`; identical guidance reuses "
-            "the existing successor with zero provider calls"
-        )
+        return f"run `{RECOMMENDED_COMMAND}`"
     return "run `echelon re continue`"
 
 
@@ -816,6 +858,36 @@ def _render_human(document: Mapping[str, object]) -> str:
         "exhaustive RE L4: not run",
         f"completion scope: {document['completion_scope']}",
     ]
+    guidance = document.get("guidance")
+    if isinstance(guidance, Mapping) and guidance.get("recommended_eligible") is True:
+        by_class = guidance.get("unresolved_by_class", [])
+        by_source = guidance.get("unresolved_by_source", [])
+        if isinstance(by_class, list) and by_class:
+            lines.append(
+                "unresolved by class: "
+                + ", ".join(
+                    f"{item['finding_class']}={item['count']}"
+                    for item in by_class
+                    if isinstance(item, Mapping)
+                )
+            )
+        if isinstance(by_source, list) and by_source:
+            lines.append(
+                "unresolved by source: "
+                + ", ".join(
+                    f"{item['source_id']}={item['count']}"
+                    for item in by_source
+                    if isinstance(item, Mapping)
+                )
+            )
+        actions = guidance.get("actions", [])
+        if isinstance(actions, list):
+            for action in actions:
+                if isinstance(action, Mapping) and action.get("enabled") is True:
+                    lines.append(
+                        f"guidance option ({action['action_id']}): "
+                        f"`{action['command']}`"
+                    )
     preflight = document.get("preflight")
     if isinstance(preflight, Mapping) and preflight.get("state") != "not_run":
         lines.append(

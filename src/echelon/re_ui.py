@@ -220,6 +220,32 @@ def print_re_status_card(
                 f"{location}: {failure.get('reason_code', 'unknown reason')}"
             )
         fields.append(("preflight", "\n".join(preflight_lines)))
+    guidance = document.get("guidance")
+    if isinstance(guidance, Mapping) and guidance.get("recommended_eligible") is True:
+        guidance_lines = []
+        for key, label, group_key in (
+            ("unresolved_by_class", "classes", "finding_class"),
+            ("unresolved_by_source", "sources", "source_id"),
+        ):
+            groups = guidance.get(key)
+            if isinstance(groups, list) and groups:
+                guidance_lines.append(
+                    f"{label}: "
+                    + ", ".join(
+                        f"{item[group_key]}={item['count']}"
+                        for item in groups
+                        if isinstance(item, Mapping)
+                    )
+                )
+        actions = guidance.get("actions")
+        if isinstance(actions, list):
+            guidance_lines.extend(
+                str(item["command"])
+                for item in actions
+                if isinstance(item, Mapping) and item.get("enabled") is True
+            )
+        if guidance_lines:
+            fields.append(("guidance", "\n".join(guidance_lines)))
     not_run = document.get("not_run")
     if isinstance(not_run, Mapping):
         fields.append(

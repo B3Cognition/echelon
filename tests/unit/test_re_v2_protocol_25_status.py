@@ -126,10 +126,17 @@ def test_blocked_pre_epoch_status_preserves_retained_candidates_and_resume_actio
     assert document["artifact_counts"]["retained_audit_candidates"] == 1
     assert document["semantic"]["unresolved_audit_targets"] == 1
     assert document["continuable"] is False
-    assert document["next_action"] == (
-        "run `echelon re resume \"<guidance>\"`; identical guidance reuses "
-        "the existing successor with zero provider calls"
-    )
+    assert document["next_action"] == "run `echelon re resume --recommended`"
+    assert document["guidance"]["recommended_eligible"] is True
+    assert document["guidance"]["banzai_eligible"] is False
+    assert [
+        item["command"]
+        for item in document["guidance"]["actions"]
+        if item["enabled"]
+    ] == [
+        "echelon re resume --recommended",
+        'echelon re resume "<your guidance>"',
+    ]
 
 
 @pytest.mark.unit

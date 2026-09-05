@@ -151,6 +151,52 @@ def test_re_status_card_surfaces_preflight_failure_without_provider_call() -> No
 
 
 @pytest.mark.unit
+def test_re_status_card_surfaces_fixed_guidance_choices_without_provider_prose() -> None:
+    from echelon.re_ui import print_re_status_card
+
+    output = StringIO()
+    print_re_status_card(
+        {
+            "run_id": "re-l3-plateau",
+            "status": "blocked_plateau",
+            "banner": "L3 BLOCKED - FROZEN FINDINGS UNRESOLVED",
+            "selection": {"selected_sources": 2, "selected_domains": 4},
+            "artifact_counts": {"adopted": 20, "generated_l3": 8},
+            "guidance": {
+                "recommended_eligible": True,
+                "unresolved_by_class": [
+                    {"finding_class": "missing_behavior", "count": 2}
+                ],
+                "unresolved_by_source": [
+                    {"source_id": "api", "count": 2}
+                ],
+                "actions": [
+                    {
+                        "action_id": "recommended",
+                        "command": "echelon re resume --recommended",
+                        "enabled": True,
+                    },
+                    {
+                        "action_id": "banzai",
+                        "command": "echelon re resume --banzai",
+                        "enabled": True,
+                    },
+                ],
+            },
+            "next_action": "run `echelon re resume --recommended`",
+        },
+        file=output,
+    )
+
+    rendered = output.getvalue()
+    assert "classes: missing_behavior=2" in rendered
+    assert "sources: api=2" in rendered
+    assert "echelon re resume --recommended" in rendered
+    assert "echelon re resume --banzai" in rendered
+    assert "provider title" not in rendered
+
+
+@pytest.mark.unit
 def test_re_error_uses_public_version_and_hides_internal_protocol_number() -> None:
     from echelon.re_ui import print_re_error
 
