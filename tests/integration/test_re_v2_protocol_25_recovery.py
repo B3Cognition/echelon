@@ -369,8 +369,10 @@ def test_source_guard_selects_only_replayed_cycle_authority(tmp_path) -> None:
     assert assessments == (selected_assessment,)
 
 
-def _context(tmp_path):  # type: ignore[no-untyped-def]
-    graph, graph_inputs, _authority, _parent, _accepted = _graph_fixture()
+def _context(tmp_path, **graph_fixture_options):  # type: ignore[no-untyped-def]
+    graph, graph_inputs, _authority, _parent, _accepted = _graph_fixture(
+        **graph_fixture_options
+    )
     parent = ParentAuthorityBundleV2(
         schema_version=2,
         parent_layer="L2",
@@ -1101,6 +1103,43 @@ def test_complete_l3_parent_prepares_explicit_next_epoch_over_prior_roots(
     assert prior
     assert targets
     assert all(prior.issubset(item.context_object_hashes) for item in targets)
+
+
+@pytest.mark.integration
+def test_zero_domain_source_accepts_l3_root_after_a_clean_audit(tmp_path) -> None:
+    """Catch finalization rejecting a selected source that has no domains."""
+    context = _context(tmp_path, source_ids=("deployment",))
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.semantic_graph.manifest.run_manifest_id},
+        occurred_at=context.semantic_graph.manifest.created_at,
+    )
+    _accept_every_prerequisite(context)
+    _accept_every_audit(context)
+
+    freeze = plan_next_protocol_25(
+        recover_protocol_25_run(context).controller_state
+    )
+    assert freeze == Protocol25ControllerActionV1(kind="freeze_epoch")
+    context.apply_controller_action(freeze)
+
+    accept = plan_next_protocol_25(
+        recover_protocol_25_run(context).controller_state
+    )
+    assert accept == Protocol25ControllerActionV1(
+        kind="accept_roots",
+        source_id="deployment",
+    )
+    context.apply_controller_action(accept)
+
+    recovered = recover_protocol_25_run(context)
+    source_root = recovered.ledger.l3_source_roots["deployment"]
+    assert source_root.selected_domain_keys == ()
+    assert source_root.full_source_coverage is True
+    assert source_root.state == "complete"
+    assert plan_next_protocol_25(recovered.controller_state) == (
+        Protocol25ControllerActionV1(kind="terminal_complete")
+    )
 
 
 @pytest.mark.integration

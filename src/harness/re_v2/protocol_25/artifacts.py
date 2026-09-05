@@ -1205,7 +1205,6 @@ class L3SourceRootV1(_Authority):
             _digests(
                 self.selected_domain_keys,
                 "L3SourceRootV1.selected_domain_keys",
-                nonempty=True,
             ),
         )
         if not isinstance(self.full_source_coverage, bool):

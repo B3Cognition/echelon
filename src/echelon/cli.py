@@ -14225,6 +14225,27 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         l3_runtime_module,
         l3_controller_module,
     )
+    from harness.re_v2.protocol_25.compatibility import (
+        compatible_installed_l3_digest,
+    )
+
+    frozen_l3_implementations = {
+        implementation
+        for entry in semantic_entries
+        for implementation in (
+            entry.verifier.implementation_digest,
+            (
+                entry.request_renderer.implementation_digest
+                if entry.request_renderer is not None
+                else None
+            ),
+        )
+        if implementation is not None
+    }
+    installed_l3_implementation = compatible_installed_l3_digest(
+        frozen_l3_implementations,
+        l3_implementation,
+    )
     role_by_family = {
         "closure-recheck": "echelon.re-validator",
         "semantic-audit": "echelon.re-validator",
@@ -14251,7 +14272,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         if previous_schema is not None and previous_schema != schema.schema_hash:
             raise ValueError("protocol-2.5 response schema authority conflicts")
         semantic_schemas[schema.artifact_kind] = schema.schema_hash
-        semantic_verifiers[entry.verifier.verifier_id] = l3_implementation
+        semantic_verifiers[entry.verifier.verifier_id] = installed_l3_implementation
     registry = replace(
         registry,
         executor_implementations={
@@ -14276,7 +14297,7 @@ def _re_v25_context(project_root: Path, run_dir: Path, manifest: object) -> obje
         },
         renderer_implementations={
             **dict(registry.renderer_implementations),
-            SEMANTIC_RENDERER_ID: l3_implementation,
+            SEMANTIC_RENDERER_ID: installed_l3_implementation,
         },
         agent_contracts={
             **dict(registry.agent_contracts),
