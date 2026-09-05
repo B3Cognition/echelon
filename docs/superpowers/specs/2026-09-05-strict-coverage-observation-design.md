@@ -62,6 +62,14 @@ remove a required item from the current delivery. A source-controlled
 `scope: follow_up`, a provider note, or an edited candidate artifact cannot do
 so.
 
+Echelon resolves the selected stack set and its observer configuration from the
+workspace-owned runtime at delivery dispatch, stores that resolved input in the
+run, and hashes it. A candidate worktree cannot add, replace, or disable an
+observer. Candidate `.echelon/runnability.yml` is reloaded after each build or
+repair because it describes the candidate's service journey, but it can only
+supply an input to a stack-required observer; it cannot alter that observer's
+command, adapter, or required test types.
+
 ## Coverage contract and test identity
 
 `coverage-map.md` remains the human-readable planning contract and keeps its
@@ -70,6 +78,31 @@ values and one or more canonical requirement IDs. During delivery,
 `automated` and `deferred-automation` both mean **a required test observation**;
 the latter records that the test did not exist at planning time. `escalate`,
 malformed rows, missing rows, and contradictory declarations remain blocking.
+
+The parser normalizes the existing table rather than requiring planners to
+reformat it. Requirement IDs are split on comma or slash. Test case IDs are
+split on comma, slash, or semicolon. A Test Type cell is split on comma or
+slash. One type applies to every case in the row; otherwise the number of types
+must equal the number of case IDs and pairs by position. For example,
+`UT-LAYOUT-003; E2E-DETERMINISM-003` with `unit/e2e` creates one unit and one
+e2e obligation. Any other cardinality, an unknown type, or the same logical
+case ID declared with incompatible types is `contradictory` and blocks.
+
+`automated` and `deferred-automation` are planning states, not delivery
+results. Echelon does not ask a provider to rewrite the map's historical state
+from `deferred-automation` to `automated`; it records delivery execution only
+in its run-owned evidence. Legacy prose in a map that says a deferred row must
+"become automated" is satisfied only by a matching observed test case, never
+by a textual edit.
+
+The initial observer vocabulary is `unit`, `integration`, `contract`, and
+`e2e`. Phase A resolves every declared test type against the selected stack's
+observer set before a spec becomes ready to build. An unsupported type is a
+clear `coverage_observer_unavailable` planning quality gap, with the required
+adapter named; it is never guessed as another runner and never allowed to enter
+an endless Phase B repair loop. This lets browser-WASM use its declared
+Vitest/Playwright contract today while reserving a future native Rust adapter
+for a spec that genuinely needs one.
 
 The test case ID is the stable bridge from the plan to a physical test. A
 candidate test that implements a planned case must include the exact logical
@@ -80,13 +113,21 @@ collectible inventory persists after reload [echelon:E2E-PERSIST-001]
 ```
 
 One physical test may carry multiple tags only when it genuinely exercises all
-of those logical cases. Each case ID must appear in exactly one normalized final
-test result from an observer whose declared test type matches its coverage row.
-Duplicate matches, no match, malformed tags, and tags for IDs absent from the
-coverage map are integrity failures. The
-tag convention is deliberately visible in source and runner output; an agent
-cannot satisfy a planned case merely by writing a separate untracked mapping
-file.
+of those logical cases. A physical identity is `(observer, relative test file,
+normalized full title)`, excluding retry, shard, and browser-project suffixes.
+Each case ID must bind to exactly one physical identity from an observer whose
+declared test types include its coverage-row type. All terminal executions of
+that physical identity (for example Chromium and WebKit projects, or retried
+attempts) must pass. Two different physical identities carrying the same case
+ID are `duplicate_binding`; no identity, malformed tags, or tags for IDs absent
+from the coverage map are integrity failures.
+
+The adapter also verifies that the tag occurs in the reported candidate test
+file and that the normalized source title matches the reported title. A runner
+which cannot provide a stable relative file and final test title is not an
+eligible coverage observer. The tag convention is therefore visible in both
+candidate source and runner output; an agent cannot satisfy a planned case by
+writing an untracked mapping file or by fabricating a report.
 
 The initial parser accepts square-bracket tags at the end of a test title,
 case-insensitively for the `echelon` label and exactly for the case ID:
@@ -104,24 +145,41 @@ judgment still assess semantics.
 
 ## Stack-owned coverage observers
 
-Stacks may declare `coverage_observers` in the stack definition, not in
-candidate `.echelon/config.yml`. Every observer specifies:
+Stack schema version 1.3 adds optional `coverage_observers`; version 1.2 stacks
+remain valid and have none. Observers are declared in a stack definition, not
+in candidate `.echelon/config.yml`. Every observer specifies:
 
-- an identifier and expected test type;
+- a globally unique identifier and its non-empty `test_types` set;
 - a sandbox command which emits a supported structured result format;
 - an adapter (`playwright-json` or `vitest-json` initially);
 - the report path to collect from the sandbox; and
-- whether it is required for the stack.
+- whether it is required and whether it is `captured` or `isolated`.
 
-Observers run in the same candidate worktree, provisioned services, sandbox
-network, and environment class as the authoritative full verifier. They run
-after the normal verifier has succeeded, so their evidence supplements rather
-than replaces `verify_command`. Echelon retains both commands' receipts.
+The stack resolver rejects two selected required observers that claim the same
+test type. That makes every normalized coverage obligation map to exactly one
+owner-configured observer instead of allowing a candidate to choose a weaker
+one.
+
+The verification bundle contains the normal `verify_command` receipt and all
+required observer receipts. A `captured` observer collects a known structured
+report emitted by the normal verifier. An `isolated` observer runs only its
+owner-configured test command in a **fresh sandbox session** for the same
+candidate, with the same sandbox image, service plan, bootstrap, and injected
+environment class as the normal verifier. It never runs against mutable service
+state left by the normal verifier or another observer. Each receipt is retained
+and every required stage must pass.
+
+This allows a stack to use capture when its normal verifier already emits
+structured results, while safely supporting existing projects whose aggregate
+verifier does not. The latter may execute a suite twice, but only in independent
+ephemeral databases/browser sessions; it cannot gain or lose a pass because a
+previous suite mutated test data. No observer command runs on the user host.
 
 Browser-3D and browser-WASM stacks initially require a structured browser
-observer and structured unit-test observer where their coverage map contains the
-matching test type. The harness starts their PostgreSQL/other required sidecars
-and browser dependencies inside its sandbox. The user host remains untouched.
+observer for `e2e` and a structured Vitest observer for `unit`, `integration`,
+and `contract` where those types occur in their coverage maps. The harness
+starts their PostgreSQL/other required sidecars and browser dependencies inside
+its sandbox. The user host remains untouched.
 
 iPhone/AR stacks declare the future capability but do not activate this gate
 until Echelon has an owner-provided macOS/Xcode simulator runner. Their status
@@ -149,7 +207,8 @@ The JSON schema contains:
     "commit": "informational SHA",
     "product_fingerprint": "sha256",
     "coverage_map_hash": "sha256",
-    "stack_hash": "sha256",
+    "resolved_stack_hash": "sha256",
+    "observer_plan_hash": "sha256",
     "runnability_contract_hash": "sha256 or null"
   },
   "verification_receipt": {"path": "...", "sha256": "...", "status": "passed"},
@@ -157,7 +216,7 @@ The JSON schema contains:
   "test_cases": {
     "E2E-PERSIST-001": {
       "status": "passed",
-      "matches": [{"observer": "playwright", "file": "...", "title": "...", "status": "passed"}]
+      "matches": [{"observer": "playwright", "file": "...", "title": "...", "source_sha256": "...", "projects": [{"name": "chromium", "status": "passed"}]}]
     }
   },
   "requirements": {
@@ -170,20 +229,38 @@ The Markdown form is a concise, user-readable table of requirement, required
 case, observer, final result, and blocker reason. It is a view of the JSON and
 cannot be used as evidence itself.
 
+The JSON retains only normalized identifiers, relative paths, result status,
+digests, and redacted bounded diagnostics. Raw reporter output and unredacted
+environment values are never copied into the run. Receipt and report handling
+uses the existing verification-redaction rules.
+
+The artifact writer follows the verification receipt's exclusive-create,
+symlink-safe, digest-checked pattern. A later attempt writes a new numbered
+artifact and updates a small trusted latest pointer; it cannot overwrite or
+silently mutate evidence from an earlier candidate.
+
 The artifact is written only after the harness validates:
 
 1. the standard verifier receipt passed for the candidate fingerprint;
 2. each required observer receipt passed and has nonzero executed tests;
-3. every logical test tag maps to exactly one final physical test result for its
-   observer;
+3. every logical tag has exactly one source identity, every observed project or
+   retry normalizes to a passed final result, and the candidate source file
+   contains the corresponding tag;
 4. every coverage-map case has a matching required observer/type and a passed
    result; and
 5. its map, stack, contract, receipt, and candidate fingerprints all match.
 
+An observer may report an untagged skipped test without changing an otherwise
+valid coverage result; existing suites sometimes intentionally skip tests for a
+separate environment capability. A skipped, missing, or failed test carrying a
+required Echelon case tag is always blocking. This avoids a coverage gate
+silently accepting a skipped planned case without turning unrelated historical
+skips into a delivery regression.
+
 For each requirement, every coverage row not excused by an active owner deferral
-must be observed. A requirement with several required cases is `observed` only if all required cases
-passed. A current owner deferral yields `owner_deferred`; it never masquerades
-as an observation.
+must be observed. A requirement with several required cases is `observed` only
+if all required cases passed. A current owner deferral yields `owner_deferred`;
+it never masquerades as an observation.
 
 The remaining explicit statuses are `unbound`, `duplicate_binding`, `failed`,
 `skipped`, `not_executed`, `observer_failed`, `observer_missing`,
@@ -198,6 +275,27 @@ validated coverage observation. The existing `coverage-evidence.json` becomes
 schema version 2 and records both declaration and observation state. It never
 rewrites `coverage-map.md` and never interprets a candidate's status word as a
 successful test execution.
+
+All direct, scoped, and full verify-spec paths use one shared sequence:
+
+1. reload and validate the repaired candidate runnability contract;
+2. run the standard sandbox verifier and required coverage observers into one
+   verification bundle;
+3. validate and write the coverage observation;
+4. reconcile coverage evidence; then
+5. run judgment pre-pass and semantic fulfillment review.
+
+No path may call the judgment pre-pass with declaration-only evidence when a
+selected stack requires coverage observation. This is the explicit guard against
+reintroducing the deferred-coverage deadlock through a fallback or resume path.
+
+The pre-pass receives a validated `CoverageObservationRef`, rather than
+silently regenerating declaration-only coverage evidence. It accepts an
+observation only after validating the verification bundle, normalized source
+identities, and full provenance tuple. The fulfillment reviewer receives the
+coverage row's stated oracle plus the exact tagged test file/title and observed
+result. An observed tag removes the execution-evidence objection; it does not
+license the reviewer to accept an unrelated or semantically empty test.
 
 `judgment_prepass.py` consumes the validated observation reference. A planned
 `deferred-automation` row may propose `IMPLEMENTED` only when all of the
@@ -239,11 +337,18 @@ Ralph performs every authoritative rerun.
 ## Provenance and finalization
 
 The coverage observation is valid only for the candidate product fingerprint,
-coverage-map hash, stack hash, contract hash, and verification receipt hash it
-records. Commit SHA is retained as useful provenance but is not the authority:
-a merge-only commit may reuse evidence only when all authoritative content
-fingerprints are unchanged. Any product, map, stack, contract, or observer
-change invalidates the observation and triggers fresh sandbox verification.
+coverage-map hash, resolved-stack hash, observer-plan hash, contract hash, and
+verification-bundle receipt hashes it records. Commit SHA is retained as useful
+provenance but is not the authority: a merge-only commit may reuse evidence only
+when all authoritative content fingerprints are unchanged. Any product, map,
+stack, observer plan, or contract change invalidates the observation and
+triggers fresh sandbox verification.
+
+The existing strict `validate_verification_receipt` remains unchanged for
+legacy callers. Landing and coverage observation gain an explicit
+equivalent-product validator which verifies the receipt digest, authority,
+passed status, and complete fingerprint tuple, then permits only a commit-SHA
+difference. It is never a broad relaxation of receipt validation.
 
 This follows the existing delivery provenance model and prevents a stale
 successful test report from fulfilling a changed candidate.
@@ -273,7 +378,9 @@ fingerprints, or a failed sandbox observer return to the repair loop.
 ## Compatibility and migration
 
 - The current Markdown coverage-map format and coupled requirement rows remain
-  supported. Requirement IDs continue to be split and assessed individually.
+  supported. Requirement IDs continue to be split and assessed individually;
+  comma, slash, and semicolon-delimited test IDs and paired test types are
+  normalized as specified above.
 - Version-1 coverage evidence remains readable for historical status views.
   It is not acceptable for a stack that now requires coverage observation; its
   deterministic outcome is `observer_missing`, not a guessed pass.
@@ -281,8 +388,8 @@ fingerprints, or a failed sandbox observer return to the repair loop.
   Other stack behavior is unchanged until their owner supplies an adapter and
   sandbox-capable runner.
 - Existing receipt carry-forward uses the authoritative fingerprint tuple, not
-  commit equality, so merge-only finalization cannot recreate the former
-  provenance mismatch.
+  commit equality only through the new equivalent-product validator, so
+  merge-only finalization cannot recreate the former provenance mismatch.
 
 ## Test strategy
 
@@ -296,20 +403,32 @@ enabled:
 3. failed, skipped, duplicate, unknown-tag, zero-test, malformed-report, and
    wrong-observer cases all fail closed with actionable reason codes;
 4. one physical tagged test may satisfy multiple planned cases only when each
-   tag is declared in the map and the normalized final result passes;
+   tag is declared in the map and every normalized project/retry result passes;
 5. every row of a coupled requirement map is assessed separately, so
    `AC-001 / FR-001` cannot hide a missing requirement;
-6. receipt, product fingerprint, map hash, stack hash, or contract hash drift
+6. semicolon-delimited test cases and positional `unit/e2e` test-type pairs are
+   normalized independently; incompatible case/type declarations fail closed;
+7. receipt, product fingerprint, map hash, resolved-stack hash, observer-plan
+   hash, or contract hash drift
    rejects observation reuse, while a merge-only SHA change with identical
    authoritative fingerprints carries it forward;
-7. active owner-controlled deferral works, but candidate-controlled deferral
+8. active owner-controlled deferral works, but candidate-controlled deferral
    text does not;
-8. browser observers run with the configured sandbox sidecars and never on the
-   host; their structured Playwright/Vitest reports retain exact test identity;
-9. unavailable iOS/macOS observation reports the explicit capability gap
+9. captured observers use a report from the normal verifier, while isolated
+   observers start from fresh sandbox services and cannot observe stale database
+   state or run on the host;
+10. browser observer reports retain exact source identity and redact diagnostics;
+11. unavailable iOS/macOS observation reports the explicit capability gap
    without claiming verification; and
-10. the browser-3D fixture reaches a clean observed-coverage fulfillment path
+12. the browser-3D fixture reaches a clean observed-coverage fulfillment path
     and a fresh delivery cannot converge by manually changing planning status.
+13. stack schema 1.2 remains accepted, schema 1.3 rejects malformed observer
+    definitions, and conflicting selected observers for one test type fail
+    during stack resolution rather than during delivery.
+14. direct, scoped, and full fulfillment paths all reject declaration-only
+    coverage when a selected stack requires an observation.
+15. Phase A rejects an unsupported planned test type before delivery, rather
+    than routing it to a guessed observer or repeated repair attempt.
 
 ## Rollout
 
