@@ -92,7 +92,8 @@ def protocol_25_status_document(
     run_path = Path(run_dir)
     try:
         authority = _authority(run_path, context)
-        return _document(authority)
+        debt = _load_debt_acceptance(run_path, authority)
+        return _document(authority, debt_acceptance=debt)
     except Protocol25StatusError:
         raise
     except Exception as exc:
@@ -231,7 +232,11 @@ class _AvailableBudget:
         return True
 
 
-def _document(authority: _StatusAuthority) -> dict[str, object]:
+def _document(
+    authority: _StatusAuthority,
+    *,
+    debt_acceptance: object | None = None,
+) -> dict[str, object]:
     manifest = authority.manifest
     state = authority.state
     events = authority.events
@@ -408,7 +413,7 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
         if projection_failure is not None
         else _BANNERS[status]
     )
-    return {
+    document = {
         "artifact_counts": {
             "adopted": len(adopted_work_ids),
             "generated_l2": generated_l2,
@@ -502,6 +507,50 @@ def _document(authority: _StatusAuthority) -> dict[str, object]:
             ),
         },
     }
+    if debt_acceptance is not None:
+        return _apply_debt_status(document, debt_acceptance)
+    return document
+
+
+def _load_debt_acceptance(run_path: Path, authority: _StatusAuthority) -> object | None:
+    from .debt import (
+        load_residual_debt_acceptance,
+        residual_debt_pointer_path,
+        validate_residual_debt_acceptance,
+    )
+
+    pointer = residual_debt_pointer_path(run_path)
+    if not pointer.exists() and not pointer.is_symlink():
+        return None
+    acceptance = load_residual_debt_acceptance(run_path)
+    validate_residual_debt_acceptance(authority, acceptance)
+    return acceptance
+
+
+def _apply_debt_status(
+    document: dict[str, object],
+    acceptance: object,
+) -> dict[str, object]:
+    unresolved_ids = tuple(getattr(acceptance, "unresolved_finding_ids"))
+    document["banner"] = "L3 COMPLETE WITH ACCEPTED RESIDUAL DEBT"
+    document["status"] = "complete_with_debt"
+    document["semantic_status"] = "blocked_plateau"
+    document["quality"] = "partial"
+    document["debt_manifest_hash"] = getattr(acceptance, "identity")
+    document["accepted_residual_findings"] = len(unresolved_ids)
+    document["continuable"] = False
+    document["next_action"] = "none — selected L3 scope is complete with accepted residual debt"
+    guidance = document.get("guidance")
+    if isinstance(guidance, dict):
+        guidance["recommended_eligible"] = False
+        guidance["banzai_eligible"] = False
+        actions = guidance.get("actions")
+        if isinstance(actions, list):
+            guidance["actions"] = [
+                {**item, "enabled": False} if isinstance(item, dict) else item
+                for item in actions
+            ]
+    return document
 
 
 def _preflight_document(authority: _StatusAuthority) -> dict[str, object]:
@@ -987,6 +1036,13 @@ def _render_human(document: Mapping[str, object]) -> str:
         lines.append(
             "recommended continuation ceiling: " + "; ".join(descriptions)
         )
+    if document.get("status") == "complete_with_debt":
+        lines.append(
+            "accepted residual findings: "
+            f"{document.get('accepted_residual_findings', 0)}"
+        )
+        lines.append(f"quality: {document.get('quality', 'partial')}")
+        lines.append(f"debt manifest: {document.get('debt_manifest_hash')}")
     lines.extend(
         (
             f"next action: {document['next_action']}",

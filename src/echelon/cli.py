@@ -17920,6 +17920,7 @@ def _cmd_re_resume(args: list[str]) -> None:
 def _cmd_re_finalize(args: list[str]) -> None:
     """Explicitly acknowledge debt and terminalize a blocked RE run as partial."""
     from harness.re_finalization import ReFinalizationError, finalize_partial_re_run
+    from harness.re_v2.protocol_25.debt import Protocol25DebtError
 
     allow_partial = False
     positional: list[str] = []
@@ -17944,9 +17945,54 @@ def _cmd_re_finalize(args: list[str]) -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
+    project_root = Path.cwd()
+    try:
+        from harness.re_lifecycle import resolve_current_re_run
+
+        run_dir = (
+            _resolve_named_re_run(project_root, positional[0])
+            if positional
+            else resolve_current_re_run(project_root)
+        )
+        if _detect_re_engine_for_cli(run_dir) == "v2":
+            from echelon.re_ui import print_re_status_card
+            from harness.re_v2.protocol_25.debt import (
+                finalize_protocol_25_debt,
+            )
+            from harness.re_v2.protocol_25.model import RunManifestV4
+            from harness.re_v2.protocol_25.status import protocol_25_status_document
+            from harness.re_v2.protocol_26.model import RunManifestV5
+            from harness.re_v2.run_store import load_run_manifest
+
+            manifest = load_run_manifest(run_dir)
+            is_l3 = isinstance(manifest, RunManifestV4) or (
+                isinstance(manifest, RunManifestV5) and manifest.target_layer == "L3"
+            )
+            if not is_l3:
+                raise Protocol25DebtError(
+                    "immutable residual-debt finalization is supported only for L3"
+                )
+            acceptance = finalize_protocol_25_debt(
+                project_root=project_root,
+                run_dir=run_dir,
+                require_banzai=True,
+            )
+            document = protocol_25_status_document(run_dir)
+            if document.get("debt_manifest_hash") != acceptance.identity:
+                raise Protocol25DebtError(
+                    "finalized debt is absent from replayed status"
+                )
+            print_re_status_card(document, title="RE FINAL STATE")
+            return
+    except Protocol25DebtError as exc:
+        print(f"echelon re finalize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except (OSError, ValueError) as exc:
+        print(f"echelon re finalize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     try:
         result = finalize_partial_re_run(
-            Path.cwd(),
+            project_root,
             run_id=positional[0] if positional else None,
         )
     except (ReFinalizationError, OSError, ValueError) as exc:

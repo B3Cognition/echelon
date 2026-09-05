@@ -2,9 +2,50 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
+
+
+@pytest.mark.unit
+def test_finalize_routes_l3_to_exact_banzai_debt_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_re_finalize
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    run_dir = tmp_path / "runs" / "re-l3"
+    run_dir.mkdir(parents=True)
+    calls: list[tuple[Path, Path, bool]] = []
+    rendered: list[dict[str, object]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._detect_re_engine_for_cli", lambda _path: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _path: replace(manifest_v4(), run_id="re-l3"),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.debt.finalize_protocol_25_debt",
+        lambda *, project_root, run_dir, require_banzai: (
+            calls.append((project_root, run_dir, require_banzai))
+            or SimpleNamespace(identity="sha256:" + "d" * 64)
+        ),
+    )
+    monkeypatch.setattr(
+        "harness.re_v2.protocol_25.status.protocol_25_status_document",
+        lambda _path: {"debt_manifest_hash": "sha256:" + "d" * 64},
+    )
+    monkeypatch.setattr(
+        "echelon.re_ui.print_re_status_card",
+        lambda document, **_kwargs: rendered.append(document),
+    )
+
+    _cmd_re_finalize(["re-l3", "--allow-partial"])
+
+    assert calls == [(tmp_path, run_dir, True)]
+    assert rendered == [{"debt_manifest_hash": "sha256:" + "d" * 64}]
 
 
 @pytest.mark.unit
