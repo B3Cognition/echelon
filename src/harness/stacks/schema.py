@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Any
 
 from harness.stacks.errors import StackValidationError
@@ -71,6 +72,18 @@ VALID_RUNNABILITY_OBSERVATIONS = {
     "exec",
     "postgres_query",
 }
+VALID_COVERAGE_OBSERVER_FIELDS = {
+    "id",
+    "test_types",
+    "command",
+    "report_path",
+    "adapter",
+    "mode",
+    "required",
+}
+VALID_COVERAGE_OBSERVER_ADAPTERS = {"playwright-json", "vitest-json"}
+VALID_COVERAGE_OBSERVER_MODES = {"captured", "isolated"}
+_COVERAGE_OBSERVER_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SUPPORTED_PROVISIONER_SATISFIER_KINDS = {"environment", "compose-template"}
 POSTGRES_COMPOSE_PROVISIONER_ID = "postgres-verify"
 POSTGRES_COMPOSE_SERVICE = "postgres"
@@ -154,6 +167,19 @@ class StackRunnability:
 
 
 @dataclass(frozen=True)
+class StackCoverageObserver:
+    """A stack-owned, harness-executed structured test observer."""
+
+    id: str
+    test_types: tuple[str, ...]
+    command: str
+    report_path: str
+    adapter: str
+    mode: str
+    required: bool
+
+
+@dataclass(frozen=True)
 class StackDefinition:
     id: str
     name: str
@@ -172,6 +198,7 @@ class StackDefinition:
     detection: StackDetection = field(default_factory=StackDetection)
     provisioners: list[StackProvisioner] = field(default_factory=list)
     runnability: StackRunnability = field(default_factory=StackRunnability)
+    coverage_observers: list[StackCoverageObserver] = field(default_factory=list)
 
 
 def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefinition:
@@ -247,13 +274,22 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
             path=source_path,
             field_path="provisioning",
         )
-    if "runnability" in raw and schema_version != "1.2":
+    if "runnability" in raw and schema_version not in {"1.2", "1.3"}:
         raise StackValidationError(
             "runnability requires stack schema_version 1.2",
             path=source_path,
             field_path="runnability",
         )
     runnability = _parse_runnability(raw.get("runnability"), source_path)
+    if "coverage_observers" in raw and schema_version != "1.3":
+        raise StackValidationError(
+            "coverage_observers requires stack schema_version 1.3",
+            path=source_path,
+            field_path="coverage_observers",
+        )
+    coverage_observers = _parse_coverage_observers(
+        raw.get("coverage_observers"), source_path
+    )
 
     return StackDefinition(
         id=stack_id,
@@ -279,6 +315,7 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         context_files=context_files,
         provisioners=provisioners,
         runnability=runnability,
+        coverage_observers=coverage_observers,
     )
 
 
@@ -345,6 +382,110 @@ def _parse_runnability(value: Any, source_path: Path) -> StackRunnability:
         capabilities=tuple(capabilities),
         required_observations=tuple(observations),
     )
+
+
+def _parse_coverage_observers(
+    value: Any, source_path: Path
+) -> list[StackCoverageObserver]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise StackValidationError(
+            "coverage_observers must be a list",
+            path=source_path,
+            field_path="coverage_observers",
+        )
+
+    observers: list[StackCoverageObserver] = []
+    observer_ids: set[str] = set()
+    for index, value_item in enumerate(value):
+        field_path = f"coverage_observers[{index}]"
+        raw = _mapping(value_item, source_path, field_path)
+        _reject_unknown_keys(raw, VALID_COVERAGE_OBSERVER_FIELDS, source_path, field_path)
+        observer_id = _non_empty_str(raw.get("id"), source_path, f"{field_path}.id")
+        if not _COVERAGE_OBSERVER_NAME.fullmatch(observer_id):
+            raise StackValidationError(
+                "invalid coverage observer id",
+                path=source_path,
+                field_path=f"{field_path}.id",
+            )
+        if observer_id in observer_ids:
+            raise StackValidationError(
+                f"duplicate coverage observer id: {observer_id}",
+                path=source_path,
+                field_path=f"{field_path}.id",
+            )
+        observer_ids.add(observer_id)
+
+        test_types = _string_list(
+            raw.get("test_types"), source_path, f"{field_path}.test_types"
+        )
+        if not test_types:
+            raise StackValidationError(
+                "test_types must contain at least one test type",
+                path=source_path,
+                field_path=f"{field_path}.test_types",
+            )
+        seen_test_types: set[str] = set()
+        for test_type in test_types:
+            if not _COVERAGE_OBSERVER_NAME.fullmatch(test_type):
+                raise StackValidationError(
+                    f"invalid coverage observer test type: {test_type}",
+                    path=source_path,
+                    field_path=f"{field_path}.test_types",
+                )
+            if test_type in seen_test_types:
+                raise StackValidationError(
+                    f"duplicate coverage observer test type: {test_type}",
+                    path=source_path,
+                    field_path=f"{field_path}.test_types",
+                )
+            seen_test_types.add(test_type)
+
+        command = _non_empty_str(
+            raw.get("command"), source_path, f"{field_path}.command"
+        )
+        report_path = _non_empty_str(
+            raw.get("report_path"), source_path, f"{field_path}.report_path"
+        )
+        _validate_target_relative_report_path(
+            report_path, source_path, f"{field_path}.report_path"
+        )
+        adapter = _non_empty_str(
+            raw.get("adapter"), source_path, f"{field_path}.adapter"
+        )
+        if adapter not in VALID_COVERAGE_OBSERVER_ADAPTERS:
+            raise StackValidationError(
+                f"unsupported coverage observer adapter: {adapter}",
+                path=source_path,
+                field_path=f"{field_path}.adapter",
+            )
+        mode = _non_empty_str(raw.get("mode"), source_path, f"{field_path}.mode")
+        if mode not in VALID_COVERAGE_OBSERVER_MODES:
+            raise StackValidationError(
+                f"unsupported coverage observer mode: {mode}",
+                path=source_path,
+                field_path=f"{field_path}.mode",
+            )
+        if not isinstance(raw.get("required"), bool):
+            raise StackValidationError(
+                "coverage observer required must be a boolean",
+                path=source_path,
+                field_path=f"{field_path}.required",
+            )
+
+        observers.append(
+            StackCoverageObserver(
+                id=observer_id,
+                test_types=tuple(test_types),
+                command=command,
+                report_path=report_path,
+                adapter=adapter,
+                mode=mode,
+                required=raw["required"],
+            )
+        )
+    return observers
 
 
 def _validated_unique_values(
@@ -817,7 +958,7 @@ def _schema_version(value: Any, source_path: Path) -> str:
             field_path=field_path,
         )
     result = value.strip()
-    if result not in {"1.0", "1.1", "1.2"}:
+    if result not in {"1.0", "1.1", "1.2", "1.3"}:
         raise StackValidationError(
             "unsupported stack schema_version",
             path=source_path,
@@ -860,6 +1001,24 @@ def _validate_target_relative_output(
     ):
         raise StackValidationError(
             "provisioner output must be a target-relative one-file path",
+            path=source_path,
+            field_path=field_path,
+        )
+
+
+def _validate_target_relative_report_path(
+    report_path: str, source_path: Path, field_path: str
+) -> None:
+    path = Path(report_path)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or "." in path.parts
+        or "\\" in report_path
+        or report_path in {".", ".."}
+    ):
+        raise StackValidationError(
+            "report_path must be a target-relative path",
             path=source_path,
             field_path=field_path,
         )

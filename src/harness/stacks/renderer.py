@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from harness.stacks.resolver import ResolvedStacks
+from harness.verification_evidence import redact_verification_text
 
 
 def resolved_to_dict(resolved: ResolvedStacks) -> dict:
@@ -46,6 +48,19 @@ def resolved_to_dict(resolved: ResolvedStacks) -> dict:
             ),
             "sources": list(resolved.runnability.sources),
         },
+        "coverage_observers": [
+            {
+                "owner": item.owner_stack_id,
+                "id": item.observer.id,
+                "test_types": list(item.observer.test_types),
+                "command": redact_verification_text(item.observer.command, os.environ),
+                "report_path": item.observer.report_path,
+                "adapter": item.observer.adapter,
+                "mode": item.observer.mode,
+                "required": item.observer.required,
+            }
+            for item in resolved.coverage_observers
+        ],
         "context_files": resolved.context_files,
     }
 
@@ -100,6 +115,25 @@ def render_resolved_markdown(resolved: ResolvedStacks) -> str:
                 f"- Sources: {', '.join(resolved.runnability.sources)}",
             ]
         )
+
+    if resolved.coverage_observers:
+        lines.extend(["", "## Coverage Observers", ""])
+        for item in resolved.coverage_observers:
+            observer = item.observer
+            command = redact_verification_text(observer.command, os.environ)
+            lines.extend(
+                [
+                    f"### {item.owner_stack_id}/{observer.id}",
+                    "",
+                    "- Test types: " + ", ".join(observer.test_types),
+                    f"- Adapter: `{observer.adapter}`",
+                    f"- Mode: `{observer.mode}`",
+                    f"- Required: `{str(observer.required).lower()}`",
+                    f"- Report path: `{observer.report_path}`",
+                    f"- Command: `{command}`",
+                    "",
+                ]
+            )
 
     if resolved.tools:
         lines.extend(["", "## Available Stack Tools", ""])

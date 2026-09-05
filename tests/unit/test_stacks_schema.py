@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,111 @@ def test_stack_schema_rejects_runnability_before_schema_1_2() -> None:
         StackValidationError,
         match="runnability requires stack schema_version 1.2",
     ):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+def _coverage_observer() -> dict[str, object]:
+    return {
+        "id": "playwright",
+        "test_types": ["e2e"],
+        "command": "pnpm exec playwright test --reporter=json",
+        "report_path": "artifacts/playwright.json",
+        "adapter": "playwright-json",
+        "mode": "isolated",
+        "required": True,
+    }
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_schema_1_3_coverage_observer() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.3",
+        "coverage_observers": [_coverage_observer()],
+    }
+
+    parsed = parse_stack_definition(raw, Path("stack.yml"))
+
+    assert len(parsed.coverage_observers) == 1
+    assert parsed.coverage_observers[0].id == "playwright"
+    assert parsed.coverage_observers[0].test_types == ("e2e",)
+    assert parsed.coverage_observers[0].mode == "isolated"
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_coverage_observers_before_schema_1_3() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.2",
+        "coverage_observers": [_coverage_observer()],
+    }
+
+    with pytest.raises(
+        StackValidationError,
+        match="coverage_observers requires stack schema_version 1.3",
+    ):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda observers: observers.append(deepcopy(observers[0])),
+            "duplicate coverage observer id",
+        ),
+        (
+            lambda observers: observers[0].update(test_types=[]),
+            "test_types must contain at least one test type",
+        ),
+        (
+            lambda observers: observers[0].update(test_types=["e2e", "e2e"]),
+            "duplicate coverage observer test type",
+        ),
+        (
+            lambda observers: observers[0].update(test_types=["E2E"]),
+            "invalid coverage observer test type",
+        ),
+        (
+            lambda observers: observers[0].update(command=" "),
+            "command must be a non-empty string",
+        ),
+        (
+            lambda observers: observers[0].update(report_path="/tmp/report.json"),
+            "report_path must be a target-relative path",
+        ),
+        (
+            lambda observers: observers[0].update(report_path="../report.json"),
+            "report_path must be a target-relative path",
+        ),
+        (
+            lambda observers: observers[0].update(adapter="junit-xml"),
+            "unsupported coverage observer adapter",
+        ),
+        (
+            lambda observers: observers[0].update(mode="host"),
+            "unsupported coverage observer mode",
+        ),
+        (
+            lambda observers: observers[0].pop("required"),
+            "coverage observer required must be a boolean",
+        ),
+    ],
+)
+def test_stack_schema_rejects_malformed_coverage_observer(
+    mutate: object,
+    message: str,
+) -> None:
+    observers = [deepcopy(_coverage_observer())]
+    mutate(observers)  # type: ignore[operator]
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.3",
+        "coverage_observers": observers,
+    }
+
+    with pytest.raises(StackValidationError, match=message):
         parse_stack_definition(raw, Path("stack.yml"))
 
 

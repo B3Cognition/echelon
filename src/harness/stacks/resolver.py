@@ -7,6 +7,7 @@ from typing import Iterable
 
 from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.schema import (
+    StackCoverageObserver,
     StackDefinition,
     StackProvisioner,
     StackRunnability,
@@ -38,6 +39,14 @@ class ResolvedRunnability:
 
 
 @dataclass(frozen=True)
+class ResolvedCoverageObserver:
+    """One stack-owned observer and its declaring stack."""
+
+    owner_stack_id: str
+    observer: StackCoverageObserver
+
+
+@dataclass(frozen=True)
 class ResolvedStacks:
     selected_ids: list[str]
     resolved_ids: list[str]
@@ -50,6 +59,7 @@ class ResolvedStacks:
     provisioners: list[ResolvedStackProvisioner] = field(default_factory=list)
     services: list[SandboxServiceSpec] = field(default_factory=list)
     runnability: ResolvedRunnability = field(default_factory=ResolvedRunnability)
+    coverage_observers: list[ResolvedCoverageObserver] = field(default_factory=list)
 
 
 def resolve_stacks(
@@ -70,6 +80,7 @@ def resolve_stacks(
             provisioners=[],
             services=[],
             runnability=ResolvedRunnability(),
+            coverage_observers=[],
         )
 
     normalized_selected = _normalize_stack_ids(selected_ids)
@@ -129,10 +140,29 @@ def resolve_stacks(
     services: list[SandboxServiceSpec] = []
     provisioners_by_id: dict[str, StackProvisioner] = {}
     runnability = ResolvedRunnability()
+    coverage_observers: list[ResolvedCoverageObserver] = []
+    required_observers_by_test_type: dict[str, ResolvedCoverageObserver] = {}
 
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
         runnability = _merge_runnability(runnability, stack_id, stack.runnability)
+        for observer in stack.coverage_observers:
+            resolved_observer = ResolvedCoverageObserver(
+                owner_stack_id=stack_id,
+                observer=observer,
+            )
+            if observer.required:
+                for test_type in observer.test_types:
+                    existing = required_observers_by_test_type.get(test_type)
+                    if existing is not None:
+                        raise StackConflictError(
+                            "Stack coverage observer conflict for "
+                            f"test type {test_type}: "
+                            f"{existing.owner_stack_id}/{existing.observer.id} "
+                            f"conflicts with {stack_id}/{observer.id}"
+                        )
+                    required_observers_by_test_type[test_type] = resolved_observer
+            coverage_observers.append(resolved_observer)
         for capability, value in stack.provides.items():
             existing = capabilities.get(capability)
             if existing is None:
@@ -214,6 +244,10 @@ def resolve_stacks(
         provisioners=provisioners,
         services=services,
         runnability=runnability,
+        coverage_observers=sorted(
+            coverage_observers,
+            key=lambda item: (item.owner_stack_id, item.observer.id),
+        ),
     )
 
 
@@ -265,6 +299,33 @@ def resolved_stack_contract_sha256(resolved: ResolvedStacks) -> str:
     }
     encoded = json.dumps(
         payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def resolved_coverage_observer_plan_sha256(resolved: ResolvedStacks) -> str:
+    """Return an order-independent digest of stack-owned observer behavior."""
+    observers = sorted(
+        (
+            {
+                "owner_stack_id": item.owner_stack_id,
+                "id": item.observer.id,
+                "test_types": sorted(item.observer.test_types),
+                "command": item.observer.command,
+                "report_path": item.observer.report_path,
+                "adapter": item.observer.adapter,
+                "mode": item.observer.mode,
+                "required": item.observer.required,
+            }
+            for item in resolved.coverage_observers
+        ),
+        key=lambda item: (str(item["owner_stack_id"]), str(item["id"])),
+    )
+    encoded = json.dumps(
+        {"coverage_observers": observers},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
