@@ -17195,6 +17195,56 @@ def _run_re_v25_resume(
     semantic_time_limit_minutes: int | None = None,
 ) -> Path:
     """Create or exactly reuse one immutable guided protocol-2.5 successor."""
+    from harness.re_v2.protocol_25.guidance import GuidancePolicyV1
+
+    workspace = workspace_root.resolve()
+    parent_dir = parent_run.resolve()
+    if not isinstance(guidance_policy, GuidancePolicyV1):
+        raise ValueError("immutable guidance resume policy is invalid")
+    create_successor = lambda blocked: _create_or_reuse_re_v25_guided_successor(
+        workspace,
+        blocked,
+        guidance_policy,
+        token_limit,
+        time_limit_minutes,
+        semantic_token_limit,
+        semantic_time_limit_minutes,
+    )
+    if guidance_policy.kind == "banzai":
+        from echelon.re_ui import print_re_status_card
+        from harness.re_v2.protocol_25.convergence import run_banzai_resume
+        from harness.re_v2.protocol_25.status import protocol_25_status_document
+
+        result = run_banzai_resume(
+            project_root=workspace,
+            blocked_run_dir=parent_dir,
+            create_or_reuse_successor=create_successor,
+            execute_successor=lambda child: _run_re_v2_live(
+                _re_v2_context(workspace, child)
+            ),
+        )
+        run_dir = workspace / "runs" / result.run_id
+        _activate_re_v2_run(workspace, result.run_id)
+        document = protocol_25_status_document(run_dir)
+        document["banzai"] = result.to_json_dict()
+        print_re_status_card(document, title="RE BANZAI")
+        return run_dir
+
+    run_dir, created = create_successor(parent_dir)
+    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
+    return run_dir
+
+
+def _create_or_reuse_re_v25_guided_successor(
+    workspace: Path,
+    parent_dir: Path,
+    guidance_policy: object,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+    semantic_token_limit: int | None,
+    semantic_time_limit_minutes: int | None,
+) -> tuple[Path, bool]:
+    """Create/reuse one guided child without deciding how it is executed."""
     from dataclasses import replace
 
     from harness.re_v2.protocol_25.guidance import GuidancePolicyV1
@@ -17210,13 +17260,11 @@ def _run_re_v25_resume(
         with_current_semantic_executor_capacities,
     )
 
-    workspace = workspace_root.resolve()
-    parent_dir = parent_run.resolve()
+    if not isinstance(guidance_policy, GuidancePolicyV1):
+        raise ValueError("immutable guidance resume policy is invalid")
     context = _re_v2_context(workspace, parent_dir)
     exported = export_protocol_25_parent(context)
     parent_manifest = exported.manifest
-    if not isinstance(guidance_policy, GuidancePolicyV1):
-        raise ValueError("immutable guidance resume policy is invalid")
     prepared = prepare_guided_successor(
         parent=exported.parent,
         parent_manifest=parent_manifest,
@@ -17270,8 +17318,7 @@ def _run_re_v25_resume(
             run_dir = existing
             initialize_protocol_25_successor(run_dir, exported)
         _activate_re_v2_run(workspace, run_dir.name)
-    _run_or_report_re_v25_child(workspace, run_dir, execute=created)
-    return run_dir
+    return run_dir, created
 
 
 def _prepare_re_v25_creation(
@@ -17911,8 +17958,10 @@ def _cmd_re_resume(args: list[str]) -> None:
             re_max_inner,
             **overrides,
         )
-    except (ReLifecycleError, ValueError) as exc:
-        print(f"echelon re resume: {exc}", file=sys.stderr)
+    except (ReLifecycleError, RuntimeError, ValueError) as exc:
+        from echelon.re_ui import print_re_error
+
+        print_re_error("echelon re resume", exc)
         raise SystemExit(2) from exc
     _print_re_lifecycle_result(result)
 

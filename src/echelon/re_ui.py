@@ -17,6 +17,7 @@ from echelon.ui import banner
 
 _STATUS_ICONS = {
     "complete": "✓",
+    "complete_with_debt": "✓",
     "completed": "✓",
     "paused": "◐",
     "in_progress": "▶",
@@ -246,6 +247,53 @@ def print_re_status_card(
             )
         if guidance_lines:
             fields.append(("guidance", "\n".join(guidance_lines)))
+    operator_guidance = document.get("operator_guidance")
+    if isinstance(operator_guidance, Mapping) and operator_guidance:
+        fields.append(
+            (
+                "operator guidance",
+                "\n".join(
+                    (
+                        f"kind: {operator_guidance.get('kind', 'unknown')}",
+                        "authority: "
+                        f"{operator_guidance.get('guidance_directive_hash', 'unknown')}",
+                        "automatic successor: "
+                        f"{operator_guidance.get('successor_index', 0)}/"
+                        f"{operator_guidance.get('automatic_successor_limit', 0)}",
+                    )
+                ),
+            )
+        )
+    banzai = document.get("banzai")
+    if isinstance(banzai, Mapping):
+        fields.append(
+            (
+                "banzai",
+                "\n".join(
+                    (
+                        "guidance: banzai / "
+                        f"{banzai.get('guidance_directive_hash', 'unknown')}",
+                        "automatic successors: "
+                        f"{banzai.get('automatic_successor_count', 0)}/"
+                        f"{banzai.get('automatic_successor_limit', 1)}",
+                        "successor: "
+                        + (
+                            "created"
+                            if banzai.get("successor_created") is True
+                            else "reused"
+                        ),
+                        f"provider calls: {banzai.get('provider_call_count', 0)}",
+                        "unresolved findings: "
+                        f"{banzai.get('unresolved_start', 0)} → "
+                        f"{banzai.get('unresolved_end', 0)}",
+                        "zero-call reuse: "
+                        + (
+                            "yes" if banzai.get("zero_call_reuse") is True else "no"
+                        ),
+                    )
+                ),
+            )
+        )
     not_run = document.get("not_run")
     if isinstance(not_run, Mapping):
         fields.append(

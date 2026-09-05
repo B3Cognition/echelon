@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping
 
+from harness.re_v2.canonical import content_digest
 from harness.re_v2.events import EventProtocol, EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.budget import evaluate_budget_v22
@@ -29,6 +30,7 @@ from .controller import Protocol25ControllerStateV1
 from .events import PROTOCOL_25_EVENTS, Protocol25ReplayState
 from .findings import SemanticFindingV1
 from .graph import Protocol25Graph, build_protocol_25_graph
+from .guidance import GuidanceDirectiveV1
 from .guidance_status import RECOMMENDED_COMMAND, derive_guidance_summary
 from .inputs import ValidatedProtocol25Inputs, load_protocol_25_inputs
 from .ledger import Protocol25Ledger, Protocol25LedgerView
@@ -457,6 +459,7 @@ def _document(
             "exhaustive_re_l4": "not run",
             "workspace_synthesis": "not run",
         },
+        "operator_guidance": _operator_guidance_document(authority),
         "partition_manifest_id": manifest.partition_manifest_id,
         "preflight": preflight,
         "run_id": manifest.run_id,
@@ -510,6 +513,25 @@ def _document(
     if debt_acceptance is not None:
         return _apply_debt_status(document, debt_acceptance)
     return document
+
+
+def _operator_guidance_document(authority: _StatusAuthority) -> dict[str, object]:
+    payload = authority.inputs.human_guidance
+    reference = authority.manifest.human_guidance
+    if payload is None and reference is None:
+        return {}
+    if payload is None or reference is None:
+        raise Protocol25StatusError("operator guidance authority is incomplete")
+    guidance = load_canonical_object(payload, GuidanceDirectiveV1.from_json_dict)
+    if content_digest(payload) != reference.object_hash:
+        raise Protocol25StatusError("operator guidance authority hash mismatch")
+    return {
+        "accept_residual_debt": guidance.accept_residual_debt,
+        "automatic_successor_limit": guidance.automatic_successor_limit,
+        "guidance_directive_hash": guidance.identity,
+        "kind": guidance.kind,
+        "successor_index": guidance.successor_index,
+    }
 
 
 def _load_debt_acceptance(run_path: Path, authority: _StatusAuthority) -> object | None:
@@ -937,6 +959,18 @@ def _render_human(document: Mapping[str, object]) -> str:
                         f"guidance option ({action['action_id']}): "
                         f"`{action['command']}`"
                     )
+    operator_guidance = document.get("operator_guidance")
+    if isinstance(operator_guidance, Mapping) and operator_guidance:
+        lines.append(
+            "operator guidance: "
+            f"{operator_guidance.get('kind')} / "
+            f"{operator_guidance.get('guidance_directive_hash')}"
+        )
+        lines.append(
+            "automatic successor: "
+            f"{operator_guidance.get('successor_index', 0)}/"
+            f"{operator_guidance.get('automatic_successor_limit', 0)}"
+        )
     preflight = document.get("preflight")
     if isinstance(preflight, Mapping) and preflight.get("state") != "not_run":
         lines.append(

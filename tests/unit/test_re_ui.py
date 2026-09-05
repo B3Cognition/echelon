@@ -45,6 +45,48 @@ def test_re_status_card_uses_shared_echelon_presentation() -> None:
 
 
 @pytest.mark.unit
+def test_re_status_card_makes_bounded_banzai_outcome_visible() -> None:
+    from echelon.re_ui import print_re_status_card
+
+    output = StringIO()
+    guidance_hash = "sha256:" + "a" * 64
+    print_re_status_card(
+        {
+            "run_id": "re-banzai-child",
+            "status": "complete_with_debt",
+            "banner": "L3 COMPLETE WITH ACCEPTED RESIDUAL DEBT",
+            "selection": {"selected_sources": 1, "selected_domains": 2},
+            "artifact_counts": {"generated_l3": 4, "adopted": 8},
+            "operator_guidance": {
+                "kind": "banzai",
+                "guidance_directive_hash": guidance_hash,
+                "successor_index": 1,
+                "automatic_successor_limit": 1,
+            },
+            "banzai": {
+                "guidance_directive_hash": guidance_hash,
+                "automatic_successor_count": 1,
+                "automatic_successor_limit": 1,
+                "successor_created": True,
+                "provider_call_count": 3,
+                "unresolved_start": 9,
+                "unresolved_end": 2,
+                "zero_call_reuse": False,
+            },
+            "next_action": "none",
+        },
+        file=output,
+    )
+
+    rendered = output.getvalue()
+    assert "✓ L3 COMPLETE WITH ACCEPTED RESIDUAL DEBT" in rendered
+    assert "automatic successors: 1/1" in rendered
+    assert "provider calls: 3" in rendered
+    assert "unresolved findings: 9 → 2" in rendered
+    assert guidance_hash in rendered
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("document", "title"),
     (

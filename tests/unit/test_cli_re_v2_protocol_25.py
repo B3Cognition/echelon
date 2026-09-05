@@ -14,6 +14,8 @@ def test_finalize_routes_l3_to_exact_banzai_debt_acceptance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.cli import _cmd_re_finalize
+    # Import before patching run_store so this module never captures the test double.
+    import harness.re_v2.protocol_25.status  # noqa: F401
     from tests.re_v2_protocol_25_fixtures import manifest_v4
 
     run_dir = tmp_path / "runs" / "re-l3"
