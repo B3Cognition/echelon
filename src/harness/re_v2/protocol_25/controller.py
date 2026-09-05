@@ -456,20 +456,19 @@ def plan_next_protocol_25(
                 if item.no_reduction_rounds >= 2 or item.semantic_round >= 3
             )
             unrecorded_plateau = tuple(
-                item for item in plateau if item.stage != "plateau_recorded"
+                item
+                for item in plateau
+                if item.stage != "plateau_recorded"
+                and item.no_reduction_rounds >= 2
             )
             if unrecorded_plateau:
                 target = unrecorded_plateau[0]
-                # The event protocol permits semantic_plateau only after two
-                # unchanged rounds.  A pure three-round ceiling with reductions
-                # is blocked incomplete without fabricating plateau authority.
-                if target.no_reduction_rounds >= 2:
-                    return Protocol25ControllerActionV1(
-                        kind="record_plateau",
-                        audit_target_id=target.audit_target_id,
-                        source_id=source_id,
-                        semantic_round=target.semantic_round,
-                    )
+                return Protocol25ControllerActionV1(
+                    kind="record_plateau",
+                    audit_target_id=target.audit_target_id,
+                    source_id=source_id,
+                    semantic_round=target.semantic_round,
+                )
             blocked_plateau = blocked_plateau or any(
                 item.no_reduction_rounds >= 2 for item in plateau
             )

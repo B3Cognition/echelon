@@ -432,6 +432,34 @@ def test_plateaued_target_does_not_stop_independent_sibling() -> None:
 
 
 @pytest.mark.integration
+def test_round_ceiling_does_not_hide_later_unrecorded_plateau() -> None:
+    ceiling_target_id, plateau_target_id = sorted((DOMAIN_TARGET, SOURCE_TARGET))
+    ceiling = _target(
+        ceiling_target_id,
+        findings=(DOMAIN_FINDING,),
+        semantic_round=3,
+        no_reduction=1,
+    )
+    plateau = _target(
+        plateau_target_id,
+        findings=(SOURCE_FINDING,),
+        semantic_round=2,
+        no_reduction=2,
+    )
+
+    action = plan_next_protocol_25(
+        _state(ceiling, plateau, roots=(SOURCE,))
+    )
+
+    assert action == Protocol25ControllerActionV1(
+        kind="record_plateau",
+        audit_target_id=plateau_target_id,
+        source_id=SOURCE,
+        semantic_round=2,
+    )
+
+
+@pytest.mark.integration
 def test_third_round_ceiling_blocks_without_fabricating_plateau() -> None:
     state = _state(
         _target(
