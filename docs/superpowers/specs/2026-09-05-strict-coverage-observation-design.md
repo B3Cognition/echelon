@@ -85,7 +85,7 @@ split on comma, slash, or semicolon. A Test Type cell is split on comma or
 slash. One type applies to every case in the row; otherwise the number of types
 must equal the number of case IDs and pairs by position. For example,
 `UT-LAYOUT-003; E2E-DETERMINISM-003` with `unit/e2e` creates one unit and one
-e2e obligation. Any other cardinality, an unknown type, or the same logical
+e2e obligation. Any other cardinality, invalid type syntax, or the same logical
 case ID declared with incompatible types is `contradictory` and blocks.
 
 `automated` and `deferred-automation` are planning states, not delivery
@@ -95,14 +95,15 @@ in its run-owned evidence. Legacy prose in a map that says a deferred row must
 "become automated" is satisfied only by a matching observed test case, never
 by a textual edit.
 
-The initial observer vocabulary is `unit`, `integration`, `contract`, and
-`e2e`. Phase A resolves every declared test type against the selected stack's
-observer set before a spec becomes ready to build. An unsupported type is a
-clear `coverage_observer_unavailable` planning quality gap, with the required
-adapter named; it is never guessed as another runner and never allowed to enter
-an endless Phase B repair loop. This lets browser-WASM use its declared
-Vitest/Playwright contract today while reserving a future native Rust adapter
-for a spec that genuinely needs one.
+The initial browser observer vocabulary is `unit`, `integration`, `contract`,
+and `e2e`; stack schemas permit future syntactically valid lower-case
+hyphenated test-type names. Phase A resolves every declared test type against
+the selected stack's observer set before a spec becomes ready to build. A type
+with no observer is a clear `coverage_observer_unavailable` planning quality
+gap, with the required adapter named; it is never guessed as another runner and
+never allowed to enter an endless Phase B repair loop. This lets browser-WASM
+use its declared Vitest/Playwright contract today while reserving a future
+native Rust adapter for a spec that genuinely needs one.
 
 The test case ID is the stable bridge from the plan to a physical test. A
 candidate test that implements a planned case must include the exact logical
