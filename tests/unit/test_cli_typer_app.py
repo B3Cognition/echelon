@@ -61,6 +61,62 @@ def test_re_status_json_option_routes_without_changing_default(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_resume_routes_custom_recommended_and_banzai_modes(monkeypatch):
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_resume", lambda args: calls.append(args))
+    runner = CliRunner()
+
+    custom = runner.invoke(app, ["re", "resume", "Use accepted timeout evidence."])
+    recommended = runner.invoke(app, ["re", "resume", "--recommended"])
+    banzai = runner.invoke(
+        app,
+        [
+            "re",
+            "resume",
+            "--banzai",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ],
+    )
+
+    assert custom.exit_code == recommended.exit_code == banzai.exit_code == 0
+    assert calls == [
+        ["Use accepted timeout evidence."],
+        ["--recommended"],
+        [
+            "--banzai",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "720",
+        ],
+    ]
+
+
+@pytest.mark.unit
+def test_re_resume_help_explains_bounded_debt_acceptance() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "resume", "--help"],
+        env={"COLUMNS": "200"},
+    )
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "--recommended" in result.output
+    assert "--banzai" in result.output
+    assert "one automatic successor" in normalized
+    assert "documented residual debt" in normalized
+    assert "--re-semantic-token-limit" in result.output
+
+
+@pytest.mark.unit
 def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
     from echelon.cli_app import run
 
@@ -793,12 +849,13 @@ def test_spec_help_uses_typer_front_door():
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["spec", "--help"])
+    normalized = " ".join(result.output.split())
 
     assert result.exit_code == 0
     assert "Usage: root spec [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase A/spec lifecycle commands" in result.output
     assert "Common forms:" in result.output
-    assert "run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]" in result.output
+    assert "run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]" in normalized
     assert "run" in result.output
     assert "status" in result.output
     assert "Usage: echelon spec <subcommand>" not in result.output

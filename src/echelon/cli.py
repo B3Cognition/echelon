@@ -199,7 +199,7 @@ Commands:
   re status [--json]                        Show live RE state, source quality, debt, and next action.
   re continue [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Continue the active RE run.
-  re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
+  re resume (<answer>|--recommended|--banzai) [--re-token-limit <n>] [--re-time-limit-minutes <n>] [--re-semantic-token-limit <n>] [--re-semantic-time-limit-minutes <n>]
                                             Resume blocked RE with a human answer.
   re finalize [<run-id>] --allow-partial    Accept recorded debt and stop a blocked RE run.
   re synthesize [<run-id>] --allow-partial [--re-token-limit <n>]
@@ -15675,6 +15675,76 @@ class _ReDeepenOptions:
     shadow: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _ReResumeOptions:
+    guidance: str | None
+    recommended: bool
+    banzai: bool
+    token_limit: int | None
+    time_limit_minutes: int | None
+    semantic_token_limit: int | None
+    semantic_time_limit_minutes: int | None
+
+
+def _parse_re_resume_options(
+    args: list[str],
+) -> tuple[_ReResumeOptions, int | None]:
+    """Parse one explicit guidance mode plus optional absolute resource ceilings."""
+    recommended = False
+    banzai = False
+    remaining: list[str] = []
+    for arg in args:
+        if arg == "--recommended":
+            if recommended:
+                raise ValueError("--recommended may be supplied only once")
+            recommended = True
+        elif arg == "--banzai":
+            if banzai:
+                raise ValueError("--banzai may be supplied only once")
+            banzai = True
+        else:
+            remaining.append(arg)
+    (
+        lifecycle_args,
+        semantic_token_limit,
+        semantic_time_limit_minutes,
+    ) = _extract_re_semantic_budget_options(remaining)
+    (
+        _policy,
+        re_max_inner,
+        _reset,
+        _no_reuse,
+        _profile,
+        token_limit,
+        time_limit_minutes,
+        positional,
+    ) = _parse_re_lifecycle_options(
+        lifecycle_args,
+        allow_policy=False,
+        allow_reset=False,
+        allow_budget_overrides=True,
+    )
+    guidance = positional[0] if len(positional) == 1 else None
+    selected = int(guidance is not None) + int(recommended) + int(banzai)
+    if selected != 1 or len(positional) > 1:
+        raise ValueError(
+            "exactly one resume mode is required: \"<guidance>\", "
+            "--recommended, or --banzai"
+        )
+    return (
+        _ReResumeOptions(
+            guidance=guidance,
+            recommended=recommended,
+            banzai=banzai,
+            token_limit=token_limit,
+            time_limit_minutes=time_limit_minutes,
+            semantic_token_limit=semantic_token_limit,
+            semantic_time_limit_minutes=semantic_time_limit_minutes,
+        ),
+        re_max_inner,
+    )
+
+
 def _advance_re_v28_open_intent(workspace_root: Path, child_run_id: str) -> bool:
     """Advance the unique durable L4 intent linked to a continued child."""
     from harness.re_v2.protocol_28.orchestration import (
@@ -17118,14 +17188,16 @@ def _run_re_v25_next_epoch(
 def _run_re_v25_resume(
     workspace_root: Path,
     parent_run: Path,
-    answer: str,
+    guidance_policy: object,
     token_limit: int | None,
     time_limit_minutes: int | None,
+    semantic_token_limit: int | None = None,
+    semantic_time_limit_minutes: int | None = None,
 ) -> Path:
     """Create or exactly reuse one immutable guided protocol-2.5 successor."""
     from dataclasses import replace
 
-    from harness.re_v2.protocol_25.guidance import custom_guidance_policy
+    from harness.re_v2.protocol_25.guidance import GuidancePolicyV1
     from harness.re_v2.protocol_25.inputs import create_protocol_25_run_store
     from harness.re_v2.protocol_25.lifecycle import (
         export_protocol_25_parent,
@@ -17143,13 +17215,15 @@ def _run_re_v25_resume(
     context = _re_v2_context(workspace, parent_dir)
     exported = export_protocol_25_parent(context)
     parent_manifest = exported.manifest
+    if not isinstance(guidance_policy, GuidancePolicyV1):
+        raise ValueError("immutable guidance resume policy is invalid")
     prepared = prepare_guided_successor(
         parent=exported.parent,
         parent_manifest=parent_manifest,
         parent_inputs=exported.inputs,
         accepted_parent=exported.accepted_parent,
         parent_objects=exported.immutable_objects,
-        guidance_policy=custom_guidance_policy(answer),
+        guidance_policy=guidance_policy,
         created_at=_re_v2_now(),
         token_limit=(
             token_limit
@@ -17161,8 +17235,16 @@ def _run_re_v25_resume(
             if time_limit_minutes is not None
             else parent_manifest.initial_budget_policy.active_ms_limit
         ),
-        semantic_token_limit=parent_manifest.semantic_closure_policy.token_limit,
-        semantic_active_ms_limit=parent_manifest.semantic_closure_policy.active_ms_limit,
+        semantic_token_limit=(
+            semantic_token_limit
+            if semantic_token_limit is not None
+            else parent_manifest.semantic_closure_policy.token_limit
+        ),
+        semantic_active_ms_limit=(
+            semantic_time_limit_minutes * 60_000
+            if semantic_time_limit_minutes is not None
+            else parent_manifest.semantic_closure_policy.active_ms_limit
+        ),
         successor_artifact_policy=build_semantic_v1_policy_catalog(),
         successor_executor_contract=with_current_semantic_executor_capacities(
             exported.inputs.executor_contract
@@ -17761,14 +17843,7 @@ def _cmd_re_resume(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError, resolve_current_re_run
 
     try:
-        _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
-            args,
-            allow_policy=False,
-            allow_reset=False,
-            allow_budget_overrides=True,
-        )
-        if len(positional) != 1:
-            raise ValueError('usage: echelon re resume "<answer>"')
+        options, re_max_inner = _parse_re_resume_options(args)
         project_root = Path.cwd()
         run_dir = resolve_current_re_run(project_root)
         if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
@@ -17792,21 +17867,47 @@ def _cmd_re_resume(args: list[str]) -> None:
                 raise ValueError(
                     "immutable guidance resume requires an L3 RE run"
                 )
+            from harness.re_v2.protocol_25.guidance import (
+                banzai_guidance_policy,
+                custom_guidance_policy,
+                recommended_guidance_policy,
+            )
+
+            guidance_policy = (
+                recommended_guidance_policy()
+                if options.recommended
+                else banzai_guidance_policy(semantic_manifest.run_manifest_id)
+                if options.banzai
+                else custom_guidance_policy(options.guidance or "")
+            )
             _run_re_v25_resume(
                 project_root,
                 run_dir,
-                positional[0],
-                token_limit,
-                time_limit_minutes,
+                guidance_policy,
+                options.token_limit,
+                options.time_limit_minutes,
+                options.semantic_token_limit,
+                options.semantic_time_limit_minutes,
             )
             return
+        if options.recommended or options.banzai:
+            raise ValueError(
+                "--recommended and --banzai require an immutable RE v2 L3 run"
+            )
+        if (
+            options.semantic_token_limit is not None
+            or options.semantic_time_limit_minutes is not None
+        ):
+            raise ValueError(
+                "semantic resource authorization requires an immutable RE v2 L3 run"
+            )
         overrides: dict[str, int] = {}
-        if token_limit is not None:
-            overrides["hard_token_limit"] = token_limit
-        if time_limit_minutes is not None:
-            overrides["hard_active_minutes"] = time_limit_minutes
+        if options.token_limit is not None:
+            overrides["hard_token_limit"] = options.token_limit
+        if options.time_limit_minutes is not None:
+            overrides["hard_active_minutes"] = options.time_limit_minutes
         result = _re_lifecycle_controller(project_root).resume(
-            positional[0],
+            options.guidance or "",
             re_max_inner,
             **overrides,
         )

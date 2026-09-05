@@ -8,6 +8,51 @@ from typer.testing import CliRunner
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("args", "guidance", "recommended", "banzai"),
+    (
+        (["Use accepted evidence."], "Use accepted evidence.", False, False),
+        (["--recommended"], None, True, False),
+        (["--banzai"], None, False, True),
+    ),
+)
+def test_resume_parser_requires_exactly_one_guidance_mode(
+    args: list[str],
+    guidance: str | None,
+    recommended: bool,
+    banzai: bool,
+) -> None:
+    from echelon.cli import _parse_re_resume_options
+
+    options, re_max_inner = _parse_re_resume_options(args)
+
+    assert options.guidance == guidance
+    assert options.recommended is recommended
+    assert options.banzai is banzai
+    assert re_max_inner is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    (
+        [],
+        ["answer", "second"],
+        ["answer", "--recommended"],
+        ["answer", "--banzai"],
+        ["--recommended", "--banzai"],
+    ),
+)
+def test_resume_parser_rejects_missing_or_conflicting_guidance_modes(
+    args: list[str],
+) -> None:
+    from echelon.cli import _parse_re_resume_options
+
+    with pytest.raises(ValueError, match="exactly one"):
+        _parse_re_resume_options(args)
+
+
+@pytest.mark.unit
 def test_l3_authority_mismatch_explains_how_to_create_a_compatible_successor(
     tmp_path: Path,
 ) -> None:
@@ -653,7 +698,7 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
     from echelon import cli
 
     run_dir = tmp_path / "runs" / "re-blocked-l3"
-    calls: list[tuple[Path, Path, str, int | None, int | None]] = []
+    calls: list[tuple[Path, Path, object, int | None, int | None, int | None, int | None]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "harness.re_lifecycle.resolve_current_re_run",
@@ -669,8 +714,17 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
     monkeypatch.setattr(
         cli,
         "_run_re_v25_resume",
-        lambda workspace, parent, answer, token_limit, time_limit_minutes: calls.append(
-            (workspace, parent, answer, token_limit, time_limit_minutes)
+        lambda workspace, parent, policy, token_limit, time_limit_minutes,
+        semantic_token_limit, semantic_time_limit_minutes: calls.append(
+            (
+                workspace,
+                parent,
+                policy,
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
         ),
         raising=False,
     )
@@ -686,15 +740,12 @@ def test_resume_routes_terminal_schema4_run_to_immutable_successor(
         ["Resolve only the retained timeout finding", "--re-token-limit", "7000000"]
     )
 
-    assert calls == [
-        (
-            tmp_path,
-            run_dir,
-            "Resolve only the retained timeout finding",
-            7_000_000,
-            None,
-        )
-    ]
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == "custom"
+    assert policy.answer == "Resolve only the retained timeout finding"
+    assert limits == [7_000_000, None, None, None]
 
 
 @pytest.mark.unit
@@ -710,7 +761,7 @@ def test_resume_unwraps_schema5_l3_run_to_immutable_successor(
     from tests.re_v2_protocol_26_fixtures import manifest_v5
 
     run_dir = tmp_path / "runs" / "re-blocked-l3"
-    calls: list[tuple[Path, Path, str, int | None, int | None]] = []
+    calls: list[tuple[Path, Path, object, int | None, int | None, int | None, int | None]] = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "harness.re_lifecycle.resolve_current_re_run",
@@ -732,19 +783,101 @@ def test_resume_unwraps_schema5_l3_run_to_immutable_successor(
     monkeypatch.setattr(
         cli,
         "_run_re_v25_resume",
-        lambda workspace, parent, answer, token_limit, time_limit_minutes: calls.append(
-            (workspace, parent, answer, token_limit, time_limit_minutes)
+        lambda workspace, parent, policy, token_limit, time_limit_minutes,
+        semantic_token_limit, semantic_time_limit_minutes: calls.append(
+            (
+                workspace,
+                parent,
+                policy,
+                token_limit,
+                time_limit_minutes,
+                semantic_token_limit,
+                semantic_time_limit_minutes,
+            )
         ),
     )
 
     cli._cmd_re_resume(["Retry the transient provider failure"])
 
-    assert calls == [
-        (
-            tmp_path,
-            run_dir,
-            "Retry the transient provider failure",
-            None,
-            None,
-        )
-    ]
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == "custom"
+    assert policy.answer == "Retry the transient provider failure"
+    assert limits == [None, None, None, None]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mode", ("--recommended", "--banzai"))
+def test_resume_routes_installed_guidance_modes_and_semantic_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    from echelon import cli
+    from tests.re_v2_protocol_25_fixtures import manifest_v4
+
+    run_dir = tmp_path / "runs" / "re-blocked-l3"
+    manifest = manifest_v4(run_id="re-blocked-l3")
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: run_dir,
+    )
+    monkeypatch.setattr(cli, "_detect_re_engine_for_cli", lambda _run: "v2")
+    monkeypatch.setattr(
+        "harness.re_v2.run_store.load_run_manifest",
+        lambda _run: manifest,
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_re_v25_resume",
+        lambda *values: calls.append(values),
+    )
+
+    cli._cmd_re_resume(
+        [
+            mode,
+            "--re-token-limit",
+            "11000000",
+            "--re-time-limit-minutes",
+            "360",
+            "--re-semantic-token-limit",
+            "9000000",
+            "--re-semantic-time-limit-minutes",
+            "180",
+        ]
+    )
+
+    assert len(calls) == 1
+    workspace, parent, policy, *limits = calls[0]
+    assert (workspace, parent) == (tmp_path, run_dir)
+    assert policy.kind == mode.removeprefix("--")
+    assert policy.automation_root_manifest_hash == (
+        manifest.run_manifest_id if mode == "--banzai" else None
+    )
+    assert limits == [11_000_000, 360, 9_000_000, 180]
+
+
+@pytest.mark.unit
+def test_v1_resume_rejects_recommended_mode_directly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon import cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_current_re_run",
+        lambda _root: None,
+    )
+
+    with pytest.raises(SystemExit) as failure:
+        cli._cmd_re_resume(["--recommended"])
+
+    assert failure.value.code == 2
+    assert "--recommended and --banzai require an immutable RE v2 L3 run" in (
+        capsys.readouterr().err
+    )

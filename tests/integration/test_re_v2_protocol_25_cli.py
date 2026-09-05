@@ -637,7 +637,7 @@ def test_concurrent_identical_resume_creates_one_child_and_one_paid_run(
                 lambda _index: legacy_cli._run_re_v25_resume(
                     workspace,
                     parent_run,
-                    "Use retained evidence only.",
+                    custom_guidance_policy("Use retained evidence only."),
                     None,
                     None,
                 ),

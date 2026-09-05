@@ -1178,7 +1178,23 @@ def re_continue(
 
 @re_app.command("resume")
 def re_resume(
-    answer: str = typer.Argument(..., help="Answer to the active RE human blocker."),
+    answer: Optional[str] = typer.Argument(
+        None,
+        help="Custom guidance for the active RE human blocker.",
+    ),
+    recommended: bool = typer.Option(
+        False,
+        "--recommended",
+        help="Use Echelon's installed conservative convergence guidance.",
+    ),
+    banzai: bool = typer.Option(
+        False,
+        "--banzai",
+        help=(
+            "Authorize one automatic successor which may finish with "
+            "documented residual debt."
+        ),
+    ),
     re_max_inner: Optional[int] = typer.Option(
         None,
         "--re-max-inner",
@@ -1197,12 +1213,34 @@ def re_resume(
         min=1,
         help="Raise the active run's active-time ceiling without resetting it.",
     ),
+    re_semantic_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-token-limit",
+        min=1,
+        help="Set the absolute L3 semantic token ceiling for the successor.",
+    ),
+    re_semantic_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-semantic-time-limit-minutes",
+        min=1,
+        help="Set the absolute L3 semantic active-time ceiling in minutes.",
+    ),
 ) -> None:
-    """Answer a typed human blocker and continue the active RE run."""
-    args = [answer]
+    """Resume with exactly one custom, recommended, or bounded Banzai mode."""
+    args = [answer] if answer is not None else []
+    if recommended:
+        args.append("--recommended")
+    if banzai:
+        args.append("--banzai")
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _extend_option(args, "--re-semantic-token-limit", re_semantic_token_limit)
+    _extend_option(
+        args,
+        "--re-semantic-time-limit-minutes",
+        re_semantic_time_limit_minutes,
+    )
     _legacy_cli()._cmd_re_resume(args)
 
 
