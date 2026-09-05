@@ -169,7 +169,6 @@ class ParentSemanticAuthorityV1:
             *self.target_assessment_hashes,
             *self.source_assessment_hashes,
             *self.closure_receipt_ids,
-            *self.deferred_observation_ids,
             *self.l3_source_root_hashes,
         }
         if self.audit_epoch_id is not None:

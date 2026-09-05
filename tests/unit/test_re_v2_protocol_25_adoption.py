@@ -213,6 +213,13 @@ def test_closure_successor_retains_epoch_progress_and_only_open_findings() -> No
     assert validated.adopted_semantic_object_ids == semantic.object_ids
 
 
+def test_deferred_observation_ids_are_not_object_store_dependencies() -> None:
+    """Catch successor export trying to read a semantic ID as a stored blob."""
+    semantic = _semantic(epoch=True, deferred=True)
+
+    assert digest("deferred-observation") not in semantic.object_ids
+
+
 def test_incomplete_closure_successor_does_not_require_final_root() -> None:
     semantic = replace(
         _semantic(epoch=True, unresolved_findings=True),
