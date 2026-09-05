@@ -11,6 +11,8 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.model import ArtifactKeyV2, ArtifactScope
 from harness.re_v2.protocol_24.artifacts import L2SourceRootEnvelopeV1
 from harness.re_v2.protocol_24.source_root_v2 import L2SourceBaselineRootV2
+from harness.re_v2.protocol_25.artifacts import L3SourceRootV1
+from harness.re_v2.protocol_25.debt import ResidualDebtAcceptanceV1
 from harness.re_v2.protocol_27.model import (
     PartialSourceAcceptanceV1,
     RunManifestV6,
@@ -314,7 +316,7 @@ def test_blocked_l3_parent_is_rejected_through_recovery_controller_state(
 
     with pytest.raises(
         Protocol27AuthorityError,
-        match="L3 parent is running, blocked, or incomplete",
+        match="residual-debt acceptance is invalid",
     ):
         resolve_synthesis_parent(
             tmp_path,
@@ -322,3 +324,169 @@ def test_blocked_l3_parent_is_rejected_through_recovery_controller_state(
             (),
             context_loader=lambda _root, _run_dir: context,
         )
+
+
+@pytest.mark.unit
+def test_exact_l3_debt_acceptance_binds_partial_sources_to_acceptance_identity() -> None:
+    from harness.re_v2.protocol_25.debt import DebtGroupV1
+    from harness.re_v2.protocol_27.authority import _l3_source_debt_binding
+
+    finding_id = digest("residual-finding")
+    root = L3SourceRootV1(
+        schema_version=1,
+        source_id="api",
+        selected_domain_keys=(digest("domain"),),
+        full_source_coverage=True,
+        audit_target_ids=(digest("target"),),
+        closure_root_hashes=(digest("closure"),),
+        adopted_l2_root_hash=digest("l2-root"),
+        unresolved_finding_ids=(finding_id,),
+        deferred_observation_ids=(),
+        state="blocked",
+    )
+    acceptance = ResidualDebtAcceptanceV1(
+        schema_version=1,
+        run_manifest_hash=digest("manifest"),
+        terminal_event_hash=digest("terminal"),
+        audit_epoch_id=digest("epoch"),
+        closure_root_hash=digest("closure"),
+        source_root_hashes=(("api", root.identity),),
+        unresolved_by_source_and_class=(
+            DebtGroupV1("api", "contract", (finding_id,)),
+        ),
+        deferred_observation_ids=(),
+        guidance_directive_hash=digest("guidance"),
+        acceptance_policy_id="re-v2-banzai-residual-debt-v1",
+        source_snapshot_id=digest("snapshot"),
+        selection_id=digest("selection"),
+        operation_id=digest("operation"),
+    )
+
+    partial, debt_hash, summary_hash = _l3_source_debt_binding(root, acceptance)
+
+    assert partial is True
+    assert debt_hash == acceptance.identity
+    assert debt_hash != root.identity
+    assert summary_hash != acceptance.identity
+
+
+@pytest.mark.unit
+def test_l3_debt_binding_rejects_altered_source_root_or_finding_set() -> None:
+    from harness.re_v2.protocol_25.debt import DebtGroupV1
+    from harness.re_v2.protocol_27.authority import (
+        Protocol27AuthorityError,
+        _l3_source_debt_binding,
+    )
+
+    finding_id = digest("residual-finding")
+    root = L3SourceRootV1(
+        1,
+        "api",
+        (digest("domain"),),
+        True,
+        (digest("target"),),
+        (digest("closure"),),
+        digest("l2-root"),
+        (finding_id,),
+        (),
+        "blocked",
+    )
+    acceptance = ResidualDebtAcceptanceV1(
+        1,
+        digest("manifest"),
+        digest("terminal"),
+        digest("epoch"),
+        digest("closure"),
+        (("api", digest("different-root")),),
+        (DebtGroupV1("api", "contract", (finding_id,)),),
+        (),
+        digest("guidance"),
+        "re-v2-banzai-residual-debt-v1",
+        digest("snapshot"),
+        digest("selection"),
+        digest("operation"),
+    )
+    with pytest.raises(Protocol27AuthorityError, match="source root"):
+        _l3_source_debt_binding(root, acceptance)
+
+    altered = replace(
+        acceptance,
+        source_root_hashes=(("api", root.identity),),
+        unresolved_by_source_and_class=(
+            DebtGroupV1("api", "contract", (digest("different-finding"),)),
+        ),
+    )
+    with pytest.raises(Protocol27AuthorityError, match="finding"):
+        _l3_source_debt_binding(root, altered)
+
+
+@pytest.mark.unit
+def test_global_l3_debt_keeps_debt_free_source_complete() -> None:
+    from harness.re_v2.protocol_25.debt import DebtGroupV1
+    from harness.re_v2.protocol_27.authority import _l3_source_debt_binding
+
+    finding_id = digest("api-residual-finding")
+    api_root = L3SourceRootV1(
+        1,
+        "api",
+        (digest("api-domain"),),
+        True,
+        (digest("api-target"),),
+        (digest("closure"),),
+        digest("api-l2-root"),
+        (finding_id,),
+        (),
+        "blocked",
+    )
+    web_root = L3SourceRootV1(
+        1,
+        "web",
+        (digest("web-domain"),),
+        True,
+        (digest("web-target"),),
+        (digest("closure"),),
+        digest("web-l2-root"),
+        (),
+        (),
+        "complete",
+    )
+    acceptance = ResidualDebtAcceptanceV1(
+        1,
+        digest("manifest"),
+        digest("terminal"),
+        digest("epoch"),
+        digest("closure"),
+        (("api", api_root.identity), ("web", web_root.identity)),
+        (DebtGroupV1("api", "contract", (finding_id,)),),
+        (),
+        digest("guidance"),
+        "re-v2-banzai-residual-debt-v1",
+        digest("snapshot"),
+        digest("selection"),
+        digest("operation"),
+    )
+
+    assert _l3_source_debt_binding(api_root, acceptance)[0] is True
+    assert _l3_source_debt_binding(web_root, acceptance) == (False, None, None)
+
+
+@pytest.mark.unit
+def test_exact_finalized_debt_needs_no_second_partial_acceptance_flag() -> None:
+    from harness.re_v2.protocol_27.authority import (
+        Protocol27AuthorityError,
+        _validate_exact_partial_selection,
+    )
+    from tests.re_v2_protocol_27_fixtures import accepted_source_outcome_v1
+
+    sources = (
+        accepted_source_outcome_v1("api"),
+        accepted_source_outcome_v1("web", outcome="partial"),
+    )
+
+    _validate_exact_partial_selection(
+        sources,
+        (),
+        exact_debt_already_accepted=True,
+    )
+    with pytest.raises(Protocol27AuthorityError, match="missing partial acceptance"):
+        _validate_exact_partial_selection(sources, ())

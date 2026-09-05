@@ -919,10 +919,12 @@ def build_synthesis_graph(inputs: SynthesisGraphInputsV1) -> SynthesisGraph:
         )
         debts = tuple(
             sorted(
-                source.debt_manifest_hash
-                for source_id in participant_source_ids
-                for source in (sources[source_id],)
-                if source.debt_manifest_hash is not None
+                {
+                    source.debt_manifest_hash
+                    for source_id in participant_source_ids
+                    for source in (sources[source_id],)
+                    if source.debt_manifest_hash is not None
+                }
             )
         )
         node = SynthesisGraphNodeV1(
@@ -953,9 +955,11 @@ def build_synthesis_graph(inputs: SynthesisGraphInputsV1) -> SynthesisGraph:
     workspace_participants = tuple(sorted(sources))
     all_debts = tuple(
         sorted(
-            source.debt_manifest_hash
-            for source in sources.values()
-            if source.debt_manifest_hash is not None
+            {
+                source.debt_manifest_hash
+                for source in sources.values()
+                if source.debt_manifest_hash is not None
+            }
         )
     )
     domain_dependency_ids = tuple(

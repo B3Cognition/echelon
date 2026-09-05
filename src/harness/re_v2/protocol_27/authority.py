@@ -7,7 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Mapping
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.materialization import (
@@ -17,6 +17,12 @@ from harness.re_v2.protocol_22.materialization import (
 from harness.re_v2.protocol_22.artifacts import SourceBaselineRootV1
 from harness.re_v2.protocol_22.recovery import recover_protocol_22_run
 from harness.re_v2.protocol_22.schema import load_canonical_object
+from harness.re_v2.protocol_25.debt import (
+    Protocol25DebtError,
+    ResidualDebtAcceptanceV1,
+    load_residual_debt_acceptance,
+    validate_residual_debt_acceptance,
+)
 from harness.re_v2.protocol_25.materialization import materialize_accepted_l3
 from harness.re_v2.protocol_25.recovery import recover_protocol_25_run
 from harness.re_v2.protocol_24.artifacts import L2SourceBaselineRootV1
@@ -81,6 +87,11 @@ class ResolvedSynthesisParentV1:
         repr=False,
         compare=False,
     )
+    _residual_debt_acceptance_id: str | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.accepted_sources:
@@ -111,6 +122,22 @@ class ResolvedSynthesisParentV1:
             raise Protocol27AuthorityError(
                 "synthesis parent debt summaries must exactly cover partial sources"
             )
+        if self._residual_debt_acceptance_id is not None:
+            if (
+                not self._residual_debt_acceptance_id.startswith("sha256:")
+                or len(self._residual_debt_acceptance_id) != 71
+            ):
+                raise Protocol27AuthorityError(
+                    "residual-debt acceptance identity is invalid"
+                )
+            if {
+                item.debt_manifest_hash
+                for item in self.accepted_sources
+                if item.outcome == "partial"
+            } != {self._residual_debt_acceptance_id}:
+                raise Protocol27AuthorityError(
+                    "partial sources differ from residual-debt acceptance identity"
+                )
         object.__setattr__(self, "authority_objects", MappingProxyType(objects))
         object.__setattr__(self, "debt_summary_hashes", MappingProxyType(summaries))
         object.__setattr__(self, "selected_layers", MappingProxyType(selected_layers))
@@ -146,6 +173,9 @@ def resolve_synthesis_parent(
     _validate_exact_partial_selection(
         resolved.accepted_sources,
         accepted_partial_sources,
+        exact_debt_already_accepted=(
+            resolved._residual_debt_acceptance_id is not None
+        ),
     )
     return resolved
 
@@ -323,12 +353,13 @@ def _resolve_layer_parent(
     outcomes: list[AcceptedSourceOutcomeV1] = []
     selected_layers: dict[str, str] = {}
     overview_authorities: dict[str, tuple[str, str]] = {}
+    debt_acceptance: ResidualDebtAcceptanceV1 | None = None
     if target_layer == "L3":
         recovered = recover_protocol_25_run(context)  # type: ignore[arg-type]
-        if recovered.controller_state.terminal_state not in {
-            "complete",
-            "next_epoch_required",
-        }:
+        terminal_state = recovered.controller_state.terminal_state
+        if terminal_state == "blocked_plateau":
+            debt_acceptance = _validated_l3_debt_acceptance(run_dir, context)
+        elif terminal_state not in {"complete", "next_epoch_required"}:
             raise Protocol27AuthorityError("L3 parent is running, blocked, or incomplete")
         target_ids = tuple(authority.semantic_graph.selected_source_ids)
         l3_roots = recovered.ledger.l3_source_roots
@@ -370,21 +401,37 @@ def _resolve_layer_parent(
     for source_id in all_source_ids:
         if target_layer == "L3" and source_id in target_ids:
             root = l3_roots[source_id]
-            if root.state not in {"complete", "next_epoch_required"}:
+            if root.state not in {"complete", "next_epoch_required", "blocked"}:
                 raise Protocol27AuthorityError(
                     f"source is not a terminal synthesis input: {source_id}"
                 )
             payload = context.object_store.read_blob(root.identity)
             authority_objects[root.identity] = payload
-            partial = root.state == "next_epoch_required"
-            if partial:
-                summaries[source_id] = content_digest(
-                    {
-                        "deferred_observation_ids": list(root.deferred_observation_ids),
-                        "source_id": source_id,
-                        "source_root_hash": root.identity,
-                    }
+            if debt_acceptance is None:
+                partial = root.state == "next_epoch_required"
+                debt_hash = root.identity if partial else None
+                summary_hash = (
+                    content_digest(
+                        {
+                            "deferred_observation_ids": list(root.deferred_observation_ids),
+                            "source_id": source_id,
+                            "source_root_hash": root.identity,
+                        }
+                    )
+                    if partial
+                    else None
                 )
+            else:
+                partial, debt_hash, summary_hash = _l3_source_debt_binding(
+                    root,
+                    debt_acceptance,
+                )
+            if partial:
+                if debt_hash is None or summary_hash is None:
+                    raise Protocol27AuthorityError(
+                        f"partial source has no accepted debt authority: {source_id}"
+                    )
+                summaries[source_id] = summary_hash
             selected_layers[source_id] = "L3"
             overview_authorities[source_id] = (root.identity, root.identity)
             outcomes.append(
@@ -394,7 +441,7 @@ def _resolve_layer_parent(
                     source_root_key_id=root.identity,
                     source_root_hash=root.identity,
                     outcome="partial" if partial else "complete",
-                    debt_manifest_hash=root.identity if partial else None,
+                    debt_manifest_hash=debt_hash,
                     lower_authority_ids=tuple(
                         sorted(
                             {
@@ -475,6 +522,10 @@ def _resolve_layer_parent(
             raise Protocol27AuthorityError(
                 f"source authority object is unavailable: {object_hash}"
             ) from exc
+    if debt_acceptance is not None:
+        authority_objects[debt_acceptance.identity] = canonical_json_bytes(
+            debt_acceptance.to_json_dict()
+        )
     return ResolvedSynthesisParentV1(
         parent_run_id=manifest.run_id,
         parent_manifest_hash=manifest.run_manifest_id,
@@ -486,7 +537,81 @@ def _resolve_layer_parent(
         debt_summary_hashes=summaries,
         _context=context,
         _overview_authorities=overview_authorities,
+        _residual_debt_acceptance_id=(
+            None if debt_acceptance is None else debt_acceptance.identity
+        ),
     )
+
+
+def _validated_l3_debt_acceptance(
+    run_dir: Path,
+    context: object,
+) -> ResidualDebtAcceptanceV1:
+    """Authenticate the persisted debt record against the exact terminal replay."""
+    try:
+        from harness.re_v2.protocol_25.status import _authority as l3_status_authority
+
+        replayed = l3_status_authority(run_dir, context)  # type: ignore[arg-type]
+        acceptance = load_residual_debt_acceptance(run_dir)
+        validate_residual_debt_acceptance(replayed, acceptance)
+        return acceptance
+    except Protocol25DebtError as exc:
+        raise Protocol27AuthorityError(
+            f"L3 parent residual-debt acceptance is invalid: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise Protocol27AuthorityError(
+            f"L3 parent is blocked without exact residual-debt acceptance: {exc}"
+        ) from exc
+
+
+def _l3_source_debt_binding(
+    root: object,
+    acceptance: ResidualDebtAcceptanceV1,
+) -> tuple[bool, str | None, str | None]:
+    """Bind one L3 source to the global debt record without inventing source debt."""
+    source_id = getattr(root, "source_id", None)
+    root_identity = getattr(root, "identity", None)
+    roots = dict(acceptance.source_root_hashes)
+    if not isinstance(source_id, str) or roots.get(source_id) != root_identity:
+        raise Protocol27AuthorityError(
+            f"accepted residual debt differs from source root: {source_id}"
+        )
+    groups = tuple(
+        item for item in acceptance.unresolved_by_source_and_class
+        if item.source_id == source_id
+    )
+    accepted_findings = tuple(
+        sorted(finding_id for group in groups for finding_id in group.finding_ids)
+    )
+    root_findings = tuple(getattr(root, "unresolved_finding_ids", ()))
+    if accepted_findings != root_findings:
+        raise Protocol27AuthorityError(
+            f"accepted residual debt differs from source finding authority: {source_id}"
+        )
+    deferred = tuple(getattr(root, "deferred_observation_ids", ()))
+    if not set(deferred).issubset(set(acceptance.deferred_observation_ids)):
+        raise Protocol27AuthorityError(
+            f"accepted residual debt differs from source deferred authority: {source_id}"
+        )
+    state = getattr(root, "state", None)
+    partial = bool(
+        accepted_findings
+        or deferred
+        or state in {"blocked", "next_epoch_required"}
+    )
+    if not partial:
+        return False, None, None
+    summary_hash = content_digest(
+        {
+            "debt_manifest_hash": acceptance.identity,
+            "deferred_observation_ids": list(deferred),
+            "source_id": source_id,
+            "source_root_hash": root_identity,
+            "unresolved_by_class": [item.to_json_dict() for item in groups],
+        }
+    )
+    return True, acceptance.identity, summary_hash
 
 
 def _target_source_ids(layer_manifest: object, shared_inputs: object) -> tuple[str, ...]:
@@ -501,6 +626,8 @@ def _target_source_ids(layer_manifest: object, shared_inputs: object) -> tuple[s
 def _validate_exact_partial_selection(
     sources: tuple[AcceptedSourceOutcomeV1, ...],
     selected: tuple[str, ...],
+    *,
+    exact_debt_already_accepted: bool = False,
 ) -> None:
     if selected != tuple(sorted(set(selected))):
         raise Protocol27AuthorityError(
@@ -518,6 +645,8 @@ def _validate_exact_partial_selection(
             f"complete source cannot be accepted as partial: {complete[0]}"
         )
     required = {item.source_id for item in sources if item.outcome == "partial"}
+    if exact_debt_already_accepted and not selected:
+        return
     missing = sorted(required - set(selected))
     if missing:
         raise Protocol27AuthorityError(f"missing partial acceptance: {missing[0]}")

@@ -24,6 +24,7 @@ def _inputs(
     policy_seed: str = "policy",
     source_ids: tuple[str, ...] = ("api", "web"),
     workspace_executor_contract_hash: str | None = None,
+    shared_debt_hash: str | None = None,
 ):
     from harness.re_v2.protocol_27.graph import (
         SynthesisGraphInputsV1,
@@ -54,6 +55,8 @@ def _inputs(
             source_id,
             outcome="partial" if source_id in partial_sources else "complete",
         )
+        if source_id in partial_sources and shared_debt_hash is not None:
+            base = replace(base, debt_manifest_hash=shared_debt_hash)
         if source_id in hashes:
             base = replace(base, source_root_hash=hashes[source_id])
         sources.append(base)
@@ -133,6 +136,26 @@ def test_graph_has_granular_source_domain_and_workspace_nodes() -> None:
     assert "workspace-relationships" in kinds
     assert "workspace-contracts" in kinds
     assert len(graph.public_paths) == len(graph.required_nodes) + 2
+
+
+@pytest.mark.unit
+def test_graph_deduplicates_one_global_debt_acceptance_across_partial_sources() -> None:
+    from harness.re_v2.protocol_27.graph import build_synthesis_graph
+
+    debt_hash = digest("global-residual-debt-acceptance")
+    graph = build_synthesis_graph(
+        _inputs(
+            partial_sources=frozenset({"api", "web"}),
+            shared_debt_hash=debt_hash,
+        )
+    )
+
+    assert graph.root_specification.debt_manifest_hashes == (debt_hash,)
+    assert graph.root_specification.input_quality == "partial"
+    assert all(
+        node.debt_manifest_hashes == (debt_hash,)
+        for node in graph.required_nodes
+    )
 
 
 @pytest.mark.unit
