@@ -37,6 +37,33 @@ def test_l3_implementation_compatibility_fails_closed_for_unknown_changes() -> N
         frozenset((digest("unknown-frozen-authority"),)),
         ZERO_DOMAIN_ROOT_L3_IMPLEMENTATION_DIGEST,
     ) == ZERO_DOMAIN_ROOT_L3_IMPLEMENTATION_DIGEST
+
+
+@pytest.mark.unit
+def test_guided_convergence_upgrade_accepts_only_the_preserved_opta_authority() -> None:
+    from harness.re_v2.protocol_25.compatibility import (
+        GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST,
+        LEGACY_L3_IMPLEMENTATION_DIGEST,
+        ZERO_DOMAIN_ROOT_L3_IMPLEMENTATION_DIGEST,
+        compatible_installed_l3_digest,
+    )
+
+    assert compatible_installed_l3_digest(
+        (LEGACY_L3_IMPLEMENTATION_DIGEST,),
+        GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST,
+    ) == LEGACY_L3_IMPLEMENTATION_DIGEST
+    assert compatible_installed_l3_digest(
+        (ZERO_DOMAIN_ROOT_L3_IMPLEMENTATION_DIGEST,),
+        GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST,
+    ) == GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST
+    assert compatible_installed_l3_digest(
+        (LEGACY_L3_IMPLEMENTATION_DIGEST, digest("mixed-frozen-authority")),
+        GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST,
+    ) == GUIDED_CONVERGENCE_L3_IMPLEMENTATION_DIGEST
+    assert compatible_installed_l3_digest(
+        (LEGACY_L3_IMPLEMENTATION_DIGEST,),
+        digest("different-installed-guided-implementation"),
+    ) == digest("different-installed-guided-implementation")
     assert compatible_installed_l3_digest(
         frozenset(
             (

@@ -174,6 +174,24 @@ echelon re status
 echelon re status --json
 ```
 
+When L3 reaches a semantic plateau, `echelon re status` reports grouped
+unresolved counts and offers copyable, deterministic choices. Use
+`echelon re resume --recommended` when accepted evidence may resolve the
+ambiguity. Use `echelon re resume "<guidance>"` when you can supply a product
+decision or interpretation. Use `echelon re resume --banzai` when one bounded
+attempt is enough and remaining semantic uncertainty may remain as explicit,
+authenticated debt. Banzai creates at most one automatic successor, never
+raises a budget, and finishes only as `complete` or `complete_with_debt`.
+Repeated execution reuses the same authority and can make zero provider calls.
+
+`complete_with_debt` is an honest terminal result, not full semantic closure:
+workspace synthesis and L4 retain `input_quality: partial` and the exact debt
+acceptance hash. Structural, snapshot, provider, schema, resource, and
+incomplete-authority failures remain blocked and cannot be accepted as debt.
+All RE budget flags are absolute ceilings; increasing one does not reset prior
+usage. See [the RE v2 operator runbook](docs/re-v2-operator-runbook.md) for the
+decision tree and recovery commands.
+
 New RE runs use the bounded `balanced` execution goal by default. It targets
 completion within 60 active minutes and has hard ceilings of 180 active minutes
 and 5,000,000 provider-reported tokens. `fast` uses 30/60 minutes and 1,000,000
@@ -268,6 +286,8 @@ echelon re run                               # changed policy; no-op when curren
 echelon re continue --re-max-inner 10       # continue without a new answer
 echelon re continue --re-token-limit 25000000  # raise the active token ceiling
 echelon re resume "Use the v2 contract"     # answer a structured RE block
+echelon re resume --recommended              # conservative evidence-led guidance
+echelon re resume --banzai                    # one successor; may accept exact debt
 echelon re publish <run-id>                   # publish a validated complete run
 echelon re publish <run-id> --allow-partial   # explicit structural override
 echelon re publish <run-id> --commit          # also make a local durable-RE commit
@@ -1134,7 +1154,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon re deepen --to L2 (--all \| --source <id>...) [--domain <id>...] [--from-run <id>] [--token-limit <n>] [--active-ms-limit <n>]` | Create or reuse a self-contained protocol-2.4 child that generates only selected missing L2 work |
 | `echelon re status [--json]` | Report authoritative active-run state, selected coverage, adoption/generation counts, budgets, telemetry, and the next safe action |
 | `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
-| `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
+| `echelon re resume ("<answer>" \| --recommended \| --banzai) [budget options]` | Resolve an L3 semantic plateau; Banzai permits exactly one successor and may finish with authenticated residual debt |
 | `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | Build phase (agent-driven) |

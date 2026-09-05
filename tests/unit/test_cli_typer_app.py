@@ -113,6 +113,8 @@ def test_re_resume_help_explains_bounded_debt_acceptance() -> None:
     assert "--banzai" in result.output
     assert "one automatic successor" in normalized
     assert "documented residual debt" in normalized
+    assert "absolute L3 semantic token ceiling" in normalized
+    assert "absolute L3 semantic active-time ceiling" in normalized
     assert "--re-semantic-token-limit" in result.output
 
 
