@@ -28,6 +28,7 @@ class _CoverageProvider(SandboxProvider):
         self.service_environments: list[dict[str, str]] = []
         self.exec_calls: list[tuple[str, str, dict[str, str]]] = []
         self.host_exec_calls: list[str] = []
+        self.remote_files: dict[str, bytes] = {}
 
     def create(self, spec: SandboxSpec) -> SandboxHandle:
         del spec
@@ -54,27 +55,23 @@ class _CoverageProvider(SandboxProvider):
                 (self.worktree / "candidate-mutation.txt").write_text(
                     "observer must not change product files\n", encoding="utf-8"
                 )
-            report = self.worktree / ".echelon" / "coverage-reports" / "vitest.json"
-            report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(
-                json.dumps(
-                    {
-                        "testResults": [
-                            {
-                                "name": "tests/feature.test.ts",
-                                "projectName": "default",
-                                "assertionResults": [
-                                    {
-                                        "title": "persists checkpoint [echelon:UT-PERSIST-001]",
-                                        "status": "passed",
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
+            report_path = str((env or {})["ECHELON_COVERAGE_REPORT"])
+            self.remote_files[report_path] = json.dumps(
+                {
+                    "testResults": [
+                        {
+                            "name": "tests/feature.test.ts",
+                            "projectName": "default",
+                            "assertionResults": [
+                                {
+                                    "title": "persists checkpoint [echelon:UT-PERSIST-001]",
+                                    "status": "passed",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ).encode("utf-8")
         assert cwd == "/workspace"
         return ExecResult(0, "ok", "", 15, None)
 
@@ -82,8 +79,8 @@ class _CoverageProvider(SandboxProvider):
         del handle, path, content
 
     def read_file(self, handle: SandboxHandle, path: str) -> bytes:
-        del handle, path
-        return b""
+        del handle
+        return self.remote_files[path]
 
     def destroy(self, handle: SandboxHandle) -> None:
         self.destroyed_session_ids.append(handle.session_id)
@@ -212,6 +209,13 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
     assert bundle.observer_runs[0].executions[0].test_type == "unit"
     assert bundle.observer_runs[0].receipt is not None
     assert bundle.observer_runs[0].receipt.passed is True
+    assert not (tmp_path / ".echelon" / "coverage-reports").exists()
+    assert product_evidence_fingerprint(tmp_path) == fingerprint
+    assert list(
+        (evidence_dir / "coverage-observers" / "vitest" / "reports").glob(
+            "attempt-0001-vitest.json"
+        )
+    )
 
 
 def test_captured_observer_reuses_passing_standard_receipt_without_session(

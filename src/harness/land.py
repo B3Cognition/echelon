@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import hashlib
 import json
 import logging
 import re
@@ -36,6 +37,17 @@ from kernel.fulfillment import (
 )
 from kernel.spec_identity import spec_identity_aliases
 from harness.deferred_scope import active_entries, ledger_path
+from harness.canonical_requirements import extract_canonical_requirements
+from harness.coverage_evidence import (
+    active_unmapped_coverage_requirement_ids,
+    parse_coverage_map_obligations,
+)
+from harness.coverage_observation import (
+    CoverageObservationError,
+    CoverageObservationRef,
+    load_coverage_observation,
+    validate_coverage_observation,
+)
 from harness.product_inventory import product_evidence_fingerprint
 from harness.runnability_contract import (
     RunnabilityContractError,
@@ -57,7 +69,11 @@ from harness.verification_evidence import (
 )
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.paths import find_stack_extension_root
-from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
+from harness.stacks.resolver import (
+    resolve_stacks,
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
 from harness.workspace_landing import (
     WorkspaceLandingResult,
     finalize_landed_topology,
@@ -1247,16 +1263,35 @@ def _check_runnability_before_land(
         ref=candidate_ref,
         stack_project_dir=wrapper_project_dir,
     )
-    if warning is None:
+    if warning is not None:
+        _banner(
+            "LAND — USER RUNNABILITY BLOCKED",
+            [
+                ("spec", spec_id),
+                ("problem", warning),
+                ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
+            ],
+            subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+        )
+        return False
+
+    coverage_warning = _coverage_observation_warning(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+        ref=candidate_ref,
+        stack_project_dir=wrapper_project_dir,
+    )
+    if coverage_warning is None:
         return True
     _banner(
-        "LAND — USER RUNNABILITY BLOCKED",
+        "LAND — COVERAGE OBSERVATION BLOCKED",
         [
             ("spec", spec_id),
-            ("problem", warning),
+            ("problem", coverage_warning),
             ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
         ],
-        subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+        subtitle="A fulfillment override cannot bypass stale per-case test evidence.",
     )
     return False
 
@@ -1503,7 +1538,124 @@ def _runnability_warning(
         return f"could not inspect the landing candidate for runnability: {exc}"
 
 
+def _coverage_observation_warning(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path,
+    ref: str | None = None,
+    stack_project_dir: Path | None = None,
+) -> str | None:
+    """Return a blocking warning for stale required per-case coverage evidence.
+
+    Landing is the only carry-forward caller: an otherwise-identical merge
+    commit may reuse the observation, but every product-affecting hash remains
+    authoritative. Ordinary fulfillment keeps exact-commit validation.
+    """
+    try:
+        configured_root = (
+            Path(stack_project_dir).resolve() if stack_project_dir else project_dir.resolve()
+        )
+        configured = _resolved_landing_stacks(configured_root)
+        if not any(item.observer.required for item in configured.coverage_observers):
+            return None
+        with _land_candidate_tree(project_dir, ref) as candidate:
+            resolution_root = (
+                candidate
+                if configured_root == project_dir.resolve()
+                else configured_root
+            )
+            resolved = _resolved_landing_stacks(resolution_root)
+
+            spec_root = Path(stack_project_dir).resolve() if stack_project_dir else project_dir
+            spec_ref = ref if spec_root == project_dir.resolve() else None
+            with _land_spec_dir(spec_id, spec_root, ref=spec_ref) as spec_dir:
+                if spec_dir is None or not (spec_dir / "coverage-map.md").is_file():
+                    return "required coverage observers need the active spec coverage-map.md"
+                coverage_map_hash = hashlib.sha256(
+                    (spec_dir / "coverage-map.md").read_bytes()
+                ).hexdigest()
+                canonical_ids = {
+                    item.id for item in extract_canonical_requirements(spec_dir)
+                }
+                owner_deferred_ids = {
+                    item_id
+                    for entry in active_entries(spec_dir)
+                    for item_id in entry.selected_ids
+                    if not item_id.startswith("T-")
+                }
+                obligations = tuple(
+                    obligation
+                    for row in parse_coverage_map_obligations(
+                        spec_dir / "coverage-map.md", canonical_ids
+                    )
+                    for obligation in row
+                )
+                unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
+                    canonical_ids=canonical_ids,
+                    obligations=obligations,
+                    deferred_ids=owner_deferred_ids,
+                )
+                if unmapped_requirement_ids:
+                    return (
+                        "required coverage map has no planned test obligation for active "
+                        "requirement(s): "
+                        + ", ".join(unmapped_requirement_ids[:20])
+                    )
+                if not any(
+                    obligation.requirement_id not in owner_deferred_ids
+                    for obligation in obligations
+                ):
+                    return None
+
+            runnability_contract_hash: str | None = None
+            if resolved.runnability.policy == "required":
+                contract = load_runnability_contract(candidate)
+                if contract is None or not contract.enabled:
+                    return "required coverage observation has no enabled runnability contract"
+                runnability_contract_hash = runnability_contract_sha256(contract)
+
+            state = _latest_runnability_state(Path(harness_root), spec_id)
+            summary = state.get("coverage_observation") if state is not None else None
+            if not isinstance(summary, dict) or summary.get("status") != "passed":
+                return "no passing required coverage observation was recorded for this delivery"
+            raw_ref = summary.get("ref")
+            if not isinstance(raw_ref, dict):
+                return "passing coverage observation lacks an immutable reference"
+            observation_ref = CoverageObservationRef.from_mapping(raw_ref)
+            observation = load_coverage_observation(observation_ref.path)
+            if observation.ref != observation_ref:
+                return "coverage observation reference does not match its immutable artifact"
+            candidate_fingerprint = product_evidence_fingerprint(candidate)
+            validation = validate_coverage_observation(
+                observation.ref,
+                candidate_fingerprint=candidate_fingerprint,
+                coverage_map_hash=coverage_map_hash,
+                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+                runnability_contract_hash=runnability_contract_hash,
+                allow_equivalent_product=True,
+            )
+            if validation.valid:
+                return None
+            return f"coverage observation is stale: {validation.reason}"
+    except (
+        CoverageObservationError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        tarfile.TarError,
+    ) as exc:
+        return f"could not validate required coverage observation: {exc}"
+
+
 def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
+    resolved = _resolved_landing_stacks(project_dir)
+    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
+
+
+def _resolved_landing_stacks(project_dir: Path):
+    """Resolve the candidate-owned stack plan used for landing evidence."""
     from harness.config import get_full_resolved_config
 
     root = Path(project_dir).resolve()
@@ -1515,7 +1667,7 @@ def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
     archetypes = stacks.get("target_archetypes") or []
     if not isinstance(selected, list) or not isinstance(archetypes, list):
         raise ValueError("stack selection must use list values")
-    resolved = resolve_stacks(
+    return resolve_stacks(
         [str(item) for item in selected],
         load_stack_definitions(
             extension_root=find_stack_extension_root(root),
@@ -1523,7 +1675,6 @@ def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
         ),
         target_archetypes={str(item) for item in archetypes} or None,
     )
-    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
 
 
 def _latest_runnability_state(harness_root: Path, spec_id: str) -> dict[str, object] | None:

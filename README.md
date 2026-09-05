@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.19** — 61 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 23 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.20** — 61 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 23 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -732,6 +732,38 @@ review, and land a completed spec. The harness is the internal execution
 substrate: it takes Echelon's Phase A output (spec.md, tasks.md, feature branch)
 and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays
 on the host; deterministic work (build, test, verify) runs inside Docker.
+
+### Structured coverage observation
+
+The browser 3D and browser WASM stacks require executable evidence for every
+non-deferred coverage-map case. Put the planned case ID in the actual Vitest or
+Playwright test title, for example:
+
+```ts
+it("restores the checkpoint [echelon:UT-CHECKPOINT-001]", async () => {
+  // assertion
+});
+```
+
+One title may carry multiple planned IDs, such as
+`[echelon:UT-001, INT-001]`. The initial browser observers accept the
+`vitest-json` adapter for `unit`, `integration`, and `contract` coverage, and
+the `playwright-json` adapter for `e2e` coverage. A coverage-map test type with
+no selected-stack observer fails before delivery starts a browser sandbox.
+
+Echelon runs the observer commands in fresh delivery sandboxes. It installs
+dependencies, browser binaries, and ephemeral verification services there; it
+does not run the observer, provision a database, or install Playwright on the
+user host. Isolated stack commands must write their JSON to
+`$ECHELON_COVERAGE_REPORT`; Echelon assigns that path outside the mounted
+candidate, reads it back from the sandbox, and retains it once under the
+delivery build's `evidence/<strategy>/coverage-observation/` directory. This
+keeps observer output out of the candidate worktree and makes the retained
+report part of immutable harness evidence. `echelon delivery status` reports
+observed requirement counts, observer result counts, and whether the product,
+coverage map, stack, observer plan, and runnability-contract fingerprints still
+match. Candidate-owned local journey commands remain a separate, explicitly
+unverified user-facing path.
 
 ### Container Runtime
 

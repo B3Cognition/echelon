@@ -413,3 +413,56 @@ def test_write_coverage_evidence_cli_rejects_required_observer_without_observati
     state = json.loads((verify_dir / "state.json").read_text(encoding="utf-8"))
     assert state["coverage_evidence"] == "invalid"
     assert "validated coverage observation" in state["coverage_evidence_reason"]
+
+
+@pytest.mark.unit
+def test_write_coverage_evidence_cli_fails_closed_for_invalid_ralph_context(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_dir = tmp_path / "runs" / "verify"
+    verify_dir.mkdir(parents=True)
+    _write_map(
+        spec_dir,
+        "| FR-001 | E2E-001 | e2e | deferred-automation | deferred-automation | test | repair |\n",
+    )
+    (verify_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_dir / "state.json").write_text("{}\n", encoding="utf-8")
+    (verify_dir / "coverage-observation-context.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "observer_required": True,
+                "coverage_observation": {
+                    "path": str(tmp_path / "missing-observation.json"),
+                    "receipt_sha256": "a" * 64,
+                    "observation_sha256": "b" * 64,
+                    "candidate_fingerprint": "c" * 64,
+                    "passed": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "harness",
+            "write-coverage-evidence",
+            str(spec_dir),
+            str(verify_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    state = json.loads((verify_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["coverage_evidence"] == "invalid"
+    assert "coverage observation" in state["coverage_evidence_reason"]

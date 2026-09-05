@@ -547,6 +547,39 @@ def _write_coverage_evidence() -> None:
         if not item_id.startswith("T-")
     }
     observation = None
+    if not observer_required and observation_path is None:
+        context_path = verify_run_dir / "coverage-observation-context.json"
+        if context_path.is_file():
+            try:
+                context = json.loads(context_path.read_text(encoding="utf-8"))
+                raw_ref = (
+                    context.get("coverage_observation")
+                    if isinstance(context, dict)
+                    else None
+                )
+                from harness.coverage_observation import CoverageObservationRef
+
+                ref = CoverageObservationRef.from_mapping(raw_ref or {})
+                observation_path = ref.path
+                observer_required = (
+                    isinstance(context, dict)
+                    and context.get("schema_version") == 1
+                    and context.get("observer_required") is True
+                )
+                if not observer_required:
+                    raise CoverageObservationError(
+                        "coverage observation context is malformed"
+                    )
+            except (CoverageObservationError, OSError, json.JSONDecodeError) as exc:
+                _stamp_verify_spec_state(
+                    verify_run_dir,
+                    {
+                        "coverage_evidence": "invalid",
+                        "coverage_evidence_reason": str(exc),
+                    },
+                )
+                print(f"coverage observation context is invalid: {exc}", file=sys.stderr)
+                sys.exit(1)
     if observer_required:
         if observation_path is None:
             _stamp_verify_spec_state(

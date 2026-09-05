@@ -11,7 +11,11 @@ import subprocess
 import tempfile
 from typing import Mapping, Protocol
 
-from harness.canonical_requirements import INVENTORY_JSON
+from harness.canonical_requirements import INVENTORY_JSON, extract_canonical_requirements
+from harness.coverage_evidence import write_coverage_evidence
+from harness.coverage_observation import CoverageObservationResult
+from harness.deferred_scope import active_entries
+from harness.durable_json import write_json_atomic
 from harness.judgment_prepass import (
     assemble_fulfillment_report,
     write_judgment_prepass,
@@ -170,6 +174,8 @@ class FulfillmentRunner:
         reconcile: bool = False,
         dry_run: bool = False,
         verification_evidence: Mapping[str, object] | None = None,
+        coverage_observation: CoverageObservationResult | None = None,
+        observer_required: bool = False,
     ) -> FulfillmentRefreshResult:
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
@@ -185,6 +191,13 @@ class FulfillmentRunner:
             orchestration_root,
             explicit_spec_dir=spec_dir,
         )
+        if observer_required and coverage_observation is None:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope=scope,
+                reason="required coverage observation is missing or invalid",
+            )
         commit = _current_git_commit(worktree)
         evidence = _validated_verification_evidence(
             verification_evidence,
@@ -199,6 +212,11 @@ class FulfillmentRunner:
                 reason="verification evidence is invalid or stale",
             )
         evidence_sha256 = evidence.evidence_sha256 if evidence is not None else None
+        coverage_observation_sha256 = (
+            coverage_observation.ref.observation_sha256
+            if coverage_observation is not None
+            else None
+        )
         spec_input_hash = (
             _spec_input_hash(resolved_spec_dir)
             if resolved_spec_dir is not None
@@ -211,6 +229,7 @@ class FulfillmentRunner:
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
             verification_evidence_sha256=evidence_sha256,
+            coverage_observation_sha256=coverage_observation_sha256,
         )
         report = (
             latest_fulfillment_report(resolved_spec_dir)
@@ -233,6 +252,9 @@ class FulfillmentRunner:
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
                 verification_evidence=evidence,
+                coverage_observation=coverage_observation,
+                coverage_observation_sha256=coverage_observation_sha256,
+                observer_required=observer_required,
             )
         force_execution = reconcile or dry_run
         if not force_execution and _latest_full_report_matches_cache(
@@ -251,6 +273,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -273,6 +296,22 @@ class FulfillmentRunner:
             reconcile=reconcile,
             dry_run=dry_run,
         )
+        try:
+            _prepare_coverage_observation_context(
+                verify_run_dir=artifact_policy.verify_run_dir,
+                spec_dir=resolved_spec_dir,
+                observation=coverage_observation,
+                observer_required=observer_required,
+            )
+        except (OSError, ValueError) as exc:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="full",
+                reason=f"required coverage observation context is invalid: {exc}",
+                cache_key=cache_key,
+                report_path=report_path,
+            )
         if not force_execution:
             direct_result = _try_direct_no_fallback_refresh(
                 worktree=worktree,
@@ -284,6 +323,9 @@ class FulfillmentRunner:
                 implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
                 verification_evidence_sha256=evidence_sha256,
+                coverage_observation=coverage_observation,
+                coverage_observation_sha256=coverage_observation_sha256,
+                observer_required=observer_required,
             )
             if direct_result is not None:
                 return direct_result
@@ -378,6 +420,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                coverage_observation_sha256=coverage_observation_sha256,
                 cache_key=cache_key,
             )
             report = (
@@ -406,6 +449,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -441,6 +485,9 @@ class FulfillmentRunner:
         implementation_input_hash: str | None,
         verification_evidence_sha256: str | None,
         verification_evidence: VerificationEvidenceRef | None,
+        coverage_observation: CoverageObservationResult | None,
+        coverage_observation_sha256: str | None,
+        observer_required: bool,
     ) -> FulfillmentRefreshResult:
         if spec_dir is None or commit is None:
             return FulfillmentRefreshResult(
@@ -462,6 +509,7 @@ class FulfillmentRunner:
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
             verification_evidence_sha256=verification_evidence_sha256,
+            coverage_observation_sha256=coverage_observation_sha256,
         )
         impacted_requirement_ids = tuple(
             sorted(set(plan.impacted_requirement_ids) | set(ledger_plan.rechecked_requirement_ids))
@@ -497,6 +545,7 @@ class FulfillmentRunner:
                         spec_input_hash=spec_input_hash,
                         implementation_input_hash=implementation_input_hash,
                         verification_evidence_sha256=verification_evidence_sha256,
+                        coverage_observation_sha256=coverage_observation_sha256,
                     )
                     return FulfillmentRefreshResult(
                         status="cached",
@@ -518,6 +567,8 @@ class FulfillmentRunner:
                         if verification_evidence is not None
                         else None
                     ),
+                    coverage_observation=coverage_observation,
+                    observer_required=observer_required,
                 )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -540,6 +591,8 @@ class FulfillmentRunner:
                     if verification_evidence is not None
                     else None
                 ),
+                coverage_observation=coverage_observation,
+                observer_required=observer_required,
             )
 
         skill_path = find_skill(
@@ -573,6 +626,21 @@ class FulfillmentRunner:
             scoped_ids=impacted_requirement_ids,
             base_full_verify_commit=plan.base_full_verify_commit,
         )
+        try:
+            _prepare_coverage_observation_context(
+                verify_run_dir=artifact_policy.verify_run_dir,
+                spec_dir=spec_dir,
+                observation=coverage_observation,
+                observer_required=observer_required,
+            )
+        except (OSError, ValueError) as exc:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="scoped",
+                reason=f"required coverage observation context is invalid: {exc}",
+                report_path=report_path,
+            )
         arguments += f" verify_run_dir={artifact_policy.verify_run_dir}"
         if verification_evidence is not None:
             arguments += (
@@ -655,6 +723,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=verification_evidence_sha256,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -749,6 +818,7 @@ def _stamp_latest_report(
     spec_input_hash: str | None = None,
     implementation_input_hash: str | None = None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
     cache_key: str | None = None,
 ) -> None:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
@@ -772,6 +842,8 @@ def _stamp_latest_report(
         extra_metadata["implementation_input_hash"] = implementation_input_hash
     if verification_evidence_sha256:
         extra_metadata["verification_evidence_sha256"] = verification_evidence_sha256
+    if coverage_observation_sha256:
+        extra_metadata["coverage_observation_sha256"] = coverage_observation_sha256
     if cache_key:
         extra_metadata["verify_cache_key"] = cache_key
     stamp_fulfillment_report(
@@ -829,6 +901,9 @@ def _try_direct_no_fallback_refresh(
     implementation_input_hash: str,
     cache_key: str | None,
     verification_evidence_sha256: str | None,
+    coverage_observation: CoverageObservationResult | None,
+    coverage_observation_sha256: str | None,
+    observer_required: bool,
 ) -> FulfillmentRefreshResult | None:
     if spec_dir is None or commit is None:
         return None
@@ -845,6 +920,8 @@ def _try_direct_no_fallback_refresh(
         prepass = write_judgment_prepass(
             spec_dir=spec_dir,
             verify_run_dir=verify_run_dir,
+            coverage_observation=coverage_observation,
+            observer_required=observer_required,
         )
         if prepass.fallback_count:
             return None
@@ -897,6 +974,7 @@ def _try_direct_no_fallback_refresh(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         verification_evidence_sha256=verification_evidence_sha256,
+        coverage_observation_sha256=coverage_observation_sha256,
         cache_key=cache_key,
     )
     if not fulfillment_report_is_current(report, current_commit=commit):
@@ -915,6 +993,7 @@ def _try_direct_no_fallback_refresh(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         verification_evidence_sha256=verification_evidence_sha256,
+        coverage_observation_sha256=coverage_observation_sha256,
     )
     return FulfillmentRefreshResult(
         status="refreshed",
@@ -1044,6 +1123,7 @@ def _write_verified_fulfillment_ledger(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> dict[str, int] | None:
     if (
         spec_dir is None
@@ -1058,7 +1138,10 @@ def _write_verified_fulfillment_ledger(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         artifact_hashes=artifact_hashes,
-        verifier_version=_ledger_verifier_version(verification_evidence_sha256),
+        verifier_version=_ledger_verifier_version(
+            verification_evidence_sha256,
+            coverage_observation_sha256,
+        ),
     )
     write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
@@ -1067,7 +1150,8 @@ def _write_verified_fulfillment_ledger(
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
         current_verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256
+            verification_evidence_sha256,
+            coverage_observation_sha256,
         ),
     )
     return {
@@ -1086,6 +1170,7 @@ def _verified_ledger_reuse_plan(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> VerifiedLedgerReusePlan:
     if report is None or spec_input_hash is None or implementation_input_hash is None:
         return VerifiedLedgerReusePlan(
@@ -1105,7 +1190,8 @@ def _verified_ledger_reuse_plan(
             implementation_input_hash=implementation_input_hash,
             artifact_hashes=artifact_hashes,
             verifier_version=_ledger_verifier_version(
-                verification_evidence_sha256
+                verification_evidence_sha256,
+                coverage_observation_sha256,
             ),
         )
     return plan_verified_ledger_reuse(
@@ -1114,7 +1200,8 @@ def _verified_ledger_reuse_plan(
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
         current_verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256
+            verification_evidence_sha256,
+            coverage_observation_sha256,
         ),
     )
 
@@ -1189,6 +1276,7 @@ def _verify_cache_key(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> str | None:
     if commit is None or spec_input_hash is None or implementation_input_hash is None:
         return None
@@ -1203,13 +1291,59 @@ def _verify_cache_key(
     digest.update(implementation_input_hash.encode("utf-8"))
     digest.update(b"\0")
     digest.update((verification_evidence_sha256 or "").encode("utf-8"))
+    digest.update(b"\0")
+    digest.update((coverage_observation_sha256 or "").encode("utf-8"))
     return digest.hexdigest()
 
 
-def _ledger_verifier_version(verification_evidence_sha256: str | None) -> str:
-    if not verification_evidence_sha256:
-        return FULFILLMENT_VERIFIER_VERSION
-    return f"{FULFILLMENT_VERIFIER_VERSION}+host:{verification_evidence_sha256}"
+def _prepare_coverage_observation_context(
+    *,
+    verify_run_dir: Path,
+    spec_dir: Path | None,
+    observation: CoverageObservationResult | None,
+    observer_required: bool,
+) -> None:
+    """Freeze the Ralph-supplied observation for Python-owned workflow steps."""
+    if not observer_required or observation is None:
+        return
+    if spec_dir is None:
+        raise ValueError("required coverage observation has no spec directory")
+    canonical_ids = [item.id for item in extract_canonical_requirements(spec_dir)]
+    deferred_ids = {
+        item_id
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
+    write_coverage_evidence(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        canonical_ids=canonical_ids,
+        deferred_ids=deferred_ids,
+        observation=observation,
+        observer_required=True,
+    )
+    write_json_atomic(
+        verify_run_dir / "coverage-observation-context.json",
+        {
+            "schema_version": 1,
+            "observer_required": True,
+            "coverage_observation": observation.ref.as_mapping(),
+        },
+        trusted_root=verify_run_dir,
+    )
+
+
+def _ledger_verifier_version(
+    verification_evidence_sha256: str | None,
+    coverage_observation_sha256: str | None = None,
+) -> str:
+    parts = [FULFILLMENT_VERIFIER_VERSION]
+    if verification_evidence_sha256:
+        parts.append(f"host:{verification_evidence_sha256}")
+    if coverage_observation_sha256:
+        parts.append(f"coverage:{coverage_observation_sha256}")
+    return "+".join(parts)
 
 
 def _provider_session_limit_reason(

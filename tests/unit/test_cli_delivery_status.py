@@ -13,6 +13,7 @@ def _write_delivery_state(
     *,
     strategy: str = "default",
     user_runnability: dict | None = None,
+    coverage_observation: dict | None = None,
 ) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -36,6 +37,8 @@ def _write_delivery_state(
             }
     if user_runnability is not None:
         payload["user_runnability"] = user_runnability
+    if coverage_observation is not None:
+        payload["coverage_observation"] = coverage_observation
     state_file.write_text(
         json.dumps(payload, indent=2),
         encoding="utf-8",
@@ -175,6 +178,50 @@ def test_delivery_status_shows_failed_runnability_action(
     assert "missing_local_auth_bootstrap" in output
     assert "/runs/report.md" in output
     assert "delivery will repair this current-spec product gap" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_shows_strict_coverage_observation_summary(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    _write_delivery_state(
+        tmp_path,
+        coverage_observation={
+            "status": "passed",
+            "requirements_observed": 3,
+            "requirements_total": 3,
+            "observers": {
+                "playwright-e2e": {"status": "passed", "execution_count": 2},
+                "vitest-core": {"status": "passed", "execution_count": 4},
+            },
+            "fingerprints": {
+                "candidate_fingerprint": "product",
+                "coverage_map_hash": "map",
+                "resolved_stack_hash": "stack",
+                "observer_plan_hash": "observer-plan",
+                "runnability_contract_hash": "contract",
+            },
+        },
+    )
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    payload = json.loads(capsys.readouterr().out)["latest"]
+    assert payload["coverage_observation"]["requirements_observed"] == 3
+    assert payload["coverage_observation"]["observers"]["vitest-core"] == {
+        "passed": 4,
+        "total": 4,
+    }
+    assert payload["coverage_observation"]["fingerprint_tuple_complete"] is True
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "3 / 3 requirements observed" in output
+    assert "playwright-e2e: 2/2 passed" in output
+    assert "vitest-core: 4/4 passed" in output
+    assert "product + map + stack + observer-plan + contract match" in output
 
 
 @pytest.mark.unit

@@ -42,6 +42,11 @@ from harness.coverage_observer_runner import (
     CoverageObserverRun,
     CoverageVerificationBundle,
 )
+from harness.coverage_observation import (
+    CoverageObservationRef,
+    CoverageObservationResult,
+    CoverageObservationValidation,
+)
 from harness.llm_tool_policy import LlmToolPolicy
 from harness.product_inventory import product_evidence_fingerprint
 from harness.ralph import RalphController
@@ -552,6 +557,7 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
     controller, *_rest, state_store = _make_controller(tmp_path, config=config)
     state = state_store.read()
     state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
     state_store.write(state)
     bundle = CoverageVerificationBundle(
         standard_receipt=standard_receipt,
@@ -564,7 +570,6 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
             ),
         ),
     )
-
     with patch.object(ralph, "_current_git_commit", return_value="a" * 40), patch.object(
         ralph, "run_coverage_observers", return_value=bundle
     ):
@@ -579,6 +584,243 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
     assert result.passed is False
     assert result.failures[0].id == "coverage-observation-gaps"
     assert result.failures[0].details["requirements"] == {"FR-001": "unbound"}
+
+
+@pytest.mark.unit
+def test_coverage_gate_rejects_an_unavailable_type_before_starting_observers(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | RUST-001 | rust-unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
+    state_store.write(state)
+
+    with patch("harness.ralph.run_coverage_observers") as observers:
+        result = controller._apply_coverage_observation_gate(
+            VerifyResult(passed=True), str(worktree)
+        )
+
+    assert result.passed is False
+    assert result.failures[0].id == "coverage-observer-unavailable"
+    assert "rust-unit" in result.failures[0].error
+    observers.assert_not_called()
+
+
+@pytest.mark.unit
+def test_coverage_gate_does_not_treat_an_unmapped_requirement_as_deferred(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# FR-001\n", encoding="utf-8")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n",
+        encoding="utf-8",
+    )
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
+    state_store.write(state)
+
+    with patch("harness.ralph.run_coverage_observers") as observers:
+        result = controller._apply_coverage_observation_gate(
+            VerifyResult(passed=True), str(worktree)
+        )
+
+    assert result.passed is False
+    assert result.failures[0].id == "coverage-observer-map-incomplete"
+    assert "FR-001" in result.failures[0].error
+    observers.assert_not_called()
+
+
+@pytest.mark.unit
+def test_coverage_gate_never_materializes_spec_into_verified_candidate(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "src").mkdir()
+    (worktree / "src" / "game.ts").write_text("export {};\n", encoding="utf-8")
+    external_spec = tmp_path / "specs" / "spec-001"
+    external_spec.mkdir(parents=True)
+    (external_spec / "coverage-map.md").write_text("# Coverage\n", encoding="utf-8")
+    state = state_store.read()
+    state["spec_dir"] = str(external_spec)
+    state_store.write(state)
+    fingerprint_before = product_evidence_fingerprint(worktree)
+
+    result = controller._apply_coverage_observation_gate(
+        VerifyResult(passed=True),
+        str(worktree),
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "coverage-observer-spec-missing"
+    assert not (worktree / "specs").exists()
+    assert product_evidence_fingerprint(worktree) == fingerprint_before
+
+
+@pytest.mark.unit
+def test_strict_observation_is_validated_and_handed_to_fulfillment(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
+    state_store.write(state)
+    ref = CoverageObservationRef(
+        path=tmp_path / "evidence" / "attempt-0001.json",
+        receipt_sha256="a" * 64,
+        observation_sha256="b" * 64,
+        candidate_fingerprint=product_evidence_fingerprint(worktree),
+        passed=True,
+    )
+    observation = CoverageObservationResult(
+        ref=ref,
+        test_cases={},
+        requirements={},
+    )
+    controller._fulfillment_runner = MagicMock()
+    controller._fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+        status="cached", exit_code=0
+    )
+
+    with patch("harness.ralph.load_coverage_observation", return_value=observation), patch(
+        "harness.ralph.validate_coverage_observation",
+        return_value=CoverageObservationValidation(valid=True),
+    ), patch("harness.ralph._current_git_commit", return_value="a" * 40):
+        result = controller._refresh_fulfillment_report(
+            VerifyResult(
+                passed=True,
+                verification_evidence={"coverage_observation": ref.as_mapping()},
+            ),
+            str(worktree),
+        )
+
+    assert result.passed is True
+    kwargs = controller._fulfillment_runner.refresh.call_args.kwargs
+    assert kwargs["observer_required"] is True
+    assert kwargs["coverage_observation"] is observation
+
+
+@pytest.mark.unit
+def test_invalid_strict_observation_stops_before_fulfillment(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
+    state_store.write(state)
+    controller._fulfillment_runner = MagicMock()
+
+    result = controller._refresh_fulfillment_report(
+        VerifyResult(passed=True, verification_evidence={}),
+        str(worktree),
+    )
+
+    assert result.passed is False
+    assert result.failures[0].id == "coverage-observation-invalid"
+    controller._fulfillment_runner.refresh.assert_not_called()
+
+
+@pytest.mark.unit
+def test_owner_deferred_coverage_does_not_require_an_observer_run(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.resolved_stacks = _required_coverage_stacks()
+    controller, *_rest, state_store = _make_controller(tmp_path, config=config)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "deferred-scope.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "entries": [
+                    {
+                        "entry_id": "defer-001",
+                        "status": "deferred",
+                        "selected_ids": ["FR-001"],
+                        "derived_task_ids": [],
+                        "prior_task_statuses": {},
+                        "reason": "owner-approved scope deferral",
+                        "deferred_at": "2026-09-05T00:00:00Z",
+                        "planned_at": None,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = state_store.read()
+    state["spec_dir"] = str(spec_dir)
+    state["target_repo"] = "target"
+    state_store.write(state)
+
+    with patch("harness.ralph.run_coverage_observers") as observers:
+        result = controller._apply_coverage_observation_gate(
+            VerifyResult(passed=True),
+            str(worktree),
+        )
+
+    assert result.passed is True
+    observers.assert_not_called()
 
 
 @pytest.mark.unit

@@ -1,6 +1,7 @@
 """Tests for harness.land — idempotent spec completion."""
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import subprocess
@@ -15,6 +16,7 @@ from harness.land import (
     LandOptions,
     LandPrepareResult,
     _check_runnability_before_land,
+    _coverage_observation_warning,
     _check_ready_before_land,
     _delete_harness_branches,
     _fulfillment_warning,
@@ -28,6 +30,8 @@ from harness.land import (
     resolve_land_repo,
 )
 from harness.deferred_scope import apply_defer
+from harness.coverage_contract import parse_coverage_obligations
+from harness.coverage_observation import write_coverage_observation
 from harness.errors import GitOpsError
 from harness.product_inventory import product_evidence_fingerprint
 from harness.runnability_contract import (
@@ -36,6 +40,7 @@ from harness.runnability_contract import (
 )
 from harness.runnability_evidence import RunnabilityStage, write_runnability_report
 from harness.verification_evidence import VerificationStage, write_verification_receipt
+from harness.test_execution_evidence import ObservedTestExecution
 from harness.workspace_landing import WorkspaceLandingResult
 
 
@@ -188,6 +193,181 @@ def test_land_accepts_merge_only_commit_when_three_hashes_match(tmp_path: Path) 
     )
 
     assert warning is None
+
+def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    harness_root = tmp_path / "harness"
+    project.mkdir()
+    _init_repo(project)
+    test_path = project / "tests" / "save.test.ts"
+    test_path.parent.mkdir()
+    test_path.write_text(
+        "test('save persists [echelon:UT-001]', () => {});\n",
+        encoding="utf-8",
+    )
+    spec_dir = project / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# FR-001\n", encoding="utf-8")
+    coverage_map = spec_dir / "coverage-map.md"
+    coverage_map.write_text(
+        "# Coverage\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    commit = _commit(project, "README.md", "# Demo\n", "product")
+    fingerprint = product_evidence_fingerprint(project)
+    stage = VerificationStage(
+        name="verify",
+        command=("pnpm", "verify"),
+        exit_code=0,
+        duration_ms=1,
+        stdout=b"passed\n",
+        stderr=b"",
+    )
+    standard = write_verification_receipt(
+        evidence_dir=tmp_path / "standard",
+        spec_id="042-demo",
+        strategy_id="default",
+        build_id="build-coverage",
+        candidate_commit=commit,
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="sandbox",
+        stages=(stage,),
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    observer = write_verification_receipt(
+        evidence_dir=tmp_path / "observer",
+        spec_id="042-demo",
+        strategy_id="default",
+        build_id="build-coverage",
+        candidate_commit=commit,
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="sandbox",
+        stages=(stage,),
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    obligations = parse_coverage_obligations(
+        "FR-001",
+        "UT-001",
+        "unit",
+        "deferred-automation",
+        "deferred-automation",
+        "persisted test",
+        "add tagged test",
+        {"FR-001"},
+    )
+    observation = write_coverage_observation(
+        evidence_dir=tmp_path / "coverage",
+        candidate_commit=commit,
+        candidate_fingerprint=fingerprint,
+        coverage_map_hash=hashlib.sha256(coverage_map.read_bytes()).hexdigest(),
+        resolved_stack_hash="stack-hash",
+        observer_plan_hash="observer-plan-hash",
+        runnability_contract_hash=None,
+        verification_receipt=standard,
+        observer_receipts={"vitest": observer},
+        obligations=obligations,
+        executions=(
+            ObservedTestExecution(
+                observer_id="vitest",
+                test_type="unit",
+                file="tests/save.test.ts",
+                title="save persists [echelon:UT-001]",
+                project="default",
+                status="passed",
+                retry_count=0,
+            ),
+        ),
+        candidate_worktree=project,
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    state_dir = harness_root / "runs" / "build-coverage" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "042-demo",
+                "coverage_observation": {
+                    "status": "passed",
+                    "ref": observation.ref.as_mapping(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved = SimpleNamespace(
+        coverage_observers=(SimpleNamespace(observer=SimpleNamespace(required=True)),),
+        runnability=SimpleNamespace(policy="not_applicable"),
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "merge-only publication commit"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+        )
+
+    assert warning is None
+
+    coverage_map.write_text(
+        coverage_map.read_text(encoding="utf-8") + "\n# Changed coverage\n",
+        encoding="utf-8",
+    )
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+    )
+
+    assert warning is not None
+    assert "coverage observation is stale" in warning
+
+    coverage_map.write_text(
+        "# Coverage\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+        )
+
+    assert warning is not None
+    assert "no planned test obligation" in warning
 
 
 def test_land_blocks_changed_candidate_contract(tmp_path: Path) -> None:

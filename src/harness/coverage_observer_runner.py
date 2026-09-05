@@ -32,6 +32,7 @@ from harness.vitest_evidence import VitestEvidenceError, parse_vitest_json
 
 _MAX_REPORT_BYTES = 8 * 1024 * 1024
 _ATTEMPT_RE = re.compile(r"attempt-(\d+)-")
+_SANDBOX_REPORT_ROOT = "/tmp/echelon-coverage-observers"
 
 
 @dataclass(frozen=True)
@@ -204,9 +205,9 @@ def _run_captured_observer(
             reason="candidate fingerprint changed before captured report collection",
         )
     try:
+        report = _safe_report_path(worktree, observer.report_path)
         executions = _parse_report(
-            worktree=worktree,
-            report_path=observer.report_path,
+            report=report,
             observer_id=observer.id,
             test_type=observer.test_types[0],
             adapter=observer.adapter,
@@ -250,6 +251,10 @@ def _run_isolated_observer(
     started_at = datetime.now(timezone.utc).isoformat()
     failure_reason = ""
     fingerprint_after = candidate_fingerprint
+    retained_report: Path | None = None
+    observer_root = Path(evidence_dir) / "coverage-observers" / observer.id
+    attempt_sequence = _next_attempt(observer_root)
+    sandbox_report_path = _sandbox_report_path(observer.id, observer.report_path)
     try:
         if _candidate_fingerprint(worktree) != candidate_fingerprint:
             failure_reason = "candidate fingerprint changed before coverage observation"
@@ -264,6 +269,7 @@ def _run_isolated_observer(
             materialized = materialize_services(plan.services, session_id=handle.session_id)
             provider.start_services(handle, materialized.services)
             environment.update(materialized.verifier_environment)
+        environment["ECHELON_COVERAGE_REPORT"] = sandbox_report_path
         for command in plan.bootstrap_commands:
             result = provider.exec(
                 handle,
@@ -287,6 +293,14 @@ def _run_isolated_observer(
             stages.append(_stage("coverage-observer", observer.command, result))
             if result.exit_code != 0:
                 failure_reason = "coverage observer command failed"
+        if not failure_reason:
+            report_bytes = provider.read_file(handle, sandbox_report_path)
+            retained_report = _retain_observer_report(
+                observer_root=observer_root,
+                report_path=observer.report_path,
+                attempt_sequence=attempt_sequence,
+                content=report_bytes,
+            )
         fingerprint_after = _candidate_fingerprint(worktree) or ""
         if not failure_reason and fingerprint_after != candidate_fingerprint:
             failure_reason = "candidate fingerprint changed during coverage observation"
@@ -320,6 +334,8 @@ def _run_isolated_observer(
         stages=stages,
         sensitive_environment={**dict(sensitive_environment), **environment},
         started_at=started_at,
+        attempt_sequence=attempt_sequence,
+        retained_report=retained_report,
     )
     if receipt is None:
         return CoverageObserverRun(
@@ -339,8 +355,7 @@ def _run_isolated_observer(
         )
     try:
         executions = _parse_report(
-            worktree=worktree,
-            report_path=observer.report_path,
+            report=retained_report,
             observer_id=observer.id,
             test_type=observer.test_types[0],
             adapter=observer.adapter,
@@ -390,6 +405,8 @@ def _write_observer_receipt(
     stages: Sequence[VerificationStage],
     sensitive_environment: Mapping[str, str],
     started_at: str,
+    attempt_sequence: int,
+    retained_report: Path | None,
 ) -> VerificationEvidenceRef | None:
     root = Path(evidence_dir) / "coverage-observers" / observer_id
     try:
@@ -404,9 +421,17 @@ def _write_observer_receipt(
             fingerprint_after=fingerprint_after,
             verifier_source="sandbox-coverage-observer",
             detection_evidence=(f"stack coverage observer: {observer_id}",),
-            execution_context={"mode": "sandbox", "observer": observer_id},
+            execution_context={
+                "mode": "sandbox",
+                "observer": observer_id,
+                "retained_report": (
+                    retained_report.relative_to(root).as_posix()
+                    if retained_report is not None
+                    else None
+                ),
+            },
             stages=stages,
-            attempt_sequence=_next_attempt(root),
+            attempt_sequence=attempt_sequence,
             sensitive_environment=sensitive_environment,
             started_at=started_at,
         )
@@ -429,14 +454,14 @@ def _next_attempt(root: Path) -> int:
 
 def _parse_report(
     *,
-    worktree: Path,
-    report_path: str,
+    report: Path | None,
     observer_id: str,
     test_type: str,
     adapter: str,
 ) -> tuple[ObservedTestExecution, ...]:
     try:
-        report = _safe_report_path(worktree, report_path)
+        if report is None or not report.is_file():
+            raise OSError("structured observer report is unavailable")
         raw = report.read_bytes()
     except OSError as exc:
         raise CoverageObserverError("structured observer report is unavailable") from exc
@@ -458,6 +483,47 @@ def _parse_report(
     except (VitestEvidenceError, PlaywrightEvidenceError) as exc:
         raise CoverageObserverError(str(exc)) from exc
     raise CoverageObserverError(f"unsupported coverage observer adapter: {adapter}")
+
+
+def _sandbox_report_path(observer_id: str, report_path: str) -> str:
+    """Return the observer-only sandbox destination for one report.
+
+    Stack commands receive this path through ``ECHELON_COVERAGE_REPORT``.  It
+    is deliberately outside the mounted candidate worktree, so a successful
+    observer cannot leave a report under the candidate's ``.echelon`` control
+    directory and hide that mutation from the product fingerprint.
+    """
+    filename = Path(report_path).name
+    if not filename:
+        raise CoverageObserverError("structured observer report path is unsafe")
+    return f"{_SANDBOX_REPORT_ROOT}/{observer_id}/{filename}"
+
+
+def _retain_observer_report(
+    *,
+    observer_root: Path,
+    report_path: str,
+    attempt_sequence: int,
+    content: bytes,
+) -> Path:
+    """Write a sandbox-produced report once into harness-owned evidence."""
+    if len(content) > _MAX_REPORT_BYTES:
+        raise CoverageObserverError("structured observer report exceeds size limit")
+    filename = Path(report_path).name
+    if not filename:
+        raise CoverageObserverError("structured observer report path is unsafe")
+    destination = (
+        Path(observer_root)
+        / "reports"
+        / f"attempt-{attempt_sequence:04d}-{filename}"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open("xb") as handle:
+            handle.write(content)
+    except OSError as exc:
+        raise CoverageObserverError("could not retain structured observer report") from exc
+    return destination
 
 
 def _safe_report_path(worktree: Path, report_path: str) -> Path:

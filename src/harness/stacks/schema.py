@@ -467,6 +467,12 @@ def _parse_coverage_observers(
                 path=source_path,
                 field_path=f"{field_path}.mode",
             )
+        if mode == "isolated" and not _uses_coverage_report_environment(command):
+            raise StackValidationError(
+                "isolated coverage observer command must use ECHELON_COVERAGE_REPORT",
+                path=source_path,
+                field_path=f"{field_path}.command",
+            )
         if not isinstance(raw.get("required"), bool):
             raise StackValidationError(
                 "coverage observer required must be a boolean",
@@ -486,6 +492,13 @@ def _parse_coverage_observers(
             )
         )
     return observers
+
+
+def _uses_coverage_report_environment(command: str) -> bool:
+    return (
+        "$ECHELON_COVERAGE_REPORT" in command
+        or "${ECHELON_COVERAGE_REPORT}" in command
+    )
 
 
 def _validated_unique_values(

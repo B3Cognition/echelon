@@ -139,7 +139,7 @@ def _coverage_observer() -> dict[str, object]:
     return {
         "id": "playwright",
         "test_types": ["e2e"],
-        "command": "pnpm exec playwright test --reporter=json",
+        "command": "pnpm exec playwright test --reporter=json > $ECHELON_COVERAGE_REPORT",
         "report_path": "artifacts/playwright.json",
         "adapter": "playwright-json",
         "mode": "isolated",
@@ -201,6 +201,10 @@ def test_stack_schema_rejects_coverage_observers_before_schema_1_3() -> None:
         (
             lambda observers: observers[0].update(command=" "),
             "command must be a non-empty string",
+        ),
+        (
+            lambda observers: observers[0].update(command="pnpm exec playwright test"),
+            "isolated coverage observer command must use ECHELON_COVERAGE_REPORT",
         ),
         (
             lambda observers: observers[0].update(report_path="/tmp/report.json"),

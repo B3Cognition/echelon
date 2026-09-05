@@ -245,6 +245,28 @@ def parse_coverage_map_obligations(
     return tuple(rows)
 
 
+def active_unmapped_coverage_requirement_ids(
+    *,
+    canonical_ids: Iterable[str],
+    obligations: Iterable[CoverageObligation],
+    deferred_ids: Iterable[str],
+) -> tuple[str, ...]:
+    """Return active canonical requirements with no coverage-map obligation.
+
+    Strict observation must never treat a missing map row as an owner deferral.
+    The deferral ledger is the sole authority for removing a requirement from
+    the current-spec coverage obligation set.
+    """
+    canonical = {str(item).strip() for item in canonical_ids if str(item).strip()}
+    deferred = {str(item).strip() for item in deferred_ids if str(item).strip()}
+    mapped = {
+        item.requirement_id.strip()
+        for item in obligations
+        if item.requirement_id.strip()
+    }
+    return tuple(sorted(canonical - deferred - mapped))
+
+
 def _table_cells(line: str) -> list[str]:
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):

@@ -288,6 +288,31 @@ def test_coverage_observation_validation_rejects_input_fingerprint_drift(
 
 
 @pytest.mark.unit
+def test_coverage_observation_requires_exact_commit_except_for_explicit_carry_forward(
+    tmp_path: Path,
+) -> None:
+    result = _write_observation(tmp_path)
+    expected = {
+        "candidate_commit": "9" * 40,
+        "candidate_fingerprint": _FINGERPRINT,
+        "coverage_map_hash": _MAP_HASH,
+        "resolved_stack_hash": _STACK_HASH,
+        "observer_plan_hash": _OBSERVER_PLAN_HASH,
+        "runnability_contract_hash": _CONTRACT_HASH,
+    }
+
+    strict = validate_coverage_observation(result.ref, **expected)
+    carry_forward = validate_coverage_observation(
+        result.ref,
+        allow_equivalent_product=True,
+        **expected,
+    )
+
+    assert strict.valid is False
+    assert carry_forward.valid is True
+
+
+@pytest.mark.unit
 def test_coverage_observation_validation_rejects_a_symlinked_latest_pointer(
     tmp_path: Path,
 ) -> None:

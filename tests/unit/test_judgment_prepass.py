@@ -14,6 +14,11 @@ from harness.judgment_prepass import (
     write_judgment_prepass,
 )
 from harness.deferred_scope import apply_defer
+from harness.coverage_observation import (
+    CoverageObservationRef,
+    CoverageObservationResult,
+    CoverageRequirementObservation,
+)
 
 
 IMPLEMENTATION_MAP_V2_HEADER = (
@@ -21,6 +26,27 @@ IMPLEMENTATION_MAP_V2_HEADER = (
     "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
 )
+
+
+def _observed_coverage(requirement_id: str) -> CoverageObservationResult:
+    return CoverageObservationResult(
+        ref=CoverageObservationRef(
+            path=Path("/tmp/coverage-observation.json"),
+            receipt_sha256="a" * 64,
+            observation_sha256="b" * 64,
+            candidate_fingerprint="c" * 64,
+            passed=True,
+        ),
+        test_cases={},
+        requirements={
+            requirement_id: CoverageRequirementObservation(
+                requirement_id=requirement_id,
+                status="observed",
+                test_case_ids=("E-SMOKE-001",),
+                reason="all planned cases were observed as passed",
+            )
+        },
+    )
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -175,6 +201,79 @@ def test_planning_deferred_coverage_is_satisfied_by_strong_delivery_evidence(
     assert row["proposed_status"] == "IMPLEMENTED"
     assert row["reason_code"] == "deferred_automation_satisfied"
     assert (verify_run_dir / "coverage-evidence.json").is_file()
+
+
+def test_required_observation_promotes_medium_source_and_test_evidence(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "003-browser"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-003-browser-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| FR-001 | apps/web/game.ts:start | tests/e2e/game.spec.ts::journey | | none | source_and_test | medium | false | high | |\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "# Coverage Map\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | E-SMOKE-001 | e2e | deferred-automation | deferred-automation | planned | implement before merge |\n",
+        encoding="utf-8",
+    )
+
+    result = write_judgment_prepass(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        coverage_observation=_observed_coverage("FR-001"),
+        observer_required=True,
+    )
+
+    row = json.loads(result.json_path.read_text(encoding="utf-8"))["rows"][0]
+    assert row["proposed_status"] == "IMPLEMENTED"
+    assert row["reason_code"] == "coverage_observed_passed"
+
+
+def test_required_observation_never_falls_back_to_declaration_only_coverage(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "003-browser"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-003-browser-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| FR-001 | apps/web/game.ts:start | tests/e2e/game.spec.ts::journey | | none | source_and_test | strong | false | high | |\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "# Coverage Map\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | E-SMOKE-001 | e2e | deferred-automation | deferred-automation | planned | implement before merge |\n",
+        encoding="utf-8",
+    )
+
+    result = write_judgment_prepass(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        observer_required=True,
+    )
+
+    row = json.loads(result.json_path.read_text(encoding="utf-8"))["rows"][0]
+    assert row["proposed_status"] == "UNVERIFIED"
+    assert row["reason_code"] == "coverage_observer_missing"
 
 
 def test_planning_deferred_coverage_remains_unverified_without_strong_evidence(

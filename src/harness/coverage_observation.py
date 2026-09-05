@@ -292,6 +292,7 @@ def load_coverage_observation(path: Path) -> CoverageObservationResult:
     )
     validation = validate_coverage_observation(
         ref,
+        candidate_commit=str(payload.get("candidate_commit") or ""),
         candidate_fingerprint=ref.candidate_fingerprint,
         coverage_map_hash=normalized_fingerprints["coverage_map_hash"] or "",
         resolved_stack_hash=normalized_fingerprints["resolved_stack_hash"] or "",
@@ -313,13 +314,20 @@ def load_coverage_observation(path: Path) -> CoverageObservationResult:
 def validate_coverage_observation(
     ref: CoverageObservationRef,
     *,
+    candidate_commit: str | None = None,
     candidate_fingerprint: str,
     coverage_map_hash: str,
     resolved_stack_hash: str,
     observer_plan_hash: str,
     runnability_contract_hash: str | None,
+    allow_equivalent_product: bool = False,
 ) -> CoverageObservationValidation:
-    """Validate an observation and its complete equivalent-product receipt bundle."""
+    """Validate an observation and its receipt bundle.
+
+    Exact commit validation is the default. Landing alone may opt into
+    equivalent-product carry-forward for merge-only commits, after it has
+    independently checked every product-affecting fingerprint.
+    """
     try:
         path = ref.path
         if not path.is_absolute() or path.is_symlink():
@@ -392,9 +400,20 @@ def validate_coverage_observation(
         verification = _verification_ref(payload.get("verification_receipt"))
         if verification is None:
             return _invalid("coverage observation verification receipt is malformed")
-        validation = validate_equivalent_product_receipt(
-            verification,
-            candidate_fingerprint=candidate_fingerprint,
+        expected_commit = candidate_commit or str(payload.get("candidate_commit") or "")
+        if not expected_commit:
+            return _invalid("coverage observation candidate commit is missing")
+        validation = (
+            validate_equivalent_product_receipt(
+                verification,
+                candidate_fingerprint=candidate_fingerprint,
+            )
+            if allow_equivalent_product
+            else validate_verification_receipt(
+                verification,
+                candidate_commit=expected_commit,
+                candidate_fingerprint=candidate_fingerprint,
+            )
         )
         if not validation.valid:
             return _invalid("coverage observation verifier receipt is invalid")
@@ -405,9 +424,17 @@ def validate_coverage_observation(
             observer_ref = _verification_ref(raw_ref)
             if observer_ref is None:
                 return _invalid("coverage observation observer receipt is malformed")
-            validation = validate_equivalent_product_receipt(
-                observer_ref,
-                candidate_fingerprint=candidate_fingerprint,
+            validation = (
+                validate_equivalent_product_receipt(
+                    observer_ref,
+                    candidate_fingerprint=candidate_fingerprint,
+                )
+                if allow_equivalent_product
+                else validate_verification_receipt(
+                    observer_ref,
+                    candidate_commit=expected_commit,
+                    candidate_fingerprint=candidate_fingerprint,
+                )
             )
             if not validation.valid:
                 return _invalid("coverage observation observer receipt is invalid")

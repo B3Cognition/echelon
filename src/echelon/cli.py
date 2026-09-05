@@ -72,7 +72,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.19"
+CLI_VERSION = "4.0.20"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -6335,6 +6335,11 @@ def _delivery_status_summary(
     runnability = _normalized_delivery_runnability(state.get("user_runnability"))
     if runnability is not None:
         summary["user_runnability"] = runnability
+    coverage_observation = _normalized_delivery_coverage_observation(
+        state.get("coverage_observation")
+    )
+    if coverage_observation is not None:
+        summary["coverage_observation"] = coverage_observation
     last_verify = state.get("last_verify_result")
     if isinstance(last_verify, dict):
         verification_evidence = last_verify.get("verification_evidence")
@@ -6595,6 +6600,34 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
                     else "review the owner-approved runnability deferral",
                 )
             )
+    coverage_observation = summary.get("coverage_observation")
+    if isinstance(coverage_observation, dict):
+        observed = int(coverage_observation.get("requirements_observed") or 0)
+        total = int(coverage_observation.get("requirements_total") or 0)
+        coverage_status = str(coverage_observation.get("status") or "unknown")
+        fields.append(
+            (
+                "coverage",
+                f"{observed} / {total} requirements observed ({coverage_status})",
+            )
+        )
+        observers = coverage_observation.get("observers")
+        if isinstance(observers, dict):
+            for observer_id, observer in sorted(observers.items()):
+                if not isinstance(observer, dict):
+                    continue
+                passed = int(observer.get("passed") or 0)
+                total_runs = int(observer.get("total") or 0)
+                fields.append(
+                    ("observer", f"{observer_id}: {passed}/{total_runs} passed")
+                )
+        if coverage_observation.get("fingerprint_tuple_complete") is True:
+            fields.append(
+                (
+                    "evidence",
+                    "product + map + stack + observer-plan + contract match (recorded candidate)",
+                )
+            )
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
@@ -6686,6 +6719,67 @@ def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
             else {}
         ),
     }
+
+
+def _normalized_delivery_coverage_observation(value: object) -> dict[str, object] | None:
+    """Normalize Ralph's strict coverage state for stable operator reporting."""
+    if not isinstance(value, dict):
+        return None
+    status = str(value.get("status") or "").strip()
+    if not status:
+        return None
+    observed = _nonnegative_delivery_count(value.get("requirements_observed"))
+    total = _nonnegative_delivery_count(value.get("requirements_total"))
+    observers: dict[str, dict[str, int]] = {}
+    raw_observers = value.get("observers")
+    if isinstance(raw_observers, dict):
+        for raw_id, raw_observer in sorted(raw_observers.items()):
+            if not isinstance(raw_observer, dict):
+                continue
+            observer_id = str(raw_id).strip()
+            if not observer_id:
+                continue
+            execution_count = _nonnegative_delivery_count(
+                raw_observer.get("execution_count")
+            )
+            passed = (
+                execution_count
+                if str(raw_observer.get("status") or "").strip() == "passed"
+                else 0
+            )
+            observers[observer_id] = {
+                "passed": passed,
+                "total": execution_count,
+            }
+    raw_fingerprints = value.get("fingerprints")
+    fingerprints: dict[str, str] = {}
+    if isinstance(raw_fingerprints, dict):
+        for key in (
+            "candidate_fingerprint",
+            "coverage_map_hash",
+            "resolved_stack_hash",
+            "observer_plan_hash",
+            "runnability_contract_hash",
+        ):
+            item = str(raw_fingerprints.get(key) or "").strip()
+            if item:
+                fingerprints[key] = item
+    fingerprint_tuple_complete = status == "passed" and len(fingerprints) == 5
+    return {
+        "status": status,
+        "requirements_observed": observed,
+        "requirements_total": total,
+        "observers": observers,
+        "fingerprints": fingerprints,
+        "fingerprint_tuple_complete": fingerprint_tuple_complete,
+    }
+
+
+def _nonnegative_delivery_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:

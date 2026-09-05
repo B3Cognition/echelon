@@ -4,6 +4,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Strict browser coverage observation** — Browser 3D and browser WASM stacks
+  now declare isolated Vitest and Playwright JSON observers. Ralph binds every
+  active planned case to a tagged, source-backed test execution in a fresh
+  sandbox, records the immutable product/map/stack/observer-plan/contract
+  fingerprint tuple, and blocks unsupported test types before spending a
+  delivery attempt. Isolated observer JSON is copied from a sandbox-only path
+  into harness evidence rather than written to the candidate worktree.
+  Fulfillment and landing consume that evidence; merge-only landing commits
+  remain valid when the product fingerprint tuple is unchanged.
+
 ### Changed
 
 - **EGR-167 / EGR-169 layered L3 semantic closure** — Opt-in RE v2

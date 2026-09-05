@@ -4,10 +4,13 @@ from dataclasses import asdict, dataclass, field
 import os
 from pathlib import Path
 import subprocess
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
+from harness.canonical_requirements import extract_canonical_requirements
+from harness.coverage_evidence import parse_coverage_map_obligations
+from harness.deferred_scope import active_entries
 from harness.stacks.provisioning import provisioning_statuses
-from harness.stacks.resolver import ResolvedStacks
+from harness.stacks.resolver import ResolvedCoverageObserver, ResolvedStacks
 
 
 CommandLocator = Callable[[str], str | None]
@@ -45,6 +48,7 @@ class StackPreflightResult:
 def run_stack_preflight(
     resolved: ResolvedStacks,
     *,
+    coverage_test_types: Iterable[str] = (),
     command_locator: CommandLocator | None = None,
     probe_tools: bool = False,
     command_runner: CommandRunner | None = None,
@@ -120,6 +124,13 @@ def run_stack_preflight(
             )
         )
 
+    findings.extend(
+        coverage_observer_preflight_findings(
+            resolved,
+            coverage_test_types=coverage_test_types,
+        )
+    )
+
     if target_root is not None:
         findings.extend(
             _provisioning_findings(
@@ -132,6 +143,121 @@ def run_stack_preflight(
     return StackPreflightResult(
         findings=findings,
         checked_commands=checked_commands,
+    )
+
+
+def coverage_observer_preflight_findings(
+    resolved: ResolvedStacks,
+    *,
+    coverage_test_types: Iterable[str],
+) -> list[StackPreflightFinding]:
+    """Return fail-closed capability findings for planned coverage types.
+
+    Coverage maps are planning artifacts, so the caller supplies their already
+    parsed type values.  This deliberately verifies only *required* observers:
+    an optional stack tool is not evidence that delivery can meet a mandatory
+    coverage obligation.
+    """
+    test_types = tuple(
+        sorted(
+            {
+                str(value).strip()
+                for value in coverage_test_types
+                if str(value).strip()
+            }
+        )
+    )
+    if not test_types:
+        return []
+
+    stack_names = ", ".join(resolved.resolved_ids) or "selected stack"
+    if resolved.runnability.runner == "macos_simulator":
+        return [
+            StackPreflightFinding(
+                severity="error",
+                code="coverage_observer_unavailable",
+                message=(
+                    "Coverage observation for selected stack(s) "
+                    f"`{stack_names}` requires a macOS simulator runner "
+                    "(macos_simulator_required); the current Linux sandbox "
+                    "cannot execute it."
+                ),
+            )
+        ]
+
+    supported: dict[str, ResolvedCoverageObserver] = {}
+    for item in resolved.coverage_observers:
+        if not item.observer.required:
+            continue
+        for test_type in item.observer.test_types:
+            supported.setdefault(test_type, item)
+
+    return [
+        StackPreflightFinding(
+            severity="error",
+            code="coverage_observer_unavailable",
+            message=(
+                f"Coverage test type `{test_type}` has no required structured "
+                f"observer in selected stack(s) `{stack_names}`."
+            ),
+        )
+        for test_type in test_types
+        if test_type not in supported
+    ]
+
+
+def required_coverage_observers_for_types(
+    resolved: ResolvedStacks,
+    *,
+    coverage_test_types: Iterable[str],
+) -> tuple[ResolvedCoverageObserver, ...]:
+    """Select only required observers that own a planned test type."""
+    requested = {
+        str(value).strip()
+        for value in coverage_test_types
+        if str(value).strip()
+    }
+    return tuple(
+        item
+        for item in resolved.coverage_observers
+        if item.observer.required and requested.intersection(item.observer.test_types)
+    )
+
+
+def coverage_test_types_from_spec(spec_dir: Path | None) -> tuple[str, ...]:
+    """Read planned test types using the canonical coverage-map parser.
+
+    An incomplete Phase A directory has no capability requirement yet.  The
+    caller can therefore keep rendering general stack context while this helper
+    turns a completed map into a deterministic preflight input.
+    """
+    if spec_dir is None:
+        return ()
+    coverage_map = Path(spec_dir) / "coverage-map.md"
+    if not coverage_map.is_file():
+        return ()
+    try:
+        canonical_ids = {
+            item.id for item in extract_canonical_requirements(Path(spec_dir))
+        }
+        obligations = parse_coverage_map_obligations(coverage_map, canonical_ids)
+        owner_deferred_ids = {
+            item_id
+            for entry in active_entries(Path(spec_dir))
+            for item_id in entry.selected_ids
+            if not item_id.startswith("T-")
+        }
+    except (OSError, ValueError):
+        return ()
+    return tuple(
+        sorted(
+            {
+                item.test_type
+                for row in obligations
+                for item in row
+                if item.requirement_id not in owner_deferred_ids
+            }
+        )
     )
 
 

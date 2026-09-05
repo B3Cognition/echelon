@@ -105,6 +105,20 @@ class TestFulfillmentRunner:
     def test_verifier_version_invalidates_pre_split_ledgers(self):
         assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v3-coverage-evidence"
 
+    def test_required_coverage_observation_blocks_before_provider_execution(self, tmp_path):
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        result = FulfillmentRunner(provider).refresh(
+            str(tmp_path),
+            "spec-001",
+            observer_required=True,
+        )
+
+        assert result.exit_code == 2
+        assert result.reason == "required coverage observation is missing or invalid"
+        provider.exec_prompt.assert_not_called()
+
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"

@@ -39,9 +39,17 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     write_not_applicable_documentation_impact_report,
 )
-from harness.coverage_evidence import parse_coverage_map_obligations
+from harness.coverage_evidence import (
+    active_unmapped_coverage_requirement_ids,
+    parse_coverage_map_obligations,
+)
+from harness.deferred_scope import active_entries
 from harness.coverage_observation import (
     CoverageObservationError,
+    CoverageObservationRef,
+    CoverageObservationResult,
+    load_coverage_observation,
+    validate_coverage_observation,
     write_coverage_observation,
 )
 from harness.coverage_observer_runner import run_coverage_observers
@@ -91,6 +99,10 @@ from harness.verification_plan import build_verification_plan, materialize_servi
 from harness.stacks.resolver import (
     resolved_coverage_observer_plan_sha256,
     resolved_stack_contract_sha256,
+)
+from harness.stacks.preflight import (
+    coverage_observer_preflight_findings,
+    required_coverage_observers_for_types,
 )
 from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
@@ -2165,7 +2177,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -2341,38 +2353,15 @@ class RalphController:
             return verify_result
 
         resolved = getattr(self._config, "resolved_stacks", None)
-        observers = tuple(
+        required_observers = tuple(
             item
             for item in getattr(resolved, "coverage_observers", ())
             if item.observer.required
         )
-        if not observers:
+        if not required_observers:
             return verify_result
 
-        candidate = Path(worktree_path)
-        candidate_commit = _current_git_commit(candidate)
-        candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
-        if not candidate_commit or not candidate_fingerprint:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-candidate-invalid",
-                error=(
-                    "Required coverage observers could not bind execution to the "
-                    "candidate commit and product fingerprint."
-                ),
-            )
-        standard_receipt = self._verification_receipt_from_result(verify_result)
-        if standard_receipt is None:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-standard-evidence-missing",
-                error=(
-                    "Required coverage observers need the passed Ralph sandbox "
-                    "verification receipt, but none was attached."
-                ),
-            )
-
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is None:
             return self._coverage_observation_failure(
                 verify_result,
@@ -2398,6 +2387,32 @@ class RalphController:
                 for row in obligation_rows
                 for obligation in row
             )
+            owner_deferred_ids = {
+                item_id
+                for entry in active_entries(spec_dir)
+                for item_id in entry.selected_ids
+                if not item_id.startswith("T-")
+            }
+            unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
+                canonical_ids=canonical_ids,
+                obligations=obligations,
+                deferred_ids=owner_deferred_ids,
+            )
+            if unmapped_requirement_ids:
+                return self._coverage_observation_failure(
+                    verify_result,
+                    failure_id="coverage-observer-map-incomplete",
+                    error=(
+                        "Required coverage observation has no planned test obligation "
+                        "for active requirement(s): "
+                        + ", ".join(unmapped_requirement_ids[:20])
+                    ),
+                )
+            obligations = tuple(
+                obligation
+                for obligation in obligations
+                if obligation.requirement_id not in owner_deferred_ids
+            )
             coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
             runnability_contract_hash = self._runnability_contract_hash(
                 verify_result
@@ -2415,6 +2430,63 @@ class RalphController:
                 verify_result,
                 failure_id="coverage-observer-contract-invalid",
                 error=f"Coverage observation inputs are invalid: {exc}",
+            )
+
+        if not obligations:
+            state = self._state_store.read()
+            state["coverage_observation"] = {
+                "status": "not_required",
+                "reason": "all planned coverage requirements are owner-deferred",
+            }
+            self._state_store.write(state)
+            return verify_result
+
+        planned_test_types = {item.test_type for item in obligations}
+        unavailable = coverage_observer_preflight_findings(
+            resolved,
+            coverage_test_types=planned_test_types,
+        )
+        if unavailable:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-unavailable",
+                error="; ".join(item.message for item in unavailable),
+            )
+        observers = required_coverage_observers_for_types(
+            resolved,
+            coverage_test_types=planned_test_types,
+        )
+        if not observers:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-unavailable",
+                error=(
+                    "Required coverage observers could not select an observer for "
+                    "the planned coverage test types."
+                ),
+            )
+
+        candidate = Path(worktree_path)
+        candidate_commit = _current_git_commit(candidate)
+        candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
+        if not candidate_commit or not candidate_fingerprint:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-candidate-invalid",
+                error=(
+                    "Required coverage observers could not bind execution to the "
+                    "candidate commit and product fingerprint."
+                ),
+            )
+        standard_receipt = self._verification_receipt_from_result(verify_result)
+        if standard_receipt is None:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observer-standard-evidence-missing",
+                error=(
+                    "Required coverage observers need the passed Ralph sandbox "
+                    "verification receipt, but none was attached."
+                ),
             )
 
         evidence_dir = self._coverage_observer_evidence_dir()
@@ -2567,6 +2639,114 @@ class RalphController:
         value = raw.get("contract_hash")
         return str(value) if isinstance(value, str) and value else None
 
+    def _coverage_observation_for_fulfillment(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> tuple[CoverageObservationResult | None, bool, str]:
+        """Return the current strict observation for fulfillment, or a reason.
+
+        The observation is a Ralph-owned immutable artifact. Fulfillment must
+        not discover a path from provider-authored output or reuse it after the
+        product, coverage map, selected stacks, observer plan, or required
+        runnability contract changes.
+        """
+        resolved = getattr(self._config, "resolved_stacks", None)
+        observers = tuple(
+            item
+            for item in getattr(resolved, "coverage_observers", ())
+            if item.observer.required
+        )
+        if not observers:
+            return None, False, ""
+
+        try:
+            spec_dir = self._find_existing_spec_dir(worktree_path)
+            if spec_dir is None:
+                raise CoverageObservationError("active spec directory is unavailable")
+            coverage_map = spec_dir / "coverage-map.md"
+            canonical_ids = {
+                item.id for item in extract_canonical_requirements(spec_dir)
+            }
+            obligations = tuple(
+                obligation
+                for row in parse_coverage_map_obligations(coverage_map, canonical_ids)
+                for obligation in row
+            )
+            owner_deferred_ids = {
+                item_id
+                for entry in active_entries(spec_dir)
+                for item_id in entry.selected_ids
+                if not item_id.startswith("T-")
+            }
+            unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
+                canonical_ids=canonical_ids,
+                obligations=obligations,
+                deferred_ids=owner_deferred_ids,
+            )
+            if unmapped_requirement_ids:
+                return (
+                    None,
+                    True,
+                    "coverage map has no planned test obligation for active requirement(s): "
+                    + ", ".join(unmapped_requirement_ids[:20]),
+                )
+            if not any(
+                obligation.requirement_id not in owner_deferred_ids
+                for obligation in obligations
+            ):
+                return None, False, ""
+            coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
+        except (CoverageObservationError, OSError, ValueError) as exc:
+            return None, True, f"coverage observation inputs are invalid: {exc}"
+
+        raw_ref = verify_result.verification_evidence.get("coverage_observation")
+        if not isinstance(raw_ref, Mapping):
+            return (
+                None,
+                True,
+                "selected stack requires a coverage observation, but Ralph did "
+                "not attach one to the passed verification evidence",
+            )
+        try:
+            declared = CoverageObservationRef.from_mapping(raw_ref)
+            loaded = load_coverage_observation(declared.path)
+            if loaded.ref != declared:
+                raise CoverageObservationError(
+                    "coverage observation reference does not match its immutable artifact"
+                )
+            candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
+            if not candidate_fingerprint:
+                raise CoverageObservationError(
+                    "candidate product fingerprint is unavailable"
+                )
+            candidate_commit = _current_git_commit(Path(worktree_path))
+            if not candidate_commit:
+                raise CoverageObservationError("candidate commit is unavailable")
+            runnability_contract_hash = self._runnability_contract_hash(verify_result)
+            if (
+                str(getattr(resolved.runnability, "policy", "not_applicable"))
+                == "required"
+                and runnability_contract_hash is None
+            ):
+                raise CoverageObservationError(
+                    "required runnability contract evidence is missing"
+                )
+            validation = validate_coverage_observation(
+                loaded.ref,
+                candidate_commit=candidate_commit,
+                candidate_fingerprint=candidate_fingerprint,
+                coverage_map_hash=coverage_map_hash,
+                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+                runnability_contract_hash=runnability_contract_hash,
+            )
+            if not validation.valid:
+                raise CoverageObservationError(validation.reason)
+        except (CoverageObservationError, OSError, ValueError) as exc:
+            return None, True, f"coverage observation is invalid: {exc}"
+        return loaded, True, ""
+
     def _coverage_observer_evidence_dir(self) -> Path:
         return (
             self._state_store.state_dir.parent
@@ -2591,15 +2771,30 @@ class RalphController:
     ) -> None:
         ref = getattr(observation, "ref", None)
         requirements = getattr(observation, "requirements", {})
+        raw_fingerprints = getattr(observation, "fingerprints", {})
+        fingerprints = {
+            key: str(raw_fingerprints.get(key) or "")
+            for key in (
+                "coverage_map_hash",
+                "resolved_stack_hash",
+                "observer_plan_hash",
+                "runnability_contract_hash",
+            )
+            if isinstance(raw_fingerprints, Mapping) and raw_fingerprints.get(key)
+        }
+        if isinstance(ref, CoverageObservationRef) and ref.candidate_fingerprint:
+            fingerprints["candidate_fingerprint"] = ref.candidate_fingerprint
         state = self._state_store.read()
         state["coverage_observation"] = {
             "status": "passed" if getattr(ref, "passed", False) else "failed",
             "path": str(getattr(ref, "path", "")),
+            "ref": ref.as_mapping() if isinstance(ref, CoverageObservationRef) else None,
             "requirements_observed": sum(
                 item.status == "observed" for item in requirements.values()
             ) if isinstance(requirements, Mapping) else 0,
             "requirements_total": len(requirements) if isinstance(requirements, Mapping) else 0,
             "observers": dict(observer_evidence),
+            "fingerprints": fingerprints,
         }
         self._state_store.write(state)
 
@@ -2643,7 +2838,7 @@ class RalphController:
         resolved_policy = getattr(self._config, "resolved_runnability", None)
         policy = str(getattr(resolved_policy, "policy", "not_applicable"))
         required = policy == "required"
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is not None:
             try:
                 disposition = read_runnability_disposition(spec_dir)
@@ -3095,7 +3290,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -3328,14 +3523,33 @@ class RalphController:
                 verification_evidence=dict(verify_result.verification_evidence),
             )
 
+        coverage_observation, observer_required, coverage_error = (
+            self._coverage_observation_for_fulfillment(
+                verify_result,
+                worktree_path,
+            )
+        )
+        if coverage_error:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observation-invalid",
+                error=coverage_error,
+            )
         refresh_kwargs: dict[str, object] = {
-            "spec_dir": self._find_spec_dir(worktree_path),
+            "spec_dir": (
+                self._find_existing_spec_dir(worktree_path)
+                if observer_required
+                else self._find_spec_dir(worktree_path)
+            ),
             "orchestration_root": (
                 self._orchestration_root(Path(worktree_path))
                 if self._spec_artifacts_mode() == "external"
                 else None
-            )
+            ),
         }
+        if observer_required:
+            refresh_kwargs["observer_required"] = True
+            refresh_kwargs["coverage_observation"] = coverage_observation
         if verify_result.verification_evidence:
             refresh_kwargs["verification_evidence"] = dict(
                 verify_result.verification_evidence
@@ -5401,6 +5615,27 @@ class RalphController:
         if base_dir:
             return Path(base_dir).resolve()
         return (fallback or Path.cwd()).resolve()
+
+    def _find_existing_spec_dir(self, worktree_path: str | Path) -> Path | None:
+        """Find a spec for evidence validation without changing the candidate.
+
+        Standard verification is already bound to a product fingerprint. Evidence
+        gates therefore must never materialize a missing worktree-owned spec
+        after that verification; doing so would invalidate the receipt they are
+        about to consume.
+        """
+        worktree = Path(worktree_path)
+        if self._spec_artifacts_mode() == "worktree":
+            return self._find_spec_dir_in_root(worktree)
+
+        state = self._state_store.read()
+        state_spec_dir = state.get("spec_dir")
+        if state_spec_dir:
+            candidate = Path(str(state_spec_dir))
+            if not candidate.is_absolute():
+                candidate = self._orchestration_root(worktree) / candidate
+            return candidate if candidate.is_dir() else None
+        return find_spec_dir(self._spec_id, self._orchestration_root(worktree))
 
     def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
         worktree = Path(worktree_path)

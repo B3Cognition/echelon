@@ -9,6 +9,7 @@ from typing import Any
 
 from harness.deferred_scope import active_entries
 from harness.coverage_evidence import write_coverage_evidence
+from harness.coverage_observation import CoverageObservationResult
 
 
 FULFILLMENT_STATUSES = {
@@ -96,9 +97,15 @@ class _ImplementationRow:
 
 
 def build_judgment_prepass(
-    *, spec_dir: Path, verify_run_dir: Path
+    *,
+    spec_dir: Path,
+    verify_run_dir: Path,
+    coverage_observation: CoverageObservationResult | None = None,
+    observer_required: bool = False,
 ) -> list[JudgmentRow]:
     inventory_ids = _inventory_ids(verify_run_dir / "canonical-requirements.json")
+    existing_observer_required = _existing_observer_requirement(verify_run_dir)
+    observer_required = observer_required or existing_observer_required
     if (spec_dir / "coverage-map.md").is_file():
         deferred_ids = {
             item_id
@@ -106,12 +113,15 @@ def build_judgment_prepass(
             for item_id in entry.selected_ids
             if not item_id.startswith("T-")
         }
-        write_coverage_evidence(
-            spec_dir=spec_dir,
-            verify_run_dir=verify_run_dir,
-            canonical_ids=inventory_ids,
-            deferred_ids=deferred_ids,
-        )
+        if coverage_observation is not None or not existing_observer_required:
+            write_coverage_evidence(
+                spec_dir=spec_dir,
+                verify_run_dir=verify_run_dir,
+                canonical_ids=inventory_ids,
+                deferred_ids=deferred_ids,
+                observation=coverage_observation,
+                observer_required=observer_required,
+            )
     implementation_rows = _implementation_rows(verify_run_dir / "implementation-map.md")
     by_id = {row.id: row for row in implementation_rows}
     coverage_by_id = _coverage_evidence_rows(
@@ -140,10 +150,12 @@ def build_judgment_prepass(
             )
             continue
         coverage = coverage_by_id.get(item_id)
-        if coverage is not None and coverage["status"] not in {
-            "automated",
-            "deferred",
-        }:
+        allowed_coverage = (
+            {"observed"}
+            if observer_required
+            else {"automated", "deferred"}
+        )
+        if coverage is not None and coverage["status"] not in allowed_coverage:
             coverage_status = coverage["status"]
             proposed = "MISSING" if coverage_status == "missing" else "UNVERIFIED"
             results.append(
@@ -170,6 +182,9 @@ def build_judgment_prepass(
             results.append(JudgmentRow.fallback_row(item_id, "missing_implementation_map_row"))
             continue
         classified = _classify_row(row)
+        if observer_required and coverage is not None and coverage["status"] == "observed":
+            results.append(_classify_observed_coverage_row(row))
+            continue
         if (
             coverage is not None
             and coverage["status"] == "deferred"
@@ -189,9 +204,18 @@ def build_judgment_prepass(
 
 
 def write_judgment_prepass(
-    *, spec_dir: Path, verify_run_dir: Path
+    *,
+    spec_dir: Path,
+    verify_run_dir: Path,
+    coverage_observation: CoverageObservationResult | None = None,
+    observer_required: bool = False,
 ) -> JudgmentPrepassResult:
-    rows = build_judgment_prepass(spec_dir=spec_dir, verify_run_dir=verify_run_dir)
+    rows = build_judgment_prepass(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        coverage_observation=coverage_observation,
+        observer_required=observer_required,
+    )
     payload = {
         "rows": [row.to_dict() for row in rows],
         "summary": {
@@ -357,6 +381,47 @@ def _classify_row(row: _ImplementationRow) -> JudgmentRow:
     )
 
 
+def _classify_observed_coverage_row(row: _ImplementationRow) -> JudgmentRow:
+    """Promote only a measured case with high-confidence source/test evidence.
+
+    The planning mapper intentionally labels deferred rows ``medium``.  That
+    historical declaration cannot prevent a passed harness observation from
+    discharging execution evidence, while source-less or runtime-only claims
+    remain subject to normal judgment.
+    """
+    if row.runtime_threshold and row.evidence_kind == "assertion_only":
+        return JudgmentRow.mechanical_row(
+            row.id, "UNVERIFIED", "threshold_assertion_only"
+        )
+    if (
+        not row.verified_implementation_evidence.strip()
+        and not row.verified_test_evidence.strip()
+        and row.confidence == "none"
+    ):
+        return JudgmentRow.mechanical_row(row.id, "MISSING", "no_evidence")
+    if _notes_require_judgment(row.notes):
+        return JudgmentRow.fallback_row(row.id, "notes_require_judgment")
+    if (
+        not row.runtime_threshold
+        and row.confidence == "high"
+        and row.evidence_kind == "source_and_test"
+        and row.verified_implementation_evidence.strip()
+        and row.verified_test_evidence.strip()
+    ):
+        return JudgmentRow.mechanical_row(
+            row.id,
+            "IMPLEMENTED",
+            "coverage_observed_passed",
+            evidence=(
+                f"{row.verified_implementation_evidence}; "
+                f"{row.verified_test_evidence}"
+            ),
+        )
+    return JudgmentRow.fallback_row(
+        row.id, "confidence_or_semantics_require_judgment"
+    )
+
+
 def _notes_require_judgment(notes: str) -> bool:
     lowered = notes.lower()
     return any(
@@ -416,6 +481,17 @@ def _coverage_evidence_rows(path: Path) -> dict[str, dict[str, str]]:
             "reason": str(raw.get("reason") or status).strip(),
         }
     return result
+
+
+def _existing_observer_requirement(verify_run_dir: Path) -> bool:
+    path = verify_run_dir / "coverage-evidence.json"
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("observer_required") is True
 
 
 def _judgment_rows(path: Path) -> list[JudgmentRow]:

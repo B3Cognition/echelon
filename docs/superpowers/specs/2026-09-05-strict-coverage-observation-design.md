@@ -153,7 +153,9 @@ in candidate `.echelon/config.yml`. Every observer specifies:
 - a globally unique identifier and its non-empty `test_types` set;
 - a sandbox command which emits a supported structured result format;
 - an adapter (`playwright-json` or `vitest-json` initially);
-- the report path to collect from the sandbox; and
+- a target-relative report location: `captured` reads it from the verified
+  candidate, while `isolated` uses its filename for the retained harness
+  artifact; and
 - whether it is required and whether it is `captured` or `isolated`.
 
 The stack resolver rejects two selected required observers that claim the same
@@ -169,6 +171,14 @@ candidate, with the same sandbox image, service plan, bootstrap, and injected
 environment class as the normal verifier. It never runs against mutable service
 state left by the normal verifier or another observer. Each receipt is retained
 and every required stage must pass.
+
+An isolated command must write its report through the harness-provided
+`ECHELON_COVERAGE_REPORT` environment variable. That destination is outside the
+mounted candidate worktree. Echelon copies the finished bytes out through the
+sandbox provider and writes them once under the observer's immutable evidence
+directory before parsing. A stack observer therefore cannot hide generated
+reports in candidate `.echelon` control files excluded from the product
+fingerprint.
 
 This allows a stack to use capture when its normal verifier already emits
 structured results, while safely supporting existing projects whose aggregate
