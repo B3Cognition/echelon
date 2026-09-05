@@ -26,6 +26,7 @@ from harness.delivery_results import DeliveryRunOutcome, LandingOutcome
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
 from harness.spec_frontmatter import find_spec_dir, read_targets
+from harness.state import state_lock_owner_is_alive
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ def _fresh_delivery_baselines(
             except (OSError, json.JSONDecodeError):
                 continue
             status = str(state.get("status") or "")
-            if status == "running" and _state_lock_owner_is_alive(state_path):
+            if status == "running" and state_lock_owner_is_alive(state_path):
                 raise RunContextError(
                     "delivery is already active for "
                     f"{intent.spec_id}/{strategy_id} in {prior_build_id}"
@@ -191,29 +192,6 @@ def _checkpoint_is_landed(gitops: Any | None, commit: str) -> bool:
     except Exception as error:  # pragma: no cover - defensive: stale recovery must remain available
         logger.warning("Could not inspect stale checkpoint %s: %s", commit[:12], error)
         return False
-
-
-def _state_lock_owner_is_alive(state_path: Path) -> bool:
-    """Return whether a delivery state lock names a currently live process."""
-    try:
-        lock_text = state_path.with_suffix(".lock").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
-    if match is None:
-        return False
-    pid = int(match.group(1))
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:

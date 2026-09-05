@@ -350,6 +350,34 @@ def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.Capt
 
 
 @pytest.mark.unit
+def test_delivery_status_reports_dead_running_lock_as_interrupted(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An abruptly lost delivery process must not look active to an operator."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "running"
+    state["termination_reason"] = None
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    state_file.with_suffix(".lock").write_text(
+        "pid=999999999\ntimestamp=2026-07-10T10:15:00+00:00\nrun_id=lost\n",
+        encoding="utf-8",
+    )
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["status"] == "interrupted"
+    assert latest["termination_reason"] == "execution_lost"
+    assert latest["next"] == "echelon delivery run 001"
+    assert latest["execution"] == "process exited; checkpoint preserved"
+    assert json.loads(state_file.read_text(encoding="utf-8"))["status"] == "running"
+
+
+@pytest.mark.unit
 def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

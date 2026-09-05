@@ -41,6 +41,7 @@ from harness.recovery_instruction import (
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.state import state_lock_owner_is_alive
 from harness.issue_identity import (
     issue_fingerprint,
     matching_issue_resolution,
@@ -71,7 +72,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.17"
+CLI_VERSION = "4.0.18"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
@@ -6259,11 +6260,31 @@ def _delivery_status_next_step(
     return f"echelon delivery run {effective_spec}"
 
 
+def _delivery_status_effective_state(state: dict) -> dict:
+    """Overlay an orphaned running record as an interrupted delivery.
+
+    Status must stay read-only: a later ``delivery run`` owns checkpoint
+    recovery.  It still must not tell an operator to wait for a PID that has
+    already exited.
+    """
+    if str(state.get("status") or "") != "running":
+        return state
+    raw_state_file = str(state.get("state_file") or "").strip()
+    if raw_state_file and state_lock_owner_is_alive(Path(raw_state_file)):
+        return state
+    observed = dict(state)
+    observed["status"] = "interrupted"
+    observed["termination_reason"] = "execution_lost"
+    observed["execution"] = "process exited; checkpoint preserved"
+    return observed
+
+
 def _delivery_status_summary(
     state: dict,
     *,
     project_root: Path,
 ) -> dict:
+    state = _delivery_status_effective_state(state)
     spec_id = str(state.get("spec_id") or "")
     strategy = str(state.get("strategy_id") or "default")
     status = str(state.get("status") or "unknown")
@@ -6300,6 +6321,7 @@ def _delivery_status_summary(
         "salvage_commit": str(state.get("salvage_commit") or ""),
         "checkpoint_count": checkpoint_count,
         "state_file": str(state.get("state_file") or ""),
+        "execution": str(state.get("execution") or ""),
         "next": _delivery_status_next_step(state, spec_id, escalation),
     }
     if escalation is not None:
@@ -6396,6 +6418,8 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         fields.append(("target", str(summary["target"])))
     if summary.get("mode"):
         fields.append(("mode", str(summary["mode"])))
+    if summary.get("execution"):
+        fields.append(("execution", str(summary["execution"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
     tokens = int(summary.get("tokens_used") or 0)
     budget = summary.get("token_budget")

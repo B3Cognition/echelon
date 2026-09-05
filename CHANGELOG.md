@@ -45,6 +45,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Interrupted delivery visibility** — `echelon delivery status` now checks
+  the per-strategy execution lock. A dead or absent owner for a `running`
+  record is reported as an interrupted, checkpoint-preserved delivery rather
+  than misleadingly live work; new delivery budgets reuse the same shared
+  liveness check before recovering durable checkpoints.
+
 - **Coupled coverage requirements** — Fulfillment evidence now recognizes
   slash-separated requirement IDs in one coverage-map row (for example,
   `AC-001 / FR-001`), rather than falsely treating both requirements as

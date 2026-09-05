@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,6 +108,24 @@ def is_process_alive(pid: int) -> bool:
         return True
     except (OSError, ProcessLookupError):
         return False
+
+
+def state_lock_owner_is_alive(state_file: Path) -> bool:
+    """Return whether a delivery state file's lock names a live process.
+
+    A missing, malformed, or dead lock cannot prove that a ``running`` JSON
+    record still has an executing owner.  Callers use this to present abrupt
+    process loss as an interrupted, recoverable delivery rather than live work.
+    """
+    try:
+        lock_text = state_file.with_suffix(".lock").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
+    if match is None:
+        return False
+    pid = int(match.group(1))
+    return pid > 0 and is_process_alive(pid)
 
 
 class StateStore:
