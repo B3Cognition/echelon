@@ -17,6 +17,7 @@ from tests.unit.test_re_v2_protocol_28_lifecycle import (
     _MalformedFirstProducerBackend,
     _RepairThenPassBackend,
 )
+from tests.unit.test_re_v2_protocol_28_preparation import _accepted_debt_fixture
 
 
 @pytest.mark.unit
@@ -138,6 +139,27 @@ def _identity(value: object) -> str:
     from harness.re_v2.canonical import content_digest
 
     return content_digest(value)
+
+
+@pytest.mark.unit
+def test_partial_l4_status_keeps_residual_debt_visible(tmp_path: Path) -> None:
+    from harness.re_v2.protocol_28.status import (
+        protocol_28_status_document,
+        render_protocol_28_status,
+    )
+    from harness.re_v2.protocol_28.lifecycle import prepare_protocol_28_request
+
+    workspace, intent, parent, options, acceptance = _accepted_debt_fixture(tmp_path)
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+    run_dir = create_or_reuse_protocol_28_child(workspace, inputs)
+
+    document = protocol_28_status_document(run_dir)
+    output = render_protocol_28_status(run_dir)
+
+    assert document["input_quality"] == "partial"
+    assert document["residual_debt_acceptance_hash"] == acceptance.identity
+    assert "input quality: partial" in output
+    assert f"residual debt acceptance: {acceptance.identity}" in output
 
 
 @pytest.mark.unit

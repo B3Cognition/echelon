@@ -572,6 +572,7 @@ def _entry(
     policy: ExhaustivePolicyV1,
     evidence_sizes: dict[str, int],
     planned_dependency_root_ids: tuple[str, ...] = (),
+    global_lower_authority_ids: tuple[str, ...] = (),
 ) -> SlicePlanEntryV1:
     context_bytes = sum(
         len(canonical_json_bytes(item.to_json_dict())) for item in subjects
@@ -588,6 +589,12 @@ def _entry(
             {
                 target.candidate_authority_hash,
                 *target.relevant_l2_root_ids,
+                *global_lower_authority_ids,
+                *(
+                    lower_id
+                    for subject in subjects
+                    for lower_id in subject.lower_authority_ids
+                ),
             }
         )
     )
@@ -608,6 +615,7 @@ def _target_plan(
     evidence_catalog: SnapshotEvidenceCatalogV1,
     composition_dependency_root_ids: tuple[str, ...] = (),
     required_finding_ids: tuple[str, ...] = (),
+    global_lower_authority_ids: tuple[str, ...] = (),
 ) -> ExhaustiveTargetPlanV1:
     categories = policy.domain_categories if target.target_kind == "domain" else policy.source_categories
     allowed = set(categories)
@@ -771,6 +779,7 @@ def _target_plan(
                     if category == "source-composition"
                     else ()
                 ),
+                global_lower_authority_ids=global_lower_authority_ids,
             ))
             subject_assignment_ids.extend(
                 content_digest({"subject_id": item.identity, "category_id": category})
@@ -859,11 +868,19 @@ def build_exhaustive_plan(
         ))
         for key in l3_by_target
     }
+    common_lower_authority_ids = tuple(
+        sorted(
+            set.intersection(
+                *(set(item.lower_authority_ids) for item in subjects.subjects)
+            )
+        )
+    ) if subjects.subjects else ()
     domain_plans = tuple(
         _target_plan(
             l3_by_target[key], evidence_by_target[key],
             tuple(subjects_by_target[key]), policy, evidence,
             required_finding_ids=findings_by_target[key],
+            global_lower_authority_ids=common_lower_authority_ids,
         )
         for key in sorted(l3_by_target)
         if key[1] == "domain"
@@ -876,6 +893,7 @@ def build_exhaustive_plan(
                 item.identity for item in domain_plans if item.source_id == key[0]
             )),
             findings_by_target[key],
+            common_lower_authority_ids,
         )
         for key in sorted(l3_by_target)
         if key[1] == "source"

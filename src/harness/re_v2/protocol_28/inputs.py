@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import shutil
 from types import MappingProxyType
@@ -50,6 +51,10 @@ from harness.re_v2.protocol_28.planning import (
     ExhaustiveSubjectCatalogV1,
 )
 from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1
+from harness.re_v2.protocol_25.debt import (
+    Protocol25DebtError,
+    ResidualDebtAcceptanceV1,
+)
 from harness.re_v2.run_store import ReV2Paths, ReV2RunStoreError, load_run_manifest
 
 
@@ -132,6 +137,7 @@ class Protocol28CreationInputs:
             raise Protocol28InputError(
                 "unbound authority object is forbidden: " + ",".join(sorted(extra))
             )
+        protocol_28_residual_debt_acceptance(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +156,108 @@ class ValidatedProtocol28Inputs:
         object.__setattr__(
             self, "authority_objects", MappingProxyType(dict(sorted(self.authority_objects.items())))
         )
+
+
+def residual_debt_acceptance_from_objects(
+    authority_objects: Mapping[str, bytes],
+) -> ResidualDebtAcceptanceV1 | None:
+    """Decode the unique exact residual-debt object in an authority closure."""
+    candidates: list[tuple[str, ResidualDebtAcceptanceV1]] = []
+    for object_hash, payload in authority_objects.items():
+        try:
+            raw = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, dict) or raw.get("acceptance_policy_id") != (
+            "re-v2-banzai-residual-debt-v1"
+        ):
+            continue
+        try:
+            acceptance = load_canonical_object(
+                payload, ResidualDebtAcceptanceV1.from_json_dict
+            )
+        except (Protocol22SchemaError, Protocol25DebtError, ValueError) as exc:
+            raise Protocol28InputError(
+                f"invalid residual-debt acceptance authority: {object_hash}"
+            ) from exc
+        if acceptance.identity != object_hash:
+            raise Protocol28InputError("residual-debt acceptance identity mismatch")
+        candidates.append((object_hash, acceptance))
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        raise Protocol28InputError("L4 inputs contain multiple residual-debt acceptances")
+    return candidates[0][1]
+
+
+def protocol_28_residual_debt_acceptance(
+    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+) -> ResidualDebtAcceptanceV1 | None:
+    """Return and authenticate the exact residual debt carried into L4, if any."""
+    if not isinstance(inputs, (Protocol28CreationInputs, ValidatedProtocol28Inputs)):
+        raise Protocol28InputError("protocol-2.8 debt authority input is invalid")
+    acceptance = residual_debt_acceptance_from_objects(inputs.authority_objects)
+    if acceptance is None:
+        return None
+    acceptance_hash = acceptance.identity
+    parent = inputs.parent_authority_bundle
+    if (
+        acceptance.run_manifest_hash != parent.l3_manifest_hash
+        or acceptance.terminal_event_hash != parent.l3_terminal_event_hash
+        or acceptance.audit_epoch_id != parent.frozen_epoch_id
+        or acceptance.source_snapshot_id != parent.source_snapshot_id
+    ):
+        raise Protocol28InputError("residual-debt acceptance does not bind the L3 parent")
+    selected_unresolved = tuple(
+        sorted(
+            finding_id
+            for projection in inputs.l3_projection_catalog.projections
+            for finding_id in projection.unresolved_finding_ids
+        )
+    )
+    if not selected_unresolved or not set(selected_unresolved).issubset(
+        acceptance.unresolved_finding_ids
+    ):
+        raise Protocol28InputError(
+            "residual-debt acceptance does not cover selected unresolved findings"
+        )
+    debt_sources = {
+        finding_id: group.source_id
+        for group in acceptance.unresolved_by_source_and_class
+        for finding_id in group.finding_ids
+    }
+    if any(
+        debt_sources.get(finding_id) != projection.source_id
+        for projection in inputs.l3_projection_catalog.projections
+        for finding_id in projection.unresolved_finding_ids
+    ):
+        raise Protocol28InputError(
+            "residual-debt acceptance source ownership differs from L3 projections"
+        )
+    plan_entries = tuple(
+        entry
+        for target in inputs.exhaustive_plan.target_plans
+        for entry in target.entries
+    )
+    if any(
+        acceptance_hash not in entry.required_lower_authority_ids
+        for entry in plan_entries
+    ):
+        raise Protocol28InputError(
+            "every L4 slice must authenticate the residual-debt acceptance"
+        )
+    return acceptance
+
+
+def protocol_28_input_quality(
+    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+) -> str:
+    """Classify L4 inputs without allowing exhaustive evidence to erase L3 debt."""
+    return (
+        "partial"
+        if protocol_28_residual_debt_acceptance(inputs) is not None
+        else "complete"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,9 +747,11 @@ def _load_staged(
             read_staged_shard_bytes(store, shard)
         except (ReV2LedgerError, Protocol22SchemaError) as exc:
             raise Protocol28InputError(f"invalid snapshot evidence object: {exc}") from exc
-    return ValidatedProtocol28Inputs(
+    loaded = ValidatedProtocol28Inputs(
         manifest, parent, l3, evidence, subjects, policy, executors, plan, opaque
     )
+    protocol_28_residual_debt_acceptance(loaded)
+    return loaded
 
 
 def _read_collection(paths: ReV2Paths, label: str, decoder):  # type: ignore[no-untyped-def]
@@ -717,7 +827,10 @@ __all__ = (
     "ValidatedProtocol28ClosureInputs",
     "ValidatedProtocol28Inputs",
     "load_protocol_28_inputs",
+    "protocol_28_input_quality",
+    "protocol_28_residual_debt_acceptance",
     "publish_protocol_28_run",
+    "residual_debt_acceptance_from_objects",
     "stage_closure_inputs",
     "stage_exhaustive_inputs",
 )

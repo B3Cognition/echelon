@@ -18,6 +18,7 @@ from harness.re_v2.protocol_28.inputs import (
     ValidatedProtocol28ClosureInputs,
     ValidatedProtocol28Inputs,
     load_protocol_28_inputs,
+    residual_debt_acceptance_from_objects,
 )
 from harness.re_v2.protocol_28.ledger import Protocol28Ledger
 from harness.re_v2.protocol_28.artifacts import (
@@ -212,6 +213,10 @@ def build_protocol_28_slice_context(
                 "bytes_base64": base64.b64encode(payload).decode("ascii"),
             }
         )
+    residual_debt = residual_debt_acceptance_from_objects(
+        inputs.authority_objects
+    )
+    input_quality = "partial" if residual_debt is not None else "complete"
     payload: dict[str, object] = {
         "schema_version": 1,
         "role": role,
@@ -229,6 +234,18 @@ def build_protocol_28_slice_context(
             for item in permitted_anchors
         ],
         "lower_authority_objects": lower_objects,
+        "input_quality": input_quality,
+        "residual_debt_acceptance_hash": (
+            None if residual_debt is None else residual_debt.identity
+        ),
+        "accepted_residual_debt": (
+            None if residual_debt is None else residual_debt.to_json_dict()
+        ),
+        "residual_debt_disposition": (
+            None
+            if residual_debt is None
+            else "accepted_not_closed_by_l4"
+        ),
         "repair_diagnostic_ids": list(normalized_diagnostic_ids),
         "repair_diagnostics": [
             item.to_json_dict() for item in repair_diagnostics

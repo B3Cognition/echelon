@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import json
 
 import pytest
 
@@ -9,7 +10,14 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_24.model import SelectionScopeV1
 from harness.re_v2.protocol_28.authority import (
     ValidatedL3ParentV1,
+    ValidatedL3ParentV2,
     ValidatedL3TargetV1,
+)
+from harness.re_v2.protocol_25.debt import DebtGroupV1, ResidualDebtAcceptanceV1
+from harness.re_v2.protocol_28.inputs import (
+    Protocol28InputError,
+    protocol_28_input_quality,
+    protocol_28_residual_debt_acceptance,
 )
 from harness.re_v2.protocol_28.executors import build_l4_executor_catalog
 from harness.re_v2.protocol_28.lifecycle import (
@@ -173,6 +181,63 @@ def _preparation_fixture(
     return workspace, intent, parent, options
 
 
+def _accepted_debt_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
+    workspace, intent, parent, options = _preparation_fixture(tmp_path)
+    objects = dict(options.authority_objects)
+    finding_id = _authority(objects, "accepted residual finding")
+    domain_target = next(item for item in parent.targets if item.target_kind == "domain")
+    domain_target = replace(
+        domain_target,
+        finding_ids=(finding_id,),
+        unresolved_finding_ids=(finding_id,),
+        closure_state="deeper-evidence-blocked",
+    )
+    raw = replace(
+        parent,
+        terminal_state="blocked",
+        blocker_classes=("requires_human_decision",),
+        targets=tuple(
+            sorted(
+                (
+                    domain_target,
+                    *(item for item in parent.targets if item.target_kind != "domain"),
+                ),
+                key=lambda item: item.sort_key,
+            )
+        ),
+    )
+    acceptance = ResidualDebtAcceptanceV1(
+        1,
+        raw.manifest_hash,
+        raw.terminal_event_hash,
+        raw.frozen_epoch_id,
+        content_digest(b"closure-root"),
+        (("api", content_digest(b"source-root")),),
+        (DebtGroupV1("api", "requires_human_decision", (finding_id,)),),
+        (content_digest(b"deferred-observation"),),
+        content_digest(b"guidance"),
+        "re-v2-banzai-residual-debt-v1",
+        raw.source_snapshot_id,
+        raw.selection_id,
+        content_digest(b"finalize-operation"),
+    )
+    objects[acceptance.identity] = canonical_json_bytes(acceptance.to_json_dict())
+    partial = ValidatedL3ParentV2(
+        raw,
+        "partial",
+        acceptance.identity,
+        (finding_id,),
+        acceptance.deferred_observation_ids,
+    )
+    return (
+        workspace,
+        intent,
+        partial,
+        replace(options, authority_objects=objects),
+        acceptance,
+    )
+
+
 @pytest.mark.unit
 def test_preparation_builds_publishable_self_contained_exact_child(
     tmp_path: Path,
@@ -205,6 +270,60 @@ def test_preparation_builds_publishable_self_contained_exact_child(
                 role="producer",
             )
             assert entry.canonical_context_bytes == len(encoded)
+
+
+@pytest.mark.unit
+def test_partial_debt_is_bound_to_every_l4_input_and_context(tmp_path: Path) -> None:
+    workspace, intent, parent, options, acceptance = _accepted_debt_fixture(tmp_path)
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+    run_dir = create_or_reuse_protocol_28_child(workspace, inputs)
+    loaded = load_protocol_28_run_context(run_dir)
+
+    assert protocol_28_input_quality(inputs) == "partial"
+    assert protocol_28_residual_debt_acceptance(inputs) == acceptance
+    assert protocol_28_residual_debt_acceptance(loaded.inputs) == acceptance
+    for target_plan in loaded.inputs.exhaustive_plan.target_plans:
+        for entry in target_plan.entries:
+            assert acceptance.identity in entry.required_lower_authority_ids
+            payload = json.loads(
+                build_protocol_28_slice_context(
+                    loaded,
+                    target_plan,
+                    entry,
+                    realize_slice(
+                        entry,
+                        {
+                            dependency_id: dependency_id
+                            for dependency_id in entry.planned_dependency_root_ids
+                        },
+                    ),
+                    role="producer",
+                )
+            )
+            assert payload["input_quality"] == "partial"
+            assert payload["residual_debt_acceptance_hash"] == acceptance.identity
+            assert payload["accepted_residual_debt"] == acceptance.to_json_dict()
+            assert payload["residual_debt_disposition"] == "accepted_not_closed_by_l4"
+
+
+@pytest.mark.unit
+def test_partial_l4_rejects_missing_exact_debt_object(tmp_path: Path) -> None:
+    workspace, intent, parent, options, acceptance = _accepted_debt_fixture(tmp_path)
+    reduced = replace(
+        options,
+        authority_objects={
+            key: value
+            for key, value in options.authority_objects.items()
+            if key != acceptance.identity
+        },
+    )
+
+    with pytest.raises(
+        (Protocol28InputError, Protocol28PreparationError),
+        match="authority closure is incomplete|required authority object is missing",
+    ):
+        prepare_protocol_28_request(workspace, intent, parent, reduced)
 
 
 @pytest.mark.unit

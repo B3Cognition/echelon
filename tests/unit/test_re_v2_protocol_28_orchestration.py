@@ -18,6 +18,7 @@ from harness.re_v2.protocol_28.orchestration import (
 )
 from tests.re_v2_protocol_28_fixtures import digest, selection_scope_v1
 from tests.unit.test_re_v2_protocol_28_authority import _parent, _selection
+from harness.re_v2.protocol_28.authority import ValidatedL3ParentV2
 
 
 NOW = "2026-08-31T12:00:00Z"
@@ -190,6 +191,29 @@ def test_l3_eligibility_accepts_only_complete_or_deeper_evidence_scope() -> None
     )
     with pytest.raises(DeepenOrchestrationError, match="exclusively"):
         evaluate_l3_eligibility(mixed, _selection(domain))
+
+
+@pytest.mark.unit
+def test_l3_eligibility_accepts_nonideal_convergence_only_with_exact_debt() -> None:
+    domain = digest("accepted-debt-domain")
+    finding = digest(f"{domain}:finding")
+    raw = _parent(
+        (domain,),
+        epoch_seed="accepted-debt",
+        blocker_classes=("requires_human_decision",),
+        unresolved_domain=domain,
+    )
+    partial = ValidatedL3ParentV2(
+        raw,
+        "partial",
+        digest("residual-debt-acceptance"),
+        (finding,),
+        (),
+    )
+
+    assert evaluate_l3_eligibility(partial, _selection(domain)) is partial
+    with pytest.raises(DeepenOrchestrationError, match="exclusively"):
+        evaluate_l3_eligibility(raw, _selection(domain))
 
 
 @pytest.mark.unit

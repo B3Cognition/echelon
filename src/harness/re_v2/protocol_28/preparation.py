@@ -19,6 +19,7 @@ from harness.re_v2.protocol_22.provider import canonical_prosaic_agent_bytes
 from harness.re_v2.protocol_24.model import ParentLineageV1
 from harness.re_v2.protocol_28.authority import (
     ValidatedL3ParentV1,
+    ValidatedL3ParentV2,
     build_l3_target_projections,
     build_parent_authority_bundle_v3,
 )
@@ -131,25 +132,43 @@ def load_protocol_28_role_bytes(workspace_root: Path) -> tuple[bytes, bytes]:
 def prepare_protocol_28_request(
     workspace_root: Path,
     intent: DeepenOrchestrationRequestV1,
-    eligible_l3: ValidatedL3ParentV1,
+    eligible_l3: ValidatedL3ParentV1 | ValidatedL3ParentV2,
     options: Protocol28PreparationOptions,
 ) -> Protocol28CreationInputs:
     """Assemble a complete immutable L4 child input set without publishing it."""
     root = Path(workspace_root).resolve()
     if not isinstance(intent, DeepenOrchestrationRequestV1):
         raise Protocol28PreparationError("L4 preparation requires a durable intent request")
-    if not isinstance(eligible_l3, ValidatedL3ParentV1):
+    if not isinstance(eligible_l3, (ValidatedL3ParentV1, ValidatedL3ParentV2)):
         raise Protocol28PreparationError("L4 preparation requires validated L3 authority")
     if not isinstance(options, Protocol28PreparationOptions):
         raise Protocol28PreparationError("L4 preparation options are invalid")
     _validate_clean_exact_sources(root, options.snapshot)
+    normalized_l3 = (
+        eligible_l3.parent
+        if isinstance(eligible_l3, ValidatedL3ParentV2)
+        else eligible_l3
+    )
+    residual_debt_hash = (
+        eligible_l3.residual_debt_acceptance_hash
+        if isinstance(eligible_l3, ValidatedL3ParentV2)
+        and eligible_l3.input_quality == "partial"
+        else None
+    )
+    if (
+        residual_debt_hash is not None
+        and residual_debt_hash not in options.authority_objects
+    ):
+        raise Protocol28PreparationError(
+            "L4 parent authority closure is incomplete: " + residual_debt_hash
+        )
     partition = options.workspace_partition
     if (
         options.snapshot.snapshot_id != intent.source_snapshot_id
         or partition.snapshot_id != intent.source_snapshot_id
-        or partition.identity != eligible_l3.workspace_partition_catalog_id
-        or eligible_l3.source_snapshot_id != intent.source_snapshot_id
-        or eligible_l3.partition_manifest_id != intent.partition_manifest_id
+        or partition.identity != normalized_l3.workspace_partition_catalog_id
+        or normalized_l3.source_snapshot_id != intent.source_snapshot_id
+        or normalized_l3.partition_manifest_id != intent.partition_manifest_id
     ):
         raise Protocol28PreparationError(
             "snapshot, partition, intent, and L3 authority do not match"
@@ -188,7 +207,12 @@ def prepare_protocol_28_request(
             evidence_policy,
             ObjectStore(Path(temporary) / "objects"),
         )
-    subjects = _build_evidence_subjects(parent, l3, evidence)
+    subjects = _build_evidence_subjects(
+        parent,
+        l3,
+        evidence,
+        residual_debt_hash=residual_debt_hash,
+    )
     plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
     plan = _bind_exact_context_sizes(
         plan,
@@ -227,9 +251,9 @@ def prepare_protocol_28_request(
         selection,
         ParentLineageV1(
             1,
-            eligible_l3.run_id,
-            eligible_l3.manifest_hash,
-            eligible_l3.terminal_event_hash,
+            normalized_l3.run_id,
+            normalized_l3.manifest_hash,
+            normalized_l3.terminal_event_hash,
             options.lineage_root_run_id,
             options.lineage_root_manifest_hash,
         ),
@@ -674,7 +698,13 @@ def _validate_clean_exact_sources(root: Path, snapshot: CapturedSnapshot) -> Non
         )
 
 
-def _build_evidence_subjects(parent, l3, evidence):  # type: ignore[no-untyped-def]
+def _build_evidence_subjects(
+    parent,
+    l3,
+    evidence,
+    *,
+    residual_debt_hash: str | None = None,
+):  # type: ignore[no-untyped-def]
     targets = {
         (item.source_id, item.target_kind, item.target_id): item
         for item in l3.projections
@@ -713,6 +743,7 @@ def _build_evidence_subjects(parent, l3, evidence):  # type: ignore[no-untyped-d
                         {
                             target.candidate_authority_hash,
                             *target.relevant_l2_root_ids,
+                            *(() if residual_debt_hash is None else (residual_debt_hash,)),
                         }
                     )
                 ),

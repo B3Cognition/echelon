@@ -9,6 +9,7 @@ from harness.re_v2.protocol_28.authority import (
     L4ClosureParentBundleV1,
     Protocol28AuthorityError,
     ValidatedL3ParentV1,
+    ValidatedL3ParentV2,
     ValidatedL3TargetV1,
     build_l3_target_projections,
     build_parent_authority_bundle_v3,
@@ -156,6 +157,63 @@ def test_parent_bundle_accepts_only_deeper_evidence_blockers() -> None:
 
     with pytest.raises(Protocol28AuthorityError, match="requires_human_decision"):
         build_parent_authority_bundle_v3(parent, projections)
+
+
+@pytest.mark.unit
+def test_exact_partial_parent_accepts_every_authenticated_blocker_class() -> None:
+    domain = digest("api-domain")
+    finding = digest(f"{domain}:finding")
+    raw = _parent(
+        (domain,),
+        epoch_seed="accepted-debt",
+        blocker_classes=("requires_human_decision",),
+        unresolved_domain=domain,
+    )
+    partial = ValidatedL3ParentV2(
+        parent=raw,
+        input_quality="partial",
+        residual_debt_acceptance_hash=digest("residual-debt-acceptance"),
+        unresolved_finding_ids=(finding,),
+        deferred_observation_ids=(),
+    )
+
+    projections = build_l3_target_projections(partial, _selection(domain))
+    bundle = build_parent_authority_bundle_v3(partial, projections)
+
+    assert bundle.unresolved_deeper_finding_ids == (finding,)
+    assert partial.parent.to_json_dict() == raw.to_json_dict()
+
+
+@pytest.mark.unit
+def test_partial_parent_rejects_missing_or_mismatched_debt_authority() -> None:
+    domain = digest("api-domain")
+    finding = digest(f"{domain}:finding")
+    raw = _parent(
+        (domain,),
+        epoch_seed="invalid-debt",
+        blocker_classes=("requires_human_decision",),
+        unresolved_domain=domain,
+    )
+
+    with pytest.raises(Protocol28AuthorityError, match="debt acceptance"):
+        ValidatedL3ParentV2(raw, "partial", None, (finding,), ())
+    with pytest.raises(Protocol28AuthorityError, match="unresolved"):
+        ValidatedL3ParentV2(
+            raw,
+            "partial",
+            digest("residual-debt-acceptance"),
+            (digest("different-finding"),),
+            (),
+        )
+    complete = _parent((domain,), epoch_seed="complete-not-partial")
+    with pytest.raises(Protocol28AuthorityError, match="unresolved blocked"):
+        ValidatedL3ParentV2(
+            complete,
+            "partial",
+            digest("residual-debt-acceptance"),
+            (),
+            (),
+        )
 
 
 @pytest.mark.unit

@@ -32,6 +32,7 @@ from harness.re_v2.protocol_22.schema import (
 from harness.re_v2.protocol_24.model import SelectionScopeV1
 from harness.re_v2.protocol_28.authority import (
     ValidatedL3ParentV1,
+    ValidatedL3ParentV2,
     ValidatedL3TargetV1,
     build_l3_target_projections,
 )
@@ -47,7 +48,7 @@ class ResolvedL4ParentV1:
 
     input_run_dir: Path
     analysis_run_dir: Path
-    selected_l3: ValidatedL3ParentV1 | None
+    selected_l3: ValidatedL3ParentV2 | None
     authority_objects: Mapping[str, bytes]
     prerequisite_required: bool
 
@@ -808,20 +809,21 @@ def find_open_orchestrations_for_child(
 
 
 def evaluate_l3_eligibility(
-    parent: ValidatedL3ParentV1,
+    parent: ValidatedL3ParentV1 | ValidatedL3ParentV2,
     selection: SelectionScopeV1,
-) -> ValidatedL3ParentV1:
+) -> ValidatedL3ParentV1 | ValidatedL3ParentV2:
     """Authenticate exact selected target closure and the closed L4 blocker set."""
-    if not isinstance(parent, ValidatedL3ParentV1) or not isinstance(
+    if not isinstance(parent, (ValidatedL3ParentV1, ValidatedL3ParentV2)) or not isinstance(
         selection, SelectionScopeV1
     ):
         raise DeepenOrchestrationError("L3 eligibility inputs are invalid")
     # Projection construction is the canonical strict selection coverage check.
-    catalog = build_l3_target_projections(parent, selection)
+    normalized = parent.parent if isinstance(parent, ValidatedL3ParentV2) else parent
+    catalog = build_l3_target_projections(normalized, selection)
     selected_ids = {item.identity for item in catalog.projections}
     selected = tuple(
         item
-        for item in parent.targets
+        for item in normalized.targets
         if any(
             projection.identity in selected_ids
             and projection.source_id == item.source_id
@@ -834,8 +836,14 @@ def evaluate_l3_eligibility(
         finding_id for item in selected for finding_id in item.unresolved_finding_ids
     }
     if unresolved:
-        if parent.terminal_state != "blocked" or parent.blocker_classes != (
-            "requires_deeper_evidence",
+        accepted_partial = (
+            isinstance(parent, ValidatedL3ParentV2)
+            and parent.input_quality == "partial"
+            and tuple(sorted(unresolved)) == parent.unresolved_finding_ids
+        )
+        if not accepted_partial and (
+            normalized.terminal_state != "blocked"
+            or normalized.blocker_classes != ("requires_deeper_evidence",)
         ):
             raise DeepenOrchestrationError(
                 "selected L3 findings are not exclusively requires_deeper_evidence"
@@ -848,7 +856,7 @@ def evaluate_l3_eligibility(
             raise DeepenOrchestrationError(
                 "selected unresolved L3 target is not frozen for deeper evidence"
             )
-    elif parent.terminal_state != "complete":
+    elif normalized.terminal_state != "complete":
         raise DeepenOrchestrationError("selected L3 authority is not terminal-complete")
     return parent
 
@@ -908,16 +916,41 @@ def _resolve_l4_parent_run(
             )
         )
         if partial:
-            raise DeepenOrchestrationError(
-                "selected synthesis source requires the next explicit L3 audit epoch: "
-                + ",".join(partial)
-            )
+            from harness.re_v2.protocol_27.inputs import load_protocol_27_inputs
+
+            try:
+                loaded_synthesis = load_protocol_27_inputs(run_dir)
+            except Exception as exc:
+                raise DeepenOrchestrationError(
+                    "selected partial synthesis has no authenticated residual-debt "
+                    "authority; run the next explicit L3 audit epoch "
+                    f"(partial synthesis authority is invalid: {exc})"
+                ) from exc
+            if loaded_synthesis.manifest != manifest:
+                raise DeepenOrchestrationError(
+                    "partial synthesis manifest differs from authenticated inputs"
+                )
         parent_dir = workspace_root / "runs" / manifest.parent_run_id
         if not parent_dir.is_dir() or parent_dir.is_symlink():
             raise DeepenOrchestrationError("synthesis analysis parent is unavailable")
-        return _resolve_l4_parent_run(
+        resolved = _resolve_l4_parent_run(
             workspace_root, input_run, parent_dir, selection, visited
         )
+        if partial:
+            selected_l3 = resolved.selected_l3
+            expected_debts = {
+                outcomes[source_id].debt_manifest_hash for source_id in partial
+            }
+            if (
+                selected_l3 is None
+                or selected_l3.input_quality != "partial"
+                or selected_l3.residual_debt_acceptance_hash is None
+                or expected_debts != {selected_l3.residual_debt_acceptance_hash}
+            ):
+                raise DeepenOrchestrationError(
+                    "partial synthesis debt differs from underlying accepted L3 authority"
+                )
+        return resolved
     if isinstance(manifest, RunManifestV4) or (
         isinstance(manifest, RunManifestV5) and manifest.target_layer == "L3"
     ):
@@ -940,7 +973,7 @@ def _resolve_l4_parent_run(
 def _validated_l3_parent_from_context(
     context: object,
     selection: SelectionScopeV1,
-) -> tuple[ValidatedL3ParentV1, Mapping[str, bytes]]:
+) -> tuple[ValidatedL3ParentV2, Mapping[str, bytes]]:
     from harness.re_v2.protocol_22.schema import load_canonical_object
     from harness.re_v2.protocol_25.artifacts import (
         AuditCandidateV1,
@@ -963,9 +996,27 @@ def _validated_l3_parent_from_context(
             else state.terminal_state or "unfinished"
         )
         raise DeepenOrchestrationError(f"L3 authority is terminal-ineligible: {reason}")
+    debt_acceptance = None
+    if state.terminal_state == "blocked_plateau":
+        from harness.re_v2.protocol_25.debt import (
+            load_residual_debt_acceptance,
+            validate_residual_debt_acceptance,
+        )
+        from harness.re_v2.protocol_25.status import _authority as l3_status_authority
+
+        try:
+            replayed = l3_status_authority(context.paths.root.parent, context)
+            debt_acceptance = load_residual_debt_acceptance(
+                context.paths.root.parent
+            )
+            validate_residual_debt_acceptance(replayed, debt_acceptance)
+        except Exception as exc:
+            raise DeepenOrchestrationError(
+                f"blocked L3 authority lacks exact residual-debt acceptance: {exc}"
+            ) from exc
     if state.audit_epoch_id is None or len(recovered.ledger.audit_epochs) != 1:
         raise DeepenOrchestrationError("L3 authority has no unique frozen audit epoch")
-    if state.deferred_observation_ids:
+    if state.deferred_observation_ids and debt_acceptance is None:
         raise DeepenOrchestrationError(
             "L3 authority requires the next explicit audit epoch"
         )
@@ -1076,7 +1127,7 @@ def _validated_l3_parent_from_context(
         )
     if not targets:
         raise DeepenOrchestrationError("selected L3 authority contains no targets")
-    if blockers - {"requires_deeper_evidence"}:
+    if blockers - {"requires_deeper_evidence"} and debt_acceptance is None:
         raise DeepenOrchestrationError(
             "selected L3 blocker set is ineligible for L4: "
             + ",".join(sorted(blockers))
@@ -1109,6 +1160,39 @@ def _validated_l3_parent_from_context(
         lower_ids,
         tuple(sorted(targets, key=lambda item: item.sort_key)),
     )
+    selected_unresolved = tuple(
+        sorted(
+            {
+                finding_id
+                for target in targets
+                for finding_id in target.unresolved_finding_ids
+            }
+        )
+    )
+    if debt_acceptance is not None and not set(selected_unresolved).issubset(
+        set(debt_acceptance.unresolved_finding_ids)
+    ):
+        raise DeepenOrchestrationError(
+            "selected L3 findings exceed accepted residual-debt authority"
+        )
+    selected_debt = debt_acceptance if selected_unresolved else None
+    validated = ValidatedL3ParentV2(
+        parent=parent,
+        input_quality="partial" if selected_debt is not None else "complete",
+        residual_debt_acceptance_hash=(
+            None if selected_debt is None else selected_debt.identity
+        ),
+        unresolved_finding_ids=selected_unresolved,
+        deferred_observation_ids=(
+            ()
+            if selected_debt is None
+            else selected_debt.deferred_observation_ids
+        ),
+    )
+    if selected_debt is not None:
+        objects[selected_debt.identity] = canonical_json_bytes(
+            selected_debt.to_json_dict()
+        )
     # Preserve the semantic manifest authority too when protocol 2.6 is the
     # outer run envelope; it remains useful lineage evidence but is not the
     # direct parent identity.
@@ -1131,7 +1215,7 @@ def _validated_l3_parent_from_context(
             "L3 executor bytes differ from frozen epoch authority"
         )
     objects[epoch.executor_authority_hash] = executor_bytes
-    return parent, objects
+    return validated, objects
 
 
 def execute_deepen_orchestration(

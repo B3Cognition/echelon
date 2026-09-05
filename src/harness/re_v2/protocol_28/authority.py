@@ -306,6 +306,96 @@ class ValidatedL3ParentV1:
 
 
 @dataclass(frozen=True, slots=True)
+class ValidatedL3ParentV2:
+    """L3 parent plus exact accepted residual-debt authority, when present."""
+
+    parent: ValidatedL3ParentV1
+    input_quality: Literal["complete", "partial"]
+    residual_debt_acceptance_hash: str | None
+    unresolved_finding_ids: tuple[str, ...]
+    deferred_observation_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.parent, ValidatedL3ParentV1):
+            raise Protocol28AuthorityError(
+                "ValidatedL3ParentV2 requires ValidatedL3ParentV1 authority"
+            )
+        quality = _schema(
+            one_of,
+            self.input_quality,
+            frozenset({"complete", "partial"}),
+            "ValidatedL3ParentV2.input_quality",
+        )
+        unresolved = _schema(
+            sorted_unique_digests,
+            self.unresolved_finding_ids,
+            "ValidatedL3ParentV2.unresolved_finding_ids",
+        )
+        deferred = _schema(
+            sorted_unique_digests,
+            self.deferred_observation_ids,
+            "ValidatedL3ParentV2.deferred_observation_ids",
+        )
+        target_unresolved = tuple(
+            sorted(
+                {
+                    finding_id
+                    for target in self.parent.targets
+                    for finding_id in target.unresolved_finding_ids
+                }
+            )
+        )
+        if unresolved != target_unresolved:
+            raise Protocol28AuthorityError(
+                "ValidatedL3ParentV2 unresolved findings differ from parent authority"
+            )
+        if quality == "complete":
+            if (
+                self.residual_debt_acceptance_hash is not None
+                or unresolved
+                or deferred
+                or self.parent.terminal_state != "complete"
+            ):
+                raise Protocol28AuthorityError(
+                    "complete L3 input cannot carry residual-debt authority"
+                )
+        else:
+            if self.residual_debt_acceptance_hash is None:
+                raise Protocol28AuthorityError(
+                    "partial L3 input requires residual-debt acceptance"
+                )
+            _schema(
+                digest_value,
+                self.residual_debt_acceptance_hash,
+                "ValidatedL3ParentV2.residual_debt_acceptance_hash",
+            )
+            if self.parent.terminal_state != "blocked" or not unresolved:
+                raise Protocol28AuthorityError(
+                    "partial L3 input requires exact unresolved blocked authority"
+                )
+        object.__setattr__(self, "unresolved_finding_ids", unresolved)
+        object.__setattr__(self, "deferred_observation_ids", deferred)
+
+    def __getattr__(self, name: str) -> object:
+        """Keep the V1 authority surface readable while carrying quality metadata."""
+        parent = object.__getattribute__(self, "parent")
+        try:
+            return getattr(parent, name)
+        except AttributeError as exc:
+            raise AttributeError(name) from exc
+
+
+def _validated_l3_parent_v1(
+    parent: ValidatedL3ParentV1 | ValidatedL3ParentV2,
+) -> ValidatedL3ParentV1:
+    if isinstance(parent, ValidatedL3ParentV2):
+        return parent.parent
+    if isinstance(parent, ValidatedL3ParentV1):
+        return parent
+    raise Protocol28AuthorityError("validated L3 parent authority is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class L3TargetAuthorityProjectionV1:
     schema_version: int
     target_kind: Literal["domain", "source"]
@@ -743,13 +833,10 @@ class L4ClosureParentBundleV1:
 
 
 def build_l3_target_projections(
-    parent: ValidatedL3ParentV1,
+    parent: ValidatedL3ParentV1 | ValidatedL3ParentV2,
     selection: SelectionScopeV1,
 ) -> L3TargetProjectionCatalogV1:
-    if not isinstance(parent, ValidatedL3ParentV1):
-        raise Protocol28AuthorityError(
-            "L3 target projection requires ValidatedL3ParentV1"
-        )
+    parent = _validated_l3_parent_v1(parent)
     if not isinstance(selection, SelectionScopeV1):
         raise Protocol28AuthorityError("L3 target projection selection is invalid")
     selected_source_ids = (
@@ -820,12 +907,15 @@ def build_l3_target_projections(
 
 
 def build_parent_authority_bundle_v3(
-    parent: ValidatedL3ParentV1,
+    parent: ValidatedL3ParentV1 | ValidatedL3ParentV2,
     projections: L3TargetProjectionCatalogV1,
 ) -> ParentAuthorityBundleV3:
-    if not isinstance(parent, ValidatedL3ParentV1) or not isinstance(
-        projections, L3TargetProjectionCatalogV1
-    ):
+    accepted_partial = (
+        isinstance(parent, ValidatedL3ParentV2)
+        and parent.input_quality == "partial"
+    )
+    parent = _validated_l3_parent_v1(parent)
+    if not isinstance(projections, L3TargetProjectionCatalogV1):
         raise Protocol28AuthorityError(
             "parent bundle requires validated L3 parent and projection catalog"
         )
@@ -840,7 +930,7 @@ def build_parent_authority_bundle_v3(
             "L3 target projection catalog does not match parent authority"
         )
     blockers = set(parent.blocker_classes)
-    if parent.terminal_state == "blocked" and blockers != {
+    if parent.terminal_state == "blocked" and not accepted_partial and blockers != {
         "requires_deeper_evidence"
     }:
         raise Protocol28AuthorityError(
@@ -898,6 +988,7 @@ __all__ = (
     "ParentAuthorityBundleV3",
     "Protocol28AuthorityError",
     "ValidatedL3ParentV1",
+    "ValidatedL3ParentV2",
     "ValidatedL3TargetV1",
     "build_l3_target_projections",
     "build_parent_authority_bundle_v3",

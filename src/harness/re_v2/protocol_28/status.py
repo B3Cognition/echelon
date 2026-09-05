@@ -12,6 +12,7 @@ from harness.re_v2.protocol_28.context import (
     load_protocol_28_run_context,
 )
 from harness.re_v2.protocol_28.events import replay_protocol_28
+from harness.re_v2.protocol_28.inputs import residual_debt_acceptance_from_objects
 from harness.re_v2.protocol_28.orchestration import (
     load_orchestration,
     recover_orchestration,
@@ -52,13 +53,26 @@ def protocol_28_status_document(
             if isinstance(context, Protocol28RunContext)
             else _closure_document(context, state, events)
         )
+        residual_debt = residual_debt_acceptance_from_objects(
+            context.inputs.authority_objects
+        )
+        details["input_quality"] = (
+            "partial" if residual_debt is not None else "complete"
+        )
+        details["residual_debt_acceptance_hash"] = (
+            None if residual_debt is None else residual_debt.identity
+        )
         if (
             isinstance(context, Protocol28RunContext)
             and context.inputs.parent_authority_bundle.unresolved_deeper_finding_ids
             and isinstance(orchestration, Mapping)
             and orchestration.get("state") == "complete"
         ):
-            details["l3_finding_closure"] = "complete via linked L4 successor"
+            details["l3_finding_closure"] = (
+                "accepted residual debt preserved; L4 evidence does not close it"
+                if residual_debt is not None
+                else "complete via linked L4 successor"
+            )
             details["l4_closure_root"] = orchestration.get(
                 "closure_root_id", "not recorded"
             )
@@ -137,6 +151,11 @@ def render_protocol_28_status(
             "avoided={avoided_dispatches}"
         ).format(**document["dispatch_counts"]),
         f"historical rejected attempts: {document['historical_rejected_attempts']}",
+        f"input quality: {document['input_quality']}",
+        (
+            "residual debt acceptance: "
+            f"{document['residual_debt_acceptance_hash'] or 'none'}"
+        ),
         f"inherited L3 finding closure: {document['l3_finding_closure']}",
         f"L4 closure root: {document['l4_closure_root']}",
         "workspace synthesis: not run",
