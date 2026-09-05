@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import hmac
 import json
@@ -112,6 +112,7 @@ class CoverageObservationResult:
     ref: CoverageObservationRef
     test_cases: dict[str, CoverageTestCaseObservation]
     requirements: dict[str, CoverageRequirementObservation]
+    fingerprints: Mapping[str, str | None] = field(default_factory=dict)
 
 
 def write_coverage_observation(
@@ -246,6 +247,64 @@ def write_coverage_observation(
         ref=ref,
         test_cases=test_cases,
         requirements=requirements,
+        fingerprints={
+            "coverage_map_hash": coverage_map_hash,
+            "resolved_stack_hash": resolved_stack_hash,
+            "observer_plan_hash": observer_plan_hash,
+            "runnability_contract_hash": runnability_contract_hash,
+        },
+    )
+
+
+def load_coverage_observation(path: Path) -> CoverageObservationResult:
+    """Load a self-consistent, passing immutable observation for CLI consumers."""
+    observation_path = Path(path)
+    if not observation_path.is_absolute() or observation_path.is_symlink():
+        raise CoverageObservationError("coverage observation path is unsafe")
+    try:
+        payload = json.loads(observation_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CoverageObservationError("coverage observation is unavailable") from exc
+    if not isinstance(payload, dict):
+        raise CoverageObservationError("coverage observation is malformed")
+    fingerprints = payload.get("fingerprints")
+    if not isinstance(fingerprints, dict):
+        raise CoverageObservationError("coverage observation fingerprints are malformed")
+    normalized_fingerprints: dict[str, str | None] = {}
+    for key in (
+        "coverage_map_hash",
+        "resolved_stack_hash",
+        "observer_plan_hash",
+        "runnability_contract_hash",
+    ):
+        value = fingerprints.get(key)
+        if value is not None and not isinstance(value, str):
+            raise CoverageObservationError("coverage observation fingerprints are malformed")
+        normalized_fingerprints[key] = value
+    ref = CoverageObservationRef(
+        path=observation_path,
+        receipt_sha256=str(payload.get("receipt_sha256") or ""),
+        observation_sha256=str(payload.get("observation_sha256") or ""),
+        candidate_fingerprint=str(payload.get("candidate_fingerprint") or ""),
+        passed=payload.get("status") == "passed",
+    )
+    validation = validate_coverage_observation(
+        ref,
+        candidate_fingerprint=ref.candidate_fingerprint,
+        coverage_map_hash=normalized_fingerprints["coverage_map_hash"] or "",
+        resolved_stack_hash=normalized_fingerprints["resolved_stack_hash"] or "",
+        observer_plan_hash=normalized_fingerprints["observer_plan_hash"] or "",
+        runnability_contract_hash=normalized_fingerprints["runnability_contract_hash"],
+    )
+    if not validation.valid:
+        raise CoverageObservationError(
+            "coverage observation is invalid: " + validation.reason
+        )
+    return CoverageObservationResult(
+        ref=ref,
+        test_cases=_load_test_cases(payload.get("test_cases")),
+        requirements=_load_requirements(payload.get("requirements")),
+        fingerprints=normalized_fingerprints,
     )
 
 
@@ -376,6 +435,50 @@ def _planned_cases(
         requirement_id: tuple(case_ids)
         for requirement_id, case_ids in requirement_cases.items()
     }
+
+
+def _load_test_cases(value: object) -> dict[str, CoverageTestCaseObservation]:
+    if not isinstance(value, dict):
+        raise CoverageObservationError("coverage observation test cases are malformed")
+    result: dict[str, CoverageTestCaseObservation] = {}
+    for case_id, raw in value.items():
+        if not isinstance(case_id, str) or not isinstance(raw, dict):
+            raise CoverageObservationError("coverage observation test cases are malformed")
+        test_type = str(raw.get("test_type") or "").strip()
+        status = str(raw.get("status") or "").strip()
+        if not test_type or not status:
+            raise CoverageObservationError("coverage observation test cases are malformed")
+        result[case_id] = CoverageTestCaseObservation(
+            test_case_id=str(raw.get("test_case_id") or case_id).strip(),
+            test_type=test_type,
+            status=status,
+            reason=str(raw.get("reason") or status).strip(),
+        )
+    return result
+
+
+def _load_requirements(value: object) -> dict[str, CoverageRequirementObservation]:
+    if not isinstance(value, dict):
+        raise CoverageObservationError("coverage observation requirements are malformed")
+    result: dict[str, CoverageRequirementObservation] = {}
+    for requirement_id, raw in value.items():
+        if not isinstance(requirement_id, str) or not isinstance(raw, dict):
+            raise CoverageObservationError("coverage observation requirements are malformed")
+        raw_case_ids = raw.get("test_case_ids")
+        if not isinstance(raw_case_ids, list) or not all(
+            isinstance(item, str) and item.strip() for item in raw_case_ids
+        ):
+            raise CoverageObservationError("coverage observation requirements are malformed")
+        status = str(raw.get("status") or "").strip()
+        if not status:
+            raise CoverageObservationError("coverage observation requirements are malformed")
+        result[requirement_id] = CoverageRequirementObservation(
+            requirement_id=str(raw.get("requirement_id") or requirement_id).strip(),
+            status=status,
+            test_case_ids=tuple(raw_case_ids),
+            reason=str(raw.get("reason") or status).strip(),
+        )
+    return result
 
 
 def _group_executions(

@@ -382,7 +382,7 @@ def _coverage_evidence_rows(path: Path) -> dict[str, dict[str, str]]:
     if not path.is_file():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if not isinstance(data, dict) or data.get("schema_version") not in {1, 2}:
         raise ValueError("coverage-evidence.json uses unsupported schema")
     raw_requirements = data.get("requirements")
     if not isinstance(raw_requirements, dict):
@@ -399,6 +399,16 @@ def _coverage_evidence_rows(path: Path) -> dict[str, dict[str, str]]:
             "missing",
             "contradictory",
             "owner_deferred",
+            "observed",
+            "unbound",
+            "duplicate_binding",
+            "failed",
+            "skipped",
+            "not_executed",
+            "observer_failed",
+            "observer_missing",
+            "invalid_report",
+            "provenance_mismatch",
         }:
             raise ValueError(f"unsupported coverage evidence status: {status}")
         result[item_id] = {

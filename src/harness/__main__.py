@@ -491,22 +491,45 @@ def _write_judgment_prepass() -> None:
 
 
 def _write_coverage_evidence() -> None:
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 4:
         print(
             "Usage: python -m harness write-coverage-evidence "
-            "<spec-dir> <verify-run-dir>",
+            "<spec-dir> <verify-run-dir> "
+            "[--observer-required] [--coverage-observation <path>]",
             file=sys.stderr,
         )
         sys.exit(1)
 
+    import hashlib
     import json
     from pathlib import Path
 
     from harness.coverage_evidence import write_coverage_evidence
+    from harness.coverage_observation import (
+        CoverageObservationError,
+        load_coverage_observation,
+    )
     from harness.deferred_scope import active_entries
 
     spec_dir = Path(sys.argv[2]).resolve()
     verify_run_dir = Path(sys.argv[3]).resolve()
+    observer_required = False
+    observation_path: Path | None = None
+    option_index = 4
+    while option_index < len(sys.argv):
+        option = sys.argv[option_index]
+        if option == "--observer-required":
+            observer_required = True
+            option_index += 1
+            continue
+        if option == "--coverage-observation" and option_index + 1 < len(sys.argv):
+            observation_path = Path(
+                os.path.abspath(sys.argv[option_index + 1])
+            )
+            option_index += 2
+            continue
+        print(f"invalid write-coverage-evidence option: {option}", file=sys.stderr)
+        sys.exit(1)
     canonical_path = verify_run_dir / "canonical-requirements.json"
     _require_inputs([canonical_path])
     _require_verify_spec_state(verify_run_dir)
@@ -523,11 +546,50 @@ def _write_coverage_evidence() -> None:
         for item_id in entry.selected_ids
         if not item_id.startswith("T-")
     }
+    observation = None
+    if observer_required:
+        if observation_path is None:
+            _stamp_verify_spec_state(
+                verify_run_dir,
+                {
+                    "coverage_evidence": "invalid",
+                    "coverage_evidence_reason": (
+                        "selected stack requires a validated coverage observation"
+                    ),
+                },
+            )
+            print(
+                "coverage observation required but no observation path was supplied",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            observation = load_coverage_observation(observation_path)
+            coverage_map_path = spec_dir / "coverage-map.md"
+            coverage_map_hash = hashlib.sha256(
+                coverage_map_path.read_bytes()
+            ).hexdigest()
+            if observation.fingerprints.get("coverage_map_hash") != coverage_map_hash:
+                raise CoverageObservationError(
+                    "coverage map fingerprint does not match the observation"
+                )
+        except (CoverageObservationError, OSError) as exc:
+            _stamp_verify_spec_state(
+                verify_run_dir,
+                {
+                    "coverage_evidence": "invalid",
+                    "coverage_evidence_reason": str(exc),
+                },
+            )
+            print(f"coverage observation is invalid: {exc}", file=sys.stderr)
+            sys.exit(1)
     result = write_coverage_evidence(
         spec_dir=spec_dir,
         verify_run_dir=verify_run_dir,
         canonical_ids=canonical_ids,
         deferred_ids=deferred_ids,
+        observation=observation,
+        observer_required=observer_required,
     )
     _stamp_verify_spec_state(
         verify_run_dir,
