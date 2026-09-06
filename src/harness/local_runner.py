@@ -1,0 +1,657 @@
+"""One explicit, isolated macOS local-verification lifecycle."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+from pathlib import Path
+import re
+import signal
+import shlex
+import socket
+import subprocess
+import time
+from typing import Callable, Mapping, MutableMapping
+from urllib.parse import urlsplit
+from urllib.request import urlopen
+import uuid
+
+from harness.local_runner_candidate import (
+    EffectiveLocalCandidate,
+    LocalCandidateRequest,
+    materialize_local_candidate,
+    resolve_effective_local_candidate,
+)
+from harness.local_runner_compose import parse_canonical_compose_plan
+from harness.local_runner_engine import (
+    DockerDesktopMacOSAdapter,
+    LocalEngineAdapter,
+    LocalEngineError,
+    LocalResourceSet,
+    PodmanMacOSAdapter,
+)
+from harness.local_runner_evidence import (
+    LocalRunnabilityAttestationInput,
+    write_local_runnability_attestation,
+)
+from harness.local_runner_journal import (
+    LocalRunJournal,
+    LocalRunRecoveryRequired,
+    LocalRunSideEffectError,
+    acquire_workspace_local_run_lock,
+    assert_git_baseline_unchanged,
+    assert_no_recovery_journal,
+    build_host_execution_environment,
+    git_porcelain_baseline,
+    write_local_run_journal,
+)
+from harness.runnability_contract import (
+    LocalExecution,
+    RunnabilityContract,
+    RunnabilityContractError,
+    load_runnability_contract,
+    runnability_contract_sha256,
+)
+
+
+class LocalActionConfirmationRequired(RuntimeError):
+    """Raised when host-local execution was not explicitly confirmed."""
+
+
+@dataclass(frozen=True)
+class LocalVerificationRequest:
+    workspace_root: Path
+    target_root: Path
+    spec_id: str
+    target_id: str
+    candidate_request: LocalCandidateRequest
+    local_run_root: Path
+
+
+@dataclass(frozen=True)
+class LocalRunnerOptions:
+    engine: str
+    action_confirmed: bool
+    keep_on_failure: bool
+
+
+@dataclass(frozen=True)
+class LocalRunnerResult:
+    status: str
+    local_run_id: str
+    attestation_path: Path | None
+    cleanup_complete: bool
+    summary: str = ""
+
+
+CommandExecutor = Callable[..., object]
+ObservationRunner = Callable[..., bool]
+
+
+class LocalRunnabilityRunner:
+    """Own the complete lifecycle; it has no repair or landing authority."""
+
+    def __init__(
+        self,
+        *,
+        candidate_resolver: Callable[[LocalCandidateRequest], EffectiveLocalCandidate] = resolve_effective_local_candidate,
+        candidate_materializer: Callable[[EffectiveLocalCandidate, Path], Path] = materialize_local_candidate,
+        candidate_remover: Callable[[EffectiveLocalCandidate, Path], None] | None = None,
+        adapters: Mapping[str, LocalEngineAdapter] | None = None,
+        command_executor: CommandExecutor | None = None,
+        readiness_probe: Callable[..., bool] | None = None,
+        observation_runner: ObservationRunner | None = None,
+        git_baseline: Callable[[Path], str] = git_porcelain_baseline,
+        browser_helper: Path | None = None,
+    ) -> None:
+        self._candidate_resolver = candidate_resolver
+        self._candidate_materializer = candidate_materializer
+        self._candidate_remover = candidate_remover or _remove_candidate_worktree
+        self._adapters = dict(adapters or {
+            "docker": DockerDesktopMacOSAdapter(),
+            "podman": PodmanMacOSAdapter(),
+        })
+        self._command_executor = command_executor or _run_command
+        self._readiness_probe = readiness_probe or _wait_for_readiness
+        self._browser_helper = browser_helper
+        self._observation_runner = observation_runner or (
+            lambda worktree, contract, environment, adapter, resources, after_restart:
+            _run_independent_observations(
+                worktree,
+                contract,
+                environment,
+                adapter,
+                resources,
+                after_restart,
+                browser_helper=self._browser_helper,
+            )
+        )
+        self._git_baseline = git_baseline
+
+    def verify(
+        self,
+        request: LocalVerificationRequest,
+        options: LocalRunnerOptions,
+    ) -> LocalRunnerResult:
+        if not options.action_confirmed:
+            raise LocalActionConfirmationRequired(
+                "local verification requires explicit confirmation"
+            )
+        adapter = self._adapters.get(options.engine)
+        if adapter is None:
+            raise LocalEngineError("local engine must be docker or podman")
+        with acquire_workspace_local_run_lock(request.workspace_root):
+            candidate = self._candidate_resolver(request.candidate_request)
+            root = _local_runs_root(request.local_run_root, candidate)
+            assert_no_recovery_journal(root)
+            return self._verify_locked(candidate, request, options, adapter, root)
+
+    def cleanup(self, local_run_id: str) -> LocalRunnerResult:
+        """Cleanup is intentionally dispatched by the CLI with a validated journal."""
+        raise LocalRunRecoveryRequired(
+            f"cleanup requires the workspace-bound journal for {local_run_id}"
+        )
+
+    def _verify_locked(
+        self,
+        candidate: EffectiveLocalCandidate,
+        request: LocalVerificationRequest,
+        options: LocalRunnerOptions,
+        adapter: LocalEngineAdapter,
+        root: Path,
+    ) -> LocalRunnerResult:
+        local_run_id = f"local-{uuid.uuid4().hex}"
+        run_root = root / local_run_id
+        run_root.mkdir(parents=True, exist_ok=False)
+        status = "host_preflight_failed"
+        summary = ""
+        cleanup_complete = False
+        attestation_path: Path | None = None
+        candidate_worktree: Path | None = None
+        rendered = None
+        resources: LocalResourceSet | None = None
+        processes: list[object] = []
+        environment: Mapping[str, str] = {}
+        target_before = self._git_baseline(request.target_root)
+        workspace_before = self._git_baseline(request.workspace_root)
+        journal = LocalRunJournal(
+            local_run_id=local_run_id,
+            status="running",
+            target_git_baseline=target_before,
+            workspace_git_baseline=workspace_before,
+        )
+        write_local_run_journal(run_root, journal)
+        try:
+            profile = adapter.probe()
+            candidate_worktree = self._candidate_materializer(
+                candidate, run_root / "candidate"
+            )
+            contract = _load_matching_contract(candidate_worktree, candidate)
+            execution, allowed_services, bindings = _local_execution_from_snapshot(
+                candidate, contract
+            )
+            if execution.profile != "macos-compose-v1":
+                raise LocalEngineError("candidate local execution profile is unsupported")
+            plan = parse_canonical_compose_plan(
+                candidate_worktree, execution.compose_file, allowed_services
+            )
+            initial_environment = _runner_variables(contract)
+            controlled = build_host_execution_environment(run_root, initial_environment)
+            _execute_stage(
+                execution, "install", candidate_worktree, controlled.values,
+                self._command_executor, processes,
+            )
+            rendered = adapter.render_plan(plan, local_run_id, run_root / "generated")
+            resources = adapter.up(rendered)
+            journal = LocalRunJournal(
+                local_run_id=journal.local_run_id,
+                status="running",
+                target_git_baseline=journal.target_git_baseline,
+                workspace_git_baseline=journal.workspace_git_baseline,
+                resources=resources.resources,
+                completed_actions=("engine_up",),
+            )
+            write_local_run_journal(run_root, journal)
+            resources = adapter.inspect(rendered, resources)
+            environment = _bound_environment(
+                controlled.values, resources.bindings, bindings
+            )
+            _execute_stage(
+                execution, "bootstrap", candidate_worktree, environment,
+                self._command_executor, processes,
+            )
+            _issue_identity(candidate_worktree, contract, environment)
+            _execute_stage(
+                execution, "start", candidate_worktree, environment,
+                self._command_executor, processes,
+            )
+            if not self._readiness_probe(contract, environment):
+                raise _CandidateLifecycleFailure("application readiness did not pass")
+            if not self._observation_runner(
+                candidate_worktree, contract, environment, adapter, resources, False
+            ):
+                raise _CandidateLifecycleFailure("independent browser or persistence observation failed")
+            if contract.persistence_probe is not None:
+                _terminate_processes(processes)
+                processes.clear()
+                _execute_stage(
+                    execution, "start", candidate_worktree, environment,
+                    self._command_executor, processes,
+                )
+                if not self._readiness_probe(contract, environment):
+                    raise _CandidateLifecycleFailure("application readiness after restart did not pass")
+                if not self._observation_runner(
+                    candidate_worktree, contract, environment, adapter, resources, True
+                ):
+                    raise _CandidateLifecycleFailure("persistence observation after restart failed")
+            status = "passed"
+            summary = "Local browser, restart, and persistence observations passed."
+        except _CandidateLifecycleFailure as exc:
+            status = "candidate_lifecycle_failed"
+            summary = str(exc)
+        except (LocalEngineError, RunnabilityContractError, ValueError, OSError) as exc:
+            status = "host_preflight_failed" if resources is None else "candidate_lifecycle_failed"
+            summary = str(exc)
+        finally:
+            _terminate_processes(processes)
+            if candidate_worktree is not None:
+                try:
+                    contract = load_runnability_contract(candidate_worktree)
+                    if contract is not None and contract.local_journey is not None:
+                        execution = contract.local_journey.execution
+                        if execution is not None:
+                            _execute_stage(
+                                execution, "stop", candidate_worktree, environment,
+                                self._command_executor, [],
+                            )
+                except Exception:
+                    if status == "passed":
+                        status = "candidate_lifecycle_failed"
+                        summary = "validated stop lifecycle failed"
+            if resources is not None and rendered is not None and not (
+                options.keep_on_failure and status != "passed"
+            ):
+                try:
+                    adapter.down(rendered, resources)
+                    resources = None
+                    cleanup_complete = True
+                    journal = LocalRunJournal(
+                        local_run_id=journal.local_run_id,
+                        status=status,
+                        target_git_baseline=journal.target_git_baseline,
+                        workspace_git_baseline=journal.workspace_git_baseline,
+                        completed_actions=("engine_up", "cleanup"),
+                    )
+                    write_local_run_journal(run_root, journal)
+                except Exception as exc:
+                    cleanup_complete = False
+                    status = "cleanup_failed"
+                    summary = f"{summary}; cleanup failed: {exc}".strip("; ")
+            elif resources is None:
+                cleanup_complete = True
+            if candidate_worktree is not None and (cleanup_complete or status == "passed"):
+                try:
+                    self._candidate_remover(candidate, candidate_worktree)
+                except Exception as exc:
+                    cleanup_complete = False
+                    status = "cleanup_failed"
+                    summary = f"{summary}; candidate cleanup failed: {exc}".strip("; ")
+            try:
+                assert_git_baseline_unchanged(
+                    request.target_root, target_before, self._git_baseline(request.target_root)
+                )
+                assert_git_baseline_unchanged(
+                    request.workspace_root, workspace_before, self._git_baseline(request.workspace_root)
+                )
+            except LocalRunSideEffectError as exc:
+                status = "cleanup_failed"
+                cleanup_complete = False
+                summary = str(exc)
+            if cleanup_complete:
+                write_local_run_journal(
+                    run_root,
+                    LocalRunJournal(
+                        local_run_id=journal.local_run_id,
+                        status="passed" if status == "passed" else "failed",
+                        target_git_baseline=journal.target_git_baseline,
+                        workspace_git_baseline=journal.workspace_git_baseline,
+                        completed_actions=tuple(
+                            dict.fromkeys((*journal.completed_actions, "cleanup"))
+                        ),
+                    ),
+                )
+            try:
+                attestation = write_local_runnability_attestation(
+                    root.parent / "evidence" / "local-runnability",
+                    LocalRunnabilityAttestationInput(
+                        status="passed" if status == "passed" else "failed",
+                        candidate=candidate,
+                        sandbox_receipt_sha256=candidate.sandbox_receipt_sha256,
+                        runner_profile_digest=_profile_digest(candidate),
+                        cleanup_complete=cleanup_complete,
+                        redacted_logs=summary,
+                        attempt_sequence=_next_attempt(root.parent / "evidence" / "local-runnability"),
+                        local_run_id=local_run_id,
+                    ),
+                )
+                attestation_path = attestation.path
+            except Exception as exc:
+                if status == "passed":
+                    status = "cleanup_failed"
+                    cleanup_complete = False
+                    summary = f"could not record local attestation: {exc}"
+        return LocalRunnerResult(status, local_run_id, attestation_path, cleanup_complete, summary)
+
+
+class _CandidateLifecycleFailure(RuntimeError):
+    pass
+
+
+def _local_runs_root(requested: Path, candidate: EffectiveLocalCandidate) -> Path:
+    expected = candidate.mirror_path.parent / candidate.build_id / "local-runs"
+    raw = Path(requested).expanduser()
+    try:
+        if raw.resolve(strict=False) != expected.resolve(strict=False):
+            raise ValueError
+    except OSError as exc:
+        raise LocalEngineError("managed local-run root is unavailable") from exc
+    if raw.is_symlink():
+        raise LocalEngineError("managed local-run root is symlinked")
+    raw.mkdir(parents=True, exist_ok=True)
+    return raw.resolve(strict=True)
+
+
+def _load_matching_contract(
+    worktree: Path, candidate: EffectiveLocalCandidate
+) -> RunnabilityContract:
+    contract = load_runnability_contract(worktree)
+    if contract is None or not contract.enabled or contract.schema_version != 2:
+        raise _CandidateLifecycleFailure("candidate requires an enabled schema-version-2 local contract")
+    if runnability_contract_sha256(contract) != candidate.contract_hash:
+        raise _CandidateLifecycleFailure("candidate contract hash does not match sandbox evidence")
+    return contract
+
+
+def _local_execution_from_snapshot(
+    candidate: EffectiveLocalCandidate,
+    contract: RunnabilityContract,
+) -> tuple[LocalExecution, set[str], Mapping[str, str]]:
+    local = contract.local_journey
+    execution = local.execution if local is not None else None
+    if execution is None:
+        raise _CandidateLifecycleFailure("candidate local executable journey is missing")
+    resolved = candidate.stack_snapshot.get("resolved")
+    if not isinstance(resolved, dict):
+        raise LocalEngineError("sandbox stack snapshot is malformed")
+    runnability = resolved.get("runnability")
+    local_runner = runnability.get("local_runner") if isinstance(runnability, dict) else None
+    if not isinstance(local_runner, dict):
+        raise LocalEngineError("sandbox stack snapshot lacks local runner ownership")
+    profiles = local_runner.get("profiles")
+    services = local_runner.get("allowed_services")
+    bindings = local_runner.get("environment_bindings")
+    if not isinstance(profiles, list) or execution.profile not in profiles:
+        raise LocalEngineError("candidate local execution profile is not stack-authorized")
+    if not isinstance(services, list) or set(execution.compose_services) != set(services):
+        raise LocalEngineError("candidate Compose services are not stack-authorized")
+    if not isinstance(bindings, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in bindings.items()
+    ):
+        raise LocalEngineError("sandbox stack environment bindings are malformed")
+    return execution, set(services), bindings
+
+
+def _runner_variables(contract: RunnabilityContract) -> dict[str, str]:
+    template = contract.readiness.url
+    generated_port = _free_loopback_port() if "${ECHELON_PORT}" in template else ""
+    readiness = _expand(template, {"ECHELON_PORT": generated_port})
+    parsed = urlsplit(readiness)
+    if parsed.hostname not in {"127.0.0.1", "localhost"} or parsed.port is None:
+        raise _CandidateLifecycleFailure("candidate readiness is not loopback-bound")
+    base = f"http://127.0.0.1:{parsed.port}"
+    return {
+        "ECHELON_PORT": generated_port or str(parsed.port),
+        "ECHELON_BASE_URL": base,
+        "ECHELON_MARKER": str(uuid.uuid4()),
+    }
+
+
+def _free_loopback_port() -> str:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return str(listener.getsockname()[1])
+
+
+def _bound_environment(
+    controlled: Mapping[str, str],
+    engine_bindings: tuple[tuple[str, str], ...],
+    stack_bindings: Mapping[str, str],
+) -> dict[str, str]:
+    values = dict(controlled)
+    engine = dict(engine_bindings)
+    sources = {
+        "postgres_url": engine.get("DATABASE_URL", ""),
+        "browser_port": values.get("ECHELON_PORT", ""),
+        "browser_base_url": values.get("ECHELON_BASE_URL", ""),
+        "marker": values.get("ECHELON_MARKER", ""),
+        "session_token": values.get("ECHELON_SESSION_TOKEN", ""),
+    }
+    for name, source in stack_bindings.items():
+        value = sources.get(source, "")
+        if not value:
+            raise LocalEngineError(f"local stack binding {name} has no generated {source}")
+        values[name] = value
+    return values
+
+
+def _execute_stage(
+    execution: LocalExecution,
+    name: str,
+    cwd: Path,
+    environment: Mapping[str, str],
+    executor: CommandExecutor,
+    processes: list[object],
+) -> None:
+    lifecycle = dict(execution.lifecycle)
+    for command in lifecycle.get(name, ()):
+        background = name == "start"
+        result = executor(command.argv, cwd=cwd, env=dict(environment), background=background)
+        if background:
+            processes.append(result)
+        elif int(result) != 0:
+            raise _CandidateLifecycleFailure(f"candidate {name} lifecycle command failed")
+
+
+def _run_command(
+    argv: tuple[str, ...], *, cwd: Path, env: Mapping[str, str], background: bool
+) -> object:
+    if background:
+        return subprocess.Popen(
+            argv, cwd=str(cwd), env=dict(env), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    return subprocess.run(argv, cwd=str(cwd), env=dict(env), check=False).returncode
+
+
+def _terminate_processes(processes: list[object]) -> None:
+    for process in reversed(processes):
+        try:
+            pid = getattr(process, "pid", None)
+            if isinstance(pid, int):
+                try:
+                    import os
+                    os.killpg(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+            elif callable(getattr(process, "terminate", None)):
+                process.terminate()
+            if callable(getattr(process, "wait", None)):
+                process.wait(timeout=10)
+        except Exception:
+            continue
+
+
+def _wait_for_readiness(contract: RunnabilityContract, environment: Mapping[str, str]) -> bool:
+    url = _expand(contract.readiness.url, environment)
+    deadline = time.monotonic() + contract.readiness.timeout_ms / 1000
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=2) as response:  # noqa: S310 - contract parser restricts loopback
+                if 200 <= response.status < 300:
+                    return True
+        except OSError:
+            time.sleep(0.2)
+    return False
+
+
+def _run_independent_observations(
+    worktree: Path,
+    contract: RunnabilityContract,
+    environment: Mapping[str, str],
+    adapter: object,
+    resources: LocalResourceSet,
+    after_restart: bool,
+    *,
+    browser_helper: Path | None = None,
+) -> bool:
+    """Require browser DOM and direct PostgreSQL observations, never command exit alone."""
+    browser = [item for item in contract.primary_journey.observations if item.kind == "browser_dom"]
+    postgres = [item for item in contract.primary_journey.observations if item.kind == "postgres_query"]
+    required_ids = set(contract.persistence_probe.observation_ids) if contract.persistence_probe else set()
+    if required_ids:
+        browser = [item for item in browser if item.id in required_ids]
+        postgres = [item for item in postgres if item.id in required_ids]
+    if not browser or not postgres:
+        return False
+    helper = browser_helper or (
+        Path(__file__).resolve().parents[2]
+        / "runtime"
+        / "scripts"
+        / "user-runnability-browser.mjs"
+    )
+    if not helper.is_file():
+        return False
+    plan = asdict(contract.primary_journey)
+    plan = _expand_value(plan, environment)
+    if after_restart:
+        plan["steps"] = [
+            step for step in plan["steps"] if isinstance(step, dict) and step.get("action") == "goto"
+        ]
+    plan["observation_ids"] = [item.id for item in browser]
+    plan_path = worktree / ".echelon-local-browser-plan.json"
+    try:
+        plan_path.write_text(json.dumps(plan, sort_keys=True) + "\n", encoding="utf-8")
+        browser_result = subprocess.run(
+            ["node", str(helper), str(plan_path)], cwd=str(worktree), env=dict(environment),
+            capture_output=True, text=True, check=False, timeout=120,
+        )
+        if browser_result.returncode != 0:
+            return False
+        payload = json.loads(browser_result.stdout)
+        observations = payload.get("observations") if isinstance(payload, dict) else None
+        if payload.get("status") != "passed" or not isinstance(observations, dict):
+            return False
+        if any(observations.get(item.id, {}).get("passed") is not True for item in browser):
+            return False
+        execute = getattr(adapter, "exec", None)
+        if not callable(execute):
+            return False
+        for observation in postgres:
+            statement = _postgres_statement(observation.statement or "", observation.parameters, environment)
+            result = execute(resources, ("psql", "-U", "echelon", "-d", "echelon", "-AtX", "-c", statement))
+            if getattr(result, "returncode", 1) != 0:
+                return False
+            rows = [line for line in str(getattr(result, "stdout", "")).splitlines() if line]
+            expected = _expand(observation.parameters[0], environment) if observation.parameters else ""
+            if observation.expectation == "one_row_exact" and rows != [expected]:
+                return False
+        return True
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
+        return False
+    finally:
+        plan_path.unlink(missing_ok=True)
+
+
+def _postgres_statement(statement: str, parameters: tuple[str, ...], environment: Mapping[str, str]) -> str:
+    for index in range(len(parameters), 0, -1):
+        value = _expand(parameters[index - 1], environment).replace("'", "''")
+        statement = statement.replace(f"${index}", f"'{value}'")
+    return statement
+
+
+def _issue_identity(
+    worktree: Path,
+    contract: RunnabilityContract,
+    environment: MutableMapping[str, str],
+) -> None:
+    if contract.identity is None:
+        return
+    try:
+        argv = tuple(shlex.split(contract.identity.command))
+    except ValueError as exc:
+        raise _CandidateLifecycleFailure("candidate identity command is invalid") from exc
+    if not argv or argv[0] in {"sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh"}:
+        raise _CandidateLifecycleFailure("candidate identity command must be argv-safe")
+    result = subprocess.run(
+        argv,
+        cwd=str(worktree),
+        env=dict(environment),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise _CandidateLifecycleFailure("candidate identity bootstrap failed")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise _CandidateLifecycleFailure("candidate identity output is invalid") from exc
+    if not isinstance(payload, dict):
+        raise _CandidateLifecycleFailure("candidate identity output is invalid")
+    for source, target in contract.identity.stdout_json:
+        value = payload.get(source)
+        if not isinstance(value, str) or not value:
+            raise _CandidateLifecycleFailure("candidate identity output is incomplete")
+        environment[target] = value
+
+
+def _expand(value: str, environment: Mapping[str, str]) -> str:
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda item: environment.get(item.group(1), item.group(0)), value)
+
+
+def _expand_value(value: object, environment: Mapping[str, str]) -> object:
+    if isinstance(value, str):
+        return _expand(value, environment)
+    if isinstance(value, list):
+        return [_expand_value(item, environment) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand_value(item, environment) for key, item in value.items()}
+    return value
+
+
+def _remove_candidate_worktree(candidate: EffectiveLocalCandidate, path: Path) -> None:
+    subprocess.run(
+        ["git", "-C", str(candidate.mirror_path), "worktree", "remove", "--force", str(path)],
+        capture_output=True, text=True, check=False,
+    )
+    subprocess.run(
+        ["git", "-C", str(candidate.mirror_path), "worktree", "prune"],
+        capture_output=True, text=True, check=False,
+    )
+
+
+def _profile_digest(candidate: EffectiveLocalCandidate) -> str:
+    payload = json.dumps(candidate.stack_snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256((candidate.stack_hash + "\0" + payload).encode("utf-8")).hexdigest()
+
+
+def _next_attempt(root: Path) -> int:
+    highest = 0
+    if root.is_dir():
+        for path in root.glob("attempt-*.json"):
+            match = re.match(r"attempt-(\d+)-", path.name)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    return highest + 1

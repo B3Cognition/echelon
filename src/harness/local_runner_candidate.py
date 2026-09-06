@@ -54,6 +54,7 @@ class EffectiveLocalCandidate:
     contract_hash: str
     stack_hash: str
     observer_plan_hash: str
+    sandbox_receipt_sha256: str
     mirror_path: Path
     stack_snapshot: Mapping[str, object]
 
@@ -122,6 +123,7 @@ def resolve_effective_local_candidate(
         contract_hash=contract_hash,
         stack_hash=stack_hash,
         observer_plan_hash=observer_plan_hash,
+        sandbox_receipt_sha256=_sandbox_receipt_sha256(state),
         mirror_path=mirror.resolve(strict=True),
         stack_snapshot=snapshot,
     )
@@ -339,6 +341,15 @@ def _validate_sandbox_observation(
         raise LocalCandidateError("sandbox coverage observation is invalid") from exc
     if not validation.valid:
         raise LocalCandidateError("sandbox coverage observation is stale: " + validation.reason)
+
+
+def _sandbox_receipt_sha256(state: Mapping[str, object]) -> str:
+    raw_summary = state.get("coverage_observation")
+    raw_ref = raw_summary.get("ref") if isinstance(raw_summary, dict) else None
+    value = raw_ref.get("receipt_sha256") if isinstance(raw_ref, dict) else None
+    if not isinstance(value, str) or not _SHA256.fullmatch(value):
+        raise LocalCandidateError("sandbox coverage observation lacks a valid receipt digest")
+    return value
 
 
 def _git(

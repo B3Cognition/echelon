@@ -23,6 +23,7 @@ def _candidate(fingerprint: str = "a" * 64) -> EffectiveLocalCandidate:
         contract_hash="d" * 64,
         stack_hash="e" * 64,
         observer_plan_hash="f" * 64,
+        sandbox_receipt_sha256="1" * 64,
         mirror_path=Path("/tmp/mirror.git"),
         stack_snapshot={"schema_version": 1, "resolved": {}},
     )

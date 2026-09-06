@@ -68,6 +68,10 @@ class LocalEngineAdapter(Protocol):
         self, rendered: RenderedEnginePlan, resources: LocalResourceSet
     ) -> LocalResourceSet: ...
 
+    def exec(
+        self, resources: LocalResourceSet, argv: tuple[str, ...]
+    ) -> subprocess.CompletedProcess[str]: ...
+
 
 Executor = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -192,6 +196,15 @@ class _MacOSComposeAdapter:
         except OSError as exc:
             raise LocalEngineError("could not remove generated Compose override") from exc
         return LocalResourceSet(run_id=resources.run_id, resources=())
+
+    def exec(
+        self, resources: LocalResourceSet, argv: tuple[str, ...]
+    ) -> subprocess.CompletedProcess[str]:
+        if len(resources.resources) != 1 or not argv:
+            raise LocalEngineError("local engine command requires one journaled container")
+        resource = resources.resources[0]
+        self._assert_owned_resource(resource, resources.run_id)
+        return self._run((self.engine, "exec", resource.resource_id, *argv))
 
     def _assert_owned_resource(self, resource: ResourceJournalEntry, run_id: str) -> None:
         if resource.engine != self.engine or resource.resource_kind != "container":
