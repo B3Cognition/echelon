@@ -48,19 +48,19 @@ def _preparation_fixture(
     tmp_path: Path,
     *,
     large_source: bool = False,
+    extra_source_files: dict[str, str | bytes] | None = None,
 ):  # type: ignore[no-untyped-def]
     handler = (
         "x = '" + ("a" * 100_000) + "'\n"
         if large_source
         else "def handle():\n    return 'ok'\n"
     )
-    snapshot, partition = _fixture(
-        tmp_path,
-        {
-            "README.md": "API service\n",
-            "src/orders/handler.py": handler,
-        },
-    )
+    source_files: dict[str, str | bytes] = {
+        "README.md": "API service\n",
+        "src/orders/handler.py": handler,
+    }
+    source_files.update(extra_source_files or {})
+    snapshot, partition = _fixture(tmp_path, source_files)
     workspace = tmp_path / "workspace"
     domain = partition.sources[0].domains[0]
     selection = SelectionScopeV1(1, False, ("api",), (domain.domain_key,))
@@ -270,6 +270,27 @@ def test_preparation_builds_publishable_self_contained_exact_child(
                 role="producer",
             )
             assert entry.canonical_context_bytes == len(encoded)
+
+
+@pytest.mark.unit
+def test_preparation_covers_mp4_asset_as_nonbehavioral_metadata(
+    tmp_path: Path,
+) -> None:
+    workspace, intent, parent, options = _preparation_fixture(
+        tmp_path,
+        extra_source_files={
+            "public/editor-placeholder-video.mp4": b"\x00\x00\x00\x18ftypmp42",
+        },
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+
+    disposition = next(
+        item
+        for item in inputs.snapshot_evidence_catalog.nontext_dispositions
+        if item.source_relative_path == "public/editor-placeholder-video.mp4"
+    )
+    assert disposition.disposition == "proven_non_behavioral"
 
 
 @pytest.mark.unit

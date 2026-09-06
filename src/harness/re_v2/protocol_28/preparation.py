@@ -69,7 +69,7 @@ class Protocol28PreparationError(RuntimeError):
     """Raised before publication when L4 input closure cannot be authenticated."""
 
 
-_NON_BEHAVIORAL_SUFFIXES = (".gif", ".ico", ".jpeg", ".jpg", ".png")
+_NON_BEHAVIORAL_SUFFIXES = (".gif", ".ico", ".jpeg", ".jpg", ".mp4", ".png")
 _ATTEMPT_POLICY_BYTES = canonical_json_bytes(
     {
         "identical_outcome_early_stop": 2,
