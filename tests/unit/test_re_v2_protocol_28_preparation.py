@@ -53,7 +53,7 @@ def _preparation_fixture(
     extra_source_files: dict[str, str | bytes] | None = None,
 ):  # type: ignore[no-untyped-def]
     handler = (
-        "x = '" + ("a" * 100_000) + "'\n"
+        "x = '" + ("a" * 220_000) + "'\n"
         if large_source
         else "def handle():\n    return 'ok'\n"
     )
@@ -175,7 +175,7 @@ def _preparation_fixture(
         lineage_root_run_id="re-l0-root",
         lineage_root_manifest_hash=lineage_root_hash,
         authority_objects=objects,
-        token_limit=400_000,
+        token_limit=1_000_000,
         active_ms_limit=600_000,
         producer_agent_bytes=producer,
         verifier_agent_bytes=verifier,
@@ -378,7 +378,7 @@ def test_partial_debt_is_bound_to_every_l4_input_and_context(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
-def test_partial_l4_adaptively_reshards_until_exact_context_fits(
+def test_partial_l4_exact_context_fits_current_capacity(
     tmp_path: Path,
 ) -> None:
     workspace, intent, parent, options, _acceptance = _accepted_debt_fixture(
@@ -397,7 +397,7 @@ def test_partial_l4_adaptively_reshards_until_exact_context_fits(
     assert max(
         shard.byte_end - shard.byte_start
         for shard in inputs.snapshot_evidence_catalog.shards
-    ) < inputs.exhaustive_policy.raw_shard_byte_limit
+    ) <= inputs.exhaustive_policy.raw_shard_byte_limit
 
 
 @pytest.mark.unit
@@ -437,6 +437,45 @@ def test_l4_chunks_large_subject_evidence_indexes(tmp_path: Path) -> None:
         if subject.target_kind == "source"
         for evidence_id in subject.evidence_ids
     } == expected_evidence
+
+
+@pytest.mark.unit
+def test_l4_accepts_large_authenticated_lower_authority(tmp_path: Path) -> None:
+    workspace, intent, parent, options = _preparation_fixture(tmp_path)
+    objects = dict(options.authority_objects)
+    payload = b"x" * 100_000
+    payload_id = content_digest(payload)
+    objects[payload_id] = payload
+    domain_target = next(
+        item for item in parent.targets if item.target_kind == "domain"
+    )
+    parent = replace(
+        parent,
+        targets=tuple(
+            sorted(
+                (
+                    replace(domain_target, candidate_authority_hash=payload_id),
+                    *(item for item in parent.targets if item != domain_target),
+                ),
+                key=lambda item: item.sort_key,
+            )
+        ),
+    )
+
+    inputs = prepare_protocol_28_request(
+        workspace,
+        intent,
+        parent,
+        replace(options, authority_objects=objects),
+    )
+
+    contexts = [
+        entry.canonical_context_bytes
+        for target in inputs.exhaustive_plan.target_plans
+        for entry in target.entries
+    ]
+    assert max(contexts) > 131_072
+    assert max(contexts) <= inputs.exhaustive_policy.max_context_bytes
 
 
 @pytest.mark.unit
@@ -521,7 +560,7 @@ def test_preparation_rejects_unsplittable_exact_provider_context(
 ) -> None:
     """Authority bytes count after base64 encoding, not merely by object ID."""
     workspace, intent, parent, options = _preparation_fixture(tmp_path)
-    oversized_payload = b"x" * 150_000
+    oversized_payload = b"x" * 250_000
     oversized_id = content_digest(oversized_payload)
     first, *remaining = parent.targets
     oversized_target = replace(first, relevant_l2_root_ids=(oversized_id,))

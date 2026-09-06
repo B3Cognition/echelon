@@ -23,8 +23,8 @@ def test_initial_exhaustive_policy_freezes_reviewed_bounds() -> None:
     assert policy.max_supporting_subjects == 32
     assert policy.max_primary_records == 64
     assert policy.max_supporting_records == 128
-    assert policy.max_context_bytes == 131_072
-    assert policy.max_conservative_tokens == 131_072
+    assert policy.max_context_bytes == 262_144
+    assert policy.max_conservative_tokens == 262_144
     assert policy.max_entries_per_target == 512
     assert policy.max_entries_per_run == 16_384
     assert policy.domain_categories == DOMAIN_CATEGORIES
@@ -63,3 +63,14 @@ def test_exhaustive_policy_closed_round_trip() -> None:
     encoded["adaptive_repair"] = True
     with pytest.raises(Protocol28PolicyError, match="unknown fields"):
         type(policy).from_json_dict(encoded)
+
+
+@pytest.mark.unit
+def test_exhaustive_policy_loads_legacy_context_capacity() -> None:
+    policy = replace(
+        build_initial_exhaustive_policy(),
+        max_context_bytes=131_072,
+        max_conservative_tokens=131_072,
+    )
+
+    assert type(policy).from_json_dict(policy.to_json_dict()) == policy

@@ -325,24 +325,25 @@ def test_semantically_applicable_empty_evidence_category_is_not_vacant() -> None
 def test_context_is_split_before_canonical_byte_bound() -> None:
     """Packing accounts for subject bytes as well as raw evidence bytes."""
     domain, selection, parent, l3, evidence = _authorities(
-        (b"a" * 65_536, b"b" * 65_536)
+        tuple(bytes([value]) * 65_536 for value in range(4))
     )
+    shard_ids = tuple(item.shard_id for item in evidence.shards)
+    first, second = _subjects(domain, shard_ids)
     subjects = build_exhaustive_subject_catalog(
         parent.source_snapshot_id,
         parent.partition_manifest_id,
         l3.identity,
-        _subjects(domain, tuple(item.shard_id for item in evidence.shards)),
+        (first, replace(second, evidence_ids=tuple(sorted(shard_ids[1:])))),
     )
 
-    plan = build_exhaustive_plan(
-        parent, l3, evidence, subjects, build_initial_exhaustive_policy(), selection
-    )
+    policy = build_initial_exhaustive_policy()
+    plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
     public = [
         item for item in plan.target_plans[0].entries if item.category_id == "public-surfaces"
     ]
 
     assert len(public) >= 2
-    assert all(item.canonical_context_bytes <= 131_072 for item in public)
+    assert all(item.canonical_context_bytes <= policy.max_context_bytes for item in public)
 
 
 @pytest.mark.unit

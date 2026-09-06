@@ -102,10 +102,8 @@ class ExhaustivePolicyV1:
             "max_supporting_subjects": 32,
             "max_primary_records": 64,
             "max_supporting_records": 128,
-            "max_context_bytes": 131_072,
             "max_candidate_output_bytes": 65_536,
             "max_rendered_markdown_bytes": 98_304,
-            "max_conservative_tokens": 131_072,
             "max_entries_per_target": 512,
             "max_entries_per_run": 16_384,
             "producer_attempt_limit": 3,
@@ -115,6 +113,13 @@ class ExhaustivePolicyV1:
         }
         for field, expected in fixed.items():
             _schema(literal, getattr(self, field), expected, f"ExhaustivePolicyV1.{field}")
+        if (self.max_context_bytes, self.max_conservative_tokens) not in {
+            (131_072, 131_072),
+            (262_144, 262_144),
+        }:
+            raise Protocol28PolicyError(
+                "ExhaustivePolicyV1 context capacity is not a supported envelope"
+            )
         for field in ("producer_contract_hash", "verifier_contract_hash"):
             _schema(digest_value, getattr(self, field), f"ExhaustivePolicyV1.{field}")
         _schema(
@@ -174,10 +179,10 @@ def build_initial_exhaustive_policy(
         max_supporting_subjects=32,
         max_primary_records=64,
         max_supporting_records=128,
-        max_context_bytes=131_072,
+        max_context_bytes=262_144,
         max_candidate_output_bytes=65_536,
         max_rendered_markdown_bytes=98_304,
-        max_conservative_tokens=131_072,
+        max_conservative_tokens=262_144,
         max_entries_per_target=512,
         max_entries_per_run=16_384,
         producer_attempt_limit=3,
