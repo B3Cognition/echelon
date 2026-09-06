@@ -290,9 +290,94 @@ def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
 
     action = _classify_run_recovery(state)
 
-    assert action.kind == "retry_phase"
+    assert action.kind == "resolve_decision"
     assert action.command == "echelon spec continue"
     assert "re-evaluate" in action.note
+
+
+def test_continue_delegates_legacy_banzai_why2_to_the_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision = _legacy_banzai_why2_decision()
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "user_message": "animate the character",
+            "autonomy_mode": "banzai",
+            "blocked_reason": decision["reason_code"],
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code=str(decision["reason_code"]),
+                phase="phase1-why2",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id=str(decision["id"]),
+            ).to_dict(),
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert calls == [["animate the character", "--mode", "banzai"]]
+    assert state["status"] == "blocked"
+    assert state["blocked_decision"]["id"] == decision["id"]
+    assert state["recovery_instruction"]["decision_id"] == decision["id"]
+
+
+def test_continue_restores_interrupted_legacy_banzai_why2_reassessment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repair only the transient state created by the pre-fix retry path."""
+    decision = _legacy_banzai_why2_decision()
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "running",
+            "phase": "phase1-why2",
+            "user_message": "animate the character",
+            "autonomy_mode": "banzai",
+            "blocked_reason": None,
+            "blocked_decision": decision,
+            "recovery_instruction": None,
+            "escalation_question": None,
+            "escalation_options": None,
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert calls == [["animate the character", "--mode", "banzai"]]
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == "human_clarification_required"
+    assert state["recovery_instruction"]["decision_id"] == decision["id"]
+    assert state["escalation_question"] == decision["question"]
 
 
 def test_continue_rearms_stale_banzai_product_recommendation(

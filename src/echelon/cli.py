@@ -3863,7 +3863,7 @@ def _versioned_decision_recovery_action(
         )
     if _legacy_banzai_why2_reassessment_is_available(run_state, decision):
         return _RunRecoveryAction(
-            "retry_phase",
+            "resolve_decision",
             reason=str(decision["reason_code"]),
             phase="phase1-why2",
             command="echelon spec continue",
@@ -4569,7 +4569,16 @@ def _legacy_banzai_why2_reassessment_is_available(
         and run_state.get("autonomy_mode") == "banzai"
         and run_state.get("banzai_default_candidate_protocol_version") is None
         and run_state.get("banzai_default_reassessment") is None
-        and decision.get("schema_version") == 3
+        and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _is_pre_candidate_banzai_why2_decision(
+    decision: Mapping[str, object],
+) -> bool:
+    """Identify the only historic decision eligible for protocol reassessment."""
+    return (
+        decision.get("schema_version") == 3
         and decision.get("status") == "awaiting_human"
         and decision.get("autonomy_mode") == "banzai"
         and decision.get("source_kind") == "provider_escalation"
@@ -4588,6 +4597,47 @@ def _legacy_banzai_why2_reassessment_is_available(
         and decision.get("attempts") == 0
         and decision.get("failure_code") is None
     )
+
+
+def _restore_interrupted_legacy_banzai_why2_reassessment(
+    state: dict[str, object],
+) -> bool:
+    """Repair the exact transient state emitted by the retired retry path."""
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or state.get("status") != "running"
+        or state.get("phase") != "phase1-why2"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("blocked_reason") is not None
+        or state.get("recovery_instruction") is not None
+        or state.get("escalation_question") is not None
+        or state.get("escalation_options") is not None
+        or state.get("banzai_default_candidate_protocol_version") is not None
+        or state.get("banzai_default_reassessment") is not None
+    ):
+        return False
+    try:
+        from harness.blocked_decision import validate_blocked_decision
+
+        decision = validate_blocked_decision(raw_decision)
+    except ValueError:
+        return False
+    if not _is_pre_candidate_banzai_why2_decision(decision):
+        return False
+    state["status"] = "blocked"
+    state["blocked_reason"] = decision["reason_code"]
+    state["recovery_instruction"] = RecoveryInstruction(
+        kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+        reason_code=str(decision["reason_code"]),
+        phase="phase1-why2",
+        requires_human_input=True,
+        schema_version=2,
+        decision_id=str(decision["id"]),
+    ).to_dict()
+    state["escalation_question"] = decision["question"]
+    state["escalation_options"] = []
+    return True
 
 
 def _render_escalation_options(options: object) -> str:
@@ -9854,7 +9904,10 @@ def _cmd_continue_impl(
         return
 
     state = _json.loads((squad_dir / "state.json").read_text())
-    if _supersede_quality_guard_decision(state):
+    if (
+        _restore_interrupted_legacy_banzai_why2_reassessment(state)
+        or _supersede_quality_guard_decision(state)
+    ):
         (squad_dir / "state.json").write_text(
             _json.dumps(state, indent=2, ensure_ascii=False)
         )
