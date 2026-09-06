@@ -18,6 +18,7 @@ from harness.local_runner_journal import (
     assert_git_baseline_unchanged,
     assert_no_recovery_journal,
     build_host_execution_environment,
+    filter_git_porcelain_baseline,
     write_local_run_journal,
 )
 
@@ -82,6 +83,26 @@ def test_host_environment_redirects_all_runner_owned_state(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+def test_host_environment_can_use_a_short_owned_runtime_temp_directory(
+    tmp_path: Path,
+) -> None:
+    short_temp = tmp_path / "echelon-local-123"
+    run_root = tmp_path / "long-managed-run-root"
+    run_root.mkdir()
+
+    environment = build_host_execution_environment(
+        run_root,
+        {},
+        runtime_temp_root=short_temp,
+    )
+
+    assert environment.values["TMPDIR"] == str(short_temp)
+    assert environment.values["TMP"] == str(short_temp)
+    assert environment.values["TEMP"] == str(short_temp)
+    assert short_temp.is_dir()
+
+
+@pytest.mark.unit
 def test_non_terminal_journal_requires_explicit_cleanup(tmp_path: Path) -> None:
     journal = LocalRunJournal(
         local_run_id="local-1",
@@ -105,3 +126,29 @@ def test_baseline_check_accepts_preexisting_dirty_state_but_rejects_new_change(
         assert_git_baseline_unchanged(
             tmp_path, baseline, baseline + "?? generated.txt\n"
         )
+
+
+@pytest.mark.unit
+def test_workspace_baseline_ignores_only_this_local_runs_owned_artifacts() -> None:
+    """The runner's journal and downloads are not user-checkout mutations."""
+    baseline = (
+        "?? runs/targets/game/runs/build-1/state/default.json\n"
+        " M README.md\n"
+    )
+    after = baseline + (
+        "?? runs/targets/game/runs/build-1/local-runs/local-"
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pnpm/store/v3/files/pkg\n"
+        "?? runs/targets/game/runs/build-1/evidence/local-runnability/"
+        "attempt-0001-local-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json\n"
+        "?? sources/game/unexpected.txt\n"
+    )
+
+    assert filter_git_porcelain_baseline(
+        after,
+        (
+            Path("runs/targets/game/runs/build-1/local-runs/local-"
+                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            Path("runs/targets/game/runs/build-1/evidence/local-runnability/"
+                 "attempt-0001-local-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"),
+        ),
+    ) == baseline + "?? sources/game/unexpected.txt\n"

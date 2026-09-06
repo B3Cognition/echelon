@@ -185,6 +185,7 @@ def build_host_execution_environment(
     bindings: Mapping[str, str],
     *,
     parent_environment: Mapping[str, str] | None = None,
+    runtime_temp_root: Path | None = None,
 ) -> HostExecutionEnvironment:
     """Build the exact scrubbed environment used for host-local commands."""
     root = _regular_directory(run_root, "local run root")
@@ -195,12 +196,20 @@ def build_host_execution_environment(
         if isinstance(parent.get(name), str) and str(parent[name])
     }
     values.setdefault("PATH", "/usr/bin:/bin")
+    runtime_temp = root / "tmp" if runtime_temp_root is None else Path(runtime_temp_root)
+    if not runtime_temp.is_absolute() or runtime_temp.is_symlink():
+        raise LocalRunJournalError("local runtime temporary directory is invalid")
+    try:
+        runtime_temp.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        if not runtime_temp.is_dir() or runtime_temp.is_symlink():
+            raise LocalRunJournalError("local runtime temporary directory is invalid")
     directories = {
         "HOME": root / "home",
         "XDG_CONFIG_HOME": root / "xdg" / "config",
         "XDG_CACHE_HOME": root / "xdg" / "cache",
         "XDG_DATA_HOME": root / "xdg" / "data",
-        "TMPDIR": root / "tmp",
+        "TMPDIR": runtime_temp,
         "PNPM_HOME": root / "pnpm",
         "npm_config_cache": root / "npm-cache",
         "PLAYWRIGHT_BROWSERS_PATH": root / "playwright-browsers",
@@ -208,6 +217,8 @@ def build_host_execution_environment(
     for value in directories.values():
         value.mkdir(parents=True, exist_ok=True)
     values.update({name: str(path) for name, path in directories.items()})
+    values["TMP"] = str(runtime_temp)
+    values["TEMP"] = str(runtime_temp)
     git_config = root / "gitconfig"
     if git_config.is_symlink():
         raise LocalRunJournalError("local Git config path is symlinked")
@@ -236,6 +247,47 @@ def git_porcelain_baseline(path: Path) -> str:
     if result.returncode != 0:
         raise LocalRunJournalError("could not inspect Git baseline")
     return result.stdout
+
+
+def filter_git_porcelain_baseline(
+    baseline: str,
+    owned_relative_paths: tuple[Path, ...],
+) -> str:
+    """Remove only explicitly-owned runner artifacts from a Git status snapshot.
+
+    The local runner writes its journal, isolated dependency cache, and immutable
+    attestation beneath the Echelon-managed run directory.  Those files are not
+    edits to the user's checkout, even when the encompassing workspace happens
+    to be a Git repository that does not ignore ``runs/``.  All other porcelain
+    records remain part of the baseline comparison.
+
+    This deliberately accepts only repository-relative, ordinary path prefixes.
+    It is not a generic ignore mechanism for candidate-provided paths.
+    """
+    prefixes = tuple(
+        _owned_status_path_prefix(path) for path in owned_relative_paths
+    )
+    if not prefixes:
+        return baseline
+    retained: list[str] = []
+    for line in baseline.splitlines(keepends=True):
+        # Porcelain v1 uses two status columns, a separator, then the path.
+        # Runner-owned artifacts are created (``??``), but supporting staged or
+        # modified records here makes recovery safe if a prior run was
+        # interrupted while writing its own journal.
+        path = line[3:].rstrip("\n") if len(line) >= 4 else ""
+        if any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes):
+            continue
+        retained.append(line)
+    return "".join(retained)
+
+
+def _owned_status_path_prefix(path: Path) -> str:
+    value = Path(path).as_posix().strip("/")
+    parts = value.split("/")
+    if not value or any(part in {"", ".", ".."} for part in parts):
+        raise LocalRunJournalError("runner-owned status path is invalid")
+    return value
 
 
 def assert_git_baseline_unchanged(

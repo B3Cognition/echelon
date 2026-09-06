@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
-import { chromium } from "@playwright/test";
+import path from "node:path";
+import { createRequire } from "node:module";
+
+// This helper is owned by Echelon and lives outside the candidate worktree.
+// Resolve Playwright from the candidate's managed dependencies, rather than
+// accidentally requiring the harness installation (or a host-global module).
+const candidateRequire = createRequire(path.join(process.cwd(), "package.json"));
+const { chromium } = candidateRequire("@playwright/test");
 
 const planPath = process.argv[2];
 if (!planPath) {

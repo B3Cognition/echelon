@@ -14,9 +14,12 @@ from harness.local_runner_engine import LocalResourceSet
 from harness.local_runner_journal import ResourceJournalEntry
 from harness.product_inventory import product_evidence_fingerprint
 from harness.local_runner import (
+    LocalObservationResult,
     LocalRunnerOptions,
     LocalRunnabilityRunner,
     LocalVerificationRequest,
+    _expand_value,
+    _install_playwright_chromium,
 )
 from harness.runnability_contract import load_runnability_contract, runnability_contract_sha256
 
@@ -186,6 +189,7 @@ def _runner_with_fakes(
     *,
     browser_result: str = "passed",
     mutate_candidate_during_start: bool = False,
+    browser_installer=None,
 ):
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "browser-3d-game"
@@ -262,6 +266,7 @@ def _runner_with_fakes(
         readiness_probe=lambda *_args, **_kwargs: True,
         observation_runner=lambda *_args, **_kwargs: browser_result == "passed",
         git_baseline=baseline,
+        browser_installer=browser_installer or (lambda *_args: None),
     )
     return runner, fixture
 
@@ -330,6 +335,141 @@ def test_runner_rejects_lifecycle_that_changes_the_verified_candidate(
 
     assert result.status == "candidate_lifecycle_failed"
     assert "verified product contents" in result.summary
+
+
+@pytest.mark.unit
+def test_runner_provisions_chromium_in_its_managed_environment(tmp_path: Path) -> None:
+    """Browser dependencies must not be assumed to exist on the user host."""
+    installs: list[tuple[Path, dict[str, str]]] = []
+    runner, fixture = _runner_with_fakes(
+        tmp_path,
+        browser_installer=lambda cwd, environment: installs.append((cwd, dict(environment))),
+    )
+
+    result = runner.verify(
+        fixture.request(),
+        LocalRunnerOptions(engine="docker", action_confirmed=True, keep_on_failure=False),
+    )
+
+    assert result.status == "passed"
+    assert installs[0][0] != fixture.target
+    assert installs[0][1]["PLAYWRIGHT_BROWSERS_PATH"].startswith(
+        str(fixture.request().local_run_root)
+    )
+
+
+@pytest.mark.unit
+def test_browser_installer_bootstraps_playwright_headless_shell(monkeypatch, tmp_path: Path) -> None:
+    """The runner owns a small, compatible browser without using host caches."""
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def run(*args, **kwargs):
+        calls.append((args, kwargs))
+        argv = args[0]
+        if argv[:4] == ["pnpm", "exec", "node", "-e"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout='{"revision":"1200","browser_version":"143.0.7499.4"}',
+                stderr="",
+            )
+        if argv[0] == "/usr/bin/ditto":
+            destination = Path(argv[-1])
+            executable = destination / "chrome-headless-shell-mac-arm64" / "chrome-headless-shell"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("browser", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("harness.local_runner.subprocess.run", run)
+    monkeypatch.setattr("harness.local_runner.platform.machine", lambda: "arm64")
+
+    browser_cache = tmp_path / "playwright-browsers"
+    _install_playwright_chromium(
+        tmp_path,
+        {
+            "PLAYWRIGHT_BROWSERS_PATH": str(browser_cache),
+            "TMPDIR": str(tmp_path / "tmp"),
+        },
+    )
+
+    assert calls[0][0][0][:4] == ["pnpm", "exec", "node", "-e"]
+    assert calls[1][0][0][0] == "/usr/bin/curl"
+    assert calls[1][0][0][-1].endswith("chrome-headless-shell-mac-arm64.zip")
+    assert calls[2][0][0][:3] == ["/usr/bin/ditto", "-x", "-k"]
+    assert calls[0][1]["env"]["PLAYWRIGHT_BROWSERS_PATH"] == str(browser_cache)
+    assert (browser_cache / "chromium_headless_shell-1200" / "INSTALLATION_COMPLETE").is_file()
+
+
+@pytest.mark.unit
+def test_runner_allows_only_its_owned_workspace_artifacts(tmp_path: Path) -> None:
+    """Managed browser caches and evidence must not masquerade as user edits."""
+    runner, fixture = _runner_with_fakes(tmp_path)
+    workspace_baseline_calls = 0
+
+    def baseline(path: Path) -> str:
+        nonlocal workspace_baseline_calls
+        if path != fixture.workspace:
+            return ""
+        local_runs = fixture.request().local_run_root
+        run_dirs = tuple(local_runs.glob("local-*")) if local_runs.exists() else ()
+        if not run_dirs:
+            return ""
+        run = run_dirs[0].relative_to(fixture.workspace).as_posix()
+        evidence = (
+            fixture.request().local_run_root.parent.parent
+            / "evidence"
+            / "local-runnability"
+        ).relative_to(fixture.workspace).as_posix()
+        mirror_worktree = (
+            fixture.candidate.mirror_path
+            / "worktrees"
+            / "candidate"
+            / "index"
+        ).relative_to(fixture.workspace).as_posix()
+        status = (
+            f"?? {run}/playwright-browsers/chromium/Chrome\n"
+            f"?? {evidence}/attempt-0001-local.json\n"
+        )
+        if workspace_baseline_calls > 0:
+            status += f"?? {mirror_worktree}\n"
+        workspace_baseline_calls += 1
+        return status
+
+    runner._git_baseline = baseline
+    result = runner.verify(
+        fixture.request(),
+        LocalRunnerOptions(engine="docker", action_confirmed=True, keep_on_failure=False),
+    )
+
+    assert result.status == "passed"
+
+
+@pytest.mark.unit
+def test_runner_reports_a_classified_observation_failure(tmp_path: Path) -> None:
+    runner, fixture = _runner_with_fakes(tmp_path)
+    runner._observation_runner = lambda *_args: LocalObservationResult(
+        False, "browser DOM observation timed out"
+    )
+
+    result = runner.verify(
+        fixture.request(),
+        LocalRunnerOptions(engine="docker", action_confirmed=True, keep_on_failure=False),
+    )
+
+    assert result.status == "candidate_lifecycle_failed"
+    assert result.summary == "browser DOM observation timed out"
+
+
+@pytest.mark.unit
+def test_browser_plan_expands_tuple_valued_session_storage() -> None:
+    plan = {
+        "session_storage": (("echelonSessionToken", "${ECHELON_SESSION_TOKEN}"),),
+    }
+
+    expanded = _expand_value(plan, {"ECHELON_SESSION_TOKEN": "fixture-token"})
+
+    assert expanded == {
+        "session_storage": (("echelonSessionToken", "fixture-token"),),
+    }
 
 
 @pytest.mark.unit

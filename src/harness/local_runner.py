@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
+import platform
 import re
 import signal
 import shlex
+import shutil
 import socket
 import subprocess
 import time
@@ -43,6 +45,7 @@ from harness.local_runner_journal import (
     assert_git_baseline_unchanged,
     assert_no_recovery_journal,
     build_host_execution_environment,
+    filter_git_porcelain_baseline,
     git_porcelain_baseline,
     load_local_run_journal,
     write_local_run_journal,
@@ -87,8 +90,15 @@ class LocalRunnerResult:
     summary: str = ""
 
 
+@dataclass(frozen=True)
+class LocalObservationResult:
+    passed: bool
+    summary: str
+
+
 CommandExecutor = Callable[..., object]
-ObservationRunner = Callable[..., bool]
+ObservationRunner = Callable[..., bool | LocalObservationResult]
+BrowserInstaller = Callable[[Path, Mapping[str, str]], None]
 
 
 class LocalRunnabilityRunner:
@@ -106,6 +116,7 @@ class LocalRunnabilityRunner:
         observation_runner: ObservationRunner | None = None,
         git_baseline: Callable[[Path], str] = git_porcelain_baseline,
         browser_helper: Path | None = None,
+        browser_installer: BrowserInstaller | None = None,
         recovery_workspace_root: Path | None = None,
         recovery_candidate_remover: Callable[[Path, Path], None] | None = None,
     ) -> None:
@@ -119,6 +130,7 @@ class LocalRunnabilityRunner:
         self._command_executor = command_executor or _run_command
         self._readiness_probe = readiness_probe or _wait_for_readiness
         self._browser_helper = browser_helper
+        self._browser_installer = browser_installer or _install_playwright_chromium
         self._observation_runner = observation_runner or (
             lambda worktree, contract, environment, adapter, resources, after_restart:
             _run_independent_observations(
@@ -193,6 +205,7 @@ class LocalRunnabilityRunner:
                     self._recovery_candidate_remover(
                         Path(journal.mirror_path), candidate_worktree
                     )
+                _remove_managed_macos_runtime_temp(journal.local_run_id)
                 assert_git_baseline_unchanged(
                     target,
                     journal.target_git_baseline,
@@ -200,8 +213,14 @@ class LocalRunnabilityRunner:
                 )
                 assert_git_baseline_unchanged(
                     workspace,
-                    journal.workspace_git_baseline,
-                    self._git_baseline(workspace),
+                    filter_git_porcelain_baseline(
+                        journal.workspace_git_baseline,
+                        _runner_owned_workspace_paths(workspace, run_root),
+                    ),
+                    filter_git_porcelain_baseline(
+                        self._git_baseline(workspace),
+                        _runner_owned_workspace_paths(workspace, run_root),
+                    ),
                 )
             except (LocalEngineError, LocalRunSideEffectError, OSError, RuntimeError) as exc:
                 failed = replace(journal, status="cleanup_failed")
@@ -243,8 +262,14 @@ class LocalRunnabilityRunner:
         resources: LocalResourceSet | None = None
         processes: list[object] = []
         environment: Mapping[str, str] = {}
+        runtime_temp_root = _managed_macos_runtime_temp(local_run_id)
         target_before = self._git_baseline(request.target_root)
-        workspace_before = self._git_baseline(request.workspace_root)
+        owned_workspace_paths = _runner_owned_workspace_paths(
+            request.workspace_root, run_root
+        )
+        workspace_before = filter_git_porcelain_baseline(
+            self._git_baseline(request.workspace_root), owned_workspace_paths
+        )
         journal = LocalRunJournal(
             local_run_id=local_run_id,
             status="running",
@@ -275,11 +300,16 @@ class LocalRunnabilityRunner:
                 candidate_worktree, execution.compose_file, allowed_services
             )
             initial_environment = _runner_variables(contract)
-            controlled = build_host_execution_environment(run_root, initial_environment)
+            controlled = build_host_execution_environment(
+                run_root,
+                initial_environment,
+                runtime_temp_root=runtime_temp_root,
+            )
             _execute_stage(
                 execution, "install", candidate_worktree, controlled.values,
                 self._command_executor, processes,
             )
+            self._browser_installer(candidate_worktree, controlled.values)
             rendered = adapter.render_plan(plan, local_run_id, run_root / "generated")
             resources = adapter.up(rendered)
             journal = replace(
@@ -303,10 +333,10 @@ class LocalRunnabilityRunner:
             )
             if not self._readiness_probe(contract, environment):
                 raise _CandidateLifecycleFailure("application readiness did not pass")
-            if not self._observation_runner(
+            observation = self._observation_runner(
                 candidate_worktree, contract, environment, adapter, resources, False
-            ):
-                raise _CandidateLifecycleFailure("independent browser or persistence observation failed")
+            )
+            _require_passing_observation(observation)
             if contract.persistence_probe is not None:
                 _terminate_processes(processes)
                 processes.clear()
@@ -316,10 +346,10 @@ class LocalRunnabilityRunner:
                 )
                 if not self._readiness_probe(contract, environment):
                     raise _CandidateLifecycleFailure("application readiness after restart did not pass")
-                if not self._observation_runner(
+                observation = self._observation_runner(
                     candidate_worktree, contract, environment, adapter, resources, True
-                ):
-                    raise _CandidateLifecycleFailure("persistence observation after restart failed")
+                )
+                _require_passing_observation(observation, after_restart=True)
             if product_evidence_fingerprint(candidate_worktree) != candidate.product_fingerprint:
                 raise _CandidateLifecycleFailure(
                     "candidate lifecycle changed the verified product contents"
@@ -374,12 +404,24 @@ class LocalRunnabilityRunner:
                     cleanup_complete = False
                     status = "cleanup_failed"
                     summary = f"{summary}; candidate cleanup failed: {exc}".strip("; ")
+            if cleanup_complete:
+                try:
+                    _remove_managed_macos_runtime_temp(local_run_id)
+                except OSError as exc:
+                    cleanup_complete = False
+                    status = "cleanup_failed"
+                    summary = f"{summary}; runtime cleanup failed: {exc}".strip("; ")
             try:
                 assert_git_baseline_unchanged(
                     request.target_root, target_before, self._git_baseline(request.target_root)
                 )
                 assert_git_baseline_unchanged(
-                    request.workspace_root, workspace_before, self._git_baseline(request.workspace_root)
+                    request.workspace_root,
+                    workspace_before,
+                    filter_git_porcelain_baseline(
+                        self._git_baseline(request.workspace_root),
+                        owned_workspace_paths,
+                    ),
                 )
             except LocalRunSideEffectError as exc:
                 status = "cleanup_failed"
@@ -424,6 +466,18 @@ class _CandidateLifecycleFailure(RuntimeError):
     pass
 
 
+def _require_passing_observation(
+    result: bool | LocalObservationResult, *, after_restart: bool = False
+) -> None:
+    if isinstance(result, LocalObservationResult):
+        if not result.passed:
+            raise _CandidateLifecycleFailure(result.summary)
+        return
+    if not result:
+        phase = "persistence observation after restart" if after_restart else "independent browser or persistence observation"
+        raise _CandidateLifecycleFailure(f"{phase} failed")
+
+
 def _local_runs_root(requested: Path, candidate: EffectiveLocalCandidate) -> Path:
     expected = candidate.mirror_path.parent / candidate.build_id / "local-runs"
     raw = Path(requested).expanduser()
@@ -436,6 +490,44 @@ def _local_runs_root(requested: Path, candidate: EffectiveLocalCandidate) -> Pat
         raise LocalEngineError("managed local-run root is symlinked")
     raw.mkdir(parents=True, exist_ok=True)
     return raw.resolve(strict=True)
+
+
+def _runner_owned_workspace_paths(workspace_root: Path, run_root: Path) -> tuple[Path, ...]:
+    """Return the exact Echelon-owned paths a local run may create.
+
+    The managed candidate, browser cache, journal, and the immutable local
+    attestation live below these paths.  Everything else in the user's
+    workspace remains protected by the Git baseline check.
+    """
+    workspace = Path(workspace_root).resolve(strict=True)
+    build_root = run_root.parent.parent
+    mirror_worktree = run_root.parent.parent.parent / "mirror.git" / "worktrees" / "candidate"
+    try:
+        return (
+            run_root.relative_to(workspace),
+            (build_root / "evidence" / "local-runnability").relative_to(workspace),
+            mirror_worktree.relative_to(workspace),
+        )
+    except ValueError as exc:
+        raise LocalEngineError(
+            "managed local-run paths must be inside the workspace"
+        ) from exc
+
+
+def _managed_macos_runtime_temp(local_run_id: str) -> Path:
+    """Keep macOS UNIX sockets short while retaining a per-run ownership key."""
+    if not re.fullmatch(r"local-[a-f0-9]{32}", local_run_id):
+        raise LocalEngineError("managed local-run ID is invalid")
+    return Path("/tmp") / f"echelon-{local_run_id[6:]}"
+
+
+def _remove_managed_macos_runtime_temp(local_run_id: str) -> None:
+    runtime_temp = _managed_macos_runtime_temp(local_run_id)
+    if not runtime_temp.exists():
+        return
+    if runtime_temp.is_symlink() or not runtime_temp.is_dir():
+        raise OSError("managed local runtime temporary directory is invalid")
+    shutil.rmtree(runtime_temp)
 
 
 def _existing_regular_directory(path: Path, label: str) -> Path:
@@ -645,6 +737,119 @@ def _run_command(
     return subprocess.run(argv, cwd=str(cwd), env=dict(env), check=False).returncode
 
 
+def _install_playwright_chromium(worktree: Path, environment: Mapping[str, str]) -> None:
+    """Provision the Playwright headless shell inside the per-run cache only."""
+    browser_cache = Path(environment.get("PLAYWRIGHT_BROWSERS_PATH", ""))
+    if not browser_cache.is_absolute() or browser_cache.is_symlink():
+        raise _CandidateLifecycleFailure("managed Playwright browser cache is invalid")
+    try:
+        metadata = _playwright_headless_shell_metadata(worktree, environment)
+        archive_platform, extracted_directory = _macos_headless_shell_layout()
+        browser_directory = browser_cache / f"chromium_headless_shell-{metadata['revision']}"
+        executable = browser_directory / extracted_directory / "chrome-headless-shell"
+        marker = browser_directory / "INSTALLATION_COMPLETE"
+        if marker.is_file() and executable.is_file():
+            return
+        if browser_directory.exists():
+            raise _CandidateLifecycleFailure("managed Playwright browser cache is incomplete")
+        browser_cache.mkdir(parents=True, exist_ok=True)
+        temp_root = Path(environment.get("TMPDIR", ""))
+        if not temp_root.is_absolute() or temp_root.is_symlink():
+            raise _CandidateLifecycleFailure("managed Playwright temporary directory is invalid")
+        temp_root.mkdir(parents=True, exist_ok=True)
+        archive = temp_root / f"playwright-headless-shell-{uuid.uuid4().hex}.zip"
+        url = (
+            "https://storage.googleapis.com/chrome-for-testing-public/"
+            f"{metadata['browser_version']}/{archive_platform}/"
+            f"chrome-headless-shell-{archive_platform}.zip"
+        )
+        downloaded = subprocess.run(
+            ["/usr/bin/curl", "--fail", "--location", "--silent", "--show-error", "--max-time", "300", "--output", str(archive), url],
+            cwd=str(worktree),
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=330,
+        )
+        if downloaded.returncode != 0:
+            raise _CandidateLifecycleFailure("managed Playwright headless shell download failed")
+        browser_directory.mkdir(parents=True, exist_ok=False)
+        extracted = subprocess.run(
+            ["/usr/bin/ditto", "-x", "-k", str(archive), str(browser_directory)],
+            cwd=str(worktree),
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if extracted.returncode != 0 or not executable.is_file():
+            raise _CandidateLifecycleFailure("managed Playwright headless shell extraction failed")
+        executable.chmod(0o755)
+        marker.write_text("", encoding="utf-8")
+        archive.unlink(missing_ok=True)
+    except _CandidateLifecycleFailure:
+        raise
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise _CandidateLifecycleFailure("managed Playwright headless shell provision failed") from exc
+
+
+def _playwright_headless_shell_metadata(
+    worktree: Path, environment: Mapping[str, str]
+) -> dict[str, str]:
+    """Read the installed candidate's Playwright revision without host lookup."""
+    script = (
+        "const path=require('node:path');"
+        "const test=path.dirname(require.resolve('@playwright/test'));"
+        "const core=path.dirname(require.resolve('playwright-core',{paths:[test]}));"
+        "const metadata=require(path.join(core,'browsers.json'));"
+        "const shell=metadata.browsers.find(item=>item.name==='chromium-headless-shell');"
+        "if(!shell)process.exit(2);"
+        "process.stdout.write(JSON.stringify({revision:String(shell.revision),browser_version:String(shell.browserVersion)}));"
+    )
+    try:
+        result = subprocess.run(
+            ["pnpm", "exec", "node", "-e", script],
+            cwd=str(worktree),
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _CandidateLifecycleFailure("managed Playwright metadata lookup could not start") from exc
+    if result.returncode != 0:
+        raise _CandidateLifecycleFailure(
+            "managed Playwright metadata lookup failed; ensure the candidate declares @playwright/test"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise _CandidateLifecycleFailure("managed Playwright metadata is invalid") from exc
+    if not isinstance(payload, dict):
+        raise _CandidateLifecycleFailure("managed Playwright metadata is invalid")
+    revision = payload.get("revision")
+    browser_version = payload.get("browser_version")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9]{1,20}", revision):
+        raise _CandidateLifecycleFailure("managed Playwright revision is invalid")
+    if not isinstance(browser_version, str) or not re.fullmatch(
+        r"[0-9]+(?:\.[0-9]+){3}", browser_version
+    ):
+        raise _CandidateLifecycleFailure("managed Playwright browser version is invalid")
+    return {"revision": revision, "browser_version": browser_version}
+
+
+def _macos_headless_shell_layout() -> tuple[str, str]:
+    machine = platform.machine().lower()
+    if machine in {"arm64", "aarch64"}:
+        return "mac-arm64", "chrome-headless-shell-mac-arm64"
+    if machine in {"x86_64", "amd64"}:
+        return "mac", "chrome-headless-shell-mac-x64"
+    raise _CandidateLifecycleFailure("managed Playwright browser is unsupported on this macOS architecture")
+
+
 def _terminate_processes(processes: list[object]) -> None:
     for process in reversed(processes):
         try:
@@ -685,7 +890,7 @@ def _run_independent_observations(
     after_restart: bool,
     *,
     browser_helper: Path | None = None,
-) -> bool:
+) -> LocalObservationResult:
     """Require browser DOM and direct PostgreSQL observations, never command exit alone."""
     browser = [item for item in contract.primary_journey.observations if item.kind == "browser_dom"]
     postgres = [item for item in contract.primary_journey.observations if item.kind == "postgres_query"]
@@ -694,7 +899,7 @@ def _run_independent_observations(
         browser = [item for item in browser if item.id in required_ids]
         postgres = [item for item in postgres if item.id in required_ids]
     if not browser or not postgres:
-        return False
+        return LocalObservationResult(False, "local observation contract lacks browser or PostgreSQL evidence")
     helper = browser_helper or (
         Path(__file__).resolve().parents[2]
         / "runtime"
@@ -702,7 +907,7 @@ def _run_independent_observations(
         / "user-runnability-browser.mjs"
     )
     if not helper.is_file():
-        return False
+        return LocalObservationResult(False, "managed browser observation helper is unavailable")
     plan = asdict(contract.primary_journey)
     plan = _expand_value(plan, environment)
     if after_restart:
@@ -718,30 +923,42 @@ def _run_independent_observations(
             capture_output=True, text=True, check=False, timeout=120,
         )
         if browser_result.returncode != 0:
-            return False
+            return LocalObservationResult(False, _browser_observation_failure(browser_result.stderr))
         payload = json.loads(browser_result.stdout)
         observations = payload.get("observations") if isinstance(payload, dict) else None
         if payload.get("status") != "passed" or not isinstance(observations, dict):
-            return False
+            return LocalObservationResult(False, "browser DOM observation was not confirmed")
         if any(observations.get(item.id, {}).get("passed") is not True for item in browser):
-            return False
+            return LocalObservationResult(False, "browser DOM observation did not match the required state")
         execute = getattr(adapter, "exec", None)
         if not callable(execute):
-            return False
+            return LocalObservationResult(False, "managed PostgreSQL observer is unavailable")
         for observation in postgres:
             statement = _postgres_statement(observation.statement or "", observation.parameters, environment)
             result = execute(resources, ("psql", "-U", "echelon", "-d", "echelon", "-AtX", "-c", statement))
             if getattr(result, "returncode", 1) != 0:
-                return False
+                return LocalObservationResult(False, f"PostgreSQL observation {observation.id} could not execute")
             rows = [line for line in str(getattr(result, "stdout", "")).splitlines() if line]
             expected = _expand(observation.parameters[0], environment) if observation.parameters else ""
             if observation.expectation == "one_row_exact" and rows != [expected]:
-                return False
-        return True
+                return LocalObservationResult(False, f"PostgreSQL observation {observation.id} did not match")
+        return LocalObservationResult(True, "browser and PostgreSQL observations passed")
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError):
-        return False
+        return LocalObservationResult(False, "managed browser or PostgreSQL observation could not complete")
     finally:
         plan_path.unlink(missing_ok=True)
+
+
+def _browser_observation_failure(stderr: str) -> str:
+    """Classify browser failure without persisting candidate page contents or secrets."""
+    status_codes = sorted(set(re.findall(r"\bHTTP ([45][0-9]{2})\b", stderr)))
+    if status_codes:
+        return f"browser DOM observation failed with HTTP {', '.join(status_codes)}"
+    if "Timeout" in stderr or "timeout" in stderr:
+        return "browser DOM observation timed out"
+    if "Cannot find package" in stderr or "ERR_MODULE_NOT_FOUND" in stderr:
+        return "browser DOM observer could not load the candidate Playwright dependency"
+    return "browser DOM observer exited without confirming the required state"
 
 
 def _postgres_statement(statement: str, parameters: tuple[str, ...], environment: Mapping[str, str]) -> str:
@@ -797,6 +1014,8 @@ def _expand_value(value: object, environment: Mapping[str, str]) -> object:
         return _expand(value, environment)
     if isinstance(value, list):
         return [_expand_value(item, environment) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_expand_value(item, environment) for item in value)
     if isinstance(value, dict):
         return {key: _expand_value(item, environment) for key, item in value.items()}
     return value
