@@ -289,6 +289,26 @@ def test_proven_nonbehavioral_binary_gets_metadata_disposition(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_projection_canonicalizes_multiple_empty_file_receipts(tmp_path: Path) -> None:
+    snapshot, partition = _fixture(
+        tmp_path,
+        {f"empty-{index}.txt": "" for index in range(10)},
+    )
+
+    catalog = stage_snapshot_evidence(
+        snapshot,
+        partition,
+        _source_selection(),
+        _policy(),
+        ObjectStore(tmp_path / "objects"),
+    )
+
+    receipt_ids = catalog.projection_for("api").primary_empty_receipt_ids
+    assert receipt_ids == tuple(sorted(receipt_ids))
+    assert len(receipt_ids) == 10
+
+
+@pytest.mark.unit
 def test_empty_file_has_explicit_primary_coverage_receipt(tmp_path: Path) -> None:
     """Zero bytes still require an affirmative selected-scope coverage fact."""
     snapshot, partition = _fixture(tmp_path, {"empty.txt": ""})

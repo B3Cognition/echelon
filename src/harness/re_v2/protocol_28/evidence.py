@@ -1348,7 +1348,14 @@ def _projection_ids(
     for path in paths:
         kind, identifiers, _ = by_path[(source_id, path)]
         grouped[kind].extend(identifiers)
-    return {kind: tuple(values) for kind, values in grouped.items()}
+    return {
+        kind: (
+            tuple(values)
+            if kind == "shard"
+            else tuple(sorted(set(values)))
+        )
+        for kind, values in grouped.items()
+    }
 
 
 def _membership_proof(
