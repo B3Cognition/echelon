@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import json
 import shutil
 
 import pytest
@@ -32,6 +33,7 @@ from harness.re_v2.protocol_28.checkpoints import (
     CheckpointSelectionEntryV2,
 )
 from harness.re_v2.protocol_28.checkpoint_cache import load_checkpoint_cache_v2
+from tests.re_v2_protocol_28_fixtures import digest
 from tests.unit.test_re_v2_protocol_28_checkpoints import _checkpoint
 
 
@@ -202,6 +204,82 @@ class _RepairThenPassBackend(_PassingBackend):
             )
         return L4DispatchResultV1(
             canonical_json_bytes(value.to_json_dict()),
+            "test-provider",
+            "test-model",
+            "2026-08-31T12:00:00Z",
+            "2026-08-31T12:00:01Z",
+            1000,
+            token_status="trusted_exact",
+            billable_tokens=5,
+            active_status="trusted_exact",
+            active_ms=1000,
+        )
+
+
+class _FindingDispositionContractRepairBackend(_PassingBackend):
+    """Repair only after the controller identifies the producer contract fault."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._producer_calls = 0
+        self._verifier_calls = 0
+        self._last_candidate = None
+        self.producer_contexts: list[dict[str, object]] = []
+
+    def execute(self, role, _agent, context, _schema, _reservation):  # type: ignore[no-untyped-def]
+        self.roles.append(role)
+        entry, spec, _evidence, candidate = _candidate_fixture()
+        if role == "producer":
+            self._producer_calls += 1
+            parsed_context = json.loads(context)
+            self.producer_contexts.append(parsed_context)
+            emitted = (
+                candidate
+                if self._producer_calls == 1
+                else replace(
+                    candidate,
+                    rendered_markdown="Authenticated repaired exhaustive evidence.",
+                )
+            )
+            self._last_candidate = emitted
+            value = emitted.to_json_dict()
+            if self._producer_calls > 1 and (
+                "unresolved-findings-not-addressed"
+                not in parsed_context.get("producer_contract_failure_codes", [])
+            ):
+                value["unresolved_finding_ids"] = [digest("unaddressed-finding")]
+        else:
+            self._verifier_calls += 1
+            assert self._last_candidate is not None
+            candidate = self._last_candidate
+            diagnostics = ()
+            verdict = "PASS"
+            if self._verifier_calls == 1:
+                verdict = "REPAIR"
+                diagnostics = (
+                    ExhaustiveDiagnosticV1(
+                        1,
+                        candidate.identity,
+                        entry.verifier_contract_hash,
+                        "unresolved-assigned-l3-finding",
+                        candidate.covered_primary_subject_ids,
+                        candidate.covered_primary_evidence_ids,
+                        (),
+                        "The assigned finding requires an explicit disposition.",
+                    ),
+                )
+            value = ExhaustiveVerificationV1(
+                1,
+                spec.identity,
+                candidate.identity,
+                entry.verifier_contract_hash,
+                verdict,
+                diagnostics,
+                candidate.covered_primary_evidence_ids,
+                candidate.addressed_finding_ids,
+            ).to_json_dict()
+        return L4DispatchResultV1(
+            canonical_json_bytes(value),
             "test-provider",
             "test-model",
             "2026-08-31T12:00:00Z",
@@ -636,6 +714,43 @@ def test_malformed_producer_consumes_attempt_and_releases_paired_verifier(
 
     assert completed.state == "evidence_complete"
     assert backend.roles == ["producer", "producer", "verifier"]
+
+
+@pytest.mark.unit
+def test_malformed_semantic_repair_receives_durable_contract_correction(
+    tmp_path: Path,
+) -> None:
+    manifest, inputs = _fixture("re-l4-producer-contract-correction")
+    inputs = replace(
+        inputs,
+        manifest=replace(
+            manifest,
+            budget_policy=replace(
+                manifest.budget_policy, active_ms_limit=1_800_000
+            ),
+        ),
+    )
+    run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
+    backend = _FindingDispositionContractRepairBackend()
+
+    completed = run_protocol_28_exhaustive(run_dir, lambda: backend)
+    events = load_protocol_28_run_context(run_dir).events.replay()
+    rejections = [event for event in events if event.type == "candidate_rejected"]
+
+    assert completed.state == "evidence_complete"
+    assert backend.roles == [
+        "producer",
+        "verifier",
+        "producer",
+        "producer",
+        "verifier",
+    ]
+    assert backend.producer_contexts[2]["producer_contract_failure_codes"] == [
+        "unresolved-findings-not-addressed"
+    ]
+    assert rejections[-1].payload["reason_code"] == (
+        "unresolved-findings-not-addressed"
+    )
 
 
 @pytest.mark.unit

@@ -115,6 +115,38 @@ def test_slice_context_uses_only_staged_authority_after_sources_disappear(
 
 
 @pytest.mark.unit
+def test_producer_context_states_exact_finding_disposition_contract(
+    tmp_path: Path,
+) -> None:
+    run_dir = _published(tmp_path)
+    context = load_protocol_28_run_context(run_dir)
+    assert isinstance(context, Protocol28RunContext)
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+
+    payload = json.loads(
+        build_protocol_28_slice_context(
+            context,
+            target,
+            entry,
+            realize_slice(entry, {}),
+            role="producer",
+            producer_contract_failure_codes=(
+                "unresolved-findings-not-addressed",
+            ),
+        )
+    )
+
+    assert payload["finding_disposition_contract"] == {
+        "addressed_finding_ids": "exactly plan_entry.assigned_finding_ids",
+        "unresolved_finding_ids": "subset of addressed_finding_ids",
+    }
+    assert payload["producer_contract_failure_codes"] == [
+        "unresolved-findings-not-addressed"
+    ]
+
+
+@pytest.mark.unit
 def test_slice_context_uses_preindexed_frozen_catalogs(tmp_path: Path) -> None:
     run_dir = _published(tmp_path)
     context = load_protocol_28_run_context(run_dir)

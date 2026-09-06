@@ -254,8 +254,22 @@ def canonical_exhaustive_response_schema_bytes(role: RoleV1) -> bytes:
                 "type": "array",
                 "uniqueItems": True,
             },
-            "addressed_finding_ids": digest_array,
-            "unresolved_finding_ids": digest_array,
+            "addressed_finding_ids": {
+                **digest_array,
+                "description": (
+                    "Copy exactly plan_entry.assigned_finding_ids. Addressed means "
+                    "examined and dispositioned by this slice, whether resolved or "
+                    "still unresolved."
+                ),
+            },
+            "unresolved_finding_ids": {
+                **digest_array,
+                "description": (
+                    "List assigned findings that remain unresolved after examination. "
+                    "This array must be a subset of addressed_finding_ids, so every "
+                    "unresolved finding appears in both arrays."
+                ),
+            },
             "rendered_markdown": {"maxLength": 98_304, "type": "string"},
         }
     elif role == "verifier":

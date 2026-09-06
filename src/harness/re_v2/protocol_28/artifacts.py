@@ -49,6 +49,15 @@ _T = TypeVar("_T")
 class Protocol28ArtifactError(Protocol22SchemaError):
     """Raised when provider evidence escapes its exact frozen slice contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "malformed-result-contract",
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
 
 def _schema(function, *args):  # type: ignore[no-untyped-def]
     try:
@@ -270,7 +279,10 @@ class ExhaustiveEvidenceSliceV1:
         ):
             object.__setattr__(self, field, _digests(getattr(self, field), f"ExhaustiveEvidenceSliceV1.{field}"))
         if not set(self.unresolved_finding_ids).issubset(self.addressed_finding_ids):
-            raise Protocol28ArtifactError("unresolved findings must be addressed by the slice")
+            raise Protocol28ArtifactError(
+                "unresolved findings must be addressed by the slice",
+                reason_code="unresolved-findings-not-addressed",
+            )
         object.__setattr__(self, "evidence_anchors", _typed(self.evidence_anchors, EvidenceAnchorV1, "evidence_anchors"))
         object.__setattr__(self, "claims", _typed(self.claims, ExhaustiveClaimV1, "claims"))
         object.__setattr__(self, "observations", _typed(self.observations, ExhaustiveObservationV1, "observations"))

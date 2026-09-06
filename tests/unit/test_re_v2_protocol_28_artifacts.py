@@ -131,6 +131,19 @@ def test_valid_candidate_closed_round_trip_and_validation() -> None:
 
 
 @pytest.mark.unit
+def test_unresolved_finding_contract_error_has_stable_reason_code() -> None:
+    _entry, _spec, _evidence, candidate = _candidate_fixture()
+
+    with pytest.raises(Protocol28ArtifactError) as raised:
+        replace(
+            candidate,
+            unresolved_finding_ids=(digest("unaddressed-finding"),),
+        )
+
+    assert raised.value.reason_code == "unresolved-findings-not-addressed"
+
+
+@pytest.mark.unit
 def test_candidate_validation_normalizes_provider_nested_object_order() -> None:
     entry, spec, evidence, candidate = _candidate_fixture()
     second = ExhaustiveClaimV1(

@@ -16,6 +16,7 @@ from harness.re_v2.protocol_28.artifacts import (
     ExhaustiveEvidenceSliceV1,
     ExhaustiveRepairPacketV1,
     ExhaustiveVerificationV1,
+    Protocol28ArtifactError,
 )
 from harness.re_v2.protocol_28.budget import PairedReservationCommitV1
 from harness.re_v2.protocol_28.checkpoint_cache import (
@@ -78,6 +79,34 @@ from harness.re_v2.run_store import load_run_manifest
 
 class Protocol28LifecycleError(RuntimeError):
     """Raised when an exact protocol-2.8 child cannot be used safely."""
+
+
+def _candidate_contract_failure_code(exc: Protocol28ExecutionError) -> str:
+    """Classify a producer failure without exposing provider output or source data."""
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, Protocol28ArtifactError):
+            return current.reason_code
+        current = current.__cause__
+    return "malformed-result-contract"
+
+
+def _producer_contract_failure_codes(
+    context: Protocol28RunContext,
+    slice_spec: SliceSpecV1,
+) -> tuple[str, ...]:
+    """Recover durable producer correction hints for one immutable slice."""
+    return tuple(
+        sorted(
+            {
+                str(event.payload["reason_code"])
+                for event in context.events.replay()
+                if event.type == "candidate_rejected"
+                and event.payload["output_artifact_key_id"]
+                == slice_spec.output_artifact_key_id
+            }
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,6 +570,9 @@ def _execute_slice(
             role="producer",
             repair_diagnostic_ids=tuple(item.identity for item in diagnostics),
             repair_diagnostics=diagnostics,
+            producer_contract_failure_codes=_producer_contract_failure_codes(
+                context, slice_spec
+            ),
             producer_attempt_number=producer_attempt,
         )
         producer_reservation = _reservation(
@@ -625,13 +657,14 @@ def _execute_slice(
                 policy,
                 producer,
             )
-        except Protocol28ExecutionError:
+        except Protocol28ExecutionError as exc:
+            failure_code = _candidate_contract_failure_code(exc)
             context.controller.append_once(
                 "candidate_rejected",
                 {
                     "dispatch_id": producer_dispatch,
                     "output_artifact_key_id": slice_spec.output_artifact_key_id,
-                    "reason_code": "malformed-result-contract",
+                    "reason_code": failure_code,
                 },
             )
             context.resources.release_verifier(

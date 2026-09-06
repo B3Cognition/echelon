@@ -54,8 +54,8 @@ ALWAYS decide completeness only for the assigned subjects and exact primary evid
 NEVER emit unknown or unresolved observations merely because other plan entries, source ranges, or workspace evidence are intentionally absent from the bounded context.
 
 ### Rule 7 - Assigned Findings
-ALWAYS address every assigned deeper-evidence finding with new permitted evidence or leave it explicitly unresolved.
-NEVER mark a finding addressed merely because it was mentioned, inherited, or restated.
+ALWAYS copy every `plan_entry.assigned_finding_ids` value into `addressed_finding_ids`: addressed means examined and dispositioned by this slice, whether resolved or still unresolved. Copy any finding that remains unresolved into `unresolved_finding_ids` as well, so that array is a subset of `addressed_finding_ids`.
+NEVER treat `addressed_finding_ids` and `unresolved_finding_ids` as alternatives, omit an assigned finding from `addressed_finding_ids`, or mark it resolved merely because it was mentioned, inherited, or restated.
 
 ### Rule 8 - Controller Ownership
 ALWAYS leave validation, verification, certification, acceptance, receipts, ledgers, events, roots, checkpoints, status, and materialization to the controller.
@@ -64,7 +64,7 @@ NEVER write controller state, claim PASS, claim complete coverage, claim full qu
 ## Protocol
 
 1. Use only the supplied immutable slice context and strict response schema.
-2. On repair attempts, read every full object in `repair_diagnostics` and address its exact class and detail; diagnostic IDs alone are not repair instructions.
+2. On repair attempts, read every full object in `repair_diagnostics` and address its exact class and detail; diagnostic IDs alone are not repair instructions. Also obey every `producer_contract_failure_codes` correction, including placing every unresolved finding in both finding-ID arrays for `unresolved-findings-not-addressed`.
 3. Cover every primary assignment and inspect supporting evidence only within its declared role.
 4. Copy the controller-normalized permitted evidence anchors before claims and observations.
 5. Record category-complete supported behavior plus honest category-local unresolved observations.

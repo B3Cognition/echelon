@@ -134,6 +134,7 @@ def build_protocol_28_slice_context(
     candidate: ExhaustiveEvidenceSliceV1 | None = None,
     repair_diagnostic_ids: tuple[str, ...] = (),
     repair_diagnostics: tuple[ExhaustiveDiagnosticV1, ...] = (),
+    producer_contract_failure_codes: tuple[str, ...] = (),
     producer_attempt_number: int = 1,
     verifier_attempt_number: int | None = None,
     _enforce_bound: bool = True,
@@ -153,6 +154,24 @@ def build_protocol_28_slice_context(
         raise Protocol28ContextError("slice context does not match the frozen plan")
     if role == "producer" and candidate is not None:
         raise Protocol28ContextError("producer context cannot contain a candidate")
+    if role == "verifier" and producer_contract_failure_codes:
+        raise Protocol28ContextError(
+            "verifier context cannot contain producer contract failures"
+        )
+    allowed_contract_failure_codes = frozenset(
+        {
+            "malformed-result-contract",
+            "unresolved-findings-not-addressed",
+        }
+    )
+    if (
+        not isinstance(producer_contract_failure_codes, tuple)
+        or set(producer_contract_failure_codes) - allowed_contract_failure_codes
+    ):
+        raise Protocol28ContextError("producer contract failure codes are invalid")
+    normalized_contract_failure_codes = tuple(
+        sorted(set(producer_contract_failure_codes))
+    )
     if role == "verifier" and not isinstance(candidate, ExhaustiveEvidenceSliceV1):
         raise Protocol28ContextError("verifier context requires an immutable candidate")
     if (
@@ -290,6 +309,13 @@ def build_protocol_28_slice_context(
         "repair_diagnostics": [
             item.to_json_dict() for item in repair_diagnostics
         ],
+        "finding_disposition_contract": {
+            "addressed_finding_ids": "exactly plan_entry.assigned_finding_ids",
+            "unresolved_finding_ids": "subset of addressed_finding_ids",
+        },
+        "producer_contract_failure_codes": list(
+            normalized_contract_failure_codes
+        ),
         "producer_attempt_number": producer_attempt_number,
         "verifier_attempt_number": verifier_attempt_number,
         "candidate_id": None if candidate is None else candidate.identity,

@@ -82,6 +82,10 @@ def test_response_schemas_exactly_name_model_and_nested_contract_fields() -> Non
     assert claim["subject_ids"]["minItems"] == 1
     assert claim["evidence_anchor_ids"]["minItems"] == 1
     assert "supporting_subject_ids" in claim["subject_ids"]["description"]
+    addressed = producer["properties"]["addressed_finding_ids"]["description"]
+    unresolved = producer["properties"]["unresolved_finding_ids"]["description"]
+    assert "exactly" in addressed and "assigned_finding_ids" in addressed
+    assert "subset" in unresolved and "addressed_finding_ids" in unresolved
     assert verifier["required"][-2] == "verified_primary_evidence_ids"
     assert "assessed_primary_evidence_ids" not in verifier["properties"]
     assert set(verifier["properties"]) == set(verifier["required"])

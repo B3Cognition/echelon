@@ -920,8 +920,13 @@ dispatch.
 Provider output is durably captured before parsing. A valid candidate is stored
 content-addressably and appended to the candidate ledger. Invalid producer
 output consumes the current one-of-three producer dispatches and becomes the
-normalized repair input for the next dispatch, when one remains. It never
-creates semantic authority or receives a nested contract retry.
+normalized repair input for the next dispatch, when one remains. The controller
+records a stable, content-free contract failure code and includes all prior
+codes for that slice in the next producer context, including after controller
+restart. `addressed_finding_ids` is exactly the assigned finding set;
+`unresolved_finding_ids` is the subset examined but not resolved, so unresolved
+findings occur in both arrays. Invalid output never creates semantic authority
+or receives a nested contract retry.
 
 ### Phase 3: independent verification
 
