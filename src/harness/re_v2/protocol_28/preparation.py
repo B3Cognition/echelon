@@ -900,20 +900,24 @@ def _add_evidence_opaque_authority(
     evidence: SnapshotEvidenceCatalogV1,
 ) -> None:
     records = {
-        content_digest(record.to_json_dict()): (source.source_id, record)
+        (source.source_id, record.source_relative_path): record
         for source in partition.sources
         for record in source.files
     }
     required_records = {
-        item.file_record_hash
+        (item.source_id, item.source_relative_path): item.file_record_hash
         for item in (
             *evidence.shards,
             *evidence.empty_receipts,
             *evidence.nontext_dispositions,
         )
     }
-    for record_id in required_records:
-        source_id, record = records[record_id]
+    for (source_id, source_relative_path), record_id in required_records.items():
+        record = records[(source_id, source_relative_path)]
+        if content_digest(record.to_json_dict()) != record_id:
+            raise Protocol28PreparationError(
+                "snapshot evidence file record differs from partition authority"
+            )
         _add_authority(values, canonical_json_bytes(record.to_json_dict()))
         proof = canonical_json_bytes(
             {

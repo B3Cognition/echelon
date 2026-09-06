@@ -4,6 +4,7 @@ from dataclasses import replace
 import io
 from pathlib import Path
 import json
+from types import SimpleNamespace
 import zipfile
 
 import pytest
@@ -29,7 +30,10 @@ from harness.re_v2.protocol_28.lifecycle import (
 )
 from harness.re_v2.protocol_28.orchestration import DeepenOrchestrationRequestV1
 from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
-from harness.re_v2.protocol_28.preparation import Protocol28PreparationError
+from harness.re_v2.protocol_28.preparation import (
+    Protocol28PreparationError,
+    _add_evidence_opaque_authority,
+)
 from harness.re_v2.protocol_28.context import (
     build_protocol_28_slice_context,
     load_protocol_28_run_context,
@@ -251,6 +255,67 @@ def _accepted_debt_fixture(
         replace(options, authority_objects=objects),
         acceptance,
     )
+
+
+@pytest.mark.unit
+def test_evidence_authority_keeps_source_scoped_proofs_for_duplicate_records(
+    tmp_path: Path,
+) -> None:
+    _snapshot, partition = _fixture(
+        tmp_path,
+        {"README.md": "same in both repositories\n"},
+    )
+    record = partition.sources[0].files[0]
+    record_hash = content_digest(record.to_json_dict())
+    sources = tuple(
+        SimpleNamespace(
+            source_id=source_id,
+            files=(record,),
+            domains=(),
+            source_partition_id=content_digest(source_id),
+        )
+        for source_id in ("api", "api-copy")
+    )
+    evidence_items = tuple(
+        SimpleNamespace(
+            source_id=source.source_id,
+            source_relative_path=record.source_relative_path,
+            file_record_hash=record_hash,
+        )
+        for source in sources
+    )
+    evidence = SimpleNamespace(
+        shards=evidence_items,
+        empty_receipts=(),
+        nontext_dispositions=(),
+        projections=(),
+    )
+    duplicate_partition = SimpleNamespace(
+        snapshot_id=partition.snapshot_id,
+        identity=partition.identity,
+        sources=sources,
+    )
+
+    authorities: dict[str, bytes] = {}
+    _add_evidence_opaque_authority(
+        authorities,
+        duplicate_partition,
+        evidence,
+    )
+
+    expected_proofs = {
+        content_digest(
+            {
+                "file_record": record.to_json_dict(),
+                "partition_catalog_id": partition.identity,
+                "schema_version": 1,
+                "source_id": source.source_id,
+                "source_snapshot_id": partition.snapshot_id,
+            }
+        )
+        for source in sources
+    }
+    assert expected_proofs.issubset(authorities)
 
 
 @pytest.mark.unit
