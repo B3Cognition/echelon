@@ -196,32 +196,44 @@ def prepare_protocol_28_request(
     selection = intent.selection
     l3 = build_l3_target_projections(eligible_l3, selection)
     parent = build_parent_authority_bundle_v3(eligible_l3, l3)
-    evidence_policy = EvidenceStagingPolicyV1(
-        1, policy.raw_shard_byte_limit, _NON_BEHAVIORAL_SUFFIXES
-    )
-    with tempfile.TemporaryDirectory(prefix="echelon-l4-evidence-") as temporary:
-        evidence = stage_snapshot_evidence(
-            options.snapshot,
-            partition,
-            selection,
-            evidence_policy,
-            ObjectStore(Path(temporary) / "objects"),
+    shard_byte_limit = policy.raw_shard_byte_limit
+    while True:
+        evidence_policy = EvidenceStagingPolicyV1(
+            1, shard_byte_limit, _NON_BEHAVIORAL_SUFFIXES
         )
-    subjects = _build_evidence_subjects(
-        parent,
-        l3,
-        evidence,
-        residual_debt_hash=residual_debt_hash,
-    )
-    plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
-    plan = _bind_exact_context_sizes(
-        plan,
-        l3,
-        evidence,
-        subjects,
-        policy,
-        options.authority_objects,
-    )
+        with tempfile.TemporaryDirectory(prefix="echelon-l4-evidence-") as temporary:
+            evidence = stage_snapshot_evidence(
+                options.snapshot,
+                partition,
+                selection,
+                evidence_policy,
+                ObjectStore(Path(temporary) / "objects"),
+            )
+        subjects = _build_evidence_subjects(
+            parent,
+            l3,
+            evidence,
+            residual_debt_hash=residual_debt_hash,
+        )
+        plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
+        try:
+            plan = _bind_exact_context_sizes(
+                plan,
+                l3,
+                evidence,
+                subjects,
+                policy,
+                options.authority_objects,
+            )
+        except Protocol28PreparationError as exc:
+            if (
+                "one evidence shard requires" not in str(exc)
+                or shard_byte_limit <= 1_024
+            ):
+                raise
+            shard_byte_limit //= 2
+            continue
+        break
     _validate_initial_reservation(plan, producer_agent, verifier_agent, options)
 
     request = ExhaustiveRequestV1(

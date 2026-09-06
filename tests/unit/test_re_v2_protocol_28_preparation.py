@@ -183,15 +183,28 @@ def _preparation_fixture(
     return workspace, intent, parent, options
 
 
-def _accepted_debt_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
-    workspace, intent, parent, options = _preparation_fixture(tmp_path)
+def _accepted_debt_fixture(
+    tmp_path: Path,
+    *,
+    finding_count: int = 1,
+    large_source: bool = False,
+):  # type: ignore[no-untyped-def]
+    workspace, intent, parent, options = _preparation_fixture(
+        tmp_path,
+        large_source=large_source,
+    )
     objects = dict(options.authority_objects)
-    finding_id = _authority(objects, "accepted residual finding")
+    finding_ids = tuple(
+        sorted(
+            _authority(objects, f"accepted residual finding {index}")
+            for index in range(finding_count)
+        )
+    )
     domain_target = next(item for item in parent.targets if item.target_kind == "domain")
     domain_target = replace(
         domain_target,
-        finding_ids=(finding_id,),
-        unresolved_finding_ids=(finding_id,),
+        finding_ids=finding_ids,
+        unresolved_finding_ids=finding_ids,
         closure_state="deeper-evidence-blocked",
     )
     raw = replace(
@@ -215,7 +228,7 @@ def _accepted_debt_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
         raw.frozen_epoch_id,
         content_digest(b"closure-root"),
         (("api", content_digest(b"source-root")),),
-        (DebtGroupV1("api", "requires_human_decision", (finding_id,)),),
+        (DebtGroupV1("api", "requires_human_decision", finding_ids),),
         (content_digest(b"deferred-observation"),),
         content_digest(b"guidance"),
         "re-v2-banzai-residual-debt-v1",
@@ -228,7 +241,7 @@ def _accepted_debt_fixture(tmp_path: Path):  # type: ignore[no-untyped-def]
         raw,
         "partial",
         acceptance.identity,
-        (finding_id,),
+        finding_ids,
         acceptance.deferred_observation_ids,
     )
     return (
@@ -362,6 +375,29 @@ def test_partial_debt_is_bound_to_every_l4_input_and_context(tmp_path: Path) -> 
             assert payload["residual_debt_acceptance_hash"] == acceptance.identity
             assert payload["accepted_residual_debt"] == acceptance.to_json_dict()
             assert payload["residual_debt_disposition"] == "accepted_not_closed_by_l4"
+
+
+@pytest.mark.unit
+def test_partial_l4_adaptively_reshards_until_exact_context_fits(
+    tmp_path: Path,
+) -> None:
+    workspace, intent, parent, options, _acceptance = _accepted_debt_fixture(
+        tmp_path,
+        finding_count=111,
+        large_source=True,
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+
+    assert all(
+        entry.canonical_context_bytes <= inputs.exhaustive_policy.max_context_bytes
+        for target in inputs.exhaustive_plan.target_plans
+        for entry in target.entries
+    )
+    assert max(
+        shard.byte_end - shard.byte_start
+        for shard in inputs.snapshot_evidence_catalog.shards
+    ) < inputs.exhaustive_policy.raw_shard_byte_limit
 
 
 @pytest.mark.unit
