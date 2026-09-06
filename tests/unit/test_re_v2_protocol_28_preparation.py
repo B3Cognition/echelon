@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import io
 from pathlib import Path
 import json
+import zipfile
 
 import pytest
 
@@ -289,6 +291,38 @@ def test_preparation_covers_mp4_asset_as_nonbehavioral_metadata(
         item
         for item in inputs.snapshot_evidence_catalog.nontext_dispositions
         if item.source_relative_path == "public/editor-placeholder-video.mp4"
+    )
+    assert disposition.disposition == "proven_non_behavioral"
+
+
+@pytest.mark.unit
+def test_preparation_recognizes_macro_free_ooxml_with_misleading_suffix(
+    tmp_path: Path,
+) -> None:
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            (
+                b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+                b'content-types"><Override PartName="/xl/workbook.xml" '
+                b'ContentType="application/vnd.openxmlformats-officedocument.'
+                b'spreadsheetml.sheet.main+xml"/></Types>'
+            ),
+        )
+        archive.writestr("xl/workbook.xml", b"<workbook/>")
+        archive.writestr("xl/worksheets/sheet1.xml", b"<worksheet/>")
+    workspace, intent, parent, options = _preparation_fixture(
+        tmp_path,
+        extra_source_files={"Player Statistics.csv": package.getvalue()},
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+
+    disposition = next(
+        item
+        for item in inputs.snapshot_evidence_catalog.nontext_dispositions
+        if item.source_relative_path == "Player Statistics.csv"
     )
     assert disposition.disposition == "proven_non_behavioral"
 

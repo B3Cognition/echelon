@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import io
 from pathlib import PurePosixPath
 from typing import ClassVar, Literal, TypeVar
+import zipfile
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
@@ -40,6 +42,12 @@ _DISPOSITIONS = frozenset(
     {"proven_non_behavioral", "unsupported_behavioral_content"}
 )
 _T = TypeVar("_T")
+_OOXML_SPREADSHEET_MAIN_TYPE = (
+    b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+)
+_OOXML_MAX_ENTRIES = 4_096
+_OOXML_MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_OOXML_MAX_INSPECTED_XML_BYTES = 16 * 1024 * 1024
 
 
 class Protocol28EvidenceError(Protocol22SchemaError):
@@ -57,6 +65,75 @@ def _schema(function, *args):  # type: ignore[no-untyped-def]
 
 def _identity(value: object) -> str:
     return content_digest(canonical_json_bytes(value))
+
+
+def _is_macro_free_data_only_ooxml_spreadsheet(payload: bytes) -> bool:
+    """Recognize a bounded OOXML workbook with no executable or linked behavior."""
+    if not payload.startswith(b"PK\x03\x04"):
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            entries = archive.infolist()
+            if not entries or len(entries) > _OOXML_MAX_ENTRIES:
+                return False
+            names = tuple(item.filename for item in entries)
+            lowered = tuple(item.lower() for item in names)
+            if len(set(lowered)) != len(lowered):
+                return False
+            if sum(item.file_size for item in entries) > _OOXML_MAX_UNCOMPRESSED_BYTES:
+                return False
+            if any(item.flag_bits & 0x1 for item in entries):
+                return False
+            for name in names:
+                path = PurePosixPath(name)
+                if path.is_absolute() or ".." in path.parts or "\\" in name:
+                    return False
+            if not {"[content_types].xml", "xl/workbook.xml"}.issubset(lowered):
+                return False
+            forbidden = (
+                "vbaproject",
+                "/activex/",
+                "/dialogsheets/",
+                "/embeddings/",
+                "/externallinks/",
+                "/macrosheets/",
+            )
+            if any(
+                name.endswith(".bin")
+                or any(marker in f"/{name}" for marker in forbidden)
+                or name == "xl/connections.xml"
+                for name in lowered
+            ):
+                return False
+            content_types = archive.read(names[lowered.index("[content_types].xml")])
+            if (
+                len(content_types) > _OOXML_MAX_INSPECTED_XML_BYTES
+                or _OOXML_SPREADSHEET_MAIN_TYPE not in content_types.lower()
+                or b"macroenabled" in content_types.lower()
+            ):
+                return False
+            for entry, name in zip(entries, lowered, strict=True):
+                inspect = (
+                    name.endswith(".rels")
+                    or name.startswith("xl/worksheets/") and name.endswith(".xml")
+                )
+                if not inspect:
+                    continue
+                if entry.file_size > _OOXML_MAX_INSPECTED_XML_BYTES:
+                    return False
+                body = archive.read(entry).lower()
+                if name.endswith(".rels") and (
+                    b'targetmode="external"' in body
+                    or b"targetmode='external'" in body
+                ):
+                    return False
+                if name.startswith("xl/worksheets/") and (
+                    b"<f" in body or b":f" in body
+                ):
+                    return False
+            return True
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile):
+        return False
 
 
 def _typed_tuple(
@@ -815,8 +892,12 @@ def stage_snapshot_evidence(
         disposition_kind = (
             "proven_non_behavioral"
             if record.object_kind == "regular"
-            and PurePosixPath(path).suffix.lower()
-            in policy.proven_non_behavioral_suffixes
+            and (
+                PurePosixPath(path).suffix.lower()
+                in policy.proven_non_behavioral_suffixes
+                or payload is not None
+                and _is_macro_free_data_only_ooxml_spreadsheet(payload)
+            )
             else "unsupported_behavioral_content"
         )
         disposition = NonTextEvidenceDispositionV1(
