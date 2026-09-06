@@ -51,6 +51,12 @@ from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
 from harness.stacks.context import build_stack_context
+from harness.stacks.renderer import resolved_to_dict
+from harness.stacks.resolver import (
+    ResolvedStacks,
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
 from harness.visual_ralph import VisualRalphController
 from harness.state import (
     DELIVERY_STATE_VERSION,
@@ -69,6 +75,23 @@ logger = logging.getLogger(__name__)
 def _split_env_list(raw: str | None) -> list[str]:
     """Parse a comma-separated orchestrator contract without empty entries."""
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _delivery_stack_snapshot(resolved: object) -> dict[str, object] | None:
+    """Freeze the stack-owned local-verification inputs for a fresh build.
+
+    A delivery may resume for days while project configuration changes.  The
+    local runner therefore consumes this persisted snapshot and its digests,
+    rather than resolving the candidate's or target's current config again.
+    """
+    if not isinstance(resolved, ResolvedStacks):
+        return None
+    return {
+        "schema_version": 1,
+        "resolved": resolved_to_dict(resolved),
+        "resolved_stack_hash": resolved_stack_contract_sha256(resolved),
+        "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
+    }
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -1208,6 +1231,9 @@ class StrategyCoordinator:
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
                     enabled_phases=self._enabled_phases(llm_provider),
+                    delivery_stack_snapshot=_delivery_stack_snapshot(
+                        getattr(self._config, "resolved_stacks", None)
+                    ),
                 )
                 state_store.transition("running")
 

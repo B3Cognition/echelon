@@ -24,7 +24,14 @@ from harness.delivery_results import DeliveryResult, ImplementationResult, Visua
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
 from harness.state import StateStore
-from harness.stacks.resolver import ResolvedRunnability
+from harness.stacks.renderer import resolved_to_dict
+from harness.stacks.resolver import (
+    ResolvedLocalRunner,
+    ResolvedRunnability,
+    ResolvedStacks,
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
 from harness.verify_result import VerifyResult
 from harness.spec_frontmatter import read_frontmatter
 from harness.product_inventory import product_evidence_fingerprint
@@ -91,6 +98,44 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
 @pytest.mark.unit
 class TestSingleStrategy:
     """Test N=1 passthrough."""
+
+    def test_new_delivery_persists_authoritative_resolved_stack_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        """A later local verifier must not re-resolve mutable project stacks."""
+        coord = _make_coordinator(tmp_path)
+        resolved = ResolvedStacks(
+            selected_ids=["browser-3d-game"],
+            resolved_ids=["browser-3d-game", "game-persistence-postgres"],
+            implied_by={"game-persistence-postgres": "browser-3d-game"},
+            capabilities={},
+            tools={},
+            required_commands=[],
+            required_registries=[],
+            context_files=[],
+            runnability=ResolvedRunnability(
+                classification="user_facing",
+                policy="required",
+                local_runner=ResolvedLocalRunner(
+                    profiles=("macos-compose-v1",),
+                    allowed_services=("postgres",),
+                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
+                    sources=("browser-3d-game", "game-persistence-postgres"),
+                ),
+            ),
+        )
+        coord._config.resolved_stacks = resolved
+
+        result = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+
+        assert result.status == "converged"
+        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        assert state["delivery_stack_snapshot"] == {
+            "schema_version": 1,
+            "resolved": resolved_to_dict(resolved),
+            "resolved_stack_hash": resolved_stack_contract_sha256(resolved),
+            "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
+        }
 
     def test_direct_single_target_derives_canonical_targets_and_finalizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -384,6 +384,7 @@ class StateStore:
         declared_targets: list[str] | None = None,
         target_task_ids: list[str] | None = None,
         enabled_phases: list[str] | None = None,
+        delivery_stack_snapshot: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -419,6 +420,11 @@ class StateStore:
             "blocked_phase": None,
             "interrupted_phase": None,
             "verified_commit": None,
+            # This is a controller-owned snapshot of the resolved delivery
+            # stack contract.  It intentionally remains absent from legacy
+            # states: later local verification must never reinterpret a
+            # historical candidate through mutable project configuration.
+            "delivery_stack_snapshot": delivery_stack_snapshot,
             "visual_evidence": None,
             "mode": mode,
             "outer_iter": 0,
