@@ -54,7 +54,10 @@ def active_banzai_default_protocol_fingerprint(
 
 def _read_protocol_file(path: Path) -> bytes | str:
     """Return one bounded regular file without granting symlink traversal."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        return "symlink-safe open is unavailable"
+    flags = os.O_RDONLY | nofollow
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:

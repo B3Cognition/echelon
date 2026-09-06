@@ -78,3 +78,17 @@ def test_active_protocol_fingerprint_rejects_symlinked_protocol_file(
 
     assert result.fingerprint is None
     assert "phase1-why2.md" in result.diagnostic
+
+
+def test_active_protocol_fingerprint_rejects_platform_without_nofollow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch a portability fallback that would follow a protocol symlink."""
+    _write_protocol_bundle(tmp_path)
+    monkeypatch.delattr("harness.banzai_protocol.os.O_NOFOLLOW")
+
+    result = active_banzai_default_protocol_fingerprint(tmp_path)
+
+    assert result.fingerprint is None
+    assert "symlink-safe open" in result.diagnostic
