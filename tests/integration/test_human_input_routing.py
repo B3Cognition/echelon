@@ -1300,14 +1300,17 @@ def test_banzai_reassesses_one_legacy_why2_question_without_a_candidate(
 ) -> None:
     """A pre-candidate WHY2 decision gets one safe current-policy retry."""
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
-    policy = graph.get("phase1-why2").human_input_policies[0]
+    policy = replace(
+        graph.get("phase1-why2").human_input_policies[0],
+        allowed_target_phases=frozenset({"phase1-why2"}),
+    )
     controller, store, provider = _controller(
         tmp_path,
         autonomy_mode="banzai",
         policy=policy,
     )
     controller._graph = graph
-    controller._human_input_registry = graph.human_input_policy_registry()
+    controller._human_input_registry = HumanInputPolicyRegistry((policy,))
     legacy_state = store.load()
     legacy_state.pop("banzai_default_candidate_protocol_version")
     store._path.write_text(json.dumps(legacy_state), encoding="utf-8")
