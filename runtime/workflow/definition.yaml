@@ -567,7 +567,7 @@ phases:
         semi_policy: require_human
         resolution_handler: clarification_resume
         allow_free_text: true
-        allowed_target_phases: [phase1-why2]
+        allowed_target_phases: [phase1-why2, phase1-what]
         context_state_keys: [user_message, phase, quality_scores]
         context_paths:
           - "{spec_dir}/spec.md"
@@ -580,6 +580,7 @@ phases:
       - escalation_question
       - escalation_recommended_answer
       - escalation_risk_level
+      - autonomous_default_candidate
       - blocked_reason
       - status
       - shadow_output_recovered
@@ -588,6 +589,7 @@ phases:
       evidence_resolution_status: string
       evidence_requests: object
       finding_routes: object
+      autonomous_default_candidate: object
       status: string
     state_update_enums:
       evidence_resolution_status: [not_required, pending]
@@ -606,6 +608,14 @@ phases:
           - exhaustion_routing
           - decision_options
           - debt_authorization
+      banzai_default_resolution:
+        owner: controller
+        authority_capabilities: [banzai_default]
+        responsibilities:
+          - candidate_validation
+          - decision_sealing
+          - one_time_default_ledger
+          - repair_routing
     transitions:
       # Externally verifiable product facts need evidence collection, not another
       # speculative WHAT pass. This must precede the generic FAIL repair routes.

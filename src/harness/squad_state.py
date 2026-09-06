@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import re
 import stat
 import tempfile
 from contextlib import contextmanager
@@ -36,7 +37,12 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
-from harness.human_input import AppliedHumanInputResolution, PreparedHumanInput
+from harness.human_input import (
+    AppliedHumanInputResolution,
+    AutonomousDefaultCandidate,
+    HumanInputPolicyError,
+    PreparedHumanInput,
+)
 from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
@@ -139,6 +145,7 @@ _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
         "blocked_reason",
         "escalation_question",
         "escalation_options",
+        "autonomous_default_candidate",
     }
 )
 _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
@@ -151,6 +158,7 @@ _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
         "escalation_risk_level",
         "escalation_recommended_answer",
         "escalation_default_answer",
+        "autonomous_default_candidate",
     }
 )
 _HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
@@ -177,6 +185,8 @@ _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
         "recovery_instruction",
         "escalation_question",
         "escalation_options",
+        "autonomous_default_candidate",
+        "autonomous_default_ledger",
         "state_revision",
         "updated_at",
     }
@@ -196,6 +206,119 @@ class StateAdvanceError(RuntimeError):
         super().__init__(message)
         self.json_path = json_path
         self.validator = validator
+
+
+def _autonomous_default_candidate_from_state(
+    value: object,
+) -> AutonomousDefaultCandidate:
+    """Validate one controller-owned pending default candidate postimage."""
+    if not isinstance(value, Mapping):
+        raise StateAdvanceError(
+            "autonomous default candidate is missing",
+            json_path="$.autonomous_default_candidate",
+            validator="human_input_authority",
+        )
+    payload = dict(value)
+    fingerprint = payload.pop("fingerprint", None)
+    try:
+        candidate = AutonomousDefaultCandidate.from_provider_payload(payload)
+    except (HumanInputPolicyError, TypeError, ValueError) as exc:
+        raise StateAdvanceError(
+            "autonomous default candidate is invalid",
+            json_path="$.autonomous_default_candidate",
+            validator="human_input_authority",
+        ) from exc
+    if fingerprint != candidate.fingerprint:
+        raise StateAdvanceError(
+            "autonomous default candidate fingerprint is invalid",
+            json_path="$.autonomous_default_candidate.fingerprint",
+            validator="human_input_authority",
+        )
+    return candidate
+
+
+def _autonomous_default_candidate_for_decision(
+    state: Mapping[str, Any],
+    decision: Mapping[str, object],
+) -> AutonomousDefaultCandidate | None:
+    """Bind a pending candidate to its sealed recommendation evidence."""
+    evidence = decision.get("recommendation_evidence")
+    candidate_evidence = (
+        [
+            item
+            for item in evidence
+            if isinstance(item, Mapping)
+            and item.get("kind") == "banzai_default_candidate"
+        ]
+        if isinstance(evidence, list)
+        else []
+    )
+    pending = state.get("autonomous_default_candidate")
+    if not candidate_evidence:
+        if pending is not None:
+            raise StateAdvanceError(
+                "unbound autonomous default candidate is present",
+                json_path="$.autonomous_default_candidate",
+                validator="human_input_authority",
+            )
+        return None
+    if len(candidate_evidence) != 1:
+        raise StateAdvanceError(
+            "autonomous default evidence is invalid",
+            json_path="$.blocked_decision.recommendation_evidence",
+            validator="human_input_authority",
+        )
+    candidate = _autonomous_default_candidate_from_state(pending)
+    expected_reference = (
+        f"{candidate.issue_id}:{','.join(candidate.source_references)}"
+    )
+    if (
+        candidate_evidence[0].get("id") != f"banzai-default:{candidate.issue_id}"
+        or candidate_evidence[0].get("reference") != expected_reference
+        or candidate_evidence[0].get("digest") != candidate.fingerprint
+        or decision.get("question") != candidate.question
+    ):
+        raise StateAdvanceError(
+            "autonomous default candidate does not match sealed decision",
+            json_path="$.blocked_decision",
+            validator="human_input_authority",
+        )
+    return candidate
+
+
+def _autonomous_default_ledger_entries(
+    state: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    raw_ledger = state.get("autonomous_default_ledger", [])
+    if not isinstance(raw_ledger, list):
+        raise StateAdvanceError(
+            "autonomous default ledger is invalid",
+            json_path="$.autonomous_default_ledger",
+            validator="human_input_authority",
+        )
+    entries: list[dict[str, object]] = []
+    fingerprints: set[str] = set()
+    for entry in raw_ledger:
+        if not isinstance(entry, Mapping):
+            raise StateAdvanceError(
+                "autonomous default ledger entry is invalid",
+                json_path="$.autonomous_default_ledger",
+                validator="human_input_authority",
+            )
+        fingerprint = entry.get("fingerprint")
+        if (
+            not isinstance(fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+            or fingerprint in fingerprints
+        ):
+            raise StateAdvanceError(
+                "autonomous default ledger fingerprint is invalid",
+                json_path="$.autonomous_default_ledger",
+                validator="human_input_authority",
+            )
+        fingerprints.add(fingerprint)
+        entries.append(deepcopy(dict(entry)))
+    return entries
 
 
 class StateDurabilityError(StateAdvanceError):
@@ -1144,6 +1267,17 @@ def _validate_human_input_authority_write(
     current_is_authority = _is_human_input_decision(current_decision)
     candidate_is_authority = _is_human_input_decision(candidate_decision)
 
+    if (
+        not allow_update
+        and current.get("autonomous_default_ledger")
+        != candidate.get("autonomous_default_ledger")
+    ):
+        raise StateAdvanceError(
+            "generic state writes cannot mutate autonomous default ledger",
+            json_path="$.autonomous_default_ledger",
+            validator="human_input_authority",
+        )
+
     if candidate_is_authority:
         try:
             validate_decision_recovery_pair(
@@ -2090,6 +2224,22 @@ class SquadStateStore:
             status=initial_status,
             autonomy_mode=str(autonomy_mode),
         )
+        candidate = request.autonomous_default_candidate
+        if candidate is None:
+            state.pop("autonomous_default_candidate", None)
+        else:
+            ledger = _autonomous_default_ledger_entries(state)
+            if any(
+                entry["fingerprint"] == candidate.fingerprint
+                for entry in ledger
+            ):
+                raise StateAdvanceError(
+                    "autonomous default candidate was already resolved",
+                    json_path="$.autonomous_default_ledger",
+                    validator="human_input_authority",
+                )
+            state["autonomous_default_candidate"] = candidate.to_dict()
+            _autonomous_default_candidate_for_decision(state, decision)
         recovery = _human_input_recovery_for_decision(decision)
         if recovery is None:
             raise StateAdvanceError(
@@ -2375,6 +2525,50 @@ class SquadStateStore:
                 migrated["options"]
             )
             self._replace_human_input_decision_unlocked(desired, migrated)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def rearm_awaiting_banzai_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Promote one policy-reclassified v3 Banzai decision for resolution.
+
+        The controller must establish current-policy eligibility before calling
+        this method. This state transition only accepts the exact unresolved
+        decision shape and preserves every sealed recommendation field.
+        """
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision.get("automatic_eligible") is not False
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != decision["source_phase"]
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+            ):
+                raise StateAdvanceError(
+                    "only intact awaiting schema-v3 Banzai decisions may rearm",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            rearmed = {
+                **decision,
+                "status": "pending",
+                "automatic_eligible": True,
+            }
+            self._replace_human_input_decision_unlocked(desired, rearmed)
             return self._commit_human_input_state_unlocked(before, desired)
 
     def fail_pending_v2_banzai_human_input_migration(
@@ -3261,6 +3455,20 @@ class SquadStateStore:
                 expected_state_revision=expected_state_revision,
                 allowed_statuses=_ACTIVE_HUMAN_INPUT_DECISION_STATUSES,
             )
+            default_candidate = _autonomous_default_candidate_for_decision(
+                before,
+                decision,
+            )
+            ledger = _autonomous_default_ledger_entries(before)
+            if default_candidate is not None and any(
+                entry["fingerprint"] == default_candidate.fingerprint
+                for entry in ledger
+            ):
+                raise StateAdvanceError(
+                    "autonomous default candidate was already resolved",
+                    json_path="$.autonomous_default_ledger",
+                    validator="human_input_authority",
+                )
             resolved = build_human_input_resolution_postimage(
                 decision,
                 resolution,
@@ -3307,6 +3515,7 @@ class SquadStateStore:
                 "escalation_question",
                 "escalation_options",
                 "escalation_resolved",
+                "autonomous_default_candidate",
             ):
                 desired.pop(key, None)
             for key, value in detached_updates.items():
@@ -3322,6 +3531,31 @@ class SquadStateStore:
                 desired,
                 resolved,
             )
+            if default_candidate is not None:
+                selected_answer = resolved.get("answer_text")
+                if not isinstance(selected_answer, str) or not selected_answer:
+                    raise StateAdvanceError(
+                        "autonomous default resolution must select free text",
+                        json_path="$.blocked_decision.answer_text",
+                        validator="human_input_authority",
+                    )
+                desired["autonomous_default_ledger"] = [
+                    *ledger,
+                    {
+                        "schema_version": 1,
+                        "decision_id": str(resolved["id"]),
+                        "fingerprint": default_candidate.fingerprint,
+                        "authority_capability": (
+                            default_candidate.authority_capability
+                        ),
+                        "issue_id": default_candidate.issue_id,
+                        "question": default_candidate.question,
+                        "selected_answer": selected_answer,
+                        "resolved_by": str(resolved["resolved_by"]),
+                        "source_phase": str(resolved["source_phase"]),
+                        "resolved_at": str(resolved["resolved_at"]),
+                    },
+                ]
             if (
                 completion_marker is not None
                 and completion_intent is not None

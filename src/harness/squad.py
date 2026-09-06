@@ -56,6 +56,8 @@ from harness.blocked_decision import (
 )
 from harness.human_input import (
     AppliedHumanInputResolution,
+    AutonomousDefaultCandidate,
+    BANZAI_DEFAULT_RECOMMENDED_ACTION,
     HUMAN_INPUT_MAX_OPTIONS,
     HUMAN_INPUT_OPTION_LABEL_MAX_BYTES,
     HumanInputOption,
@@ -65,8 +67,10 @@ from harness.human_input import (
     PreparedHumanInput,
     ProportionalQualityRecommendationEvidence,
     RecommendationEvidence,
+    decision_recommendation_is_automatic_under_policy,
     gate_outcome_route_error,
     legacy_recovery_policy_alias,
+    prepare_banzai_default_candidate_request,
     select_initial_decision_status,
     v2_automatic_decision_is_registered,
 )
@@ -3475,6 +3479,21 @@ class SquadController:
             raise HumanInputPolicyError(
                 "prepared request does not match its registered policy"
             )
+        if request.autonomous_default_candidate is not None:
+            if (
+                request.source_kind != "provider_escalation"
+                or request.producer_id != "phase1-why2"
+                or request.phase_id != "phase1-why2"
+                or request.reason_code != "human_clarification_required"
+                or request.classification != "material"
+                or policy.resolution_handler != "clarification_resume"
+                or "phase1-what" not in policy.allowed_target_phases
+                or self._state_store.load().get("autonomy_mode") != "banzai"
+            ):
+                raise HumanInputPolicyError(
+                    "Banzai default candidate is only supported by phase1-why2 "
+                    "in Banzai mode"
+                )
         if self._is_dynamic_dispatch_cap_policy(policy):
             if not request.options:
                 raise HumanInputPolicyError(
@@ -4278,11 +4297,15 @@ class SquadController:
         resolution: AppliedHumanInputResolution,
     ) -> _HumanInputResolutionEffects:
         source_phase = str(decision["source_phase"])
+        default_candidate = self._banzai_default_candidate_for_decision(
+            state,
+            decision,
+        )
         route = self._validate_human_input_route(
             (
                 selected.next_phase
                 if selected is not None and selected.next_phase is not None
-                else source_phase
+                else "phase1-what" if default_candidate is not None else source_phase
             ),
             policy,
             allow_source_phase=source_phase,
@@ -4382,6 +4405,68 @@ class SquadController:
             state_removals=frozenset(state_removals),
             route=route,
         )
+
+    @staticmethod
+    def _banzai_default_candidate_for_decision(
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+    ) -> AutonomousDefaultCandidate | None:
+        """Return the exact state-sealed default envelope for one decision."""
+        evidence = decision.get("recommendation_evidence")
+        candidate_evidence = (
+            [
+                item
+                for item in evidence
+                if isinstance(item, Mapping)
+                and item.get("kind") == "banzai_default_candidate"
+            ]
+            if isinstance(evidence, list)
+            else []
+        )
+        pending = state.get("autonomous_default_candidate")
+        if not candidate_evidence:
+            if pending is not None:
+                raise HumanInputPolicyError(
+                    "unbound autonomous default candidate is present"
+                )
+            return None
+        if (
+            len(candidate_evidence) != 1
+            or not isinstance(pending, Mapping)
+            or decision.get("automatic_eligible") is not True
+            or decision.get("autonomy_mode") != "banzai"
+            or decision.get("recommended_action")
+            != BANZAI_DEFAULT_RECOMMENDED_ACTION
+            or decision.get("recommendation_authority")
+            != "controller_evidence"
+        ):
+            raise HumanInputPolicyError(
+                "autonomous default candidate is not sealed for Banzai"
+            )
+        payload = dict(pending)
+        fingerprint = payload.pop("fingerprint", None)
+        try:
+            candidate = AutonomousDefaultCandidate.from_provider_payload(payload)
+        except (HumanInputPolicyError, TypeError, ValueError) as exc:
+            raise HumanInputPolicyError(
+                "autonomous default candidate is invalid"
+            ) from exc
+        expected_reference = (
+            f"{candidate.issue_id}:{','.join(candidate.source_references)}"
+        )
+        if (
+            pending != candidate.to_dict()
+            or fingerprint != candidate.fingerprint
+            or candidate.question != decision.get("question")
+            or candidate_evidence[0].get("id")
+            != f"banzai-default:{candidate.issue_id}"
+            or candidate_evidence[0].get("reference") != expected_reference
+            or candidate_evidence[0].get("digest") != candidate.fingerprint
+        ):
+            raise HumanInputPolicyError(
+                "autonomous default candidate does not match sealed decision"
+            )
+        return candidate
 
     def _gate_outcome_resolution(
         self,
@@ -5245,6 +5330,10 @@ class SquadController:
             raise HumanInputPolicyError(
                 "COMMANDER context policy does not match the sealed decision"
             )
+        default_candidate = self._banzai_default_candidate_for_decision(
+            state,
+            validated,
+        )
         request_payload = {
             "decision_id": validated["id"],
             "source_kind": validated["source_kind"],
@@ -5280,6 +5369,20 @@ class SquadController:
             if debt_evidence
             else ""
         )
+        default_note = (
+            "The sealed Banzai default candidate is controller-authorized. "
+            "For this free-text decision, copy exactly one listed alternative "
+            "into answer_text. Do not invent a third value, alter a constraint, "
+            "or request another human decision.\n\n"
+            if default_candidate is not None
+            else ""
+        )
+        candidate_section = (
+            "## Sealed Banzai Default Candidate\n"
+            f"{json.dumps(default_candidate.to_dict(), ensure_ascii=False, sort_keys=True)}\n\n"
+            if default_candidate is not None
+            else ""
+        )
         instructions = (
             "# COMMANDER DECISION RESOLUTION\n\n"
             "Return exactly this envelope for a choice:\n\n"
@@ -5309,6 +5412,8 @@ class SquadController:
             "## Authoritative Recommendation\n"
             f"{json.dumps(authoritative_recommendation, ensure_ascii=False, sort_keys=True)}\n\n"
             f"{debt_note}"
+            f"{default_note}"
+            f"{candidate_section}"
             "## Registered Context\n"
         )
         base_size = len(instructions.encode("utf-8"))
@@ -5392,6 +5497,10 @@ class SquadController:
         current_state = dict(state)
         current_decision = dict(decision)
         while current_decision.get("status") == "pending":
+            default_candidate = self._banzai_default_candidate_for_decision(
+                current_state,
+                current_decision,
+            )
             try:
                 prompt = self._render_commander_decision_prompt(
                     current_decision,
@@ -5452,6 +5561,15 @@ class SquadController:
                             claimed_decision
                         ),
                     )
+                    if (
+                        default_candidate is not None
+                        and resolved.answer_text
+                        not in default_candidate.alternatives
+                    ):
+                        raise EchelonResultValidationError(
+                            "COMMANDER selected an answer outside the sealed "
+                            "Banzai default alternatives"
+                        )
                 except Exception:
                     resolved = None
 
@@ -5546,6 +5664,46 @@ class SquadController:
         except (HumanInputPolicyError, KeyError, TypeError, ValueError):
             return False
         return v2_automatic_decision_is_registered(decision, policy)
+
+    def _rearm_awaiting_banzai_recommendation(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Apply a current Banzai policy to one intact pre-policy decision."""
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            return dict(state)
+        try:
+            decision = validate_blocked_decision(raw_decision)
+            if (
+                decision["schema_version"] != 3
+                or decision["status"] != "awaiting_human"
+                or decision["autonomy_mode"] != "banzai"
+                or decision.get("automatic_eligible") is not False
+            ):
+                return dict(state)
+            policy = self._policy_for_human_input_decision(decision)
+            if not decision_recommendation_is_automatic_under_policy(
+                decision,
+                policy,
+            ):
+                return dict(state)
+            revision = state.get("state_revision")
+            if type(revision) is not int or revision < 0:
+                return dict(state)
+            return self._state_store.rearm_awaiting_banzai_human_input_decision(
+                str(decision["id"]),
+                expected_state_revision=revision,
+            )
+        except (
+            BlockedDecisionError,
+            HumanInputPolicyError,
+            StateAdvanceError,
+            StateDurabilityError,
+            TypeError,
+            ValueError,
+        ):
+            return dict(state)
 
     def _prepare_v2_controller_migration_decision(
         self,
@@ -5714,6 +5872,7 @@ class SquadController:
             if not self._drain_pending_controller_completion().recovered:
                 return False
         pending = self._state_store.reopen_failed_proportional_controller_decision()
+        pending = self._rearm_awaiting_banzai_recommendation(pending)
         raw_pending_decision = pending.get("blocked_decision")
         v2_automatic_eligible = (
             self._v2_decision_automatic_eligible(raw_pending_decision)
@@ -11577,7 +11736,7 @@ class SquadController:
             raise HumanInputPolicyError(
                 "provider escalation options must be a list"
             )
-        return self._human_input_registry.prepare(
+        request = self._human_input_registry.prepare(
             source_kind="provider_escalation",
             producer_id=node.id,
             phase_id=node.id,
@@ -11590,6 +11749,61 @@ class SquadController:
             options=options,
             source_state_revision=snapshot.state_revision,
         )
+        raw_candidate = updates.get("autonomous_default_candidate")
+        if raw_candidate is None:
+            return request
+        if node.id != "phase1-why2":
+            raise HumanInputPolicyError(
+                "autonomous default candidates are only supported by phase1-why2"
+            )
+        candidate = AutonomousDefaultCandidate.from_provider_payload(
+            raw_candidate if isinstance(raw_candidate, Mapping) else {}
+        )
+        self._validate_banzai_default_candidate_finding_route(
+            updates,
+            candidate,
+        )
+        if self._state_store.load().get("autonomy_mode") != "banzai":
+            return request
+        return prepare_banzai_default_candidate_request(request, candidate)
+
+    @staticmethod
+    def _validate_banzai_default_candidate_finding_route(
+        updates: Mapping[str, object],
+        candidate: AutonomousDefaultCandidate,
+    ) -> None:
+        """Bind one Banzai default to its exact non-evidence WHY2 finding.
+
+        SAGE's candidate is untrusted data.  A candidate may not smuggle an
+        answer for a different issue, coexist with an evidence collection
+        route, or leave a second default candidate without an envelope.
+        """
+        if updates.get("evidence_resolution_status") != "not_required":
+            raise HumanInputPolicyError(
+                "Banzai default candidate requires a non-evidence finding route"
+            )
+        finding_routes = updates.get("finding_routes")
+        findings = (
+            finding_routes.get("findings")
+            if isinstance(finding_routes, Mapping)
+            else None
+        )
+        if not isinstance(findings, list):
+            raise HumanInputPolicyError(
+                "Banzai default candidate requires finding routes"
+            )
+        candidate_routes = [
+            finding
+            for finding in findings
+            if isinstance(finding, Mapping)
+            and finding.get("route") == "autonomous_default_candidate"
+        ]
+        if len(candidate_routes) != 1 or (
+            candidate_routes[0].get("issue_id") != candidate.issue_id
+        ):
+            raise HumanInputPolicyError(
+                "Banzai default candidate does not match its finding route"
+            )
 
     def _handle_prepared_human_input_or_block(
         self,

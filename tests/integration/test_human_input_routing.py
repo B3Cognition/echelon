@@ -26,6 +26,7 @@ from harness.blocked_decision import (
 )
 from harness.config import HarnessConfig, LlmConfig
 from harness.human_input import (
+    AutonomousDefaultCandidate,
     HumanInputOption,
     HumanInputPolicy,
     HumanInputPolicyError,
@@ -37,6 +38,7 @@ from harness.human_input import (
     prepare_controller_checkpoint_assessment_decision,
     prepare_controller_phase_dispatch_limit_decision,
     prepare_controller_proportional_quality_decision,
+    prepare_banzai_default_candidate_request,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -447,14 +449,117 @@ def _automatic_free_text_request(
     policy: HumanInputPolicy,
     *,
     recommended_answer: str = "Use the sealed evidence.",
+    risk_level: str = "low",
 ):
     return _request(
         controller,
         store,
         policy,
         recommended_answer=recommended_answer,
-        risk_level="low",
+        risk_level=risk_level,
     )
+
+
+def test_banzai_resolves_one_sealed_missing_recommendation_default(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.get("phase1-why2").human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text="Use an inclusive radial distance of 10 world units.",
+        ),
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    ordinary = _request(controller, store, policy)
+    candidate = AutonomousDefaultCandidate.from_provider_payload(
+        {
+            "issue_id": "ISS-001",
+            "authority_capability": "banzai_default",
+            "question": ordinary.question,
+            "affected_requirements": ["FR-003", "FR-014"],
+            "alternatives": [
+                "Use an inclusive radial distance of 6 world units.",
+                "Use an inclusive radial distance of 10 world units.",
+            ],
+            "constraints": [
+                "The local guard and server authority must use one contract.",
+            ],
+            "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+        }
+    )
+    request = prepare_banzai_default_candidate_request(ordinary, candidate)
+    routing = _provider_routing_decision(store, policy)
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs["human_input_initial_status"],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    ) is True
+    state = store.load()
+    assert state["phase"] == "phase1-what"
+    assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+    entry = state["autonomous_default_ledger"][-1]
+    assert entry["decision_id"] == state["blocked_decision"]["id"]
+    assert entry["fingerprint"] == candidate.fingerprint
+    assert entry["authority_capability"] == "banzai_default"
+    assert entry["selected_answer"] == (
+        "Use an inclusive radial distance of 10 world units."
+    )
+    assert provider.exec_agent.call_count == 1
+
+
+def test_banzai_default_candidate_cannot_use_another_provider_policy(
+    tmp_path: Path,
+) -> None:
+    """Only the compiled WHY2 policy may carry this autonomous capability."""
+    policy = _free_text_policy(classification="material")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    ordinary = _request(controller, store, policy)
+    candidate = AutonomousDefaultCandidate.from_provider_payload(
+        {
+            "issue_id": "ISS-001",
+            "authority_capability": "banzai_default",
+            "question": ordinary.question,
+            "affected_requirements": ["FR-003"],
+            "alternatives": ["Use radius 6.", "Use radius 10."],
+            "constraints": ["One client/server contract is required."],
+            "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+        }
+    )
+    request = prepare_banzai_default_candidate_request(ordinary, candidate)
+    routing = _provider_routing_decision(store, policy)
+
+    with pytest.raises(HumanInputPolicyError, match="only supported by phase1-why2"):
+        controller.handle_human_input(
+            request,
+            provider_advance=_ProviderHumanInputAdvance(
+                from_phase=policy.producer_id,
+                to_phase=policy.producer_id,
+                decision=routing,
+            ),
+        )
 
 
 def _seal_awaiting_human(
@@ -771,6 +876,396 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     assert resolved["answer_text"] == answer
     assert resolved["recommendation_followed"] is True
     assert resolved["override_reason"] is None
+    provider.exec_agent.assert_called_once()
+
+
+def test_banzai_adopts_medium_risk_tracker_recommendation(
+    tmp_path: Path,
+) -> None:
+    answer = (
+        "Use a short reach/pick-up gesture on a valid local interaction "
+        "attempt, retaining the orb until server confirmation."
+    )
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text=answer,
+        ),
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+        risk_level="medium",
+    )
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs[
+                "human_input_initial_status"
+            ],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    )
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["automatic_eligible"] is True
+    assert resolved["status"] == "resolved"
+    assert resolved["answer_text"] == answer
+    assert resolved["resolved_by"] == "COMMANDER"
+    assert resolved["recommendation_followed"] is True
+    provider.exec_agent.assert_called_once()
+
+
+def test_banzai_why2_promotes_a_missing_recommendation_default_candidate(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    node = graph.get("phase1-why2")
+    policy = node.human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text="Use radius 10.",
+        ),
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    question = "Which inclusive interaction boundary should both guards use?"
+    prepared = SimpleNamespace(
+        state_updates={
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [
+                    {
+                        "issue_id": "ISS-001",
+                        "route": "autonomous_default_candidate",
+                        "rationale": "A bounded product calibration has no evidence-backed default.",
+                    }
+                ]
+            },
+            "escalation_question": question,
+            "autonomous_default_candidate": {
+                "issue_id": "ISS-001",
+                "authority_capability": "banzai_default",
+                "question": question,
+                "affected_requirements": ["FR-003", "FR-014"],
+                "alternatives": ["Use radius 6.", "Use radius 10."],
+                "constraints": [
+                    "The local guard and server authority use one contract.",
+                ],
+                "source_references": [
+                    "spec.md#FR-003",
+                    "issues.md#ISS-001",
+                ],
+            },
+        },
+        control_updates={"blocked_reason": "human_clarification_required"},
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+
+    request = controller._prepare_provider_human_input(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert request is not None
+    assert request.automatic_eligible is True
+    assert request.autonomous_default_candidate is not None
+    assert request.autonomous_default_candidate.issue_id == "ISS-001"
+
+    routing = _provider_routing_decision(store, policy)
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs["human_input_initial_status"],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    ) is True
+    state = store.load()
+    assert state["phase"] == "phase1-what"
+    assert state["autonomous_default_ledger"][-1]["issue_id"] == "ISS-001"
+    provider.exec_agent.assert_called_once()
+
+
+def test_banzai_why2_rejects_candidate_not_bound_to_its_finding_route(
+    tmp_path: Path,
+) -> None:
+    """A provider cannot attach a default to an unrelated WHY2 issue."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    node = graph.get("phase1-why2")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=node.human_input_policies[0],
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    question = "Which inclusive interaction boundary should both guards use?"
+    prepared = SimpleNamespace(
+        state_updates={
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [
+                    {
+                        "issue_id": "ISS-002",
+                        "route": "autonomous_default_candidate",
+                        "rationale": "A different calibration is unresolved.",
+                    }
+                ]
+            },
+            "escalation_question": question,
+            "autonomous_default_candidate": {
+                "issue_id": "ISS-001",
+                "authority_capability": "banzai_default",
+                "question": question,
+                "affected_requirements": ["FR-003"],
+                "alternatives": ["Use radius 6.", "Use radius 10."],
+                "constraints": ["One client/server contract is required."],
+                "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+            },
+        },
+        control_updates={"blocked_reason": "human_clarification_required"},
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+
+    with pytest.raises(HumanInputPolicyError, match="finding route"):
+        controller._prepare_provider_human_input(node, prepared, snapshot)
+
+
+def test_banzai_why2_rejects_default_candidate_alongside_evidence_collection(
+    tmp_path: Path,
+) -> None:
+    """A bounded default must never replace an external fact investigation."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    node = graph.get("phase1-why2")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=node.human_input_policies[0],
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    question = "Which inclusive interaction boundary should both guards use?"
+    prepared = SimpleNamespace(
+        state_updates={
+            "evidence_resolution_status": "pending",
+            "finding_routes": {
+                "findings": [
+                    {
+                        "issue_id": "ISS-001",
+                        "route": "autonomous_default_candidate",
+                        "rationale": "A bounded calibration is unresolved.",
+                    },
+                    {
+                        "issue_id": "ISS-002",
+                        "route": "evidence_resolution",
+                        "rationale": "An external fact must be verified.",
+                    },
+                ]
+            },
+            "escalation_question": question,
+            "autonomous_default_candidate": {
+                "issue_id": "ISS-001",
+                "authority_capability": "banzai_default",
+                "question": question,
+                "affected_requirements": ["FR-003"],
+                "alternatives": ["Use radius 6.", "Use radius 10."],
+                "constraints": ["One client/server contract is required."],
+                "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+            },
+        },
+        control_updates={"blocked_reason": "human_clarification_required"},
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+
+    with pytest.raises(HumanInputPolicyError, match="non-evidence finding route"):
+        controller._prepare_provider_human_input(node, prepared, snapshot)
+
+
+def test_non_banzai_why2_default_candidate_stays_awaiting_human(
+    tmp_path: Path,
+) -> None:
+    """Semi mode preserves the normal human question without an implicit default."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    node = graph.get("phase1-why2")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="semi",
+        policy=node.human_input_policies[0],
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    question = "Which inclusive interaction boundary should both guards use?"
+    prepared = SimpleNamespace(
+        state_updates={
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [
+                    {
+                        "issue_id": "ISS-001",
+                        "route": "autonomous_default_candidate",
+                        "rationale": "A bounded product calibration is unresolved.",
+                    }
+                ]
+            },
+            "escalation_question": question,
+            "autonomous_default_candidate": {
+                "issue_id": "ISS-001",
+                "authority_capability": "banzai_default",
+                "question": question,
+                "affected_requirements": ["FR-003"],
+                "alternatives": ["Use radius 6.", "Use radius 10."],
+                "constraints": ["One client/server contract is required."],
+                "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+            },
+        },
+        control_updates={"blocked_reason": "human_clarification_required"},
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+
+    request = controller._prepare_provider_human_input(node, prepared, snapshot)
+
+    assert request is not None
+    assert request.automatic_eligible is False
+    assert request.autonomous_default_candidate is None
+
+
+def test_banzai_keeps_high_risk_tracker_recommendation_for_human(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        risk_level="high",
+    )
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=lambda _node, decision, **kwargs: store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs[
+                "human_input_initial_status"
+            ],
+        )
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    ) is False
+
+    waiting = store.load()["blocked_decision"]
+    assert waiting["automatic_eligible"] is False
+    assert waiting["status"] == "awaiting_human"
+    assert controller.resume_pending_human_input() is False
+    provider.exec_agent.assert_not_called()
+
+
+def test_banzai_rearms_stale_medium_risk_tracker_decision(
+    tmp_path: Path,
+) -> None:
+    answer = (
+        "Use a short reach/pick-up gesture on a valid local interaction "
+        "attempt, retaining the orb until server confirmation."
+    )
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text=answer,
+        ),
+    )
+    request = _automatic_free_text_request(
+        controller,
+        store,
+        policy,
+        recommended_answer=answer,
+        risk_level="medium",
+    )
+    store.advance(
+        policy.producer_id,
+        policy.producer_id,
+        _provider_routing_decision(store, policy),
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+    sealed = store.load()
+
+    assert sealed["blocked_decision"]["automatic_eligible"] is True
+    assert sealed["blocked_decision"]["status"] == "awaiting_human"
+    sealed["blocked_decision"]["automatic_eligible"] = False
+    store._path.write_text(json.dumps(sealed), encoding="utf-8")
+
+    assert controller.resume_pending_human_input()
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["status"] == "resolved"
+    assert resolved["answer_text"] == answer
+    assert resolved["resolved_by"] == "COMMANDER"
     provider.exec_agent.assert_called_once()
 
 

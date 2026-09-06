@@ -10,9 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from echelon.cli import (
+    _automatic_decision_is_eligible,
     _classify_run_recovery,
     _cmd_continue,
     _current_quality_debt_cli_facts,
+    _decision_audit_fields,
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
@@ -21,8 +23,43 @@ from echelon.cli import (
     _supersede_quality_guard_decision,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
-from harness.blocked_decision import build_blocked_decision_v2
+from harness.blocked_decision import (
+    build_blocked_decision_v2,
+    build_blocked_decision_v3,
+)
+from harness.human_input import (
+    HumanInputPolicy,
+    HumanInputPolicyRegistry,
+)
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+
+
+def test_decision_audit_labels_controller_owned_banzai_default() -> None:
+    decision = {
+        "id": "dec-banzai-default",
+        "status": "pending",
+        "autonomy_mode": "banzai",
+        "classification": "material",
+        "question": "Which radius should apply?",
+        "options": [],
+        "schema_version": 3,
+        "recommended_option_id": None,
+        "recommended_answer": None,
+        "recommended_action": (
+            "COMMANDER will select one answer within the sealed Banzai default "
+            "candidate constraints."
+        ),
+        "recommendation_rationale": "Controller-owned candidate.",
+        "recommendation_confidence": "medium",
+        "recommendation_evidence": [
+            {"kind": "banzai_default_candidate"},
+        ],
+        "risk_level": None,
+    }
+
+    fields = dict(_decision_audit_fields(decision))
+
+    assert fields["Recommendation"] == "Recommended: Controller-owned Banzai default"
 
 
 @pytest.fixture(autouse=True)
@@ -161,6 +198,87 @@ def _v2_continue_instruction(status: str) -> dict[str, object]:
         schema_version=2,
         decision_id="dec-cli-continue-side-effect",
     ).to_dict()
+
+
+def _stale_medium_risk_banzai_decision() -> tuple[
+    dict[str, object],
+    HumanInputPolicyRegistry,
+]:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-tracker",
+        reason_code="human_clarification_required",
+        classification="material",
+        semi_policy="require_human",
+        resolution_handler="clarification_resume",
+        allow_free_text=True,
+        allowed_phase_ids=frozenset({"phase1-tracker"}),
+        allowed_target_phases=frozenset({"phase1-tracker"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    registry = HumanInputPolicyRegistry((policy,))
+    prepared = registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase1-tracker",
+        reason_code=policy.reason_code,
+        question="Which character interaction default should be applied?",
+        recommended_answer="Use a short reach/pick-up gesture.",
+        risk_level="medium",
+        source_state_revision=7,
+    )
+    decision = build_blocked_decision_v3(
+        prepared=prepared,
+        decision_id="dec-stale-medium-product-default",
+        status="awaiting_human",
+        autonomy_mode="banzai",
+    )
+    decision["automatic_eligible"] = False
+    return decision, registry
+
+
+def test_continue_rearms_stale_banzai_product_recommendation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision, registry = _stale_medium_risk_banzai_decision()
+    graph = SimpleNamespace(human_input_policy_registry=lambda: registry)
+    state = {
+        "status": "blocked",
+        "phase": "phase1-tracker",
+        "autonomy_mode": "banzai",
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-tracker",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+    }
+
+    assert _automatic_decision_is_eligible(
+        decision,
+        project_root=tmp_path,
+        graph=graph,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._automatic_decision_is_eligible",
+        lambda candidate, **_kwargs: _automatic_decision_is_eligible(
+            candidate,
+            project_root=tmp_path,
+            graph=graph,
+        ),
+    )
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "resolve_decision"
+    assert action.command == "echelon spec continue"
+    assert "autonomous default" in action.note
 
 
 def test_declined_quality_debt_cannot_be_reopened_by_ordinary_continue(

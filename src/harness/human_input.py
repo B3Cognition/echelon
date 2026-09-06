@@ -20,6 +20,12 @@ HUMAN_INPUT_OPTION_ID_MAX_BYTES = 128
 HUMAN_INPUT_OPTION_LABEL_MAX_BYTES = 256
 HUMAN_INPUT_OPTION_DESCRIPTION_MAX_BYTES = 1_024
 HUMAN_INPUT_OPTION_OUTCOME_MAX_BYTES = 128
+AUTONOMOUS_DEFAULT_MAX_ALTERNATIVES = 8
+AUTONOMOUS_DEFAULT_MAX_CONTEXT_ENTRIES = 16
+BANZAI_DEFAULT_RECOMMENDED_ACTION = (
+    "COMMANDER will select one answer within the sealed Banzai default "
+    "candidate constraints."
+)
 
 HumanInputSourceKind = Literal[
     "provider_escalation",
@@ -261,6 +267,171 @@ class RecommendationEvidence:
             )
 
 
+@dataclass(frozen=True)
+class AutonomousDefaultCandidate:
+    """One untrusted, bounded Banzai product-default proposal.
+
+    A provider may describe the decision envelope, but this type deliberately
+    does not confer authority to apply it. The squad controller independently
+    checks the source phase, autonomy mode, policy identity, and durable
+    decision state before using the candidate.
+    """
+
+    issue_id: str
+    authority_capability: Literal["banzai_default"]
+    question: str
+    affected_requirements: tuple[str, ...]
+    alternatives: tuple[str, ...]
+    constraints: tuple[str, ...]
+    source_references: tuple[str, ...]
+    fingerprint: str
+
+    @classmethod
+    def from_provider_payload(
+        cls,
+        payload: Mapping[str, object],
+    ) -> "AutonomousDefaultCandidate":
+        if not isinstance(payload, Mapping):
+            raise HumanInputPolicyError(
+                "autonomous_default_candidate must be an object"
+            )
+        expected_fields = {
+            "issue_id",
+            "authority_capability",
+            "question",
+            "affected_requirements",
+            "alternatives",
+            "constraints",
+            "source_references",
+        }
+        if not all(isinstance(key, str) for key in payload):
+            raise HumanInputPolicyError(
+                "autonomous_default_candidate field names must be strings"
+            )
+        unknown = set(payload) - expected_fields
+        missing = expected_fields - set(payload)
+        if unknown:
+            raise HumanInputPolicyError(
+                "unknown autonomous_default_candidate field: "
+                f"{sorted(unknown)[0]}"
+            )
+        if missing:
+            raise HumanInputPolicyError(
+                "missing autonomous_default_candidate field: "
+                f"{sorted(missing)[0]}"
+            )
+        capability = _clean_string(
+            payload["authority_capability"],
+            "authority_capability",
+        )
+        if capability != "banzai_default":
+            raise HumanInputPolicyError(
+                "authority_capability is not recognized"
+            )
+        issue_id = _clean_bounded_string(
+            payload["issue_id"],
+            "issue_id",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        )
+        question = _clean_bounded_string(
+            payload["question"],
+            "question",
+            max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+            max_characters=4_000,
+        )
+        affected_requirements = _clean_string_collection(
+            payload["affected_requirements"],
+            "affected_requirements",
+        )
+        alternatives = _clean_string_collection(
+            payload["alternatives"],
+            "alternatives",
+        )
+        constraints = _clean_string_collection(
+            payload["constraints"],
+            "constraints",
+        )
+        source_references = _clean_string_collection(
+            payload["source_references"],
+            "source_references",
+        )
+        if not affected_requirements:
+            raise HumanInputPolicyError(
+                "affected_requirements must not be empty"
+            )
+        if len(alternatives) < 2 or len(alternatives) > AUTONOMOUS_DEFAULT_MAX_ALTERNATIVES:
+            raise HumanInputPolicyError(
+                "alternatives must contain between 2 and 8 entries"
+            )
+        if not constraints:
+            raise HumanInputPolicyError("constraints must not be empty")
+        if not source_references:
+            raise HumanInputPolicyError(
+                "source_references must not be empty"
+            )
+        if len(
+            f"{issue_id}:{','.join(source_references)}".encode("utf-8")
+        ) > HUMAN_INPUT_RECOMMENDATION_MAX_BYTES:
+            raise HumanInputPolicyError(
+                "combined source_references exceed the evidence reference limit"
+            )
+        for field, values in (
+            ("affected_requirements", affected_requirements),
+            ("constraints", constraints),
+            ("source_references", source_references),
+        ):
+            if len(values) > AUTONOMOUS_DEFAULT_MAX_CONTEXT_ENTRIES:
+                raise HumanInputPolicyError(
+                    f"{field} must not contain more than "
+                    f"{AUTONOMOUS_DEFAULT_MAX_CONTEXT_ENTRIES} entries"
+                )
+        for field, values in (
+            ("affected_requirements", affected_requirements),
+            ("alternatives", alternatives),
+            ("constraints", constraints),
+            ("source_references", source_references),
+        ):
+            if any(
+                len(value.encode("utf-8")) > HUMAN_INPUT_RECOMMENDATION_MAX_BYTES
+                for value in values
+            ):
+                raise HumanInputPolicyError(
+                    f"{field} entries must not exceed "
+                    f"{HUMAN_INPUT_RECOMMENDATION_MAX_BYTES:,} UTF-8 bytes"
+                )
+        canonical = {
+            "issue_id": issue_id,
+            "authority_capability": capability,
+            "question": question,
+            "affected_requirements": list(affected_requirements),
+            "alternatives": list(alternatives),
+            "constraints": list(constraints),
+            "source_references": list(source_references),
+        }
+        return cls(
+            issue_id=issue_id,
+            authority_capability="banzai_default",
+            question=question,
+            affected_requirements=affected_requirements,
+            alternatives=alternatives,
+            constraints=constraints,
+            source_references=source_references,
+            fingerprint=_canonical_sha256(canonical),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "issue_id": self.issue_id,
+            "authority_capability": self.authority_capability,
+            "question": self.question,
+            "affected_requirements": list(self.affected_requirements),
+            "alternatives": list(self.alternatives),
+            "constraints": list(self.constraints),
+            "source_references": list(self.source_references),
+            "fingerprint": self.fingerprint,
+        }
+
+
 def _canonical_sha256(payload: Mapping[str, object]) -> str:
     """Return the stable SHA-256 for recommendation evidence content."""
     return hashlib.sha256(
@@ -482,6 +653,7 @@ class PreparedHumanInput:
     risk_level: HumanInputRisk | None
     resolution_handler: str
     source_state_revision: int
+    autonomous_default_candidate: AutonomousDefaultCandidate | None = None
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != 2:
@@ -573,6 +745,14 @@ class PreparedHumanInput:
             raise HumanInputPolicyError(
                 "recommendation_evidence must be a tuple of RecommendationEvidence values"
             )
+        candidate = self.autonomous_default_candidate
+        if candidate is not None and not isinstance(
+            candidate,
+            AutonomousDefaultCandidate,
+        ):
+            raise HumanInputPolicyError(
+                "autonomous_default_candidate must be an AutonomousDefaultCandidate"
+            )
         recommendation_ids = [option.id for option in self.options if option.recommended]
         if self.options:
             if len(recommendation_ids) != 1:
@@ -596,16 +776,23 @@ class PreparedHumanInput:
             if (
                 recommended_option_id is not None
                 or recommended_action is None
-                or self.automatic_eligible
+                or (
+                    self.automatic_eligible
+                    and candidate is None
+                )
             ):
                 raise HumanInputPolicyError(
                     "human-only free text requires a recommended action"
                 )
-            if self.recommendation_evidence:
+            if self.recommendation_evidence and candidate is None:
                 raise HumanInputPolicyError(
                     "human-only free text cannot retain recommendation evidence"
                 )
-        if (self.options or recommendation is not None) and not self.recommendation_evidence:
+        if (
+            self.options
+            or recommendation is not None
+            or candidate is not None
+        ) and not self.recommendation_evidence:
             raise HumanInputPolicyError(
                 "prepared recommendations require recommendation evidence"
             )
@@ -613,6 +800,32 @@ class PreparedHumanInput:
             raise HumanInputPolicyError(
                 "risk_level must be low, medium, high, or critical"
             )
+        if candidate is not None:
+            expected_evidence = RecommendationEvidence(
+                id=f"banzai-default:{candidate.issue_id}",
+                kind="banzai_default_candidate",
+                reference=(
+                    f"{candidate.issue_id}:"
+                    f"{','.join(candidate.source_references)}"
+                ),
+                digest=candidate.fingerprint,
+            )
+            if (
+                self.source_kind != "provider_escalation"
+                or self.classification != "material"
+                or self.options
+                or recommendation is not None
+                or recommended_option_id is not None
+                or recommended_action != BANZAI_DEFAULT_RECOMMENDED_ACTION
+                or self.automatic_eligible is not True
+                or self.recommendation_authority != "controller_evidence"
+                or self.recommendation_evidence != (expected_evidence,)
+                or self.risk_level is not None
+                or candidate.question != self.question
+            ):
+                raise HumanInputPolicyError(
+                    "autonomous_default_candidate request is not controller-owned"
+                )
         object.__setattr__(
             self,
             "resolution_handler",
@@ -668,6 +881,60 @@ class PreparedHumanInput:
                 "risk_level": self.risk_level,
             }
         )
+
+
+def prepare_banzai_default_candidate_request(
+    request: PreparedHumanInput,
+    candidate: AutonomousDefaultCandidate,
+) -> PreparedHumanInput:
+    """Attach one controller-approved default envelope to a plain escalation.
+
+    The caller still has to establish the mode and workflow identity. This
+    helper establishes only the immutable request shape that allows COMMANDER
+    to resolve a bounded free-text default without pretending the provider had
+    already supplied an answer.
+    """
+    if type(request) is not PreparedHumanInput:
+        raise HumanInputPolicyError(
+            "Banzai default resolution requires a prepared human-input request"
+        )
+    if not isinstance(candidate, AutonomousDefaultCandidate):
+        raise HumanInputPolicyError(
+            "Banzai default resolution requires an autonomous default candidate"
+        )
+    if (
+        request.source_kind != "provider_escalation"
+        or request.classification != "material"
+        or request.options
+        or request.recommended_answer is not None
+        or request.recommended_option_id is not None
+        or request.risk_level is not None
+        or request.automatic_eligible
+        or request.autonomous_default_candidate is not None
+        or request.question != candidate.question
+    ):
+        raise HumanInputPolicyError(
+            "Banzai default candidate does not match a plain material escalation"
+        )
+    evidence = RecommendationEvidence(
+        id=f"banzai-default:{candidate.issue_id}",
+        kind="banzai_default_candidate",
+        reference=f"{candidate.issue_id}:{','.join(candidate.source_references)}",
+        digest=candidate.fingerprint,
+    )
+    return replace(
+        request,
+        recommended_action=BANZAI_DEFAULT_RECOMMENDED_ACTION,
+        automatic_eligible=True,
+        recommendation_rationale=(
+            "A controller-owned Banzai default candidate is available for "
+            "COMMANDER resolution."
+        ),
+        recommendation_confidence="medium",
+        recommendation_authority="controller_evidence",
+        recommendation_evidence=(evidence,),
+        autonomous_default_candidate=candidate,
+    )
 
 
 def validate_human_input_answer_shape(
@@ -1029,16 +1296,52 @@ def _derive_automatic_eligibility(
         return False
     recommended_options = [option for option in options if option.recommended]
     if len(recommended_options) == 1:
-        return (recommended_options[0].risk_level or risk_level) == "low"
-    return not options and recommended_answer is not None and risk_level == "low"
+        return _recommendation_risk_is_automatic(
+            policy,
+            recommended_options[0].risk_level or risk_level,
+        )
+    return (
+        not options
+        and recommended_answer is not None
+        and _recommendation_risk_is_automatic(policy, risk_level)
+    )
 
 
-def v2_automatic_decision_is_registered(
+def _recommendation_risk_is_automatic(
+    policy: HumanInputPolicy,
+    risk_level: HumanInputRisk | None,
+) -> bool:
+    """Return whether a registered recommendation is safe to apply by default.
+
+    Banzai is autonomous for normal product-design choices when a provider has
+    supplied one durable recommendation. Material choices are allowed through
+    medium risk so the run does not manufacture a human stop for an ordinary
+    design default. External prerequisites and high-impact choices remain
+    human-owned regardless of the recommendation.
+    """
+    if policy.classification == "external_prerequisite":
+        return False
+    if risk_level == "low":
+        return True
+    return (
+        risk_level == "medium"
+        and policy.source_kind == "provider_escalation"
+        and policy.classification == "material"
+    )
+
+
+def decision_recommendation_is_automatic_under_policy(
     decision: Mapping[str, object],
     policy: HumanInputPolicy,
 ) -> bool:
-    """Reconstruct intrinsic v2 eligibility without requiring v3 preparation."""
-    if decision.get("schema_version") != 2:
+    """Recalculate automatic eligibility from a registered policy contract.
+
+    This is intentionally independent of a persisted ``automatic_eligible``
+    field so a narrowly broadened Banzai policy can re-arm an otherwise intact
+    pre-change decision without changing its question, recommendation, or
+    provenance.
+    """
+    if decision.get("schema_version") not in {2, 3}:
         return False
     if (
         decision.get("source_kind") != policy.source_kind
@@ -1104,15 +1407,33 @@ def v2_automatic_decision_is_registered(
         return False
     recommended_options = [option for option in options if option.recommended]
     if len(recommended_options) == 1:
-        return (
+        return _recommendation_risk_is_automatic(
+            policy,
             recommended_options[0].risk_level
-            or decision.get("risk_level")
-        ) == "low"
+            or decision.get("risk_level"),
+        )
     return (
         not options
         and isinstance(decision.get("recommended_answer"), str)
         and bool(str(decision["recommended_answer"]).strip())
-        and decision.get("risk_level") == "low"
+        and _recommendation_risk_is_automatic(
+            policy,
+            decision.get("risk_level"),
+        )
+    )
+
+
+def v2_automatic_decision_is_registered(
+    decision: Mapping[str, object],
+    policy: HumanInputPolicy,
+) -> bool:
+    """Reconstruct intrinsic v2 eligibility without requiring v3 preparation."""
+    return (
+        decision.get("schema_version") == 2
+        and decision_recommendation_is_automatic_under_policy(
+            decision,
+            policy,
+        )
     )
 
 
