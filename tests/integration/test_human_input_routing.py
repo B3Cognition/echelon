@@ -590,6 +590,32 @@ def _seal_awaiting_human(
     return state["blocked_decision"]["id"], state["state_revision"]
 
 
+def _seal_awaiting_provider_human(
+    controller: SquadController,
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+    *,
+    question: str,
+) -> tuple[str, int]:
+    request = controller._human_input_registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=next(iter(policy.allowed_phase_ids)),
+        reason_code=policy.reason_code,
+        question=question,
+        source_state_revision=store.load()["state_revision"],
+    )
+    store.advance(
+        policy.producer_id,
+        policy.producer_id,
+        _provider_routing_decision(store, policy),
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+    state = store.load()
+    return state["blocked_decision"]["id"], state["state_revision"]
+
+
 def _safeguard_policy(
     producer_id: str,
     *,
@@ -1267,6 +1293,82 @@ def test_banzai_rearms_stale_medium_risk_tracker_decision(
     assert resolved["answer_text"] == answer
     assert resolved["resolved_by"] == "COMMANDER"
     provider.exec_agent.assert_called_once()
+
+
+def test_banzai_reassesses_one_legacy_why2_question_without_a_candidate(
+    tmp_path: Path,
+) -> None:
+    """A pre-candidate WHY2 decision gets one safe current-policy retry."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.get("phase1-why2").human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    legacy_state = store.load()
+    legacy_state.pop("banzai_default_candidate_protocol_version")
+    store._path.write_text(json.dumps(legacy_state), encoding="utf-8")
+    decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question=(
+            "What inclusive radial interaction boundary should both the local "
+            "guard and server authority use?"
+        ),
+    )
+
+    assert controller.resume_pending_human_input() is True
+
+    reassessed = store.load()
+    assert reassessed["status"] == "running"
+    assert reassessed["phase"] == "phase1-why2"
+    assert "blocked_decision" not in reassessed
+    assert "escalation_question" not in reassessed
+    assert reassessed["banzai_default_reassessment"]["decision_id"] == decision_id
+    provider.exec_agent.assert_not_called()
+
+    next_decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question=(
+            "What inclusive radial interaction boundary should both the local "
+            "guard and server authority use?"
+        ),
+    )
+
+    assert controller.resume_pending_human_input() is False
+    assert store.load()["blocked_decision"]["id"] == next_decision_id
+    provider.exec_agent.assert_not_called()
+
+
+def test_banzai_does_not_reassess_current_why2_question_without_a_candidate(
+    tmp_path: Path,
+) -> None:
+    """A current run must not turn a malformed new result into a retry loop."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.get("phase1-why2").human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question="Which inclusive radial boundary should both guards use?",
+    )
+
+    assert controller.resume_pending_human_input() is False
+    assert store.load()["blocked_decision"]["id"] == decision_id
+    provider.exec_agent.assert_not_called()
 
 
 def test_commander_resolution_persists_low_confidence_follow_audit(
