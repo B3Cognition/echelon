@@ -6,6 +6,7 @@ import shutil
 
 import pytest
 
+import harness.re_v2.protocol_28.context as context_module
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_28.budget import L4ResourceStore
@@ -165,6 +166,33 @@ def test_slice_context_uses_preindexed_frozen_catalogs(tmp_path: Path) -> None:
     )
 
     assert payload
+
+
+@pytest.mark.unit
+def test_slice_context_encodes_shared_lower_authority_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _published(tmp_path)
+    context = load_protocol_28_run_context(run_dir)
+    assert isinstance(context, Protocol28RunContext)
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+    original_encode = context_module.base64.b64encode
+    calls = 0
+
+    def counted_encode(payload: bytes) -> bytes:
+        nonlocal calls
+        calls += 1
+        return original_encode(payload)
+
+    monkeypatch.setattr(context_module.base64, "b64encode", counted_encode)
+    spec = realize_slice(entry, {})
+
+    build_protocol_28_slice_context(context, target, entry, spec, role="producer")
+    build_protocol_28_slice_context(context, target, entry, spec, role="producer")
+
+    assert calls == len(entry.required_lower_authority_ids)
 
 
 @pytest.mark.unit

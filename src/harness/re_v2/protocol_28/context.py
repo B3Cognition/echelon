@@ -63,6 +63,9 @@ class Protocol28RunContext:
     _subject_by_id: dict[str, object] = field(
         init=False, repr=False, compare=False
     )
+    _encoded_lower_authority_by_id: dict[str, dict[str, str]] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         inputs = self.inputs
@@ -97,6 +100,7 @@ class Protocol28RunContext:
                 for item in inputs.exhaustive_subject_catalog.subjects
             },
         )
+        object.__setattr__(self, "_encoded_lower_authority_by_id", {})
 
     @property
     def run_dir(self) -> Path:
@@ -231,17 +235,21 @@ def build_protocol_28_slice_context(
         raise Protocol28ContextError("slice subject authority is incomplete")
     lower_objects: list[dict[str, str]] = []
     for object_id in plan_entry.required_lower_authority_ids:
+        encoded_authority = context._encoded_lower_authority_by_id.get(object_id)
+        if encoded_authority is not None:
+            lower_objects.append(encoded_authority)
+            continue
         payload = inputs.authority_objects.get(object_id)
         if payload is None:
             raise Protocol28ContextError(
                 f"slice lower authority is unavailable: {object_id}"
             )
-        lower_objects.append(
-            {
-                "object_id": object_id,
-                "bytes_base64": base64.b64encode(payload).decode("ascii"),
-            }
-        )
+        encoded_authority = {
+            "object_id": object_id,
+            "bytes_base64": base64.b64encode(payload).decode("ascii"),
+        }
+        context._encoded_lower_authority_by_id[object_id] = encoded_authority
+        lower_objects.append(encoded_authority)
     residual_debt = residual_debt_acceptance_from_objects(
         inputs.authority_objects
     )
