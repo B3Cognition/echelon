@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -78,6 +78,21 @@ _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
     default="echelon spec run",
 )
+
+
+@dataclass(frozen=True)
+class LocalActionPlan:
+    """The exact host-local action that an operator confirms before it runs."""
+
+    spec_id: str
+    target_id: str
+    engine: str
+    candidate_fingerprint: str
+    planned_actions: tuple[str, ...]
+    digest: str
+    workspace_root: Path | None = field(default=None, repr=False)
+    target_root: Path | None = field(default=None, repr=False)
+    candidate: object | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -6158,6 +6173,296 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
     return sorted(states, key=lambda state: str(state.get("build_id") or ""), reverse=True)
 
 
+def _local_delivery_workspace_root(project_dir: Path) -> Path:
+    configured = os.environ.get("ECHELON_POLYREPO_ROOT", "").strip()
+    root = Path(configured).expanduser() if configured else Path(project_dir)
+    if root.is_symlink():
+        raise ValueError("local verification workspace root is symlinked")
+    try:
+        root = root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("local verification workspace root is unavailable") from exc
+    if not root.is_dir():
+        raise ValueError("local verification workspace root is unavailable")
+    return root
+
+
+def _resolve_local_delivery_target(
+    project_dir: Path, spec_id: str, requested_target: str | None
+) -> tuple[Path, Path, str, str]:
+    """Resolve one declared target; local verification never guesses a target."""
+    from harness.spec_frontmatter import find_spec_dir, read_target_entries
+
+    workspace = _local_delivery_workspace_root(project_dir)
+    spec_dir = find_spec_dir(spec_id, workspace)
+    if spec_dir is None:
+        raise ValueError(f"spec {spec_id!r} was not found in this workspace")
+    entries = read_target_entries(spec_dir)
+    if not entries:
+        raise ValueError("spec has no declared delivery target")
+    selector = (requested_target or "").strip()
+    matches = []
+    for entry in entries:
+        entry_id = str(entry.get("id") or "").strip()
+        path_value = str(entry.get("path") or "").strip()
+        if not path_value:
+            continue
+        if not selector or selector in {entry_id, path_value, Path(path_value).name}:
+            matches.append((entry_id, path_value))
+    if len(matches) != 1:
+        if selector:
+            raise ValueError(
+                "--target must identify exactly one declared delivery target"
+            )
+        raise ValueError(
+            "spec has multiple delivery targets; rerun with --target <target-id>"
+        )
+    target_id, target_value = matches[0]
+    target = Path(target_value).expanduser()
+    if not target.is_absolute():
+        target = workspace / target
+    if target.is_symlink():
+        raise ValueError("local verification target is symlinked")
+    try:
+        target = target.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("local verification target is unavailable") from exc
+    if not target.is_dir():
+        raise ValueError("local verification target is unavailable")
+    return workspace, target, target_id or target.name, spec_dir.name
+
+
+def _select_local_engine(engine: str) -> str:
+    requested = engine.strip().lower()
+    if requested not in {"auto", "docker", "podman"}:
+        raise ValueError("--engine must be auto, docker, or podman")
+    if requested != "auto":
+        return requested
+    if shutil.which("docker"):
+        return "docker"
+    if shutil.which("podman"):
+        return "podman"
+    raise ValueError("no supported local engine found; install Docker Desktop or Podman")
+
+
+def _local_candidate_fingerprint(candidate: object) -> str:
+    fields = (
+        "product_fingerprint",
+        "contract_hash",
+        "stack_hash",
+        "observer_plan_hash",
+        "sandbox_receipt_sha256",
+    )
+    payload = {name: str(getattr(candidate, name, "")) for name in fields}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _build_local_action_plan(
+    project_dir: Path,
+    spec_id: str,
+    target_id: str | None,
+    engine: str,
+    *,
+    build_id: str | None = None,
+) -> LocalActionPlan:
+    """Resolve immutable sandbox evidence before any host resource is created."""
+    from harness.local_runner_candidate import (
+        LocalCandidateRequest,
+        resolve_effective_local_candidate,
+    )
+
+    workspace, target, resolved_target_id, resolved_spec_id = _resolve_local_delivery_target(
+        project_dir, spec_id, target_id
+    )
+    candidate = resolve_effective_local_candidate(
+        LocalCandidateRequest(
+            workspace_root=workspace,
+            target_root=target,
+            spec_id=resolved_spec_id,
+            target_id=resolved_target_id,
+            build_id=build_id,
+        )
+    )
+    selected_engine = _select_local_engine(engine)
+    actions = (
+        "materialize the sandbox-approved candidate in a managed detached worktree",
+        "start a run-ID-labelled PostgreSQL container on a generated loopback port",
+        "run the declared lifecycle in a scrubbed, run-local host environment",
+        "observe the browser, restart persistence, and PostgreSQL boundary independently",
+        "record a redacted immutable attestation and remove only journalled resources",
+    )
+    fingerprint = _local_candidate_fingerprint(candidate)
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "spec_id": resolved_spec_id,
+                "target_id": resolved_target_id,
+                "engine": selected_engine,
+                "candidate_fingerprint": fingerprint,
+                "planned_actions": actions,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return LocalActionPlan(
+        spec_id=resolved_spec_id,
+        target_id=resolved_target_id,
+        engine=selected_engine,
+        candidate_fingerprint=fingerprint,
+        planned_actions=actions,
+        digest=digest,
+        workspace_root=workspace,
+        target_root=target,
+        candidate=candidate,
+    )
+
+
+def _confirm_local_action_plan(action_plan: LocalActionPlan) -> None:
+    _banner(
+        "LOCAL DELIVERY VERIFICATION",
+        [
+            ("spec", action_plan.spec_id),
+            ("target", action_plan.target_id),
+            ("engine", action_plan.engine),
+            ("candidate", action_plan.candidate_fingerprint[:12]),
+            ("action", "; ".join(action_plan.planned_actions)),
+            ("authority", "opt-in macOS evidence only; delivery landing remains sandbox-authoritative"),
+        ],
+        subtitle="Trusted candidate code will run in a managed worktree.",
+    )
+    answer = input("Start this explicit host-local verification? [y/N] ").strip().lower()
+    if answer not in {"y", "yes"}:
+        print("No host-local resources were started.")
+        raise SystemExit(1)
+
+
+def _run_local_delivery_verification(
+    project_dir: Path,
+    action_plan: LocalActionPlan,
+    keep_on_failure: bool,
+):
+    """Run the exact candidate that the operator approved, without landing authority."""
+    from harness.local_runner import (
+        LocalRunnabilityRunner,
+        LocalRunnerOptions,
+        LocalVerificationRequest,
+    )
+    from harness.local_runner_candidate import LocalCandidateRequest
+
+    if (
+        action_plan.workspace_root is None
+        or action_plan.target_root is None
+        or action_plan.candidate is None
+    ):
+        raise ValueError("local action plan is incomplete")
+    candidate = action_plan.candidate
+    mirror = Path(getattr(candidate, "mirror_path"))
+    build_id = str(getattr(candidate, "build_id"))
+    browser_helper = (
+        Path(project_dir) / ".echelon" / "runtime" / "scripts" / "user-runnability-browser.mjs"
+    )
+    if not browser_helper.is_file():
+        browser_helper = (
+            Path(__file__).resolve().parents[2]
+            / "runtime"
+            / "scripts"
+            / "user-runnability-browser.mjs"
+        )
+    request = LocalVerificationRequest(
+        workspace_root=action_plan.workspace_root,
+        target_root=action_plan.target_root,
+        spec_id=action_plan.spec_id,
+        target_id=action_plan.target_id,
+        candidate_request=LocalCandidateRequest(
+            workspace_root=action_plan.workspace_root,
+            target_root=action_plan.target_root,
+            spec_id=action_plan.spec_id,
+            target_id=action_plan.target_id,
+            build_id=build_id,
+        ),
+        local_run_root=mirror.parent / build_id / "local-runs",
+    )
+    runner = LocalRunnabilityRunner(
+        candidate_resolver=lambda _request: candidate,
+        browser_helper=browser_helper,
+        recovery_workspace_root=action_plan.workspace_root,
+    )
+    return runner.verify(
+        request,
+        LocalRunnerOptions(
+            engine=action_plan.engine,
+            action_confirmed=True,
+            keep_on_failure=keep_on_failure,
+        ),
+    )
+
+
+def _print_local_verification_result(result: object) -> None:
+    status = str(getattr(result, "status", "failed"))
+    fields = [
+        ("status", status),
+        ("local run", str(getattr(result, "local_run_id", "-"))),
+        ("cleanup", "complete" if getattr(result, "cleanup_complete", False) else "recovery required"),
+    ]
+    attestation = getattr(result, "attestation_path", None)
+    if attestation is not None:
+        fields.append(("local evidence", str(attestation)))
+    summary = str(getattr(result, "summary", "")).strip()
+    if summary:
+        fields.append(("summary", summary))
+    if not getattr(result, "cleanup_complete", False):
+        fields.append(("recovery", f"echelon delivery cleanup-local {getattr(result, 'local_run_id', '<local-run-id>')}"))
+    _banner(
+        "LOCAL DELIVERY VERIFICATION",
+        fields,
+        subtitle="Separate local evidence; it never changes delivery landing authority.",
+    )
+
+
+def _cmd_delivery_verify_local(
+    spec_id: str,
+    *,
+    target_id: str | None,
+    engine: str,
+    assume_yes: bool,
+    keep_on_failure: bool,
+    project_root: Path | None = None,
+) -> None:
+    if keep_on_failure and assume_yes:
+        raise ValueError("--keep-on-failure cannot be combined with --yes")
+    if sys.platform != "darwin":
+        raise ValueError("local verification is supported on macOS only")
+    root = project_root or Path.cwd()
+    try:
+        action_plan = _build_local_action_plan(root, spec_id, target_id, engine)
+        if not assume_yes:
+            _confirm_local_action_plan(action_plan)
+        result = _run_local_delivery_verification(root, action_plan, keep_on_failure)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(str(exc)) from exc
+    _print_local_verification_result(result)
+    if str(getattr(result, "status", "")) != "passed":
+        raise SystemExit(1)
+
+
+def _cmd_delivery_cleanup_local(
+    local_run_id: str, *, project_root: Path | None = None
+) -> None:
+    from harness.local_runner import LocalRunnabilityRunner
+
+    root = _local_delivery_workspace_root(project_root or Path.cwd())
+    try:
+        result = LocalRunnabilityRunner(recovery_workspace_root=root).cleanup(local_run_id)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(str(exc)) from exc
+    _print_local_verification_result(result)
+    if str(result.status) != "cleanup_complete":
+        raise SystemExit(1)
+
+
 def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
     spec_id = ""
     strategy = ""
@@ -6324,6 +6629,94 @@ def _delivery_status_effective_state(state: dict) -> dict:
     return observed
 
 
+def _delivery_status_local_verification(state: Mapping[str, object]) -> dict[str, str] | None:
+    """Read immutable local evidence without resolving or modifying a candidate."""
+    raw_state_file = str(state.get("state_file") or "").strip()
+    if not raw_state_file:
+        return None
+    state_file = Path(raw_state_file)
+    if state_file.is_symlink() or state_file.name == "":
+        return None
+    build_root = state_file.parent.parent
+    evidence_root = build_root / "evidence" / "local-runnability"
+    if not evidence_root.exists() or evidence_root.is_symlink():
+        return None
+    try:
+        candidate = _local_evidence_candidate_from_state(state, build_root)
+    except ValueError as exc:
+        return {
+            "status": "unavailable",
+            "reason": str(exc),
+            "runner": "opt-in macOS (Docker Desktop or Podman)",
+        }
+    try:
+        from harness.local_runner_evidence import select_local_verification_status
+
+        selected = select_local_verification_status(evidence_root, candidate)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"local evidence is unreadable: {exc}",
+            "runner": "opt-in macOS (Docker Desktop or Podman)",
+        }
+    result = {
+        "status": selected.display_status,
+        "runner": "opt-in macOS (Docker Desktop or Podman)",
+    }
+    if selected.valid_pass_path is not None:
+        result["evidence"] = str(selected.valid_pass_path)
+    if selected.latest_attempt_path is not None:
+        result["last_attempt"] = selected.latest_attempt_status
+        result["last_attempt_evidence"] = str(selected.latest_attempt_path)
+    return result
+
+
+def _local_evidence_candidate_from_state(state: Mapping[str, object], build_root: Path):
+    """Build the content-authoritative attestation tuple from sealed delivery state."""
+    from harness.local_runner_candidate import EffectiveLocalCandidate
+
+    raw_coverage = state.get("coverage_observation")
+    snapshot = state.get("delivery_stack_snapshot")
+    if not isinstance(raw_coverage, Mapping) or raw_coverage.get("status") != "passed":
+        raise ValueError("passing sandbox coverage evidence is unavailable")
+    if not isinstance(snapshot, Mapping) or snapshot.get("schema_version") != 1:
+        raise ValueError("sealed delivery stack snapshot is unavailable")
+    fingerprints = raw_coverage.get("fingerprints")
+    reference = raw_coverage.get("ref")
+    if not isinstance(fingerprints, Mapping) or not isinstance(reference, Mapping):
+        raise ValueError("sandbox evidence fingerprint tuple is unavailable")
+    values = {
+        "product_fingerprint": fingerprints.get("candidate_fingerprint"),
+        "contract_hash": fingerprints.get("runnability_contract_hash"),
+        "stack_hash": fingerprints.get("resolved_stack_hash"),
+        "observer_plan_hash": fingerprints.get("observer_plan_hash"),
+        "sandbox_receipt_sha256": reference.get("receipt_sha256"),
+    }
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
+        raise ValueError("sandbox evidence fingerprint tuple is malformed")
+    if (
+        snapshot.get("resolved_stack_hash") != values["stack_hash"]
+        or snapshot.get("observer_plan_hash") != values["observer_plan_hash"]
+        or not isinstance(snapshot.get("resolved"), Mapping)
+    ):
+        raise ValueError("sealed stack evidence does not match sandbox coverage")
+    build_id = str(state.get("build_id") or build_root.name).strip()
+    if not re.fullmatch(r"build-[A-Za-z0-9][A-Za-z0-9._-]{0,127}", build_id):
+        raise ValueError("delivery build identity is malformed")
+    return EffectiveLocalCandidate(
+        build_id=build_id,
+        sandbox_candidate_commit="0" * 40,
+        effective_candidate_commit="0" * 40,
+        product_fingerprint=str(values["product_fingerprint"]),
+        contract_hash=str(values["contract_hash"]),
+        stack_hash=str(values["stack_hash"]),
+        observer_plan_hash=str(values["observer_plan_hash"]),
+        sandbox_receipt_sha256=str(values["sandbox_receipt_sha256"]),
+        mirror_path=build_root.parent / "mirror.git",
+        stack_snapshot=dict(snapshot),
+    )
+
+
 def _delivery_status_summary(
     state: dict,
     *,
@@ -6385,6 +6778,9 @@ def _delivery_status_summary(
     )
     if coverage_observation is not None:
         summary["coverage_observation"] = coverage_observation
+    local_verification = _delivery_status_local_verification(state)
+    if local_verification is not None:
+        summary["local_verification"] = local_verification
     last_verify = state.get("last_verify_result")
     if isinstance(last_verify, dict):
         verification_evidence = last_verify.get("verification_evidence")
@@ -6527,6 +6923,26 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         visual_path = str(visual_evidence.get("path") or "").strip()
         if visual_path:
             fields.append(("visual evidence", visual_path))
+    local_verification = summary.get("local_verification")
+    if isinstance(local_verification, dict):
+        fields.append(
+            ("local verification", str(local_verification.get("status") or "unknown"))
+        )
+        runner = str(local_verification.get("runner") or "").strip()
+        if runner:
+            fields.append(("local runner", runner))
+        evidence = str(local_verification.get("evidence") or "").strip()
+        if evidence:
+            fields.append(("local evidence", evidence))
+        latest_status = str(local_verification.get("last_attempt") or "").strip()
+        if latest_status:
+            fields.append(("last local attempt", latest_status))
+        latest_evidence = str(local_verification.get("last_attempt_evidence") or "").strip()
+        if latest_evidence and latest_evidence != evidence:
+            fields.append(("last local evidence", latest_evidence))
+        reason = str(local_verification.get("reason") or "").strip()
+        if reason:
+            fields.append(("local reason", reason))
     escalation = summary.get("escalation")
     if isinstance(escalation, dict):
         question = str(escalation.get("question") or "").strip()
