@@ -168,6 +168,118 @@ def test_loads_complete_local_user_journey_as_immutable_contract(
 
 
 @pytest.mark.unit
+def test_loads_schema_v2_executable_local_journey(tmp_path: Path) -> None:
+    text = (
+        BROWSER_CONTRACT.replace("schema_version: 1", "schema_version: 2")
+        + LOCAL_JOURNEY
+        + """\
+  execution:
+    profile: macos-compose-v1
+    compose:
+      file: docker-compose.yml
+      services: [postgres]
+    lifecycle:
+      install:
+        - [pnpm, install, --frozen-lockfile]
+      bootstrap:
+        - [pnpm, migrate]
+    manual_equivalents:
+      install:
+        - field: install_commands
+          index: 0
+          transform: same_argv
+      bootstrap:
+        - field: bootstrap_commands
+          index: 0
+          transform: same_argv
+"""
+    )
+
+    contract = load_runnability_contract(_write_contract(tmp_path, text))
+
+    assert contract is not None
+    assert contract.schema_version == 2
+    assert contract.local_journey is not None
+    assert contract.local_journey.execution is not None
+    assert contract.local_journey.execution.profile == "macos-compose-v1"
+    assert contract.local_journey.execution.compose_services == ("postgres",)
+    assert contract.local_journey.execution.lifecycle[0][1][0].argv == (
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+    )
+
+
+@pytest.mark.unit
+def test_schema_v1_rejects_executable_local_journey(tmp_path: Path) -> None:
+    text = LOCAL_JOURNEY + "  execution: {}\n"
+
+    with pytest.raises(
+        RunnabilityContractError,
+        match="execution requires schema_version 2",
+    ):
+        load_runnability_contract(_write_contract(tmp_path, BROWSER_CONTRACT + text))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("execution", "message"),
+    [
+        (
+            """\
+  execution:
+    profile: macos-compose-v1
+    compose: {}
+    lifecycle: {}
+    manual_equivalents: {}
+""",
+            "compose.file",
+        ),
+        (
+            """\
+  execution:
+    profile: macos-compose-v1
+    compose:
+      file: /tmp/docker-compose.yml
+      services: [postgres]
+    lifecycle: {}
+    manual_equivalents: {}
+""",
+            "must be candidate-relative",
+        ),
+        (
+            """\
+  execution:
+    profile: macos-compose-v1
+    compose:
+      file: docker-compose.yml
+      services: [postgres]
+    lifecycle:
+      start:
+        - [sh, -c, 'echo unsafe']
+    manual_equivalents:
+      start: []
+""",
+            "shell executable is not allowed",
+        ),
+    ],
+)
+def test_schema_v2_execution_rejects_unsafe_shapes(
+    tmp_path: Path,
+    execution: str,
+    message: str,
+) -> None:
+    text = (
+        BROWSER_CONTRACT.replace("schema_version: 1", "schema_version: 2")
+        + LOCAL_JOURNEY
+        + execution
+    )
+
+    with pytest.raises(RunnabilityContractError, match=message):
+        load_runnability_contract(_write_contract(tmp_path, text))
+
+
+@pytest.mark.unit
 def test_local_user_journey_rejects_unknown_fields(tmp_path: Path) -> None:
     text = BROWSER_CONTRACT + LOCAL_JOURNEY.replace(
         "  cleanup_commands:\n",

@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 from typing import Any, Iterable
 
 import yaml
@@ -119,6 +120,27 @@ class LocalBoundaryProbe:
 
 
 @dataclass(frozen=True)
+class LocalExecutionCommand:
+    argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ManualEquivalent:
+    field: str
+    index: int
+    transform: str
+
+
+@dataclass(frozen=True)
+class LocalExecution:
+    profile: str
+    compose_file: str
+    compose_services: tuple[str, ...]
+    lifecycle: tuple[tuple[str, tuple[LocalExecutionCommand, ...]], ...]
+    manual_equivalents: tuple[tuple[str, tuple[ManualEquivalent, ...]], ...]
+
+
+@dataclass(frozen=True)
 class LocalUserJourney:
     prerequisites: tuple[str, ...]
     provision_commands: tuple[str, ...]
@@ -131,6 +153,7 @@ class LocalUserJourney:
     boundary_probes: tuple[LocalBoundaryProbe, ...]
     stop_commands: tuple[str, ...]
     cleanup_commands: tuple[str, ...]
+    execution: LocalExecution | None = None
 
 
 @dataclass(frozen=True)
@@ -197,8 +220,26 @@ _LOCAL_JOURNEY_FIELDS = {
     "boundary_probes",
     "stop_commands",
     "cleanup_commands",
+    "execution",
 }
 _LOCAL_BOUNDARY_PROBE_FIELDS = {"id", "service", "command"}
+_LOCAL_EXECUTION_FIELDS = {"profile", "compose", "lifecycle", "manual_equivalents"}
+_LOCAL_EXECUTION_COMPOSE_FIELDS = {"file", "services"}
+_LOCAL_EXECUTION_MANUAL_FIELDS = {"field", "index", "transform"}
+_LOCAL_EXECUTION_STAGES = frozenset({"install", "bootstrap", "start", "stop"})
+_LOCAL_EXECUTION_SHELLS = frozenset(
+    {"bash", "cmd", "fish", "powershell", "pwsh", "sh", "zsh"}
+)
+_LOCAL_EXECUTION_INJECTABLE_ENVIRONMENT = frozenset(
+    {
+        "DATABASE_URL",
+        "TEST_DATABASE_URL",
+        "ECHELON_BASE_URL",
+        "ECHELON_MARKER",
+        "ECHELON_PORT",
+        "ECHELON_SESSION_TOKEN",
+    }
+)
 _VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -224,14 +265,14 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
     _validate_variables(root_raw)
 
     schema_version = root_raw.get("schema_version")
-    if type(schema_version) is not int or schema_version != 1:
-        raise RunnabilityContractError("schema_version must be integer 1")
+    if type(schema_version) is not int or schema_version not in {1, 2}:
+        raise RunnabilityContractError("schema_version must be integer 1 or 2")
     enabled = root_raw.get("enabled")
     if type(enabled) is not bool:
         raise RunnabilityContractError("enabled must be a boolean")
     if not enabled:
         return RunnabilityContract(
-            schema_version=1,
+            schema_version=schema_version,
             enabled=False,
             install_commands=(),
             bootstrap_commands=(),
@@ -259,11 +300,11 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
         root_raw.get("persistence_probe"),
         observation_ids={item.id for item in journey.observations},
     )
-    local_journey = _parse_local_journey(root_raw.get("local_journey"))
-    _validate_local_journey_obligations(
-        local_journey,
-        identity=identity,
-        journey=journey,
+    install_commands = _commands(
+        root_raw.get("install_commands", []), "install_commands"
+    )
+    bootstrap_commands = _commands(
+        root_raw.get("bootstrap_commands", []), "bootstrap_commands"
     )
     start_commands = _commands(root_raw.get("start_commands"), "start_commands")
     stop_commands = _commands(root_raw.get("stop_commands"), "stop_commands")
@@ -271,15 +312,26 @@ def load_runnability_contract(worktree: Path) -> RunnabilityContract | None:
         raise RunnabilityContractError("start_commands must contain at least one command")
     if enabled and not stop_commands:
         raise RunnabilityContractError("stop_commands must contain at least one command")
+    local_journey = _parse_local_journey(
+        root_raw.get("local_journey"),
+        schema_version=schema_version,
+        root_commands={
+            "install_commands": install_commands,
+            "bootstrap_commands": bootstrap_commands,
+            "start_commands": start_commands,
+            "stop_commands": stop_commands,
+        },
+    )
+    _validate_local_journey_obligations(
+        local_journey,
+        identity=identity,
+        journey=journey,
+    )
     return RunnabilityContract(
-        schema_version=1,
+        schema_version=schema_version,
         enabled=enabled,
-        install_commands=_commands(
-            root_raw.get("install_commands", []), "install_commands"
-        ),
-        bootstrap_commands=_commands(
-            root_raw.get("bootstrap_commands", []), "bootstrap_commands"
-        ),
+        install_commands=install_commands,
+        bootstrap_commands=bootstrap_commands,
         start_commands=start_commands,
         readiness=readiness,
         identity=identity,
@@ -507,10 +559,17 @@ def _parse_persistence(
     )
 
 
-def _parse_local_journey(value: Any) -> LocalUserJourney | None:
+def _parse_local_journey(
+    value: Any,
+    *,
+    schema_version: int,
+    root_commands: dict[str, tuple[str, ...]],
+) -> LocalUserJourney | None:
     if value is None:
         return None
     raw = _mapping(value, "local_journey")
+    if "execution" in raw and schema_version != 2:
+        raise RunnabilityContractError("execution requires schema_version 2")
     _reject_unknown(raw, _LOCAL_JOURNEY_FIELDS, "local_journey")
 
     prerequisites = tuple(
@@ -548,6 +607,17 @@ def _parse_local_journey(value: Any) -> LocalUserJourney | None:
     boundary_probes = _parse_local_boundary_probes(
         raw.get("boundary_probes", [])
     )
+    manual_commands = {
+        **root_commands,
+        "local_journey.provision_commands": commands["provision_commands"],
+        "local_journey.readiness_commands": commands["readiness_commands"],
+        "local_journey.prepare_commands": commands["prepare_commands"],
+        "local_journey.verify_commands": commands["verify_commands"],
+        "local_journey.start_commands": commands["start_commands"],
+        "local_journey.session_commands": session_commands,
+        "local_journey.stop_commands": commands["stop_commands"],
+        "local_journey.cleanup_commands": commands["cleanup_commands"],
+    }
     return LocalUserJourney(
         prerequisites=prerequisites,
         provision_commands=commands["provision_commands"],
@@ -560,7 +630,182 @@ def _parse_local_journey(value: Any) -> LocalUserJourney | None:
         boundary_probes=boundary_probes,
         stop_commands=commands["stop_commands"],
         cleanup_commands=commands["cleanup_commands"],
+        execution=_parse_local_execution(
+            raw.get("execution"),
+            manual_commands=manual_commands,
+        )
+        if "execution" in raw
+        else None,
     )
+
+
+def _parse_local_execution(
+    value: Any,
+    *,
+    manual_commands: dict[str, tuple[str, ...]],
+) -> LocalExecution:
+    raw = _mapping(value, "local_journey.execution")
+    _reject_unknown(raw, _LOCAL_EXECUTION_FIELDS, "local_journey.execution")
+
+    profile = _string(raw.get("profile"), "local_journey.execution.profile")
+    if profile != "macos-compose-v1":
+        raise RunnabilityContractError(
+            f"unsupported local execution profile: {profile}"
+        )
+
+    compose = _mapping(raw.get("compose"), "local_journey.execution.compose")
+    _reject_unknown(
+        compose,
+        _LOCAL_EXECUTION_COMPOSE_FIELDS,
+        "local_journey.execution.compose",
+    )
+    compose_file = _string(
+        compose.get("file"), "local_journey.execution.compose.file"
+    )
+    compose_path = Path(compose_file)
+    if compose_path.is_absolute() or ".." in compose_path.parts:
+        raise RunnabilityContractError(
+            "local_journey.execution.compose.file must be candidate-relative"
+        )
+    compose_services = tuple(
+        _unique_strings(
+            compose.get("services"), "local_journey.execution.compose.services"
+        )
+    )
+    if not compose_services:
+        raise RunnabilityContractError(
+            "local_journey.execution.compose.services must not be empty"
+        )
+    unsupported_services = [
+        service for service in compose_services if service not in SUPPORTED_SERVICES
+    ]
+    if unsupported_services:
+        raise RunnabilityContractError(
+            f"unsupported local execution service: {unsupported_services[0]}"
+        )
+
+    lifecycle_raw = _mapping(raw.get("lifecycle"), "local_journey.execution.lifecycle")
+    manual_raw = _mapping(
+        raw.get("manual_equivalents"),
+        "local_journey.execution.manual_equivalents",
+    )
+    if set(lifecycle_raw) != set(manual_raw):
+        raise RunnabilityContractError(
+            "local_journey.execution.manual_equivalents must cover every lifecycle stage"
+        )
+
+    lifecycle: list[tuple[str, tuple[LocalExecutionCommand, ...]]] = []
+    equivalents: list[tuple[str, tuple[ManualEquivalent, ...]]] = []
+    for stage, commands_raw in lifecycle_raw.items():
+        if stage not in _LOCAL_EXECUTION_STAGES:
+            raise RunnabilityContractError(
+                f"unsupported local execution lifecycle stage: {stage}"
+            )
+        commands = _parse_local_execution_commands(
+            commands_raw,
+            f"local_journey.execution.lifecycle.{stage}",
+        )
+        equivalent_rows = _list(
+            manual_raw[stage],
+            f"local_journey.execution.manual_equivalents.{stage}",
+        )
+        if len(commands) != len(equivalent_rows):
+            raise RunnabilityContractError(
+                f"local_journey.execution.manual_equivalents.{stage} must match lifecycle command count"
+            )
+        equivalents.append(
+            (
+                stage,
+                tuple(
+                    _parse_manual_equivalent(
+                        row,
+                        field=f"local_journey.execution.manual_equivalents.{stage}[{index}]",
+                        argv=command.argv,
+                        manual_commands=manual_commands,
+                    )
+                    for index, (row, command) in enumerate(
+                        zip(equivalent_rows, commands, strict=True)
+                    )
+                ),
+            )
+        )
+        lifecycle.append((stage, commands))
+
+    return LocalExecution(
+        profile=profile,
+        compose_file=compose_file,
+        compose_services=compose_services,
+        lifecycle=tuple(lifecycle),
+        manual_equivalents=tuple(equivalents),
+    )
+
+
+def _parse_local_execution_commands(
+    value: Any,
+    field: str,
+) -> tuple[LocalExecutionCommand, ...]:
+    rows = _list(value, field)
+    if not rows:
+        raise RunnabilityContractError(f"{field} must not be empty")
+    commands: list[LocalExecutionCommand] = []
+    for index, row in enumerate(rows):
+        argv = tuple(_string_list(row, f"{field}[{index}]") )
+        if not argv:
+            raise RunnabilityContractError(f"{field}[{index}] must not be empty")
+        if argv[0] in _LOCAL_EXECUTION_SHELLS:
+            raise RunnabilityContractError(
+                f"{field}[{index}] shell executable is not allowed"
+            )
+        commands.append(LocalExecutionCommand(argv=argv))
+    return tuple(commands)
+
+
+def _parse_manual_equivalent(
+    value: Any,
+    *,
+    field: str,
+    argv: tuple[str, ...],
+    manual_commands: dict[str, tuple[str, ...]],
+) -> ManualEquivalent:
+    raw = _mapping(value, field)
+    _reject_unknown(raw, _LOCAL_EXECUTION_MANUAL_FIELDS, field)
+    source_field = _string(raw.get("field"), f"{field}.field")
+    if source_field not in manual_commands:
+        raise RunnabilityContractError(
+            f"{field}.field is not an executable manual command field"
+        )
+    index = raw.get("index")
+    if type(index) is not int or index < 0 or index >= len(manual_commands[source_field]):
+        raise RunnabilityContractError(f"{field}.index is out of range")
+    transform = _string(raw.get("transform"), f"{field}.transform")
+    manual_argv = tuple(shlex.split(manual_commands[source_field][index]))
+    if transform == "same_argv":
+        expected = manual_argv
+    elif transform == "inject_stack_environment":
+        expected = _strip_injectable_environment(manual_argv, field)
+    else:
+        raise RunnabilityContractError(f"{field}.transform is unsupported")
+    if argv != expected:
+        raise RunnabilityContractError(
+            f"{field} does not exactly match its manual command"
+        )
+    return ManualEquivalent(field=source_field, index=index, transform=transform)
+
+
+def _strip_injectable_environment(argv: tuple[str, ...], field: str) -> tuple[str, ...]:
+    position = 0
+    while position < len(argv) and "=" in argv[position]:
+        variable, _, value = argv[position].partition("=")
+        if not variable or not value or variable not in _LOCAL_EXECUTION_INJECTABLE_ENVIRONMENT:
+            raise RunnabilityContractError(
+                f"{field}.transform has unsupported environment assignment"
+            )
+        position += 1
+    if position == 0 or position == len(argv):
+        raise RunnabilityContractError(
+            f"{field}.transform must remove one or more environment assignments"
+        )
+    return argv[position:]
 
 
 def _parse_local_boundary_probes(value: Any) -> tuple[LocalBoundaryProbe, ...]:
