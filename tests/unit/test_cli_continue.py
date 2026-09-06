@@ -239,6 +239,62 @@ def _stale_medium_risk_banzai_decision() -> tuple[
     return decision, registry
 
 
+def _legacy_banzai_why2_decision() -> dict[str, object]:
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        reason_code="human_clarification_required",
+        classification="material",
+        semi_policy="require_human",
+        resolution_handler="clarification_resume",
+        allow_free_text=True,
+        allowed_phase_ids=frozenset({"phase1-why2"}),
+        allowed_target_phases=frozenset({"phase1-what"}),
+        context_state_keys=("user_message", "phase"),
+        context_paths=(),
+        options=(),
+    )
+    prepared = HumanInputPolicyRegistry((policy,)).prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase1-why2",
+        reason_code=policy.reason_code,
+        question="Which inclusive radial boundary should both guards use?",
+        source_state_revision=7,
+    )
+    return build_blocked_decision_v3(
+        prepared=prepared,
+        decision_id="dec-legacy-banzai-why2",
+        status="awaiting_human",
+        autonomy_mode="banzai",
+    )
+
+
+def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
+    decision = _legacy_banzai_why2_decision()
+    state = {
+        "status": "blocked",
+        "phase": "phase1-why2",
+        "autonomy_mode": "banzai",
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-why2",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+    }
+
+    action = _classify_run_recovery(state)
+
+    assert action.kind == "retry_phase"
+    assert action.command == "echelon spec continue"
+    assert "re-evaluate" in action.note
+
+
 def test_continue_rearms_stale_banzai_product_recommendation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

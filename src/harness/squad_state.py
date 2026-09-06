@@ -136,6 +136,10 @@ _MAX_STATE_BYTES = 16_777_216
 _ACTIVE_HUMAN_INPUT_DECISION_STATUSES = frozenset(
     {"pending", "resolving", "awaiting_human"}
 )
+BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY = (
+    "banzai_default_candidate_protocol_version"
+)
+BANZAI_DEFAULT_REASSESSMENT_KEY = "banzai_default_reassessment"
 _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
     {
         "blocked_decision",
@@ -187,6 +191,8 @@ _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
         "escalation_options",
         "autonomous_default_candidate",
         "autonomous_default_ledger",
+        BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY,
+        BANZAI_DEFAULT_REASSESSMENT_KEY,
         "state_revision",
         "updated_at",
     }
@@ -319,6 +325,55 @@ def _autonomous_default_ledger_entries(
         fingerprints.add(fingerprint)
         entries.append(deepcopy(dict(entry)))
     return entries
+
+
+def _banzai_default_reassessment_record(
+    state: Mapping[str, Any],
+) -> dict[str, object] | None:
+    """Validate the one controller-owned retry record for a legacy WHY2 gate."""
+    raw = state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "schema_version",
+        "decision_id",
+        "source_phase",
+        "question_sha256",
+        "reassessed_at",
+    }:
+        raise StateAdvanceError(
+            "Banzai default reassessment record is invalid",
+            json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+    decision_id = raw.get("decision_id")
+    source_phase = raw.get("source_phase")
+    question_sha256 = raw.get("question_sha256")
+    reassessed_at = raw.get("reassessed_at")
+    if (
+        raw.get("schema_version") != 1
+        or not isinstance(decision_id, str)
+        or not decision_id
+        or len(decision_id.encode("utf-8")) > 256
+        or source_phase != "phase1-why2"
+        or not isinstance(question_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
+        or not isinstance(reassessed_at, str)
+        or not reassessed_at
+        or len(reassessed_at.encode("utf-8")) > 128
+    ):
+        raise StateAdvanceError(
+            "Banzai default reassessment record is invalid",
+            json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+    return {
+        "schema_version": 1,
+        "decision_id": decision_id,
+        "source_phase": source_phase,
+        "question_sha256": question_sha256,
+        "reassessed_at": reassessed_at,
+    }
 
 
 class StateDurabilityError(StateAdvanceError):
@@ -1275,6 +1330,14 @@ def _validate_human_input_authority_write(
         raise StateAdvanceError(
             "generic state writes cannot mutate autonomous default ledger",
             json_path="$.autonomous_default_ledger",
+            validator="human_input_authority",
+        )
+    current_reassessment = _banzai_default_reassessment_record(current)
+    candidate_reassessment = _banzai_default_reassessment_record(candidate)
+    if not allow_update and current_reassessment != candidate_reassessment:
+        raise StateAdvanceError(
+            "generic state writes cannot mutate Banzai default reassessment",
+            json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
             validator="human_input_authority",
         )
 
@@ -2571,6 +2634,89 @@ class SquadStateStore:
             self._replace_human_input_decision_unlocked(desired, rearmed)
             return self._commit_human_input_state_unlocked(before, desired)
 
+    def reassess_awaiting_banzai_legacy_why2_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Clear one pre-candidate WHY2 question for a policy-governed retry.
+
+        This deliberately cannot resolve a product decision.  It only returns
+        the exact historical WHY2 gate to its source phase once, giving the
+        current provider protocol an opportunity to emit a bounded candidate.
+        A subsequent ordinary awaiting-human decision remains human-owned.
+        """
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            if _banzai_default_reassessment_record(before) is not None:
+                raise StateAdvanceError(
+                    "legacy Banzai WHY2 decision was already reassessed",
+                    json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+                    validator="human_input_authority",
+                )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision["resolution_handler"] != "clarification_resume"
+                or decision.get("automatic_eligible") is not False
+                or decision.get("options") != []
+                or decision.get("recommended_answer") is not None
+                or decision.get("recommended_option_id") is not None
+                or decision.get("risk_level") is not None
+                or decision.get("recommendation_authority") != "workflow_policy"
+                or decision.get("recommendation_evidence") != []
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != "phase1-why2"
+            ):
+                raise StateAdvanceError(
+                    "only intact pre-candidate Banzai WHY2 decisions may reassess",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            for key in (
+                "blocked_decision",
+                "recovery_instruction",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_options",
+                "escalation_resolved",
+                "escalation_resolver",
+                "escalation_selected_option",
+                "escalation_risk_level",
+                "escalation_recommended_answer",
+                "escalation_default_answer",
+                "autonomous_default_candidate",
+            ):
+                desired.pop(key, None)
+            self._transition_status(desired, "running")
+            desired["phase"] = "phase1-why2"
+            desired[BANZAI_DEFAULT_REASSESSMENT_KEY] = {
+                "schema_version": 1,
+                "decision_id": str(decision["id"]),
+                "source_phase": "phase1-why2",
+                "question_sha256": hashlib.sha256(
+                    str(decision["question"]).encode("utf-8")
+                ).hexdigest(),
+                "reassessed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            return self._commit_human_input_state_unlocked(before, desired)
+
     def fail_pending_v2_banzai_human_input_migration(
         self,
         decision_id: str,
@@ -3641,6 +3787,10 @@ class SquadStateStore:
         )
         if repair_state is not None:
             initial_state["phase1_quality_repair"] = repair_state
+        if autonomy_mode == "banzai":
+            # New runs understand the candidate protocol.  Its absence is the
+            # narrow compatibility signal for a pre-protocol WHY2 decision.
+            initial_state[BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY] = 1
         with self._lock(exclusive=True):
             self._save_unlocked(initial_state)
 

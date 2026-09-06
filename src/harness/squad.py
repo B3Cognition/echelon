@@ -186,6 +186,8 @@ from echelon.telemetry.phase_timing import record_phase_finish, record_phase_sta
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
 from harness.squad_state import (
+    BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY,
+    BANZAI_DEFAULT_REASSESSMENT_KEY,
     AdvanceReceipt,
     RoutingStateSnapshot,
     StateAdvanceError,
@@ -5705,6 +5707,61 @@ class SquadController:
         ):
             return dict(state)
 
+    def _reassess_awaiting_banzai_legacy_why2_decision(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Give exactly one pre-candidate WHY2 gate the current protocol."""
+        raw_decision = state.get("blocked_decision")
+        if (
+            not isinstance(raw_decision, Mapping)
+            or state.get(BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY) is not None
+            or state.get(BANZAI_DEFAULT_REASSESSMENT_KEY) is not None
+        ):
+            return dict(state)
+        try:
+            decision = validate_blocked_decision(raw_decision)
+            if (
+                decision["schema_version"] != 3
+                or decision["status"] != "awaiting_human"
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision.get("automatic_eligible") is not False
+            ):
+                return dict(state)
+            policy = self._policy_for_human_input_decision(decision)
+            if (
+                policy.producer_id != "phase1-why2"
+                or policy.reason_code != "human_clarification_required"
+                or policy.classification != "material"
+                or policy.resolution_handler != "clarification_resume"
+                or not policy.allow_free_text
+                or policy.options
+                or "phase1-why2" not in policy.allowed_phase_ids
+                or "phase1-what" not in policy.allowed_target_phases
+            ):
+                return dict(state)
+            revision = state.get("state_revision")
+            if type(revision) is not int or revision < 0:
+                return dict(state)
+            return self._state_store.reassess_awaiting_banzai_legacy_why2_decision(
+                str(decision["id"]),
+                expected_state_revision=revision,
+            )
+        except (
+            BlockedDecisionError,
+            HumanInputPolicyError,
+            StateAdvanceError,
+            StateDurabilityError,
+            TypeError,
+            ValueError,
+        ):
+            return dict(state)
+
     def _prepare_v2_controller_migration_decision(
         self,
         state: Mapping[str, object],
@@ -5872,6 +5929,14 @@ class SquadController:
             if not self._drain_pending_controller_completion().recovered:
                 return False
         pending = self._state_store.reopen_failed_proportional_controller_decision()
+        pending = self._reassess_awaiting_banzai_legacy_why2_decision(pending)
+        if (
+            pending.get("status") == "running"
+            and pending.get("phase") == "phase1-why2"
+            and "blocked_decision" not in pending
+            and pending.get(BANZAI_DEFAULT_REASSESSMENT_KEY) is not None
+        ):
+            return True
         pending = self._rearm_awaiting_banzai_recommendation(pending)
         raw_pending_decision = pending.get("blocked_decision")
         v2_automatic_eligible = (
@@ -6103,7 +6168,10 @@ class SquadController:
         if unresolved_decision is not None:
             if next_phase_override:
                 return self._unresolved_human_input_result(existing)
-            if unresolved_decision["status"] in {"pending", "resolving"}:
+            if unresolved_decision["status"] in {"pending", "resolving"} or (
+                unresolved_decision["status"] == "awaiting_human"
+                and unresolved_decision["autonomy_mode"] == "banzai"
+            ):
                 if self.resume_pending_human_input():
                     existing = self._state_store.load()
                     existing_status = existing.get("status")

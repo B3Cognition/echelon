@@ -3861,6 +3861,17 @@ def _versioned_decision_recovery_action(
             decision,
             project_root=project_root,
         )
+    if _legacy_banzai_why2_reassessment_is_available(run_state, decision):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "will re-evaluate this pre-candidate Banzai WHY2 question "
+                "once under the current bounded-default policy"
+            ),
+        )
     if (
         status == "awaiting_human"
         and decision.get("schema_version") == 3
@@ -4545,6 +4556,38 @@ def _persisted_or_legacy_recovery_instruction(
     if phase_output_instruction is not None:
         return phase_output_instruction
     return None
+
+
+def _legacy_banzai_why2_reassessment_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Presentation-only view of the controller's narrow legacy retry gate."""
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and run_state.get("banzai_default_candidate_protocol_version") is None
+        and run_state.get("banzai_default_reassessment") is None
+        and decision.get("schema_version") == 3
+        and decision.get("status") == "awaiting_human"
+        and decision.get("autonomy_mode") == "banzai"
+        and decision.get("source_kind") == "provider_escalation"
+        and decision.get("producer_id") == "phase1-why2"
+        and decision.get("source_phase") == "phase1-why2"
+        and decision.get("reason_code") == "human_clarification_required"
+        and decision.get("classification") == "material"
+        and decision.get("resolution_handler") == "clarification_resume"
+        and decision.get("automatic_eligible") is False
+        and decision.get("options") == []
+        and decision.get("recommended_answer") is None
+        and decision.get("recommended_option_id") is None
+        and decision.get("risk_level") is None
+        and decision.get("recommendation_authority") == "workflow_policy"
+        and decision.get("recommendation_evidence") == []
+        and decision.get("attempts") == 0
+        and decision.get("failure_code") is None
+    )
 
 
 def _render_escalation_options(options: object) -> str:
