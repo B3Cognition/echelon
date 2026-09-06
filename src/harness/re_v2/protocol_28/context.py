@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeAlias
@@ -51,6 +51,52 @@ class Protocol28RunContext:
     ledger: Protocol28Ledger
     resources: L4ResourceStore
     controller: Protocol28Controller
+    _l3_projection_by_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+    _evidence_projection_by_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+    _evidence_object_by_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+    _subject_by_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        inputs = self.inputs
+        evidence = inputs.snapshot_evidence_catalog
+        object.__setattr__(
+            self,
+            "_l3_projection_by_id",
+            {item.identity: item for item in inputs.l3_projection_catalog.projections},
+        )
+        object.__setattr__(
+            self,
+            "_evidence_projection_by_id",
+            {item.identity: item for item in evidence.projections},
+        )
+        object.__setattr__(
+            self,
+            "_evidence_object_by_id",
+            {
+                item.identity: item
+                for item in (
+                    *evidence.shards,
+                    *evidence.empty_receipts,
+                    *evidence.nontext_dispositions,
+                )
+            },
+        )
+        object.__setattr__(
+            self,
+            "_subject_by_id",
+            {
+                item.identity: item
+                for item in inputs.exhaustive_subject_catalog.subjects
+            },
+        )
 
     @property
     def run_dir(self) -> Path:
@@ -133,21 +179,9 @@ def build_protocol_28_slice_context(
         )
 
     inputs = context.inputs
-    l3 = next(
-        (
-            item
-            for item in inputs.l3_projection_catalog.projections
-            if item.identity == plan_entry.target_l3_projection_id
-        ),
-        None,
-    )
-    evidence_projection = next(
-        (
-            item
-            for item in inputs.snapshot_evidence_catalog.projections
-            if item.identity == plan_entry.target_evidence_projection_id
-        ),
-        None,
+    l3 = context._l3_projection_by_id.get(plan_entry.target_l3_projection_id)
+    evidence_projection = context._evidence_projection_by_id.get(
+        plan_entry.target_evidence_projection_id
     )
     if l3 is None or evidence_projection is None:
         raise Protocol28ContextError("slice target authority is unavailable")
@@ -159,17 +193,12 @@ def build_protocol_28_slice_context(
         *plan_entry.primary_snapshot_evidence_ids,
         *plan_entry.supporting_snapshot_evidence_ids,
     }
-    evidence_catalog = inputs.snapshot_evidence_catalog
     evidence_objects = tuple(
         sorted(
             (
-                item
-                for item in (
-                    *evidence_catalog.shards,
-                    *evidence_catalog.empty_receipts,
-                    *evidence_catalog.nontext_dispositions,
-                )
-                if item.identity in evidence_ids
+                context._evidence_object_by_id[item_id]
+                for item_id in evidence_ids
+                if item_id in context._evidence_object_by_id
             ),
             key=lambda item: item.identity,
         )
@@ -194,9 +223,9 @@ def build_protocol_28_slice_context(
         )
     )
     subjects = tuple(
-        item
-        for item in inputs.exhaustive_subject_catalog.subjects
-        if item.identity in subject_ids
+        context._subject_by_id[item_id]
+        for item_id in sorted(subject_ids)
+        if item_id in context._subject_by_id
     )
     if {item.identity for item in subjects} != subject_ids:
         raise Protocol28ContextError("slice subject authority is incomplete")

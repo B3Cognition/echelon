@@ -114,6 +114,60 @@ def test_slice_context_uses_only_staged_authority_after_sources_disappear(
 
 
 @pytest.mark.unit
+def test_slice_context_uses_preindexed_frozen_catalogs(tmp_path: Path) -> None:
+    run_dir = _published(tmp_path)
+    context = load_protocol_28_run_context(run_dir)
+    assert isinstance(context, Protocol28RunContext)
+    target = context.inputs.exhaustive_plan.target_plans[0]
+    entry = target.entries[0]
+
+    class NoRescanTuple(tuple):
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            raise AssertionError("frozen catalog was rescanned")
+
+    object.__setattr__(
+        context.inputs.l3_projection_catalog,
+        "projections",
+        NoRescanTuple(context.inputs.l3_projection_catalog.projections),
+    )
+    object.__setattr__(
+        context.inputs.snapshot_evidence_catalog,
+        "projections",
+        NoRescanTuple(context.inputs.snapshot_evidence_catalog.projections),
+    )
+    object.__setattr__(
+        context.inputs.snapshot_evidence_catalog,
+        "shards",
+        NoRescanTuple(context.inputs.snapshot_evidence_catalog.shards),
+    )
+    object.__setattr__(
+        context.inputs.snapshot_evidence_catalog,
+        "empty_receipts",
+        NoRescanTuple(context.inputs.snapshot_evidence_catalog.empty_receipts),
+    )
+    object.__setattr__(
+        context.inputs.snapshot_evidence_catalog,
+        "nontext_dispositions",
+        NoRescanTuple(context.inputs.snapshot_evidence_catalog.nontext_dispositions),
+    )
+    object.__setattr__(
+        context.inputs.exhaustive_subject_catalog,
+        "subjects",
+        NoRescanTuple(context.inputs.exhaustive_subject_catalog.subjects),
+    )
+
+    payload = build_protocol_28_slice_context(
+        context,
+        target,
+        entry,
+        realize_slice(entry, {}),
+        role="producer",
+    )
+
+    assert payload
+
+
+@pytest.mark.unit
 def test_slice_context_supplies_exact_copyable_anchor_ids(tmp_path: Path) -> None:
     run_dir = _published(tmp_path)
     context = load_protocol_28_run_context(run_dir)
