@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 from pathlib import Path
@@ -44,8 +44,10 @@ from harness.local_runner_journal import (
     assert_no_recovery_journal,
     build_host_execution_environment,
     git_porcelain_baseline,
+    load_local_run_journal,
     write_local_run_journal,
 )
+from harness.product_inventory import product_evidence_fingerprint
 from harness.runnability_contract import (
     LocalExecution,
     RunnabilityContract,
@@ -104,6 +106,8 @@ class LocalRunnabilityRunner:
         observation_runner: ObservationRunner | None = None,
         git_baseline: Callable[[Path], str] = git_porcelain_baseline,
         browser_helper: Path | None = None,
+        recovery_workspace_root: Path | None = None,
+        recovery_candidate_remover: Callable[[Path, Path], None] | None = None,
     ) -> None:
         self._candidate_resolver = candidate_resolver
         self._candidate_materializer = candidate_materializer
@@ -128,6 +132,12 @@ class LocalRunnabilityRunner:
             )
         )
         self._git_baseline = git_baseline
+        self._recovery_workspace_root = (
+            Path(recovery_workspace_root) if recovery_workspace_root is not None else None
+        )
+        self._recovery_candidate_remover = (
+            recovery_candidate_remover or _remove_candidate_at_path
+        )
 
     def verify(
         self,
@@ -148,10 +158,70 @@ class LocalRunnabilityRunner:
             return self._verify_locked(candidate, request, options, adapter, root)
 
     def cleanup(self, local_run_id: str) -> LocalRunnerResult:
-        """Cleanup is intentionally dispatched by the CLI with a validated journal."""
-        raise LocalRunRecoveryRequired(
-            f"cleanup requires the workspace-bound journal for {local_run_id}"
+        """Recover one interrupted run, using no resource beyond its journal."""
+        if not re.fullmatch(r"local-[a-f0-9]{32}", local_run_id):
+            raise LocalRunRecoveryRequired("local cleanup requires a valid local run ID")
+        if self._recovery_workspace_root is None:
+            raise LocalRunRecoveryRequired(
+                "local cleanup requires an explicit workspace root"
+            )
+        workspace = _existing_regular_directory(
+            self._recovery_workspace_root, "workspace root"
         )
+        with acquire_workspace_local_run_lock(workspace):
+            run_root = _find_local_run_root(workspace, local_run_id)
+            journal = load_local_run_journal(run_root / "journal.json", run_root.parent)
+            if journal.local_run_id != local_run_id:
+                raise LocalRunRecoveryRequired("local-run journal identity does not match")
+            _validate_recovery_journal(journal, workspace, run_root)
+            target = _existing_regular_directory(Path(journal.target_root), "target root")
+            resources = LocalResourceSet(
+                run_id=local_run_id,
+                resources=journal.resources,
+            )
+            try:
+                if resources.resources:
+                    adapter = _recovery_adapter(self._adapters, journal)
+                    adapter.cleanup(
+                        run_root / "generated" / f"compose-{local_run_id}.json",
+                        resources,
+                    )
+                    journal = replace(journal, resources=())
+                    write_local_run_journal(run_root, journal)
+                candidate_worktree = _journal_candidate_worktree(journal, run_root)
+                if candidate_worktree.exists():
+                    self._recovery_candidate_remover(
+                        Path(journal.mirror_path), candidate_worktree
+                    )
+                assert_git_baseline_unchanged(
+                    target,
+                    journal.target_git_baseline,
+                    self._git_baseline(target),
+                )
+                assert_git_baseline_unchanged(
+                    workspace,
+                    journal.workspace_git_baseline,
+                    self._git_baseline(workspace),
+                )
+            except (LocalEngineError, LocalRunSideEffectError, OSError, RuntimeError) as exc:
+                failed = replace(journal, status="cleanup_failed")
+                write_local_run_journal(run_root, failed)
+                return LocalRunnerResult(
+                    "cleanup_failed", local_run_id, None, False, str(exc)
+                )
+            cleaned = replace(
+                journal,
+                status="cleaned",
+                resources=(),
+                completed_actions=tuple(
+                    dict.fromkeys((*journal.completed_actions, "cleanup"))
+                ),
+            )
+            write_local_run_journal(run_root, cleaned)
+            return LocalRunnerResult(
+                "cleanup_complete", local_run_id, None, True,
+                "Journalled local resources and managed candidate were cleaned.",
+            )
 
     def _verify_locked(
         self,
@@ -180,6 +250,9 @@ class LocalRunnabilityRunner:
             status="running",
             target_git_baseline=target_before,
             workspace_git_baseline=workspace_before,
+            workspace_root=str(request.workspace_root.resolve(strict=True)),
+            target_root=str(request.target_root.resolve(strict=True)),
+            mirror_path=str(candidate.mirror_path.resolve(strict=True)),
         )
         write_local_run_journal(run_root, journal)
         try:
@@ -187,6 +260,11 @@ class LocalRunnabilityRunner:
             candidate_worktree = self._candidate_materializer(
                 candidate, run_root / "candidate"
             )
+            journal = replace(
+                journal,
+                candidate_worktree=str(candidate_worktree.resolve(strict=True)),
+            )
+            write_local_run_journal(run_root, journal)
             contract = _load_matching_contract(candidate_worktree, candidate)
             execution, allowed_services, bindings = _local_execution_from_snapshot(
                 candidate, contract
@@ -204,11 +282,8 @@ class LocalRunnabilityRunner:
             )
             rendered = adapter.render_plan(plan, local_run_id, run_root / "generated")
             resources = adapter.up(rendered)
-            journal = LocalRunJournal(
-                local_run_id=journal.local_run_id,
-                status="running",
-                target_git_baseline=journal.target_git_baseline,
-                workspace_git_baseline=journal.workspace_git_baseline,
+            journal = replace(
+                journal,
                 resources=resources.resources,
                 completed_actions=("engine_up",),
             )
@@ -245,6 +320,10 @@ class LocalRunnabilityRunner:
                     candidate_worktree, contract, environment, adapter, resources, True
                 ):
                     raise _CandidateLifecycleFailure("persistence observation after restart failed")
+            if product_evidence_fingerprint(candidate_worktree) != candidate.product_fingerprint:
+                raise _CandidateLifecycleFailure(
+                    "candidate lifecycle changed the verified product contents"
+                )
             status = "passed"
             summary = "Local browser, restart, and persistence observations passed."
         except _CandidateLifecycleFailure as exc:
@@ -273,14 +352,12 @@ class LocalRunnabilityRunner:
                 options.keep_on_failure and status != "passed"
             ):
                 try:
-                    adapter.down(rendered, resources)
+                    adapter.cleanup(rendered.generated_override_path, resources)
                     resources = None
                     cleanup_complete = True
-                    journal = LocalRunJournal(
-                        local_run_id=journal.local_run_id,
+                    journal = replace(
+                        journal,
                         status=status,
-                        target_git_baseline=journal.target_git_baseline,
-                        workspace_git_baseline=journal.workspace_git_baseline,
                         completed_actions=("engine_up", "cleanup"),
                     )
                     write_local_run_journal(run_root, journal)
@@ -311,11 +388,10 @@ class LocalRunnabilityRunner:
             if cleanup_complete:
                 write_local_run_journal(
                     run_root,
-                    LocalRunJournal(
-                        local_run_id=journal.local_run_id,
+                    replace(
+                        journal,
                         status="passed" if status == "passed" else "failed",
-                        target_git_baseline=journal.target_git_baseline,
-                        workspace_git_baseline=journal.workspace_git_baseline,
+                        resources=(),
                         completed_actions=tuple(
                             dict.fromkeys((*journal.completed_actions, "cleanup"))
                         ),
@@ -360,6 +436,101 @@ def _local_runs_root(requested: Path, candidate: EffectiveLocalCandidate) -> Pat
         raise LocalEngineError("managed local-run root is symlinked")
     raw.mkdir(parents=True, exist_ok=True)
     return raw.resolve(strict=True)
+
+
+def _existing_regular_directory(path: Path, label: str) -> Path:
+    raw = Path(path).expanduser()
+    if raw.is_symlink():
+        raise LocalRunRecoveryRequired(f"{label} is symlinked")
+    try:
+        resolved = raw.resolve(strict=True)
+    except OSError as exc:
+        raise LocalRunRecoveryRequired(f"{label} is unavailable") from exc
+    if not resolved.is_dir() or resolved.is_symlink():
+        raise LocalRunRecoveryRequired(f"{label} is unavailable")
+    return resolved
+
+
+def _find_local_run_root(workspace: Path, local_run_id: str) -> Path:
+    runs = workspace / "runs"
+    if runs.is_symlink() or not runs.is_dir():
+        raise LocalRunRecoveryRequired("workspace has no managed local runs")
+    candidates: list[Path] = []
+    patterns = (
+        f"build-*/local-runs/{local_run_id}",
+        f"targets/*/runs/build-*/local-runs/{local_run_id}",
+    )
+    for pattern in patterns:
+        for raw in runs.glob(pattern):
+            if raw.is_symlink() or not raw.is_dir():
+                continue
+            try:
+                resolved = raw.resolve(strict=True)
+                resolved.relative_to(runs.resolve(strict=True))
+            except (OSError, ValueError):
+                continue
+            candidates.append(resolved)
+    if len(candidates) != 1:
+        raise LocalRunRecoveryRequired(
+            "local cleanup requires exactly one managed journal for this run ID"
+        )
+    return candidates[0]
+
+
+def _validate_recovery_journal(
+    journal: LocalRunJournal, workspace: Path, run_root: Path
+) -> None:
+    if not journal.workspace_root or not journal.target_root or not journal.mirror_path:
+        raise LocalRunRecoveryRequired("local-run journal lacks recovery ownership metadata")
+    try:
+        journal_workspace = Path(journal.workspace_root).resolve(strict=True)
+        expected_mirror = (run_root.parents[2] / "mirror.git").resolve(strict=True)
+        journal_mirror = Path(journal.mirror_path).resolve(strict=True)
+    except OSError as exc:
+        raise LocalRunRecoveryRequired("local-run recovery ownership is unavailable") from exc
+    if journal_workspace != workspace:
+        raise LocalRunRecoveryRequired("local-run journal belongs to a different workspace")
+    if journal_mirror != expected_mirror:
+        raise LocalRunRecoveryRequired("local-run journal mirror ownership is invalid")
+    for resource in journal.resources:
+        labels = dict(resource.labels)
+        if (
+            resource.engine not in {"docker", "podman"}
+            or resource.resource_kind != "container"
+            or labels.get("io.echelon.local-managed") != "true"
+            or labels.get("io.echelon.local-run-id") != journal.local_run_id
+        ):
+            raise LocalRunRecoveryRequired("local-run journal resource ownership is invalid")
+
+
+def _recovery_adapter(
+    adapters: Mapping[str, LocalEngineAdapter], journal: LocalRunJournal
+) -> LocalEngineAdapter:
+    engines = {item.engine for item in journal.resources}
+    if len(engines) != 1:
+        raise LocalRunRecoveryRequired("local-run journal has inconsistent resource engines")
+    engine = next(iter(engines))
+    adapter = adapters.get(engine)
+    if adapter is None:
+        raise LocalRunRecoveryRequired(
+            f"local-run journal requires unavailable {engine} cleanup adapter"
+        )
+    return adapter
+
+
+def _journal_candidate_worktree(journal: LocalRunJournal, run_root: Path) -> Path:
+    expected = run_root / "candidate"
+    raw = Path(journal.candidate_worktree) if journal.candidate_worktree else expected
+    if raw.is_symlink():
+        raise LocalRunRecoveryRequired("local-run candidate worktree is symlinked")
+    try:
+        resolved = raw.resolve(strict=False)
+        expected_resolved = expected.resolve(strict=False)
+    except OSError as exc:
+        raise LocalRunRecoveryRequired("local-run candidate worktree is unavailable") from exc
+    if resolved != expected_resolved:
+        raise LocalRunRecoveryRequired("local-run candidate ownership is invalid")
+    return raw
 
 
 def _load_matching_contract(
@@ -632,14 +803,50 @@ def _expand_value(value: object, environment: Mapping[str, str]) -> object:
 
 
 def _remove_candidate_worktree(candidate: EffectiveLocalCandidate, path: Path) -> None:
-    subprocess.run(
-        ["git", "-C", str(candidate.mirror_path), "worktree", "remove", "--force", str(path)],
-        capture_output=True, text=True, check=False,
+    _remove_candidate_at_path(candidate.mirror_path, path)
+
+
+def _remove_candidate_at_path(mirror_path: Path, path: Path) -> None:
+    """Remove only the explicitly managed detached candidate worktree."""
+    mirror = _existing_regular_directory(mirror_path, "managed delivery mirror")
+    worktree = Path(path)
+    if worktree.is_symlink():
+        raise LocalRunRecoveryRequired("managed candidate worktree is symlinked")
+    try:
+        worktree = worktree.resolve(strict=True)
+    except OSError as exc:
+        raise LocalRunRecoveryRequired("managed candidate worktree is unavailable") from exc
+    # A candidate worktree is always nested below the build-local-runs root,
+    # never in a user source checkout.  The mirror's containing runs directory
+    # is the narrowest stable parent that holds every managed build.
+    try:
+        worktree.relative_to(mirror.parent)
+    except ValueError as exc:
+        raise LocalRunRecoveryRequired("managed candidate worktree escapes delivery runs") from exc
+    if (
+        worktree.name != "candidate"
+        or worktree.parent.parent.name != "local-runs"
+        or not re.fullmatch(r"local-[a-f0-9]{32}", worktree.parent.name)
+    ):
+        raise LocalRunRecoveryRequired("managed candidate worktree location is invalid")
+    result = subprocess.run(
+        ["git", "-C", str(mirror), "worktree", "remove", "--force", str(worktree)],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    subprocess.run(
-        ["git", "-C", str(candidate.mirror_path), "worktree", "prune"],
-        capture_output=True, text=True, check=False,
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "Git worktree removal failed"
+        raise LocalRunRecoveryRequired(message)
+    pruned = subprocess.run(
+        ["git", "-C", str(mirror), "worktree", "prune"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    if pruned.returncode != 0:
+        message = pruned.stderr.strip() or pruned.stdout.strip() or "Git worktree prune failed"
+        raise LocalRunRecoveryRequired(message)
 
 
 def _profile_digest(candidate: EffectiveLocalCandidate) -> str:

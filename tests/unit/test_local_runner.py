@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from harness.local_runner_candidate import EffectiveLocalCandidate, LocalCandidateRequest
 from harness.local_runner_engine import LocalResourceSet
 from harness.local_runner_journal import ResourceJournalEntry
+from harness.product_inventory import product_evidence_fingerprint
 from harness.local_runner import (
     LocalRunnerOptions,
     LocalRunnabilityRunner,
@@ -111,7 +113,11 @@ class _FakeAdapter:
         return SimpleNamespace(profile_id="docker-desktop-macos-v1")
 
     def render_plan(self, plan, run_id: str, generated_root: Path):
-        return SimpleNamespace(project_name=f"echelon-local-{run_id}")
+        generated_root.mkdir(parents=True, exist_ok=True)
+        return SimpleNamespace(
+            project_name=f"echelon-local-{run_id}",
+            generated_override_path=generated_root / f"compose-{run_id}.json",
+        )
 
     def up(self, rendered):
         self.up_calls += 1
@@ -144,6 +150,10 @@ class _FakeAdapter:
         self.down_resource_ids = tuple(item.resource_id for item in resources.resources)
         return LocalResourceSet(run_id=resources.run_id, resources=())
 
+    def cleanup(self, generated_override_path: Path, resources):
+        self.down_resource_ids = tuple(item.resource_id for item in resources.resources)
+        return LocalResourceSet(run_id=resources.run_id, resources=())
+
 
 @dataclass
 class _Fixture:
@@ -171,7 +181,12 @@ class _Fixture:
         )
 
 
-def _runner_with_fakes(tmp_path: Path, *, browser_result: str = "passed"):
+def _runner_with_fakes(
+    tmp_path: Path,
+    *,
+    browser_result: str = "passed",
+    mutate_candidate_during_start: bool = False,
+):
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "browser-3d-game"
     target.mkdir(parents=True)
@@ -181,18 +196,20 @@ def _runner_with_fakes(tmp_path: Path, *, browser_result: str = "passed"):
     (managed / "docker-compose.yml").write_text(
         "services:\n  postgres:\n    image: postgres:17-alpine\n", encoding="utf-8"
     )
+    mirror = workspace / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
     contract = load_runnability_contract(managed)
     assert contract is not None
     candidate = EffectiveLocalCandidate(
         build_id="build-local-demo",
         sandbox_candidate_commit="a" * 40,
         effective_candidate_commit="b" * 40,
-        product_fingerprint="c" * 64,
+        product_fingerprint=product_evidence_fingerprint(managed),
         contract_hash=runnability_contract_sha256(contract),
         stack_hash="d" * 64,
         observer_plan_hash="e" * 64,
         sandbox_receipt_sha256="f" * 64,
-        mirror_path=workspace / "runs" / "mirror.git",
+        mirror_path=mirror,
         stack_snapshot={
             "schema_version": 1,
             "resolved": {
@@ -226,6 +243,8 @@ def _runner_with_fakes(tmp_path: Path, *, browser_result: str = "passed"):
 
     def execute(argv, *, cwd: Path, env, background: bool):
         calls.append(SimpleNamespace(argv=argv, cwd=cwd, env=env, background=background))
+        if background and mutate_candidate_during_start:
+            (cwd / "unexpected-local-change.txt").write_text("changed\n", encoding="utf-8")
         return _FakeProcess() if background else 0
 
     def baseline(path: Path) -> str:
@@ -292,3 +311,72 @@ def test_runner_rejects_post_build_contract_change_before_creating_resources(
 
     assert result.status == "candidate_lifecycle_failed"
     assert fixture.adapter.up_calls == 0
+
+
+@pytest.mark.unit
+def test_runner_rejects_lifecycle_that_changes_the_verified_candidate(
+    tmp_path: Path,
+) -> None:
+    """A local run cannot pass after changing product contents outside Echelon."""
+    runner, fixture = _runner_with_fakes(
+        tmp_path,
+        mutate_candidate_during_start=True,
+    )
+
+    result = runner.verify(
+        fixture.request(),
+        LocalRunnerOptions(engine="docker", action_confirmed=True, keep_on_failure=False),
+    )
+
+    assert result.status == "candidate_lifecycle_failed"
+    assert "verified product contents" in result.summary
+
+
+@pytest.mark.unit
+def test_interrupted_run_cleanup_uses_only_journalled_resources_and_managed_candidate(
+    tmp_path: Path,
+) -> None:
+    """A recovery command must never broaden cleanup beyond its run journal."""
+    runner, fixture = _runner_with_fakes(tmp_path)
+    run_id = "local-" + "a" * 32
+    run_root = fixture.request().local_run_root / run_id
+    candidate = run_root / "candidate"
+    candidate.mkdir(parents=True)
+    fixture.candidate.mirror_path.mkdir(parents=True, exist_ok=True)
+    from harness.local_runner_journal import LocalRunJournal, write_local_run_journal
+
+    write_local_run_journal(
+        run_root,
+        LocalRunJournal(
+            local_run_id=run_id,
+            status="running",
+            target_git_baseline="",
+            workspace_git_baseline="",
+            workspace_root=str(fixture.workspace),
+            target_root=str(fixture.target),
+            mirror_path=str(fixture.candidate.mirror_path),
+            resources=(
+                ResourceJournalEntry(
+                    engine="docker",
+                    resource_kind="container",
+                    resource_id="journalled-container",
+                    labels=(
+                        ("io.echelon.local-managed", "true"),
+                        ("io.echelon.local-run-id", run_id),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    recovered = LocalRunnabilityRunner(
+        adapters={"docker": fixture.adapter},
+        git_baseline=lambda _path: "",
+        recovery_workspace_root=fixture.workspace,
+        recovery_candidate_remover=lambda _mirror, path: shutil.rmtree(path),
+    ).cleanup(run_id)
+
+    assert recovered.status == "cleanup_complete"
+    assert recovered.cleanup_complete is True
+    assert fixture.adapter.down_resource_ids == ("journalled-container",)
+    assert not candidate.exists()

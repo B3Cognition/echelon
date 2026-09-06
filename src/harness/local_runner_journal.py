@@ -51,6 +51,10 @@ class LocalRunJournal:
     workspace_git_baseline: str
     resources: tuple[ResourceJournalEntry, ...] = ()
     completed_actions: tuple[str, ...] = ()
+    workspace_root: str = ""
+    target_root: str = ""
+    mirror_path: str = ""
+    candidate_worktree: str = ""
 
 
 @dataclass(frozen=True)
@@ -129,6 +133,10 @@ def write_local_run_journal(local_run_root: Path, journal: LocalRunJournal) -> P
         "workspace_git_baseline": journal.workspace_git_baseline,
         "resources": [asdict(item) for item in journal.resources],
         "completed_actions": list(journal.completed_actions),
+        "workspace_root": journal.workspace_root,
+        "target_root": journal.target_root,
+        "mirror_path": journal.mirror_path,
+        "candidate_worktree": journal.candidate_worktree,
     }
     try:
         write_json_atomic(path, payload, trusted_root=root)
@@ -263,11 +271,17 @@ def _journal_from_mapping(payload: Mapping[str, object]) -> LocalRunJournal:
     workspace_baseline = payload.get("workspace_git_baseline")
     actions = payload.get("completed_actions")
     resources = payload.get("resources")
+    metadata = {
+        key: payload.get(key, "")
+        for key in ("workspace_root", "target_root", "mirror_path", "candidate_worktree")
+    }
     if not all(isinstance(item, str) for item in (local_run_id, status, target_baseline, workspace_baseline)):
         raise LocalRunJournalError("local-run journal is malformed")
     if not isinstance(actions, list) or not all(isinstance(item, str) for item in actions):
         raise LocalRunJournalError("local-run journal is malformed")
     if not isinstance(resources, list):
+        raise LocalRunJournalError("local-run journal is malformed")
+    if not all(isinstance(value, str) for value in metadata.values()):
         raise LocalRunJournalError("local-run journal is malformed")
     parsed_resources: list[ResourceJournalEntry] = []
     for item in resources:
@@ -302,6 +316,10 @@ def _journal_from_mapping(payload: Mapping[str, object]) -> LocalRunJournal:
         workspace_git_baseline=workspace_baseline,
         resources=tuple(parsed_resources),
         completed_actions=tuple(actions),
+        workspace_root=str(metadata["workspace_root"]),
+        target_root=str(metadata["target_root"]),
+        mirror_path=str(metadata["mirror_path"]),
+        candidate_worktree=str(metadata["candidate_worktree"]),
     )
 
 

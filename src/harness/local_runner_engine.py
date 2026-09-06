@@ -68,6 +68,10 @@ class LocalEngineAdapter(Protocol):
         self, rendered: RenderedEnginePlan, resources: LocalResourceSet
     ) -> LocalResourceSet: ...
 
+    def cleanup(
+        self, generated_override_path: Path, resources: LocalResourceSet
+    ) -> LocalResourceSet: ...
+
     def exec(
         self, resources: LocalResourceSet, argv: tuple[str, ...]
     ) -> subprocess.CompletedProcess[str]: ...
@@ -188,11 +192,23 @@ class _MacOSComposeAdapter:
     def down(
         self, rendered: RenderedEnginePlan, resources: LocalResourceSet
     ) -> LocalResourceSet:
+        return self.cleanup(rendered.generated_override_path, resources)
+
+    def cleanup(
+        self, generated_override_path: Path, resources: LocalResourceSet
+    ) -> LocalResourceSet:
+        override = Path(generated_override_path)
+        if (
+            override.is_symlink()
+            or override.parent.name != "generated"
+            or override.name != f"compose-{resources.run_id}.json"
+        ):
+            raise LocalEngineError("generated Compose override is invalid for local cleanup")
         for resource in resources.resources:
             self._assert_owned_resource(resource, resources.run_id)
             self._run((self.engine, "rm", "--force", resource.resource_id))
         try:
-            rendered.generated_override_path.unlink(missing_ok=True)
+            override.unlink(missing_ok=True)
         except OSError as exc:
             raise LocalEngineError("could not remove generated Compose override") from exc
         return LocalResourceSet(run_id=resources.run_id, resources=())
