@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -78,6 +81,49 @@ def test_active_protocol_fingerprint_rejects_symlinked_protocol_file(
 
     assert result.fingerprint is None
     assert "phase1-why2.md" in result.diagnostic
+
+
+def test_active_protocol_fingerprint_rejects_symlinked_protocol_ancestor(
+    tmp_path: Path,
+) -> None:
+    """Catch a path walk that follows a workspace-controlled runtime symlink."""
+    _write_protocol_bundle(tmp_path)
+    runtime = tmp_path / ".echelon/runtime"
+    replacement = tmp_path / "replacement-runtime"
+    runtime.rename(replacement)
+    runtime.symlink_to(replacement, target_is_directory=True)
+
+    result = active_banzai_default_protocol_fingerprint(tmp_path)
+
+    assert result.fingerprint is None
+    assert ".echelon/runtime" in result.diagnostic
+
+
+def test_active_protocol_fingerprint_rejects_fifo_without_blocking(
+    tmp_path: Path,
+) -> None:
+    """Catch an O_RDONLY open that can hang before it discovers a FIFO."""
+    _write_protocol_bundle(tmp_path)
+    why2 = tmp_path / ".echelon/runtime/workflow/phases/phase1-why2.md"
+    why2.unlink()
+    os.mkfifo(why2)
+    script = (
+        "from pathlib import Path\n"
+        "from harness.banzai_protocol import active_banzai_default_protocol_fingerprint\n"
+        f"result = active_banzai_default_protocol_fingerprint(Path({str(tmp_path)!r}))\n"
+        "assert result.fingerprint is None\n"
+        "assert 'phase1-why2.md' in result.diagnostic\n"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=1,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_active_protocol_fingerprint_rejects_platform_without_nofollow(

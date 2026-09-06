@@ -8,6 +8,11 @@ import shutil
 import subprocess
 from typing import Callable, Sequence
 
+from harness.banzai_protocol import (
+    BanzaiProtocolLockError,
+    banzai_default_protocol_bundle_lock,
+)
+
 
 _CONFIG_FILENAMES = ("prosaic.config.yaml", "prosaic.config.yml", ".prosaic.yaml")
 
@@ -56,18 +61,31 @@ def install_prosaic_bundle(
     runtime_source = project_root / ".echelon" / "packages" / "echelon-runtime"
     config_path = project_root / "prosaic.config.yaml"
     try:
-        _replace_managed_tree(source_root / "prosaic", prose_source)
-        _replace_managed_tree(source_root / "runtime", runtime_source)
-        config_path.write_text(_package_config(), encoding="utf-8")
-        _run(run, ["prosaic", "package", "deploy", "echelon-prose"], project_root)
-        _run(run, ["prosaic", "package", "deploy", "echelon-runtime"], project_root)
-    except (OSError, subprocess.CalledProcessError) as exc:
+        # The controller holds the shared side of this lock while it
+        # fingerprints a candidate bundle and consumes the upgrade retry.
+        # Keep every managed-tree mutation in the exclusive section.
+        with banzai_default_protocol_bundle_lock(project_root, exclusive=True):
+            try:
+                _replace_managed_tree(source_root / "prosaic", prose_source)
+                _replace_managed_tree(source_root / "runtime", runtime_source)
+                config_path.write_text(_package_config(), encoding="utf-8")
+                _run(
+                    run,
+                    ["prosaic", "package", "deploy", "echelon-prose"],
+                    project_root,
+                )
+                _run(
+                    run,
+                    ["prosaic", "package", "deploy", "echelon-runtime"],
+                    project_root,
+                )
+            finally:
+                config_path.unlink(missing_ok=True)
+                _remove_install_staging(prose_source, runtime_source)
+    except (BanzaiProtocolLockError, OSError, subprocess.CalledProcessError) as exc:
         raise ProsaicBundleInstallError(
             f"Prosaic package installation failed: {exc}"
         ) from exc
-    finally:
-        config_path.unlink(missing_ok=True)
-        _remove_install_staging(prose_source, runtime_source)
 
     return ProsaicBundleInstallReport(
         prose_root=project_root / ".echelon" / "prosaic",

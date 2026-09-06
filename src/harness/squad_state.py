@@ -14,7 +14,7 @@ import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping
 
@@ -22,6 +22,7 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     build_blocked_decision_v3,
     ensure_blocked_decision,
+    is_valid_decision_id,
     normalize_escalation_options,
     validate_blocked_decision,
 )
@@ -331,15 +332,23 @@ def _banzai_default_reassessment_record(
     state: Mapping[str, Any],
 ) -> dict[str, object] | None:
     """Validate the controller-owned Banzai WHY2 reassessment ledger."""
-    raw = state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+    return validate_banzai_default_reassessment_record(
+        state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+    )
+
+
+def validate_banzai_default_reassessment_record(
+    raw: object,
+) -> dict[str, object] | None:
+    """Validate one durable reassessment ledger for controller and CLI use."""
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
         raise _invalid_banzai_default_reassessment_record()
     schema_version = raw.get("schema_version")
-    if schema_version == 1:
+    if type(schema_version) is int and schema_version == 1:
         return _validate_v1_banzai_default_reassessment_record(raw)
-    if schema_version == 2:
+    if type(schema_version) is int and schema_version == 2:
         return _validate_v2_banzai_default_reassessment_record(raw)
     raise _invalid_banzai_default_reassessment_record()
 
@@ -368,16 +377,13 @@ def _validate_v1_banzai_default_reassessment_record(
     question_sha256 = raw.get("question_sha256")
     reassessed_at = raw.get("reassessed_at")
     if (
-        raw.get("schema_version") != 1
-        or not isinstance(decision_id, str)
-        or not decision_id
-        or len(decision_id.encode("utf-8")) > 256
+        type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 1
+        or not is_valid_decision_id(decision_id)
         or source_phase != "phase1-why2"
         or not isinstance(question_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
-        or not isinstance(reassessed_at, str)
-        or not reassessed_at
-        or len(reassessed_at.encode("utf-8")) > 128
+        or not _is_utc_reassessment_timestamp(reassessed_at)
     ):
         raise _invalid_banzai_default_reassessment_record()
     return {
@@ -392,12 +398,18 @@ def _validate_v1_banzai_default_reassessment_record(
 def _validate_v2_banzai_default_reassessment_record(
     raw: Mapping[str, object],
 ) -> dict[str, object]:
-    if set(raw) != {
+    if (
+        type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 2
+        or set(raw)
+        != {
         "schema_version",
         "source_phase",
         "initial_attempt",
         "upgrade_attempt",
-    } or raw.get("source_phase") != "phase1-why2":
+        }
+        or raw.get("source_phase") != "phase1-why2"
+    ):
         raise _invalid_banzai_default_reassessment_record()
     initial = _validate_banzai_default_reassessment_attempt(
         raw.get("initial_attempt"),
@@ -432,9 +444,7 @@ def _validate_banzai_default_reassessment_attempt(
     question_sha256 = raw.get("question_sha256")
     protocol_fingerprint = raw.get("protocol_fingerprint")
     if (
-        not isinstance(decision_id, str)
-        or not decision_id
-        or len(decision_id.encode("utf-8")) > 256
+        not is_valid_decision_id(decision_id)
         or not isinstance(question_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
         or (
@@ -455,14 +465,25 @@ def _validate_banzai_default_reassessment_attempt(
     }
     if require_timestamp:
         reassessed_at = raw.get("reassessed_at")
-        if (
-            not isinstance(reassessed_at, str)
-            or not reassessed_at
-            or len(reassessed_at.encode("utf-8")) > 128
-        ):
+        if not _is_utc_reassessment_timestamp(reassessed_at):
             raise _invalid_banzai_default_reassessment_record()
         validated["reassessed_at"] = reassessed_at
     return validated
+
+
+def _is_utc_reassessment_timestamp(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value.encode("utf-8")) > 128
+    ):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 class StateDurabilityError(StateAdvanceError):

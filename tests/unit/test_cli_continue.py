@@ -362,6 +362,29 @@ def test_continue_exposes_one_v1_protocol_upgrade_retry(
     assert "refreshed candidate-protocol" in action.note
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("decision_id", "not-a-canonical-decision"),
+        ("reassessed_at", "not-a-timestamp"),
+    ],
+)
+def test_continue_does_not_advertise_malformed_v1_protocol_upgrade(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Catch CLI guidance that the controller's strict ledger parser rejects."""
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+    state = _v1_reassessed_banzai_why2_state()
+    state["banzai_default_reassessment"][field] = value
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "human_resume"
+    assert action.command == 'echelon spec resume "<your answer>"'
+
+
 def test_continue_delegates_legacy_banzai_why2_to_the_controller(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

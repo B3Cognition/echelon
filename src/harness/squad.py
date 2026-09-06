@@ -54,7 +54,11 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     validate_blocked_decision,
 )
-from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
+from harness.banzai_protocol import (
+    BanzaiProtocolLockError,
+    active_banzai_default_protocol_fingerprint,
+    banzai_default_protocol_bundle_lock,
+)
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -195,6 +199,7 @@ from harness.squad_state import (
     StateDurabilityError,
     SquadStateStore,
     build_human_input_resolution_postimage,
+    validate_banzai_default_reassessment_record,
 )
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
@@ -5773,11 +5778,18 @@ class SquadController:
         if (
             not isinstance(raw_decision, Mapping)
             or not isinstance(reassessment, Mapping)
-            or reassessment.get("schema_version") != 1
             or state.get(BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY) is not None
         ):
             return dict(state)
         try:
+            validated_reassessment = validate_banzai_default_reassessment_record(
+                reassessment
+            )
+            if (
+                validated_reassessment is None
+                or validated_reassessment["schema_version"] != 1
+            ):
+                return dict(state)
             decision = validate_blocked_decision(raw_decision)
             if (
                 decision["schema_version"] != 3
@@ -5806,18 +5818,27 @@ class SquadController:
             revision = state.get("state_revision")
             if type(revision) is not int or revision < 0:
                 return dict(state)
-            fingerprint = active_banzai_default_protocol_fingerprint(
-                self._project_root
-            )
-            if fingerprint.fingerprint is None:
-                return dict(state)
-            return self._state_store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
-                str(decision["id"]),
-                protocol_fingerprint=fingerprint.fingerprint,
-                expected_state_revision=revision,
-            )
+            # The shared lock bridges the identity read and state CAS. Echelon
+            # bundle deployment takes the matching exclusive lock, so the
+            # durable v2 ledger cannot claim a protocol snapshot that the
+            # package installer was concurrently replacing.
+            with banzai_default_protocol_bundle_lock(
+                self._project_root,
+                exclusive=False,
+            ):
+                fingerprint = active_banzai_default_protocol_fingerprint(
+                    self._project_root
+                )
+                if fingerprint.fingerprint is None:
+                    return dict(state)
+                return self._state_store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+                    str(decision["id"]),
+                    protocol_fingerprint=fingerprint.fingerprint,
+                    expected_state_revision=revision,
+                )
         except (
             BlockedDecisionError,
+            BanzaiProtocolLockError,
             HumanInputPolicyError,
             StateAdvanceError,
             StateDurabilityError,

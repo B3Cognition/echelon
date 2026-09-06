@@ -32,6 +32,10 @@ import sys
 from pathlib import Path, PurePosixPath
 
 from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
+from harness.squad_state import (
+    StateAdvanceError,
+    validate_banzai_default_reassessment_record,
+)
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
     RecoveryInstruction,
@@ -4586,30 +4590,19 @@ def _v1_banzai_why2_protocol_upgrade_is_available(
     decision: Mapping[str, object],
 ) -> bool:
     """Identify the one valid legacy marker eligible for an upgrade retry."""
-    reassessment = run_state.get("banzai_default_reassessment")
+    try:
+        reassessment = validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+    except StateAdvanceError:
+        return False
     return (
         run_state.get("status") == "blocked"
         and run_state.get("phase") == "phase1-why2"
         and run_state.get("autonomy_mode") == "banzai"
         and run_state.get("banzai_default_candidate_protocol_version") is None
-        and isinstance(reassessment, Mapping)
-        and set(reassessment)
-        == {
-            "schema_version",
-            "decision_id",
-            "source_phase",
-            "question_sha256",
-            "reassessed_at",
-        }
-        and reassessment.get("schema_version") == 1
-        and isinstance(reassessment.get("decision_id"), str)
-        and bool(reassessment.get("decision_id"))
-        and reassessment.get("source_phase") == "phase1-why2"
-        and isinstance(reassessment.get("question_sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", reassessment["question_sha256"])
-        is not None
-        and isinstance(reassessment.get("reassessed_at"), str)
-        and bool(reassessment.get("reassessed_at"))
+        and reassessment is not None
+        and reassessment["schema_version"] == 1
         and _is_pre_candidate_banzai_why2_decision(decision)
     )
 

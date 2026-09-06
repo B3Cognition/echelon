@@ -4,6 +4,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -117,6 +118,49 @@ def test_install_prosaic_bundle_deploys_staged_content_with_prosaic(
         encoding="utf-8"
     ) == "phases: []\n"
     assert not (workspace / ".echelon/packages").exists()
+
+
+def test_install_prosaic_bundle_waits_for_protocol_fingerprint_consumer(
+    tmp_path: Path,
+) -> None:
+    """A refresh cannot replace files while a controller owns the shared lock."""
+    from echelon.prosaic_packages import install_prosaic_bundle
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".echelon").mkdir()
+    _write_bundle_source(echelon_root)
+    lock_holder = """
+import sys
+import time
+from pathlib import Path
+from harness.banzai_protocol import banzai_default_protocol_bundle_lock
+
+with banzai_default_protocol_bundle_lock(Path(sys.argv[1]), exclusive=False):
+    print('locked', flush=True)
+    time.sleep(0.4)
+"""
+    holder = subprocess.Popen(
+        [sys.executable, "-c", lock_holder, str(workspace)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "locked"
+    started = time.monotonic()
+    try:
+        install_prosaic_bundle(
+            workspace,
+            echelon_root=echelon_root,
+            run=lambda *_args, **_kwargs: None,
+        )
+    finally:
+        holder.wait(timeout=2)
+
+    assert holder.returncode == 0, holder.stderr.read() if holder.stderr else ""
+    assert time.monotonic() - started >= 0.25
 
 
 def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:

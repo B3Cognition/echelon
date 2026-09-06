@@ -508,6 +508,70 @@ def test_protocol_upgrade_reassessment_rejects_a_v2_marker_without_mutation(
     assert store.load() == snapshot
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", True),
+        ("decision_id", "not-a-canonical-decision"),
+        ("reassessed_at", "not-a-timestamp"),
+    ],
+)
+def test_protocol_upgrade_reassessment_rejects_malformed_v1_ledger(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Catch malformed legacy provenance that could consume the one retry."""
+    store = _blocked_banzai_why2_store(tmp_path)
+    malformed = store.load()
+    malformed["banzai_default_reassessment"][field] = value
+    store._path.write_text(json.dumps(malformed), encoding="utf-8")
+    before = store.load()
+
+    with pytest.raises(StateAdvanceError, match="record is invalid"):
+        store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+            before["blocked_decision"]["id"],
+            protocol_fingerprint="sha256:" + "b" * 64,
+            expected_state_revision=before["state_revision"],
+        )
+
+    assert store.load() == before
+
+
+def test_protocol_upgrade_reassessment_rejects_malformed_v2_timestamp(
+    tmp_path: Path,
+) -> None:
+    """Catch a spent ledger whose timestamp is not durable UTC provenance."""
+    store = _blocked_banzai_why2_store(tmp_path)
+    malformed = store.load()
+    malformed["banzai_default_reassessment"] = {
+        "schema_version": 2,
+        "source_phase": "phase1-why2",
+        "initial_attempt": {
+            "decision_id": "dec-initial-legacy-why2",
+            "question_sha256": "a" * 64,
+            "protocol_fingerprint": None,
+        },
+        "upgrade_attempt": {
+            "decision_id": "dec-upgrade-why2",
+            "question_sha256": "b" * 64,
+            "protocol_fingerprint": "sha256:" + "c" * 64,
+            "reassessed_at": "not-a-timestamp",
+        },
+    }
+    store._path.write_text(json.dumps(malformed), encoding="utf-8")
+    before = store.load()
+
+    with pytest.raises(StateAdvanceError, match="record is invalid"):
+        store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+            before["blocked_decision"]["id"],
+            protocol_fingerprint="sha256:" + "b" * 64,
+            expected_state_revision=before["state_revision"],
+        )
+
+    assert store.load() == before
+
+
 def _prepare_completion(
     tmp_path: Path,
     store: SquadStateStore,
