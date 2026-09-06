@@ -373,6 +373,141 @@ def _seal_provider_human_input_via_advance(
     return store.load()
 
 
+def _blocked_banzai_why2_store(tmp_path: Path) -> SquadStateStore:
+    """Create the exact human-owned WHY2 state eligible for migration recovery."""
+    store = _store(tmp_path)
+    store.initialize(
+        "banzai-why2",
+        "greenfield",
+        "animate the character",
+        0,
+        "phase1-why2",
+        autonomy_mode="banzai",
+    )
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        reason_code="human_clarification_required",
+        classification="material",
+        semi_policy="require_human",
+        resolution_handler="clarification_resume",
+        allow_free_text=True,
+        allowed_phase_ids=frozenset({"phase1-why2"}),
+        allowed_target_phases=frozenset({"phase1-why2"}),
+        context_state_keys=("phase",),
+        context_paths=(),
+        options=(),
+    )
+    before = store.load()
+    request = HumanInputPolicyRegistry((policy,)).prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        phase_id="phase1-why2",
+        reason_code="human_clarification_required",
+        question="Which inclusive radial boundary should both guards use?",
+        source_state_revision=before["state_revision"],
+    )
+    _advance(
+        store,
+        "phase1-why2",
+        "phase1-why2",
+        _result("DONE", phase_id="phase1-why2"),
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+    state = store.load()
+    state["banzai_default_reassessment"] = {
+        "schema_version": 1,
+        "decision_id": "dec-initial-legacy-why2",
+        "source_phase": "phase1-why2",
+        "question_sha256": "a" * 64,
+        "reassessed_at": "2026-09-06T20:00:00+00:00",
+    }
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    return store
+
+
+def test_protocol_upgrade_reassessment_converts_v1_marker_to_v2_once(
+    tmp_path: Path,
+) -> None:
+    """Catch a recovery that reopens a legacy gate without consuming the retry."""
+    store = _blocked_banzai_why2_store(tmp_path)
+    before = store.load()
+    decision_id = before["blocked_decision"]["id"]
+
+    after = store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+        decision_id,
+        protocol_fingerprint="sha256:" + "b" * 64,
+        expected_state_revision=before["state_revision"],
+    )
+
+    assert after["status"] == "running"
+    assert after["phase"] == "phase1-why2"
+    assert "blocked_decision" not in after
+    ledger = after["banzai_default_reassessment"]
+    assert ledger["schema_version"] == 2
+    assert ledger["initial_attempt"]["decision_id"] == "dec-initial-legacy-why2"
+    assert ledger["upgrade_attempt"]["decision_id"] == decision_id
+    assert ledger["upgrade_attempt"]["protocol_fingerprint"] == "sha256:" + "b" * 64
+
+
+def test_protocol_upgrade_reassessment_rejects_a_v2_marker_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """Catch a second protocol upgrade retry after the single recovery is spent."""
+    store = _blocked_banzai_why2_store(tmp_path)
+    before = store.load()
+    decision_id = before["blocked_decision"]["id"]
+    converted = store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+        decision_id,
+        protocol_fingerprint="sha256:" + "b" * 64,
+        expected_state_revision=before["state_revision"],
+    )
+    request = HumanInputPolicyRegistry(
+        (
+            HumanInputPolicy(
+                source_kind="provider_escalation",
+                producer_id="phase1-why2",
+                reason_code="human_clarification_required",
+                classification="material",
+                semi_policy="require_human",
+                resolution_handler="clarification_resume",
+                allow_free_text=True,
+                allowed_phase_ids=frozenset({"phase1-why2"}),
+                allowed_target_phases=frozenset({"phase1-why2"}),
+                context_state_keys=("phase",),
+                context_paths=(),
+                options=(),
+            ),
+        )
+    ).prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        phase_id="phase1-why2",
+        reason_code="human_clarification_required",
+        question="Which inclusive radial boundary should both guards use?",
+        source_state_revision=converted["state_revision"],
+    )
+    _advance(
+        store,
+        "phase1-why2",
+        "phase1-why2",
+        _result("DONE", phase_id="phase1-why2"),
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+    snapshot = store.load()
+
+    with pytest.raises(StateAdvanceError, match="already consumed"):
+        store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+            snapshot["blocked_decision"]["id"],
+            protocol_fingerprint="sha256:" + "c" * 64,
+            expected_state_revision=snapshot["state_revision"],
+        )
+
+    assert store.load() == snapshot
+
+
 def _prepare_completion(
     tmp_path: Path,
     store: SquadStateStore,
