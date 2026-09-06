@@ -765,6 +765,46 @@ coverage map, stack, observer plan, and runnability-contract fingerprints still
 match. Candidate-owned local journey commands remain a separate, explicitly
 unverified user-facing path.
 
+### Explicit macOS local verification
+
+After a browser-3D or browser-WASM delivery has converged, an operator may run
+its executable local journey on macOS:
+
+```bash
+echelon delivery verify-local <spec_id> --engine auto
+# For a multi-target spec, select one declared target explicitly:
+echelon delivery verify-local <spec_id> --target <target-id> --engine docker
+```
+
+This is deliberately opt-in. Echelon first prints the exact action plan and
+requires confirmation (use `--yes` only for a normal cleanup-on-failure run).
+It materializes the sandbox-approved candidate in an Echelon-managed detached
+worktree, runs trusted project lifecycle code with a per-run home/cache and
+Playwright browser directory, and starts only a labelled PostgreSQL container
+on a generated loopback port. Docker Desktop and Podman are the supported
+macOS engines; only public images are permitted. Pulled public image layers may
+remain in the engine cache, but the candidate worktree, generated browser cache,
+and only journalled labelled resources are removed automatically.
+
+The local check independently observes the browser, an application restart, and
+the PostgreSQL persistence marker. Its immutable redacted JSON and Markdown
+attestations are separate from sandbox delivery evidence: a pass never changes
+landing authority, and a local failure never reopens the spec or starts an
+agent repair loop. `echelon delivery status <spec_id>` shows the latest attempt
+and retains an earlier content-matching pass after a later host preflight
+failure.
+
+If an interrupted run intentionally retained its resources or cleanup fails,
+Echelon prints the exact journal-bound recovery command:
+
+```bash
+echelon delivery cleanup-local <local-run-id>
+```
+
+That command refuses unknown IDs and validates each journalled resource label
+before removal. It never performs a global Docker/Podman prune or operates in
+your source checkout.
+
 ### Container Runtime
 
 `echelon delivery` uses a Docker-compatible container CLI for sandbox creation.
@@ -1271,6 +1311,8 @@ independently rather than allowing either one to hide the other.
 | `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery verify-local <id> [--target <target-id>] [--engine auto\|docker\|podman]` | Explicit macOS-only local browser verification in a managed worktree; records separate local evidence and never changes landing authority |
+| `echelon delivery cleanup-local <local-run-id>` | Safely recover only resources and the candidate worktree recorded in one interrupted local-run journal |
 | `echelon delivery checkpoint list <id>` | List delivery checkpoints and recovery commits for a spec |
 | `echelon delivery land <id> [--continue] [--prepare-only]` | Merge or prepare the target feature branch, then clean up after fulfillment gates pass |
 

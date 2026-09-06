@@ -200,6 +200,9 @@ Commands:
   delivery init                              Initialize delivery environment: sandbox, mirror, verify.
   delivery target <spec_id>                  Prepare target-scoped delivery metadata from spec targets.
   delivery status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state.
+  delivery verify-local <spec_id> [--target <id>] [--engine auto|docker|podman] [--yes]
+                                            Explicit macOS local verification; does not affect landing.
+  delivery cleanup-local <local-run-id>      Recover one journalled local verification run.
   delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
