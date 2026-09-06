@@ -401,6 +401,45 @@ def test_partial_l4_adaptively_reshards_until_exact_context_fits(
 
 
 @pytest.mark.unit
+def test_l4_chunks_large_subject_evidence_indexes(tmp_path: Path) -> None:
+    workspace, intent, parent, options = _preparation_fixture(
+        tmp_path,
+        extra_source_files={
+            f"fixtures/empty-{index:04d}.txt": ""
+            for index in range(2_000)
+        },
+    )
+
+    inputs = prepare_protocol_28_request(workspace, intent, parent, options)
+
+    assert len(inputs.exhaustive_subject_catalog.subjects) > 2
+    assert all(
+        len(canonical_json_bytes(subject.to_json_dict()))
+        <= inputs.exhaustive_policy.max_context_bytes // 32
+        for subject in inputs.exhaustive_subject_catalog.subjects
+    )
+    source_projection = next(
+        item
+        for item in inputs.snapshot_evidence_catalog.projections
+        if item.target_kind == "source"
+    )
+    expected_evidence = {
+        *source_projection.primary_shard_ids,
+        *source_projection.primary_empty_receipt_ids,
+        *source_projection.primary_nontext_disposition_ids,
+        *source_projection.supporting_shard_ids,
+        *source_projection.supporting_empty_receipt_ids,
+        *source_projection.supporting_nontext_disposition_ids,
+    }
+    assert {
+        evidence_id
+        for subject in inputs.exhaustive_subject_catalog.subjects
+        if subject.target_kind == "source"
+        for evidence_id in subject.evidence_ids
+    } == expected_evidence
+
+
+@pytest.mark.unit
 def test_partial_l4_rejects_missing_exact_debt_object(tmp_path: Path) -> None:
     workspace, intent, parent, options, acceptance = _accepted_debt_fixture(tmp_path)
     reduced = replace(

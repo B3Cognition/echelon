@@ -214,6 +214,7 @@ def prepare_protocol_28_request(
             l3,
             evidence,
             residual_debt_hash=residual_debt_hash,
+            max_subject_bytes=max(policy.max_context_bytes // 32, 1_024),
         )
         plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
         try:
@@ -716,6 +717,7 @@ def _build_evidence_subjects(
     evidence,
     *,
     residual_debt_hash: str | None = None,
+    max_subject_bytes: int | None = None,
 ):  # type: ignore[no-untyped-def]
     targets = {
         (item.source_id, item.target_kind, item.target_id): item
@@ -736,21 +738,19 @@ def _build_evidence_subjects(
         )
         if not evidence_ids and not target.finding_ids:
             continue
-        subjects.append(
-            ExhaustiveSubjectV1(
-                1,
-                projection.target_kind,
-                projection.source_id,
-                projection.target_id,
-                "authenticated-evidence",
-                (
+        subjects.extend(
+            _chunk_evidence_subject(
+                target_kind=projection.target_kind,
+                source_id=projection.source_id,
+                target_id=projection.target_id,
+                category_id=(
                     "public-surfaces"
                     if projection.target_kind == "domain"
-                    else "source-composition",
+                    else "source-composition"
                 ),
-                evidence_ids,
-                target.finding_ids,
-                tuple(
+                evidence_ids=evidence_ids,
+                finding_ids=target.finding_ids,
+                lower_authority_ids=tuple(
                     sorted(
                         {
                             target.candidate_authority_hash,
@@ -759,6 +759,7 @@ def _build_evidence_subjects(
                         }
                     )
                 ),
+                max_subject_bytes=max_subject_bytes,
             )
         )
     return build_exhaustive_subject_catalog(
@@ -767,6 +768,94 @@ def _build_evidence_subjects(
         l3.identity,
         tuple(subjects),
     )
+
+
+def _chunk_evidence_subject(
+    *,
+    target_kind: str,
+    source_id: str,
+    target_id: str,
+    category_id: str,
+    evidence_ids: tuple[str, ...],
+    finding_ids: tuple[str, ...],
+    lower_authority_ids: tuple[str, ...],
+    max_subject_bytes: int | None,
+) -> tuple[ExhaustiveSubjectV1, ...]:
+    """Keep generated subject indexes small enough for exact L4 contexts."""
+
+    def subject(
+        subject_id: str,
+        evidence: tuple[str, ...],
+        findings: tuple[str, ...],
+    ) -> ExhaustiveSubjectV1:
+        return ExhaustiveSubjectV1(
+            1,
+            target_kind,  # type: ignore[arg-type]
+            source_id,
+            target_id,
+            subject_id,
+            (category_id,),
+            evidence,
+            findings,
+            lower_authority_ids,
+        )
+
+    complete = subject("authenticated-evidence", evidence_ids, finding_ids)
+    if (
+        max_subject_bytes is None
+        or len(canonical_json_bytes(complete.to_json_dict())) <= max_subject_bytes
+    ):
+        return (complete,)
+
+    chunks: list[ExhaustiveSubjectV1] = []
+    pending: list[tuple[str, str]] = [
+        *(('finding', item) for item in finding_ids),
+        *(('evidence', item) for item in evidence_ids),
+    ]
+    current_evidence: tuple[str, ...] = ()
+    current_findings: tuple[str, ...] = ()
+    for item_kind, item_id in pending:
+        candidate_evidence = (
+            tuple(sorted((*current_evidence, item_id)))
+            if item_kind == "evidence"
+            else current_evidence
+        )
+        candidate_findings = (
+            tuple(sorted((*current_findings, item_id)))
+            if item_kind == "finding"
+            else current_findings
+        )
+        candidate = subject(
+            f"authenticated-evidence-{len(chunks):06d}",
+            candidate_evidence,
+            candidate_findings,
+        )
+        if len(canonical_json_bytes(candidate.to_json_dict())) <= max_subject_bytes:
+            current_evidence = candidate_evidence
+            current_findings = candidate_findings
+            continue
+        if not current_evidence and not current_findings:
+            raise Protocol28PreparationError(
+                "unsplittable L4 subject authority exceeds policy"
+            )
+        chunks.append(
+            subject(
+                f"authenticated-evidence-{len(chunks):06d}",
+                current_evidence,
+                current_findings,
+            )
+        )
+        current_evidence = (item_id,) if item_kind == "evidence" else ()
+        current_findings = (item_id,) if item_kind == "finding" else ()
+    if current_evidence or current_findings:
+        chunks.append(
+            subject(
+                f"authenticated-evidence-{len(chunks):06d}",
+                current_evidence,
+                current_findings,
+            )
+        )
+    return tuple(chunks)
 
 
 def _validate_initial_reservation(plan, producer, verifier, options):  # type: ignore[no-untyped-def]

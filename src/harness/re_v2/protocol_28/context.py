@@ -226,7 +226,10 @@ def build_protocol_28_slice_context(
         "plan_entry": plan_entry.to_json_dict(),
         "target_plan_id": target_plan.identity,
         "target_l3_projection": l3.to_json_dict(),
-        "target_evidence_projection": evidence_projection.to_json_dict(),
+        "target_evidence_projection": _slice_evidence_projection(
+            evidence_projection,
+            evidence_ids,
+        ),
         "subjects": [item.to_json_dict() for item in subjects],
         "snapshot_evidence": [item.to_json_dict() for item in evidence_objects],
         "permitted_evidence_anchors": [
@@ -267,6 +270,38 @@ def build_protocol_28_slice_context(
             f"actual={len(encoded)} maximum={maximum}"
         )
     return encoded
+
+
+def _slice_evidence_projection(
+    projection,  # type: ignore[no-untyped-def]
+    evidence_ids: set[str],
+) -> dict[str, object]:
+    """Project target-wide evidence authority down to one bounded slice."""
+    return {
+        "projection_id": projection.identity,
+        "projection_scope": "slice",
+        "schema_version": projection.schema_version,
+        "target_kind": projection.target_kind,
+        "source_id": projection.source_id,
+        "target_id": projection.target_id,
+        "target_partition_id": projection.target_partition_id,
+        "target_content_id": projection.target_content_id,
+        **{
+            field: [
+                item
+                for item in getattr(projection, field)
+                if item in evidence_ids
+            ]
+            for field in (
+                "primary_shard_ids",
+                "primary_empty_receipt_ids",
+                "primary_nontext_disposition_ids",
+                "supporting_shard_ids",
+                "supporting_empty_receipt_ids",
+                "supporting_nontext_disposition_ids",
+            )
+        },
+    }
 
 
 def load_protocol_28_run_context(

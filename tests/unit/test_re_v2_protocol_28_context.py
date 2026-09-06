@@ -139,6 +139,21 @@ def test_slice_context_supplies_exact_copyable_anchor_ids(tmp_path: Path) -> Non
     assert {
         item["anchor"]["evidence_id"] for item in anchors
     } == set(entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids)
+    projection = payload["target_evidence_projection"]
+    assert projection["projection_scope"] == "slice"
+    assert projection["projection_id"] == entry.target_evidence_projection_id
+    assert {
+        evidence_id
+        for field in (
+            "primary_shard_ids",
+            "primary_empty_receipt_ids",
+            "primary_nontext_disposition_ids",
+            "supporting_shard_ids",
+            "supporting_empty_receipt_ids",
+            "supporting_nontext_disposition_ids",
+        )
+        for evidence_id in projection[field]
+    } == set(entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids)
 
 
 @pytest.mark.unit
