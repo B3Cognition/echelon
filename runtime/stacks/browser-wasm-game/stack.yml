@@ -1,4 +1,4 @@
-schema_version: "1.3"
+schema_version: "1.4"
 stack:
   id: browser-wasm-game
   name: Browser WASM Game
@@ -35,6 +35,9 @@ runnability:
     - stop
   required_observations:
     - browser_dom
+  local_runner:
+    profiles:
+      - macos-compose-v1
 coverage_observers:
   - id: playwright-e2e
     test_types:

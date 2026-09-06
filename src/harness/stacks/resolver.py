@@ -9,6 +9,7 @@ from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.schema import (
     StackCoverageObserver,
     StackDefinition,
+    StackLocalRunner,
     StackProvisioner,
     StackRunnability,
     StackTool,
@@ -35,6 +36,17 @@ class ResolvedRunnability:
     runner: str | None = None
     capabilities: tuple[str, ...] = ()
     required_observations: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
+    local_runner: "ResolvedLocalRunner" = field(
+        default_factory=lambda: ResolvedLocalRunner()
+    )
+
+
+@dataclass(frozen=True)
+class ResolvedLocalRunner:
+    profiles: tuple[str, ...] = ()
+    allowed_services: tuple[str, ...] = ()
+    environment_bindings: tuple[tuple[str, str], ...] = ()
     sources: tuple[str, ...] = ()
 
 
@@ -296,6 +308,16 @@ def resolved_stack_contract_sha256(resolved: ResolvedStacks) -> str:
                 resolved.runnability.required_observations
             ),
             "sources": sorted(resolved.runnability.sources),
+            "local_runner": {
+                "profiles": sorted(resolved.runnability.local_runner.profiles),
+                "allowed_services": sorted(
+                    resolved.runnability.local_runner.allowed_services
+                ),
+                "environment_bindings": sorted(
+                    resolved.runnability.local_runner.environment_bindings
+                ),
+                "sources": sorted(resolved.runnability.local_runner.sources),
+            },
         },
     }
     encoded = json.dumps(
@@ -362,6 +384,11 @@ def _merge_runnability(
         if "user_facing" in {current.classification, declared.classification}
         else "non_runnable"
     )
+    local_runner = _merge_local_runner(
+        current.local_runner,
+        stack_id,
+        declared.local_runner,
+    )
     return ResolvedRunnability(
         classification=classification,
         policy=policy,
@@ -376,6 +403,34 @@ def _merge_runnability(
             )
         ),
         sources=tuple(_append_unique_many(current.sources, (stack_id,))),
+        local_runner=local_runner,
+    )
+
+
+def _merge_local_runner(
+    current: ResolvedLocalRunner,
+    stack_id: str,
+    declared: StackLocalRunner,
+) -> ResolvedLocalRunner:
+    bindings = dict(current.environment_bindings)
+    for variable, source in declared.environment_bindings:
+        existing = bindings.get(variable)
+        if existing is not None and existing != source:
+            raise StackConflictError(
+                "Stack local runner environment binding conflict for "
+                f"{variable}: {existing!r} conflicts with {source!r} from {stack_id}"
+            )
+        bindings[variable] = source
+    sources = current.sources
+    if declared != StackLocalRunner():
+        sources = tuple(_append_unique_many(sources, (stack_id,)))
+    return ResolvedLocalRunner(
+        profiles=tuple(_append_unique_many(current.profiles, declared.profiles)),
+        allowed_services=tuple(
+            _append_unique_many(current.allowed_services, declared.allowed_services)
+        ),
+        environment_bindings=tuple(bindings.items()),
+        sources=sources,
     )
 
 
