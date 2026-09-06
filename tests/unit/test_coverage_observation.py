@@ -142,6 +142,47 @@ def test_write_coverage_observation_records_a_passed_source_bound_requirement(
 
 
 @pytest.mark.unit
+def test_coverage_observation_resolves_unique_bare_report_filename_in_candidate(
+    tmp_path: Path,
+) -> None:
+    """Playwright may report a basename even when its test lives below tests/."""
+    worktree = tmp_path / "candidate"
+    title = "nested journey [echelon:E2E-001]"
+    _source(worktree, "tests/e2e/journey.spec.ts", title)
+
+    result = _write_observation(
+        tmp_path,
+        worktree=worktree,
+        executions=(_execution(file="journey.spec.ts", title=title),),
+    )
+
+    assert result.ref.passed is True
+    assert result.test_cases["E2E-001"].status == "passed"
+    assert result.requirements["FR-001"].status == "observed"
+
+
+@pytest.mark.unit
+def test_coverage_observation_rejects_ambiguous_bare_report_filename(
+    tmp_path: Path,
+) -> None:
+    """A basename must not select arbitrarily between two candidate sources."""
+    worktree = tmp_path / "candidate"
+    title = "shared journey [echelon:E2E-001]"
+    _source(worktree, "tests/a/journey.spec.ts", title)
+    _source(worktree, "tests/b/journey.spec.ts", title)
+
+    result = _write_observation(
+        tmp_path,
+        worktree=worktree,
+        executions=(_execution(file="journey.spec.ts", title=title),),
+    )
+
+    assert result.ref.passed is False
+    assert result.test_cases["E2E-001"].status == "invalid_report"
+    assert "multiple tagged source files" in result.test_cases["E2E-001"].reason
+
+
+@pytest.mark.unit
 def test_coverage_observation_marks_an_untagged_planned_case_unbound(
     tmp_path: Path,
 ) -> None:

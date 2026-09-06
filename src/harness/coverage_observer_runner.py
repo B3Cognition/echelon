@@ -255,11 +255,12 @@ def _run_isolated_observer(
     observer_root = Path(evidence_dir) / "coverage-observers" / observer.id
     attempt_sequence = _next_attempt(observer_root)
     sandbox_report_path = _sandbox_report_path(observer.id, observer.report_path)
+    sandbox_spec = sandbox_spec_factory(worktree)
     try:
         if _candidate_fingerprint(worktree) != candidate_fingerprint:
             failure_reason = "candidate fingerprint changed before coverage observation"
             raise CoverageObserverError(failure_reason)
-        handle = provider.create(sandbox_spec_factory(worktree))
+        handle = provider.create(sandbox_spec)
         plan = build_verification_plan(
             worktree,
             config,
@@ -359,6 +360,7 @@ def _run_isolated_observer(
             observer_id=observer.id,
             test_type=observer.test_types[0],
             adapter=observer.adapter,
+            sandbox_worktree_mount=sandbox_spec.container_mount,
         )
     except CoverageObserverError as exc:
         return CoverageObserverRun(
@@ -458,6 +460,7 @@ def _parse_report(
     observer_id: str,
     test_type: str,
     adapter: str,
+    sandbox_worktree_mount: str | None = None,
 ) -> tuple[ObservedTestExecution, ...]:
     try:
         if report is None or not report.is_file():
@@ -474,11 +477,17 @@ def _parse_report(
     try:
         if adapter == "vitest-json":
             return parse_vitest_json(
-                text, observer_id=observer_id, test_type=test_type
+                text,
+                observer_id=observer_id,
+                test_type=test_type,
+                sandbox_worktree_mount=sandbox_worktree_mount,
             )
         if adapter == "playwright-json":
             return parse_playwright_json_executions(
-                text, observer_id=observer_id, test_type=test_type
+                text,
+                observer_id=observer_id,
+                test_type=test_type,
+                sandbox_worktree_mount=sandbox_worktree_mount,
             )
     except (VitestEvidenceError, PlaywrightEvidenceError) as exc:
         raise CoverageObserverError(str(exc)) from exc

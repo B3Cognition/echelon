@@ -584,6 +584,13 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
     assert result.passed is False
     assert result.failures[0].id == "coverage-observation-gaps"
     assert result.failures[0].details["requirements"] == {"FR-001": "unbound"}
+    assert result.failures[0].details["test_cases"] == {
+        "UT-PERSIST-001": {
+            "test_type": "unit",
+            "status": "unbound",
+            "reason": "no executed tagged test matches the planned case",
+        }
+    }
 
 
 @pytest.mark.unit
@@ -9256,6 +9263,65 @@ class TestPromptHelpers:
         assert "Do not run Playwright" in result
         assert "configured authoritative verifier" in result
         assert "focused non-browser checks" in result
+
+    def test_required_coverage_observer_adds_case_tag_contract_to_build_context(
+        self, tmp_path: Path
+    ) -> None:
+        """Providers must know the structured evidence contract before first build."""
+        config = _make_config()
+        config.resolved_stacks = _required_coverage_stacks()
+        controller, *_ = _make_controller(tmp_path, config=config)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+
+        prompt = controller._with_harness_context("implement the slice", str(worktree))
+
+        assert "## Coverage Observation Contract" in prompt
+        assert "[echelon:UT-EXAMPLE-001]" in prompt
+        assert "coverage-map test-case ID" in prompt
+        assert "AC/FR requirement ID" in prompt
+        assert "exactly one physical test identity" in prompt
+
+    def test_feedback_prompt_names_exact_coverage_case_repair_debt(
+        self, tmp_path: Path
+    ) -> None:
+        """Repairs receive source-bound coverage debt, not an opaque aggregate."""
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="coverage-observation-gaps",
+                    error="Required coverage observations did not pass.",
+                    details={
+                        "test_cases": {
+                            "E2E-SCENE-001": {
+                                "test_type": "e2e",
+                                "status": "invalid_report",
+                                "reason": "test reporter basename did not identify a tagged source file",
+                            },
+                            "UT-SCENE-002": {
+                                "test_type": "unit",
+                                "status": "duplicate_binding",
+                                "reason": "case tag maps to more than one physical test identity",
+                            },
+                        }
+                    },
+                )
+            ],
+        )
+
+        result = controller._make_feedback_prompt("spec 001", verify, inner_iter=1)
+
+        assert "## Coverage Observation Repair Contract" in result
+        assert "`[echelon:E2E-SCENE-001]` (e2e)" in result
+        assert "invalid_report: test reporter basename" in result
+        assert "`[echelon:UT-SCENE-002]` (unit)" in result
+        assert "exactly one physical test identity" in result
+        assert "Do not edit the coverage map" in result
 
     def test_verify_owned_artifact_includes_playwright_results(self) -> None:
         from harness.ralph import _is_verify_owned_artifact

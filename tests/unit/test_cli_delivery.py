@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -54,6 +55,60 @@ def _artifact_only_provider_config() -> HarnessConfig:
             model="local-model",
         ),
     )
+
+
+@pytest.mark.unit
+def test_delivery_stack_contract_refreshes_stale_runtime_before_resolving_coverage_observers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An upgraded CLI must not let a stale managed runtime suppress required gates."""
+    from echelon import cli
+
+    workspace = tmp_path / "workspace"
+    target = workspace / "sources" / "game"
+    target.mkdir(parents=True)
+    config_path = workspace / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        "stacks:\n"
+        "  selected:\n"
+        "    - browser-3d-game\n"
+        "  target_archetypes:\n"
+        "    - browser_3d_game\n",
+        encoding="utf-8",
+    )
+
+    current_runtime = Path(__file__).resolve().parents[2] / "runtime"
+    deployed_runtime = workspace / ".echelon" / "runtime"
+    shutil.copytree(current_runtime, deployed_runtime)
+    stale_stack = deployed_runtime / "stacks" / "browser-3d-game" / "stack.yml"
+    stale_text = stale_stack.read_text(encoding="utf-8")
+    stale_stack.write_text(
+        stale_text.replace('schema_version: "1.3"', 'schema_version: "1.2"')
+        .replace(
+            stale_text[stale_text.index("coverage_observers:") : stale_text.index("detection:")],
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    def deploy_current_bundle(project_root: Path) -> object:
+        shutil.rmtree(project_root / ".echelon" / "runtime")
+        shutil.copytree(current_runtime, project_root / ".echelon" / "runtime")
+        return object()
+
+    monkeypatch.setattr(
+        "echelon.prosaic_packages.install_prosaic_bundle",
+        deploy_current_bundle,
+    )
+
+    resolved = cli._resolve_delivery_stack_contract(workspace, target)
+
+    assert {item.observer.id for item in resolved.coverage_observers} == {
+        "playwright-e2e",
+        "vitest-core",
+    }
 
 
 def _use_artifact_only_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

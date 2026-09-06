@@ -1178,6 +1178,72 @@ def _delivery_provisioning_blockers(
     return blockers
 
 
+def _refresh_workspace_runtime_for_delivery(project_root: Path) -> None:
+    """Deploy the installed Echelon-owned bundle before a delivery reads it.
+
+    ``.echelon/runtime`` and ``.echelon/prosaic`` are generated, ignored
+    workspace state.  Delivery must not silently run an older managed bundle
+    after the CLI has been upgraded, because that can remove new stack-owned
+    verification requirements from the resolved contract.
+    """
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    try:
+        install_prosaic_bundle(project_root)
+    except ProsaicBundleInstallError as exc:
+        print(
+            "✗ Could not refresh Echelon's managed runtime before delivery.\n"
+            f"  Workspace: {project_root}\n"
+            f"  Error: {exc}\n"
+            "  Fix: rerun the Echelon installer, then retry this delivery command.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
+def _resolve_delivery_stack_contract(project_root: Path, target_root: Path):
+    """Resolve the current installed stack contract for one delivery target."""
+    from harness.config import get_full_resolved_config
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    _refresh_workspace_runtime_for_delivery(project_root)
+    target_config_dir = target_root / ".echelon"
+    # A configured source owns its stack selection. Targets without their own
+    # config keep the historical workspace-root selection for compatibility.
+    target_has_source_config = target_root != project_root and any(
+        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
+    )
+    stack_config_root = target_root if target_has_source_config else project_root
+    resolved_config = get_full_resolved_config(stack_config_root)
+    stacks = resolved_config.get("stacks") or {}
+    if not isinstance(stacks, Mapping):
+        raise StackSelectionError("stacks must be a mapping")
+    selected = stacks.get("selected") or []
+    target_archetypes = stacks.get("target_archetypes") or []
+    if not isinstance(selected, list) or not all(
+        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
+    ):
+        raise StackSelectionError(
+            "stacks.selected must be a list of non-empty stack IDs"
+        )
+    if not isinstance(target_archetypes, list) or not all(
+        isinstance(archetype, str) and archetype.strip()
+        for archetype in target_archetypes
+    ):
+        raise StackSelectionError(
+            "stacks.target_archetypes must be a list of non-empty archetype IDs"
+        )
+    return resolve_stacks(
+        selected,
+        _load_stack_definitions_for_project(project_root),
+        target_archetypes=set(target_archetypes) or None,
+    )
+
+
 def _resolve_delivery_verification_services(
     config: object,
     *,
@@ -1185,28 +1251,7 @@ def _resolve_delivery_verification_services(
     target_root: Path,
 ) -> None:
     """Attach target-applicable sandbox services from the stack contract."""
-    from harness.config import get_full_resolved_config
-
-    target_config_dir = target_root.resolve() / ".echelon"
-    stack_config_root = (
-        target_root.resolve()
-        if target_root.resolve() != project_root.resolve()
-        and any((target_config_dir / name).is_file() for name in ("config.yml", "local.yml"))
-        else project_root.resolve()
-    )
-    resolved_config = get_full_resolved_config(stack_config_root)
-    stacks = resolved_config.get("stacks") or {}
-    if not isinstance(stacks, Mapping):
-        raise StackSelectionError("stacks must be a mapping")
-    selected = stacks.get("selected") or []
-    archetypes = stacks.get("target_archetypes") or []
-    if not isinstance(selected, list) or not isinstance(archetypes, list):
-        raise StackSelectionError("stack selection must use list values")
-    resolved = resolve_stacks(
-        [str(value) for value in selected],
-        _load_stack_definitions_for_project(project_root),
-        target_archetypes={str(value) for value in archetypes} or None,
-    )
+    resolved = _resolve_delivery_stack_contract(project_root, target_root)
     config.verification_services = list(resolved.services)
     config.resolved_stacks = resolved
     config.resolved_runnability = resolved.runnability
@@ -2351,16 +2396,16 @@ def _cmd_harness_run(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
-    if config.verification.execution == "host":
-        _block_if_delivery_provisioning_incomplete(
-            project_root=config_root,
-            target_root=Path(config.target_repo),
-        )
     _resolve_delivery_verification_services(
         config,
         project_root=config_root,
         target_root=Path(config.target_repo),
     )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2916,16 +2961,16 @@ def _cmd_harness_resume(
             spec_id=spec_id,
         )
 
-    if config.verification.execution == "host":
-        _block_if_delivery_provisioning_incomplete(
-            project_root=config_root,
-            target_root=Path(config.target_repo),
-        )
     _resolve_delivery_verification_services(
         config,
         project_root=config_root,
         target_root=Path(config.target_repo),
     )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.

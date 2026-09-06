@@ -87,6 +87,25 @@ def test_parse_vitest_json_accepts_null_failure_messages() -> None:
 
 
 @pytest.mark.unit
+def test_parse_vitest_json_normalizes_declared_sandbox_worktree_paths() -> None:
+    executions = parse_vitest_json(
+        _report(
+            {
+                "name": "/workspace/tests/inventory.test.ts",
+                "assertionResults": [
+                    _assertion("saves inventory [echelon:UT-001]", "passed")
+                ],
+            }
+        ),
+        observer_id="vitest",
+        test_type="unit",
+        sandbox_worktree_mount="/workspace",
+    )
+
+    assert executions[0].file == "tests/inventory.test.ts"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("stdout", "message"),
     [

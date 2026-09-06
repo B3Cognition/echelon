@@ -20,9 +20,16 @@ from harness.verification_plan import SandboxServiceSpec, materialize_services
 class _CoverageProvider(SandboxProvider):
     """Records sandbox-only observer execution without a host executor."""
 
-    def __init__(self, worktree: Path, *, mutate_candidate: bool = False) -> None:
+    def __init__(
+        self,
+        worktree: Path,
+        *,
+        mutate_candidate: bool = False,
+        absolute_report_paths: bool = False,
+    ) -> None:
         self.worktree = worktree
         self.mutate_candidate = mutate_candidate
+        self.absolute_report_paths = absolute_report_paths
         self.created_session_ids: list[str] = []
         self.destroyed_session_ids: list[str] = []
         self.service_environments: list[dict[str, str]] = []
@@ -60,7 +67,11 @@ class _CoverageProvider(SandboxProvider):
                 {
                     "testResults": [
                         {
-                            "name": "tests/feature.test.ts",
+                            "name": (
+                                "/workspace/tests/feature.test.ts"
+                                if self.absolute_report_paths
+                                else "tests/feature.test.ts"
+                            ),
                             "projectName": "default",
                             "assertionResults": [
                                 {
@@ -216,6 +227,46 @@ def test_isolated_observer_uses_fresh_sandbox_services_and_never_host(
             "attempt-0001-vitest.json"
         )
     )
+
+
+def test_isolated_observer_normalizes_report_paths_under_its_sandbox_mount(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "feature.test.ts").write_text(
+        'it("persists checkpoint [echelon:UT-PERSIST-001]", () => {});\n',
+        encoding="utf-8",
+    )
+    provider = _CoverageProvider(tmp_path, absolute_report_paths=True)
+    standard_handle = provider.create(_sandbox_spec(tmp_path))
+    standard_services = materialize_services(
+        tuple(_config().verification_services), session_id=standard_handle.session_id
+    )
+    provider.start_services(standard_handle, standard_services.services)
+    fingerprint = product_evidence_fingerprint(tmp_path)
+    evidence_dir = tmp_path.parent / f"{tmp_path.name}-evidence"
+
+    bundle = run_coverage_observers(
+        provider=provider,
+        sandbox_spec_factory=_sandbox_spec,
+        worktree=tmp_path,
+        config=_config(),
+        observers=(_observer(mode="isolated"),),
+        standard_receipt=_standard_receipt(evidence_dir, fingerprint),
+        candidate_commit="a" * 40,
+        candidate_fingerprint=fingerprint,
+        evidence_dir=evidence_dir,
+        spec_id="spec-001",
+        target_id="game",
+        strategy_id="default",
+        build_id="build-001",
+        sensitive_environment={},
+    )
+
+    assert bundle.observer_runs[0].status == "passed"
+    assert bundle.observer_runs[0].executions[0].file == "tests/feature.test.ts"
 
 
 def test_captured_observer_reuses_passing_standard_receipt_without_session(

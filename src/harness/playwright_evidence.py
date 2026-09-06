@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Iterable
 
+from harness.test_report_paths import TestReportPathError, normalize_test_report_path
 from harness.test_execution_evidence import ObservedTestExecution
 
 
@@ -94,6 +94,7 @@ def parse_playwright_json_executions(
     *,
     observer_id: str,
     test_type: str,
+    sandbox_worktree_mount: str | None = None,
 ) -> tuple[ObservedTestExecution, ...]:
     """Convert Playwright JSON to source-identity-preserving executions.
 
@@ -114,7 +115,10 @@ def parse_playwright_json_executions(
         title = str(spec.get("title") or "").strip()
         if not title:
             raise PlaywrightEvidenceError("Playwright spec title must be non-empty")
-        file = _target_relative_file(spec.get("file"))
+        file = _target_relative_file(
+            spec.get("file"),
+            sandbox_worktree_mount=sandbox_worktree_mount,
+        )
         tests = spec.get("tests", [])
         if not isinstance(tests, list):
             raise PlaywrightEvidenceError("Playwright spec tests must be an array")
@@ -195,15 +199,17 @@ def _test_status(test: dict[str, Any]) -> tuple[str, str]:
     return "failed", message[:1000]
 
 
-def _target_relative_file(value: Any) -> str:
-    file = str(value or "").strip()
-    path = Path(file)
-    if (
-        not file
-        or path.is_absolute()
-        or ".." in path.parts
-        or "." in path.parts
-        or "\\" in file
-    ):
-        raise PlaywrightEvidenceError("Playwright spec file must be target-relative")
-    return file
+def _target_relative_file(
+    value: Any,
+    *,
+    sandbox_worktree_mount: str | None,
+) -> str:
+    try:
+        return normalize_test_report_path(
+            value,
+            sandbox_worktree_mount=sandbox_worktree_mount,
+        )
+    except TestReportPathError as exc:
+        raise PlaywrightEvidenceError(
+            "Playwright spec file must be target-relative"
+        ) from exc

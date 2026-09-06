@@ -600,6 +600,22 @@ def _source_binding(
             or "\\" in identity.file
         ):
             return "test file must be target-relative", ""
+        if len(relative.parts) == 1:
+            matches = _bare_report_source_matches(root, relative.name, identity.title)
+            if not matches:
+                return (
+                    "test reporter basename did not identify a tagged source file "
+                    "in the candidate worktree",
+                    "",
+                )
+            if len(matches) != 1:
+                return (
+                    "test reporter basename maps to multiple tagged source files "
+                    "in the candidate worktree",
+                    "",
+                )
+            _, content = matches[0]
+            return "", hashlib.sha256(content).hexdigest()
         candidate = root
         for part in relative.parts:
             candidate = candidate / part
@@ -617,6 +633,51 @@ def _source_binding(
         return "", hashlib.sha256(content).hexdigest()
     except (OSError, UnicodeDecodeError, RuntimeError) as exc:
         return _safe_diagnostic(str(exc), sensitive_environment), ""
+
+
+def _bare_report_source_matches(
+    root: Path,
+    filename: str,
+    title: str,
+) -> list[tuple[Path, bytes]]:
+    """Find exact tagged sources for an observer that reports only a basename.
+
+    Playwright's JSON reporter can omit a test file's directory.  Resolve that
+    incomplete identity only inside the candidate worktree and only when its
+    tagged title identifies one regular, non-symlinked source file.  This
+    preserves source-bound evidence without trusting a reporter path to reach
+    outside the candidate.
+    """
+    matches: list[tuple[Path, bytes]] = []
+    excluded_directories = {
+        ".git",
+        "node_modules",
+        ".pnpm-store",
+        "coverage",
+        "dist",
+        "test-results",
+    }
+    for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        directories[:] = [
+            name
+            for name in directories
+            if name not in excluded_directories and not (current_path / name).is_symlink()
+        ]
+        if filename not in files:
+            continue
+        candidate = current_path / filename
+        if candidate.is_symlink():
+            continue
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != root and root not in resolved.parents:
+            continue
+        if not resolved.is_file():
+            continue
+        content = resolved.read_bytes()
+        if title in content.decode("utf-8"):
+            matches.append((resolved, content))
+    return matches
 
 
 def _observe_test_cases(

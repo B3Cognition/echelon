@@ -140,6 +140,40 @@ def test_parse_playwright_json_executions_rejects_absolute_test_files() -> None:
         )
 
 
+@pytest.mark.unit
+def test_parse_playwright_json_executions_normalizes_declared_sandbox_worktree_paths() -> None:
+    report = json.dumps(
+        {
+            "suites": [
+                {
+                    "specs": [
+                        {
+                            "title": "journey [echelon:E2E-001]",
+                            "file": "/workspace/tests/journey.spec.ts",
+                            "tests": [
+                                {
+                                    "projectName": "chromium",
+                                    "expectedStatus": "passed",
+                                    "results": [{"status": "passed"}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+
+    executions = parse_playwright_json_executions(
+        report,
+        observer_id="playwright",
+        test_type="e2e",
+        sandbox_worktree_mount="/workspace",
+    )
+
+    assert executions[0].file == "tests/journey.spec.ts"
+
+
 @pytest.mark.parametrize("stdout", ["", "not json", "[]", '{"suites":"wrong"}'])
 def test_parse_playwright_json_rejects_absent_or_malformed_reports(stdout: str) -> None:
     with pytest.raises(PlaywrightEvidenceError):

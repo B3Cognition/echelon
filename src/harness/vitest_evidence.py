@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
+from harness.test_report_paths import TestReportPathError, normalize_test_report_path
 from harness.test_execution_evidence import ObservedTestExecution
 
 
@@ -28,6 +28,7 @@ def parse_vitest_json(
     *,
     observer_id: str,
     test_type: str,
+    sandbox_worktree_mount: str | None = None,
 ) -> tuple[ObservedTestExecution, ...]:
     """Parse a Jest-compatible Vitest JSON report into terminal test results."""
     if not isinstance(stdout, str) or not stdout.strip():
@@ -44,7 +45,11 @@ def parse_vitest_json(
         result_path = f"testResults[{result_index}]"
         if not isinstance(result, dict):
             raise VitestEvidenceError(f"{result_path} must be an object")
-        file = _target_relative_file(result.get("name"), result_path)
+        file = _target_relative_file(
+            result.get("name"),
+            result_path,
+            sandbox_worktree_mount=sandbox_worktree_mount,
+        )
         assertions = result.get("assertionResults")
         if not isinstance(assertions, list):
             raise VitestEvidenceError(f"{result_path}.assertionResults must be an array")
@@ -78,12 +83,21 @@ def parse_vitest_json(
     return tuple(executions)
 
 
-def _target_relative_file(value: Any, field_path: str) -> str:
-    file = _non_empty_string(value)
-    path = Path(file)
-    if path.is_absolute() or ".." in path.parts or "." in path.parts or "\\" in file:
-        raise VitestEvidenceError(f"{field_path}.name must be target-relative")
-    return file
+def _target_relative_file(
+    value: Any,
+    field_path: str,
+    *,
+    sandbox_worktree_mount: str | None,
+) -> str:
+    try:
+        return normalize_test_report_path(
+            value,
+            sandbox_worktree_mount=sandbox_worktree_mount,
+        )
+    except TestReportPathError as exc:
+        raise VitestEvidenceError(
+            f"{field_path}.name must be target-relative"
+        ) from exc
 
 
 def _non_empty_string(value: Any, *, default: str | None = None) -> str:

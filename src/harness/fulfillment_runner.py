@@ -1241,7 +1241,11 @@ def _implementation_input_paths(worktree: Path) -> list[Path]:
         if not root.exists():
             continue
         for path in root.rglob("*.json"):
-            if path.is_file() and not _is_ignored_implementation_path(path):
+            if (
+                path.is_file()
+                and not path.name.startswith(".")
+                and not _is_ignored_implementation_path(path)
+            ):
                 paths.add(path)
     for filename in IMPLEMENTATION_INPUT_FILES:
         path = worktree / filename
