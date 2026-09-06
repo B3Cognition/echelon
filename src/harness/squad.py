@@ -5742,7 +5742,7 @@ class SquadController:
                 or not policy.allow_free_text
                 or policy.options
                 or "phase1-why2" not in policy.allowed_phase_ids
-                or "phase1-what" not in policy.allowed_target_phases
+                or "phase1-why2" not in policy.allowed_target_phases
             ):
                 return dict(state)
             revision = state.get("state_revision")
