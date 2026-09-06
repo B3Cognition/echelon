@@ -3734,10 +3734,29 @@ def _v2_automatic_decision_is_registered(
     graph: object | None = None,
 ) -> bool:
     """Reconstruct intrinsic v2 automatic eligibility from registered policy."""
-    if decision.get("schema_version") != 2 or project_root is None:
+    return (
+        decision.get("schema_version") == 2
+        and _decision_automatic_eligibility_under_current_policy(
+            decision,
+            project_root=project_root,
+            graph=graph,
+        )
+    )
+
+
+def _decision_automatic_eligibility_under_current_policy(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    """Recalculate registered v2/v3 recommendation eligibility for recovery."""
+    if decision.get("schema_version") not in {2, 3} or project_root is None:
         return False
     try:
-        from harness.human_input import v2_automatic_decision_is_registered
+        from harness.human_input import (
+            decision_recommendation_is_automatic_under_policy,
+        )
 
         if graph is None:
             from harness.phase_graph import load_workspace_phase_graph
@@ -3749,7 +3768,10 @@ def _v2_automatic_decision_is_registered(
             str(decision.get("producer_id") or ""),
             str(decision.get("reason_code") or ""),
         )
-        return v2_automatic_decision_is_registered(decision, policy)
+        return decision_recommendation_is_automatic_under_policy(
+            decision,
+            policy,
+        )
     except (AttributeError, KeyError, OSError, TypeError, ValueError):
         return False
 
@@ -3760,9 +3782,12 @@ def _automatic_decision_is_eligible(
     project_root: Path | None,
     graph: object | None = None,
 ) -> bool:
-    if decision.get("schema_version") == 3:
-        return decision.get("automatic_eligible") is True
-    return _v2_automatic_decision_is_registered(
+    if (
+        decision.get("schema_version") == 3
+        and decision.get("automatic_eligible") is True
+    ):
+        return True
+    return _decision_automatic_eligibility_under_current_policy(
         decision,
         project_root=project_root,
         graph=graph,
@@ -3835,6 +3860,28 @@ def _versioned_decision_recovery_action(
             run_state,
             decision,
             project_root=project_root,
+        )
+    if (
+        status == "awaiting_human"
+        and decision.get("schema_version") == 3
+        and decision.get("automatic_eligible") is False
+        and source_kind == "provider_escalation"
+        and decision.get("autonomy_mode") == "banzai"
+        and run_state.get("autonomy_mode") == "banzai"
+        and _automatic_decision_is_eligible(
+            decision,
+            project_root=project_root,
+        )
+    ):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase=str(decision["source_phase"]),
+            command="echelon spec continue",
+            note=(
+                "the current Banzai policy accepts this sealed product "
+                "recommendation as an autonomous default"
+            ),
         )
     if (
         status != "failed"
@@ -4057,8 +4104,19 @@ def _decision_audit_fields(
         recommended_answer = str(
             decision.get("recommended_answer") or ""
         ).strip()
+        evidence = decision.get("recommendation_evidence")
+        controller_owned_banzai_default = (
+            recommended_option is None
+            and not recommended_answer
+            and isinstance(evidence, list)
+            and len(evidence) == 1
+            and isinstance(evidence[0], Mapping)
+            and evidence[0].get("kind") == "banzai_default_candidate"
+        )
         recommendation_target = (
-            _decision_option_display(decision, recommended_option)
+            "Controller-owned Banzai default"
+            if controller_owned_banzai_default
+            else _decision_option_display(decision, recommended_option)
             if recommended_option is not None
             else recommended_answer or "(human action only)"
         )

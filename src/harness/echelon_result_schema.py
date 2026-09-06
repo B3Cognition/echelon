@@ -580,9 +580,15 @@ def validate_evidence_routing_state_updates(
                     f"{prefix}.{field} must be a non-empty string"
                 )
         route = finding.get("route")
-        if route not in {"spec_repair", "evidence_resolution", "human_decision"}:
+        if route not in {
+            "spec_repair",
+            "evidence_resolution",
+            "human_decision",
+            "autonomous_default_candidate",
+        }:
             raise EchelonResultValidationError(
-                f"{prefix}.route must be spec_repair, evidence_resolution, or human_decision"
+                f"{prefix}.route must be spec_repair, evidence_resolution, "
+                "human_decision, or autonomous_default_candidate"
             )
         has_evidence_route = has_evidence_route or route == "evidence_resolution"
 

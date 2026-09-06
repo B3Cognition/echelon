@@ -310,7 +310,8 @@ class TestPhaseGraph:
             ),
             ("provider_escalation", "phase1-why2", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
-                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                frozenset({"phase1-why2"}),
+                frozenset({"phase1-why2", "phase1-what"}),
                 ("user_message", "phase", "quality_scores"),
                 ("{spec_dir}/spec.md", "{spec_dir}/issues.md"), (),
             ),
@@ -653,6 +654,14 @@ class TestPhaseGraph:
         ]
         assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
         assert why2.evidence_routing == "finding_routes"
+
+    def test_why2_declares_the_controller_owned_banzai_default_route(self):
+        why2 = self.graph.get("phase1-why2")
+        policy = why2.human_input_policies[0]
+
+        assert "autonomous_default_candidate" in why2.allowed_state_updates
+        assert why2.state_update_types["autonomous_default_candidate"] == "object"
+        assert "phase1-what" in policy.allowed_target_phases
 
     def test_why2_declares_proportional_quality_policy_as_controller_owned(self):
         workflow = yaml.safe_load(PROSAIC_RUNTIME_DEFINITION.read_text(encoding="utf-8"))

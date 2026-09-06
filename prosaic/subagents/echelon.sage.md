@@ -327,10 +327,19 @@ This is a controller contract, not optional explanatory prose:
 - Mark `Banzai eligible: yes` only when that suggested option is fully supported
   by the cited evidence and selecting it cannot set product policy, alter scope,
   weaken a quality gate, or waive a critical requirement. Otherwise mark `no`.
+  For a WHY2 bounded product calibration with no evidence-backed answer, do not
+  mislabel an invented answer as evidence-backed. Instead use the typed
+  `autonomous_default_candidate` protocol in `workflow/phases/phase1-why2.md`.
+  That protocol proposes alternatives and constraints for controller review; it
+  does not permit SAGE to choose a value or grant authority.
 - Mark `Decision required: No user decision — agent repair` for a repair the
   responsible agent can perform. Do not escalate that issue to a human.
-- Record values that cannot be inferred from the declared sources. They require
-  an explicit user decision and must be `Banzai eligible: no`.
+- Record values that cannot be inferred from the declared sources. They normally
+  require an explicit user decision and must be `Banzai eligible: no`. The only
+  exception is a bounded WHY2 product calibration expressed through the typed
+  controller-reviewed `autonomous_default_candidate` protocol; it may never
+  represent a fact, external prerequisite, security/privacy/legal policy, safety
+  boundary, quality waiver, scope choice, or architecture commitment.
 
 Never mark a suggestion Banzai eligible merely because it is conventional,
 plausible, or convenient. Banzai may copy only an explicitly eligible option;
@@ -341,9 +350,11 @@ return `verdict: STOP_AND_ASK` with `status: blocked`,
 `blocked_reason: human_clarification_required`, and one concrete
 `escalation_question`. Include `escalation_recommended_answer` and
 `escalation_risk_level: low | medium | high | critical` together only when the
-recommendation is evidence-backed; otherwise omit both. Never attach a
-question to `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
-clarification writes and state cleanup.
+recommendation is evidence-backed; otherwise omit both. For a bounded WHY2
+product calibration, include the typed `autonomous_default_candidate` envelope
+instead of inventing a recommendation. Never attach a question to `FAIL`,
+`BLOCKED`, or `ESCALATE`. The controller owns clarification writes and state
+cleanup.
 
 ---
 

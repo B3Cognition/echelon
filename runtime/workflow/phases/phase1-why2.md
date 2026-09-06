@@ -129,6 +129,11 @@ Classify each failed finding before choosing a repair route:
   Return `FAIL` with the exact state updates below.
 - `human_decision`: the answer requires the user's policy, scope, or authority;
   use the User-Gated Critical Issues protocol below.
+- `autonomous_default_candidate`: a bounded product calibration has no
+  evidence-backed answer, but a Banzai run may select one explicitly listed
+  default under controller-owned authority. It is never a route for an external
+  fact, credentials, security/privacy/legal policy, safety boundary, quality
+  waiver, or scope/architecture commitment.
 
 For `evidence_resolution`, return a machine-readable request. Do not merely
 write “route to INVESTIGATOR” in prose:
@@ -150,8 +155,8 @@ echelon_result:
 Every WHY2 result MUST also classify its findings in the control plane. For a
 passing review return `evidence_resolution_status: not_required` with an empty
 list. For a failing review, include one entry for every blocking finding. The
-`route` value must be exactly `spec_repair`, `evidence_resolution`, or
-`human_decision`:
+`route` value must be exactly `spec_repair`, `evidence_resolution`,
+`human_decision`, or `autonomous_default_candidate`:
 
 ```yaml
 echelon_result:
@@ -173,6 +178,39 @@ not decide product policy, scope, requirements, security posture, or a quality
 waiver. Banzai COMMANDER may select only that exact option; all other choices
 remain human decisions.
 
+## Banzai Default Candidate
+
+Only when the unresolved value is a bounded product calibration, return the
+ordinary `STOP_AND_ASK` question with no
+`escalation_recommended_answer` or `escalation_risk_level`, and add exactly one
+candidate envelope. This is a proposal for controller review, not authority to
+apply a value:
+
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<one concrete product calibration decision>"
+    autonomous_default_candidate:
+      issue_id: "ISS-001"
+      authority_capability: banzai_default
+      question: "<must exactly equal escalation_question>"
+      affected_requirements: [FR-001]
+      alternatives:
+        - "<first exact selectable default>"
+        - "<second exact selectable default>"
+      constraints:
+        - "<invariant the selected default must preserve>"
+      source_references: ["spec.md#FR-001", "issues.md#ISS-001"]
+```
+
+Use this only in WHY2, with two to eight exact alternatives and at least one
+affected requirement, constraint, and source reference. Never use an elevated
+authority capability. The harness accepts only `banzai_default`; any future
+`super-banzai` capability is owner-granted and outside this agent contract.
+
 If any finding has `route: evidence_resolution`,
 `evidence_resolution_status` MUST be `pending` and a complete
 `evidence_requests` object is required. If none do, status MUST be
@@ -191,6 +229,10 @@ Return a question only when all of these are true:
 1. No squad agent can resolve the issue.
 2. The answer requires information only the user holds.
 3. Proceeding would require an arbitrary decision that binds downstream work.
+
+A bounded `autonomous_default_candidate` is the exception: it is a selectable
+product calibration under the controller's explicit Banzai authority, not a
+claim that the product reference established a fact.
 
 Route squad-solvable issues back to WHAT without user escalation.
 
