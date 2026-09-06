@@ -305,7 +305,9 @@ def test_preparation_recognizes_macro_free_ooxml_with_misleading_suffix(
             "[Content_Types].xml",
             (
                 b'<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
-                b'content-types"><Override PartName="/xl/workbook.xml" '
+                b'content-types"><Default Extension="xlsb" ContentType="application/'
+                b'vnd.ms-excel.sheet.binary.macroEnabled.main"/><Override '
+                b'PartName="/xl/workbook.xml" '
                 b'ContentType="application/vnd.openxmlformats-officedocument.'
                 b'spreadsheetml.sheet.main+xml"/></Types>'
             ),

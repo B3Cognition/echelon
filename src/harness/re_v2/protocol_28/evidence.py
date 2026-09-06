@@ -8,6 +8,7 @@ import io
 from pathlib import PurePosixPath
 from typing import ClassVar, Literal, TypeVar
 import zipfile
+from xml.etree import ElementTree
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
@@ -106,11 +107,21 @@ def _is_macro_free_data_only_ooxml_spreadsheet(payload: bytes) -> bool:
             ):
                 return False
             content_types = archive.read(names[lowered.index("[content_types].xml")])
-            if (
-                len(content_types) > _OOXML_MAX_INSPECTED_XML_BYTES
-                or _OOXML_SPREADSHEET_MAIN_TYPE not in content_types.lower()
-                or b"macroenabled" in content_types.lower()
-            ):
+            if len(content_types) > _OOXML_MAX_INSPECTED_XML_BYTES:
+                return False
+            root = ElementTree.fromstring(content_types)
+            overrides: dict[str, str] = {}
+            for node in root:
+                if node.tag.rsplit("}", 1)[-1] != "Override":
+                    continue
+                part_name = node.attrib.get("PartName", "").lower()
+                content_type = node.attrib.get("ContentType", "").lower()
+                if not part_name or not content_type or part_name in overrides:
+                    return False
+                overrides[part_name] = content_type
+            if overrides.get("/xl/workbook.xml") != (
+                _OOXML_SPREADSHEET_MAIN_TYPE.decode("ascii")
+            ) or any("macroenabled" in item for item in overrides.values()):
                 return False
             for entry, name in zip(entries, lowered, strict=True):
                 inspect = (
@@ -132,7 +143,14 @@ def _is_macro_free_data_only_ooxml_spreadsheet(payload: bytes) -> bool:
                 ):
                     return False
             return True
-    except (KeyError, OSError, ValueError, zipfile.BadZipFile, zipfile.LargeZipFile):
+    except (
+        ElementTree.ParseError,
+        KeyError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ):
         return False
 
 
