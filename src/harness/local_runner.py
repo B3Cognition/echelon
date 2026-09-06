@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -33,6 +32,7 @@ from harness.local_runner_engine import (
 )
 from harness.local_runner_evidence import (
     LocalRunnabilityAttestationInput,
+    local_runner_profile_digest,
     write_local_runnability_attestation,
 )
 from harness.local_runner_journal import (
@@ -404,7 +404,7 @@ class LocalRunnabilityRunner:
                         status="passed" if status == "passed" else "failed",
                         candidate=candidate,
                         sandbox_receipt_sha256=candidate.sandbox_receipt_sha256,
-                        runner_profile_digest=_profile_digest(candidate),
+                        runner_profile_digest=local_runner_profile_digest(candidate),
                         cleanup_complete=cleanup_complete,
                         redacted_logs=summary,
                         attempt_sequence=_next_attempt(root.parent / "evidence" / "local-runnability"),
@@ -847,11 +847,6 @@ def _remove_candidate_at_path(mirror_path: Path, path: Path) -> None:
     if pruned.returncode != 0:
         message = pruned.stderr.strip() or pruned.stdout.strip() or "Git worktree prune failed"
         raise LocalRunRecoveryRequired(message)
-
-
-def _profile_digest(candidate: EffectiveLocalCandidate) -> str:
-    payload = json.dumps(candidate.stack_snapshot, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256((candidate.stack_hash + "\0" + payload).encode("utf-8")).hexdigest()
 
 
 def _next_attempt(root: Path) -> int:

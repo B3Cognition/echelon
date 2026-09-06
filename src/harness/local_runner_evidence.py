@@ -98,7 +98,20 @@ def write_local_runnability_attestation(
     }
     digest = _digest(payload)
     payload["attestation_sha256"] = digest
-    _write_exclusive(path, payload)
+    markdown_path = path.with_suffix(".md")
+    markdown_written = False
+    try:
+        _write_exclusive_text(markdown_path, _render_markdown(payload))
+        markdown_written = True
+        _write_exclusive(path, payload)
+    except Exception:
+        if markdown_written:
+            try:
+                if markdown_path.is_file() and not markdown_path.is_symlink():
+                    markdown_path.unlink()
+            except OSError:
+                pass
+        raise
     return LocalRunnabilityAttestationRef(
         path=path,
         attestation_sha256=digest,
@@ -136,8 +149,6 @@ def validate_local_runnability_attestation(
     if not isinstance(details, dict):
         raise LocalRunnabilityEvidenceError("local attestation candidate is malformed")
     expected = {
-        "sandbox_candidate_commit": candidate.sandbox_candidate_commit,
-        "effective_candidate_commit": candidate.effective_candidate_commit,
         "product_fingerprint": candidate.product_fingerprint,
         "contract_hash": candidate.contract_hash,
         "stack_hash": candidate.stack_hash,
@@ -145,6 +156,10 @@ def validate_local_runnability_attestation(
     }
     if any(details.get(key) != value for key, value in expected.items()):
         raise LocalRunnabilityEvidenceError("local attestation candidate is stale")
+    if payload.get("sandbox_receipt_sha256") != candidate.sandbox_receipt_sha256:
+        raise LocalRunnabilityEvidenceError("local attestation sandbox receipt is stale")
+    if payload.get("runner_profile_digest") != local_runner_profile_digest(candidate):
+        raise LocalRunnabilityEvidenceError("local attestation runner profile is stale")
     cleanup_complete = payload.get("cleanup_complete")
     if type(cleanup_complete) is not bool:
         raise LocalRunnabilityEvidenceError("local attestation cleanup status is invalid")
@@ -225,10 +240,28 @@ def _validate_input(input: LocalRunnabilityAttestationInput) -> None:
     for value in (input.sandbox_receipt_sha256, input.runner_profile_digest):
         if not _SHA256.fullmatch(value):
             raise LocalRunnabilityEvidenceError("local attestation digest input is invalid")
+    if input.sandbox_receipt_sha256 != input.candidate.sandbox_receipt_sha256:
+        raise LocalRunnabilityEvidenceError("local attestation sandbox receipt input is stale")
+    if input.runner_profile_digest != local_runner_profile_digest(input.candidate):
+        raise LocalRunnabilityEvidenceError("local attestation runner profile input is stale")
+
+
+def local_runner_profile_digest(candidate: EffectiveLocalCandidate) -> str:
+    """Digest the frozen stack snapshot that owns the local runner profile."""
+    snapshot = json.dumps(candidate.stack_snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256((candidate.stack_hash + "\0" + snapshot).encode("utf-8")).hexdigest()
 
 
 def _write_exclusive(path: Path, payload: Mapping[str, object]) -> None:
     encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    _write_exclusive_bytes(path, encoded)
+
+
+def _write_exclusive_text(path: Path, text: str) -> None:
+    _write_exclusive_bytes(path, text.encode("utf-8"))
+
+
+def _write_exclusive_bytes(path: Path, encoded: bytes) -> None:
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as exc:
@@ -240,6 +273,31 @@ def _write_exclusive(path: Path, payload: Mapping[str, object]) -> None:
         raise LocalRunnabilityEvidenceError("could not write local attestation") from exc
     finally:
         os.close(descriptor)
+
+
+def _render_markdown(payload: Mapping[str, object]) -> str:
+    candidate = payload.get("candidate")
+    details = candidate if isinstance(candidate, Mapping) else {}
+    lines = [
+        "# Echelon local verification",
+        "",
+        f"- Status: `{payload.get('status')}`",
+        f"- Local run: `{payload.get('local_run_id')}`",
+        f"- Cleanup complete: `{payload.get('cleanup_complete')}`",
+        f"- Product fingerprint: `{details.get('product_fingerprint', '')}`",
+        f"- Contract hash: `{details.get('contract_hash', '')}`",
+        f"- Stack hash: `{details.get('stack_hash', '')}`",
+        f"- Observer plan hash: `{details.get('observer_plan_hash', '')}`",
+        f"- Attestation SHA-256: `{payload.get('attestation_sha256', '')}`",
+        "",
+        "## Redacted runner summary",
+        "",
+        "```text",
+        str(payload.get("logs") or ""),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _digest(value: Mapping[str, object]) -> str:
