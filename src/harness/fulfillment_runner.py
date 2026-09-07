@@ -1586,6 +1586,12 @@ def _exec_verify_spec_prompt(
     """Run fulfillment with narrowly scoped access to external artifacts."""
     from harness.llm_provider import AICodingCliProvider
 
+    topology_env = {
+        "ECHELON_WORKSPACE_ROOT": str(policy.workspace_root.resolve()),
+        "ECHELON_SOURCE_ROOT": str(Path(worktree_path).resolve()),
+        "ECHELON_SOURCE_ID": Path(worktree_path).resolve().name or ".",
+    }
+
     if not isinstance(prompt_executor, AICodingCliProvider):
         return prompt_executor.exec_prompt(worktree_path, prompt)
 
@@ -1611,6 +1617,7 @@ def _exec_verify_spec_prompt(
     result = prompt_executor.run_prompt_result(
         worktree_path,
         prompt,
+        extra_env=topology_env,
         request_metadata={
             "prompt_metadata": {
                 "tool_read_roots": read_roots,
