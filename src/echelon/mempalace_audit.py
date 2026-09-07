@@ -417,7 +417,9 @@ def _belongs_to_evidence_memory(metadata: dict[str, Any]) -> bool:
     """Keep evidence-miner drawers out of the requirement-memory audit domain."""
     requirement_id = metadata.get("requirement_id")
     artifact_kind = metadata.get("artifact_kind")
-    return metadata.get("scope") == "spec-evidence" and artifact_kind == "spec-evidence" or (
+    return (
+        metadata.get("scope") == "spec-evidence" and artifact_kind == "spec-evidence"
+    ) or (
         isinstance(requirement_id, str)
         and requirement_id.startswith("EVID-")
         and isinstance(artifact_kind, str)
