@@ -49,8 +49,10 @@ class SpecMemoryAuditReport:
     wrong_wing: list[str] = field(default_factory=list)
     wrong_room: list[str] = field(default_factory=list)
     duplicate: list[str] = field(default_factory=list)
+    duplicate_canonical: list[str] = field(default_factory=list)
     non_canonical: list[str] = field(default_factory=list)
     lifecycle_excluded: list[str] = field(default_factory=list)
+    historical: list[str] = field(default_factory=list)
     retrieval_probe: dict[str, Any] | None = None
     recommendations: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -70,8 +72,10 @@ class SpecMemoryAuditReport:
             "wrong_wing": list(self.wrong_wing),
             "wrong_room": list(self.wrong_room),
             "duplicate": list(self.duplicate),
+            "duplicate_canonical": list(self.duplicate_canonical),
             "non_canonical": list(self.non_canonical),
             "lifecycle_excluded": list(self.lifecycle_excluded),
+            "historical": list(self.historical),
             "retrieval_probe": self.retrieval_probe,
             "recommendations": list(self.recommendations),
             "errors": list(self.errors),
@@ -307,11 +311,13 @@ def _status_for_failures(report: SpecMemoryAuditReport) -> str:
         report.wrong_room,
         report.non_canonical,
         report.lifecycle_excluded,
+        report.duplicate_canonical,
     )
     if any(fail_lists):
         return "fail"
     if (
         report.duplicate
+        or report.historical
         or report.recommendations
         or (report.retrieval_probe or {}).get("status") == "warn"
     ):
@@ -339,7 +345,7 @@ def _scan_spec_extras(
     adapter: object,
     snapshot: object,
     expected_rows: list[PlannedRequirementDrawer],
-) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
     try:
         raw = collection.get(  # type: ignore[attr-defined]
             where={"wing": getattr(adapter, "wing")},
@@ -347,7 +353,7 @@ def _scan_spec_extras(
             limit=MAX_AUDIT_SCAN_ROWS,
         )
     except TypeError:
-        return [], [], [], [], [], ["bounded_extra_scan_unsupported"]
+        return [], [], [], [], [], [], [], ["bounded_extra_scan_unsupported"]
     parsed = _as_collection_rows(raw)
     expected_ids = {row.drawer_id for row in expected_rows}
     expected_requirement_ids = {
@@ -355,8 +361,10 @@ def _scan_spec_extras(
     }
     stale: list[str] = []
     duplicate: list[str] = []
+    duplicate_canonical: list[str] = []
     non_canonical: list[str] = []
     lifecycle_excluded: list[str] = []
+    historical: list[str] = []
     errors: list[str] = []
     for drawer_id, reasons in parsed.malformed.items():
         if drawer_id in expected_ids:
@@ -378,12 +386,10 @@ def _scan_spec_extras(
             "lifecycle_status",
             metadata.get("status", "active"),
         )
-        if status in {"deprecated", "superseded", "removed", "delivered"}:
-            _append_unique(lifecycle_excluded, drawer_id)
-        if (
-            metadata.get("canonical") is not True
-            or artifact_path != getattr(snapshot, "source")
-        ):
+        if status in {"deprecated", "superseded", "removed", "delivered"} or metadata.get("canonical") is not True:
+            _append_unique(historical, drawer_id)
+            continue
+        if artifact_path != getattr(snapshot, "source"):
             _append_unique(non_canonical, drawer_id)
         if metadata.get("artifact_hash") != current_hash:
             _append_unique(stale, drawer_id)
@@ -395,6 +401,7 @@ def _scan_spec_extras(
             and drawer_id not in lifecycle_excluded
         ):
             _append_unique(duplicate, drawer_id)
+            _append_unique(duplicate_canonical, drawer_id)
         elif requirement_id not in expected_requirement_ids:
             _append_unique(stale, drawer_id)
     return (
@@ -402,6 +409,8 @@ def _scan_spec_extras(
         duplicate,
         non_canonical,
         lifecycle_excluded,
+        historical,
+        duplicate_canonical,
         errors,
         [],
     )
@@ -616,6 +625,8 @@ def audit_spec_memory(
             duplicate,
             extra_non_canonical,
             extra_lifecycle,
+            historical,
+            duplicate_canonical,
             scan_errors,
             scan_recommendations,
         ) = _scan_spec_extras(
@@ -653,8 +664,10 @@ def audit_spec_memory(
         wrong_wing=sorted(wrong_wing),
         wrong_room=sorted(wrong_room),
         duplicate=sorted(duplicate),
+        duplicate_canonical=sorted(duplicate_canonical),
         non_canonical=sorted(non_canonical),
         lifecycle_excluded=sorted(lifecycle_excluded),
+        historical=sorted(historical),
         retrieval_probe={"status": "skipped"} if not probe_retrieval else {"status": "warn", "checked": 0},
         recommendations=sorted(set(recommendations)),
         errors=sorted(set(errors)),
@@ -672,6 +685,7 @@ def render_audit_markdown(report: SpecMemoryAuditReport) -> str:
         f"- Missing: {len(report.missing)}",
         f"- Stale: {len(report.stale)}",
         f"- Wrong wing: {len(report.wrong_wing)}",
+        f"- Historical: {len(report.historical)}",
     ]
     return "\n".join(lines) + "\n"
 

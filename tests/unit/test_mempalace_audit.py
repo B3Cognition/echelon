@@ -493,7 +493,7 @@ def test_audit_reports_security_requirement_in_wrong_room(tmp_path: Path, monkey
 
 
 @pytest.mark.unit
-def test_audit_reports_duplicate_stale_and_run_local_extras(
+def test_audit_keeps_run_local_extra_as_nonblocking_history(
     tmp_path: Path, monkeypatch
 ) -> None:
     spec_dir = make_spec(tmp_path)
@@ -501,17 +501,12 @@ def test_audit_reports_duplicate_stale_and_run_local_extras(
 
     snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
     current = current_row(snapshot)
-    duplicate = current_row(snapshot)
-    stale = current_row(snapshot)
-    stale["metadata"]["requirement_id"] = "FR-REMOVED"
-    stale["metadata"]["artifact_hash"] = "sha256:" + "0" * 64
     run_local = current_row(snapshot)
     run_local["metadata"]["canonical"] = False
+    run_local["metadata"]["lifecycle_status"] = "superseded"
     run_local["metadata"]["artifact_path"] = "runs/run-1/specs/003-demo/spec.md"
     rows = {
         "drawer-fr-001": current,
-        "drawer-duplicate": duplicate,
-        "drawer-stale": stale,
         "drawer-run-local": run_local,
     }
     monkeypatch.setattr(
@@ -522,9 +517,32 @@ def test_audit_reports_duplicate_stale_and_run_local_extras(
 
     report = audit_spec_memory(tmp_path, spec_dir)
 
-    assert report.duplicate == ["drawer-duplicate"]
-    assert "drawer-stale" in report.stale
-    assert "drawer-run-local" in report.non_canonical
+    assert report.status == "warn"
+    assert report.historical == ["drawer-run-local"]
+    assert report.stale == []
+    assert report.non_canonical == []
+
+
+@pytest.mark.unit
+def test_audit_fails_for_active_canonical_duplicate(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    rows = {
+        "drawer-fr-001": current_row(snapshot),
+        "drawer-fr-001-duplicate": current_row(snapshot),
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.duplicate_canonical == ["drawer-fr-001-duplicate"]
 
 
 @pytest.mark.unit

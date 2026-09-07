@@ -28,6 +28,7 @@ class ArtifactMemoryAuditReport:
     non_canonical: list[str] = field(default_factory=list)
     lifecycle_excluded: list[str] = field(default_factory=list)
     duplicate: list[str] = field(default_factory=list)
+    historical: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
 
@@ -49,6 +50,7 @@ class ArtifactMemoryAuditReport:
             "non_canonical": list(self.non_canonical),
             "lifecycle_excluded": list(self.lifecycle_excluded),
             "duplicate": list(self.duplicate),
+            "historical": list(self.historical),
             "errors": list(self.errors),
             "recommendations": list(self.recommendations),
         }
@@ -75,6 +77,7 @@ def render_artifact_memory_audit_markdown(report: ArtifactMemoryAuditReport) -> 
         f"- Non-canonical: {len(report.non_canonical)}",
         f"- Lifecycle excluded: {len(report.lifecycle_excluded)}",
         f"- Duplicate: {len(report.duplicate)}",
+        f"- Historical: {len(report.historical)}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -139,6 +142,7 @@ def audit_artifact_memory(
     non_canonical: list[str] = []
     lifecycle_excluded: list[str] = []
     duplicate: list[str] = []
+    historical: list[str] = []
     errors: list[str] = []
 
     rows = parsed.rows
@@ -187,7 +191,7 @@ def audit_artifact_memory(
         present += 1
 
     try:
-        extra_stale, extra_non_canonical, extra_lifecycle, extra_duplicate = _scan_extras(
+        extra_stale, extra_non_canonical, extra_lifecycle, extra_duplicate, extra_historical = _scan_extras(
             collection=collection,
             adapter=adapter,
             expected_rows=expected_rows,
@@ -213,11 +217,13 @@ def audit_artifact_memory(
         _append_unique(lifecycle_excluded, value)
     for value in extra_duplicate:
         _append_unique(duplicate, value)
+    for value in extra_historical:
+        _append_unique(historical, value)
 
     status = "pass"
     if any((missing, stale, wrong_wing, wrong_room, non_canonical, lifecycle_excluded)):
         status = "fail"
-    elif duplicate or errors:
+    elif duplicate or historical or errors:
         status = "warn"
     return _report(
         label=label,
@@ -234,6 +240,7 @@ def audit_artifact_memory(
         non_canonical=non_canonical,
         lifecycle_excluded=lifecycle_excluded,
         duplicate=duplicate,
+        historical=historical,
         errors=errors,
     )
 
@@ -345,7 +352,7 @@ def _scan_extras(
     expected_rows: list[object],
     artifact_kinds: set[str],
     spec_id: str | None,
-) -> tuple[list[str], list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
     raw = collection.get(  # type: ignore[attr-defined]
         where={"wing": {"$eq": getattr(adapter, "wing", "")}},
         include=["documents", "metadatas"],
@@ -358,6 +365,7 @@ def _scan_extras(
     non_canonical: list[str] = []
     lifecycle_excluded: list[str] = []
     duplicate: list[str] = []
+    historical: list[str] = []
     for drawer_id, (_document, metadata) in parsed.rows.items():
         if drawer_id in expected_ids:
             continue
@@ -365,16 +373,15 @@ def _scan_extras(
             continue
         if spec_id is not None and metadata.get("spec_id") != spec_id:
             continue
-        if _is_lifecycle_excluded(metadata):
-            _append_unique(lifecycle_excluded, drawer_id)
-        if metadata.get("canonical") is not True:
-            _append_unique(non_canonical, drawer_id)
+        if _is_lifecycle_excluded(metadata) or metadata.get("canonical") is not True:
+            _append_unique(historical, drawer_id)
+            continue
         requirement_id = metadata.get("requirement_id")
         if requirement_id in expected_requirement_ids:
             _append_unique(duplicate, drawer_id)
         else:
             _append_unique(stale, drawer_id)
-    return stale, non_canonical, lifecycle_excluded, duplicate
+    return stale, non_canonical, lifecycle_excluded, duplicate, historical
 
 
 def _is_lifecycle_excluded(metadata: dict[str, Any]) -> bool:
@@ -407,6 +414,7 @@ def _report(
     non_canonical: Iterable[str] = (),
     lifecycle_excluded: Iterable[str] = (),
     duplicate: Iterable[str] = (),
+    historical: Iterable[str] = (),
     errors: Iterable[str] = (),
     recommendations: Iterable[str] = (),
 ) -> ArtifactMemoryAuditReport:
@@ -427,6 +435,7 @@ def _report(
         non_canonical=sorted(set(non_canonical)),
         lifecycle_excluded=sorted(set(lifecycle_excluded)),
         duplicate=sorted(set(duplicate)),
+        historical=sorted(set(historical)),
         errors=sorted(set(errors)),
         recommendations=sorted(set(recommendations)),
     )
