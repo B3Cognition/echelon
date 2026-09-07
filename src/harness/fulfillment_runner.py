@@ -273,6 +273,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
                 coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
@@ -545,6 +546,7 @@ class FulfillmentRunner:
                         spec_input_hash=spec_input_hash,
                         implementation_input_hash=implementation_input_hash,
                         verification_evidence_sha256=verification_evidence_sha256,
+                        verification_evidence=verification_evidence,
                         coverage_observation_sha256=coverage_observation_sha256,
                     )
                     return FulfillmentRefreshResult(
@@ -723,6 +725,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=verification_evidence_sha256,
+                verification_evidence=verification_evidence,
                 coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
@@ -1123,6 +1126,7 @@ def _write_verified_fulfillment_ledger(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    verification_evidence: Mapping[str, object] | None = None,
     coverage_observation_sha256: str | None = None,
 ) -> dict[str, int] | None:
     if (
@@ -1133,15 +1137,33 @@ def _write_verified_fulfillment_ledger(
     ):
         return None
     artifact_hashes = _implementation_artifact_hashes(worktree)
+    receipt = None
+    if isinstance(verification_evidence, Mapping):
+        try:
+            raw_receipt = VerificationEvidenceRef.from_mapping(verification_evidence)
+        except (TypeError, ValueError):
+            raw_receipt = None
+        if raw_receipt is not None:
+            receipt = _validated_verification_evidence(
+                verification_evidence,
+                worktree=worktree,
+                candidate_commit=raw_receipt.candidate_commit,
+            )
+    fingerprint = product_evidence_fingerprint(worktree) if receipt is not None else ""
+    verifier_version = _ledger_verifier_version(
+        verification_evidence_sha256,
+        coverage_observation_sha256,
+    )
     ledger = build_verified_ledger(
         report_path=report,
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         artifact_hashes=artifact_hashes,
-        verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256,
-            coverage_observation_sha256,
-        ),
+        verifier_version=verifier_version,
+        receipt_refs=(receipt.as_mapping(),) if receipt is not None else (),
+        candidate_content_fingerprint=fingerprint,
+        contract_hash=verifier_version,
+        requirement_set_fingerprint=spec_input_hash,
     )
     write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
@@ -1149,10 +1171,7 @@ def _write_verified_fulfillment_ledger(
         current_spec_input_hash=spec_input_hash,
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
-        current_verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256,
-            coverage_observation_sha256,
-        ),
+        current_verifier_version=verifier_version,
     )
     return {
         "reused": len(plan.reused_requirement_ids),

@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 import pytest
 
-from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
+from harness.fulfillment_runner import (
+    FULFILLMENT_VERIFIER_VERSION,
+    FulfillmentRunner,
+    _write_verified_fulfillment_ledger,
+)
 from harness.llm_provider import AICodingCliProvider
 from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
@@ -102,6 +106,33 @@ def _write_passing_fulfillment_receipt(
 
 @pytest.mark.unit
 class TestFulfillmentRunner:
+    def test_authoritative_receipt_is_written_into_v2_ledger(self, tmp_path):
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "src").mkdir()
+        (worktree / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "spec-001"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        _write_matching_report(report)
+        receipt = _write_passing_fulfillment_receipt(tmp_path, worktree)
+
+        _write_verified_fulfillment_ledger(
+            worktree,
+            spec_dir=spec_dir,
+            report=report,
+            spec_input_hash="spec-a",
+            implementation_input_hash="impl-a",
+            verification_evidence=receipt.as_mapping(),
+        )
+
+        ledger = json.loads(
+            (spec_dir / "verified-fulfillment-ledger.json").read_text(encoding="utf-8")
+        )
+        assert ledger["schema_version"] == 2
+        assert ledger["rows"][0]["candidate_content_fingerprint"] == product_evidence_fingerprint(worktree)
+        assert ledger["rows"][0]["receipt_refs"][0]["receipt_sha256"] == receipt.receipt_sha256
+
     def test_verifier_version_invalidates_pre_split_ledgers(self):
         assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v3-coverage-evidence"
 
@@ -340,7 +371,7 @@ class TestFulfillmentRunner:
             "invalidated": 0,
             "unresolved": 1,
         }
-        assert ledger["schema_version"] == 1
+        assert ledger["schema_version"] == 2
         assert [row["requirement_id"] for row in ledger["rows"]] == ["FR-001", "FR-002"]
         assert ledger["rows"][0]["artifact_hashes"]["src/a.py"]
         assert ledger["rows"][1]["status"] == "UNVERIFIED"
