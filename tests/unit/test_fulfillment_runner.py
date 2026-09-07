@@ -333,13 +333,15 @@ class TestFulfillmentRunner:
         assert isinstance(metadata["verify_cache_key"], str)
 
     def test_refresh_writes_verified_fulfillment_ledger_on_success(self, tmp_path):
-        _write_verify_skill(tmp_path)
+        worktree = tmp_path / "project"
+        worktree.mkdir()
+        _write_verify_skill(worktree)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         _write_spec_inputs(spec_dir)
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
-        (tmp_path / "test-results").mkdir()
-        (tmp_path / "test-results" / "runtime.json").write_text(
+        (worktree / "src").mkdir()
+        (worktree / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
+        (worktree / "test-results").mkdir()
+        (worktree / "test-results" / "runtime.json").write_text(
             '{"ok": false}\n',
             encoding="utf-8",
         )
@@ -360,9 +362,20 @@ class TestFulfillmentRunner:
 
         provider.exec_prompt.side_effect = write_report
 
+        receipt = _write_passing_fulfillment_receipt(
+            tmp_path / "evidence",
+            worktree,
+        )
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
-            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=receipt.as_mapping(),
+            )
 
+        assert result.exit_code == 0, result.reason
         ledger_path = spec_dir / "verified-fulfillment-ledger.json"
         ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
         assert result.verified_ledger == {
@@ -374,6 +387,12 @@ class TestFulfillmentRunner:
         assert ledger["schema_version"] == 2
         assert [row["requirement_id"] for row in ledger["rows"]] == ["FR-001", "FR-002"]
         assert ledger["rows"][0]["artifact_hashes"]["src/a.py"]
+        assert ledger["rows"][0]["receipt_refs"] == [receipt.as_mapping()]
+        assert ledger["rows"][0]["candidate_content_fingerprint"] == (
+            product_evidence_fingerprint(worktree)
+        )
+        assert ledger["rows"][0]["requirement_set_fingerprint"]
+        assert ledger["rows"][0]["contract_hash"]
         assert ledger["rows"][1]["status"] == "UNVERIFIED"
 
     def test_refresh_assembles_no_fallback_report_without_provider_when_artifacts_exist(

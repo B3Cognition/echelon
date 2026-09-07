@@ -360,7 +360,7 @@ def _attach_re_context(spec_dir: Path, root: Path, paths: list[str]) -> None:
     _write_json(
         spec_dir / "re-context.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "attached",
             "generation": 2,
             "artifacts": [
@@ -618,7 +618,7 @@ def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
     _write_json(
         spec_dir / "verified-fulfillment-ledger.json",
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "rows": [
                 {
                     "requirement_id": "FR-001",
@@ -626,6 +626,11 @@ def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
                     "evidence_refs": ["tests/test_report.py"],
                     "verified_commit": "abc123",
                     "verify_scope": "full",
+                    "selected_evidence": ["tests/test_report.py"],
+                    "receipt_refs": [{"receipt_sha256": "receipt-a"}],
+                    "candidate_content_fingerprint": "product-a",
+                    "requirement_set_fingerprint": "requirements-a",
+                    "contract_hash": "contract-a",
                 },
                 {
                     "requirement_id": "AC-001",
@@ -669,6 +674,13 @@ def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
             "artifact:001-demo:specs/001-demo/verified-fulfillment-ledger.json",
         )
     ]["properties"]["complete"] is True
+    assert edges[
+        (
+            "req:001-demo:FR-001",
+            "VERIFIED_BY",
+            "artifact:001-demo:specs/001-demo/verified-fulfillment-ledger.json",
+        )
+    ]["properties"]["candidate_content_fingerprint"] == "product-a"
     assert edges[
         (
             "req:001-demo:AC-001",

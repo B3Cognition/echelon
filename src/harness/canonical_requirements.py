@@ -60,7 +60,7 @@ def write_canonical_requirements(
 ) -> CanonicalRequirementInventoryResult:
     requirements = extract_canonical_requirements(spec_dir)
     verify_run_dir.mkdir(parents=True, exist_ok=True)
-    inventory_hash = _inventory_hash(requirements)
+    inventory_hash = canonical_requirement_fingerprint(requirements)
     json_path = verify_run_dir / INVENTORY_JSON
     markdown_path = verify_run_dir / INVENTORY_MD
     payload = {
@@ -152,7 +152,10 @@ def _split_reqs(value: str) -> Iterable[str]:
             yield item
 
 
-def _inventory_hash(requirements: list[CanonicalRequirement]) -> str:
+def canonical_requirement_fingerprint(
+    requirements: list[CanonicalRequirement],
+) -> str:
+    """Return the stable identity of a canonical requirement snapshot."""
     digest = hashlib.sha256()
     for row in requirements:
         digest.update(row.id.encode("utf-8"))

@@ -552,6 +552,7 @@ class StrategyCoordinator:
     def _verified_evidence_updates(
         self,
         *,
+        spec_id: str,
         implementation: ImplementationResult,
         worktree_path: Path,
         verified_commit: str,
@@ -575,10 +576,61 @@ class StrategyCoordinator:
             worktree_path, ref.candidate_commit, verified_commit
         ):
             return {}
-        return {
+        updates: dict[str, Any] = {
             "verified_evidence": ref.as_mapping(),
             "verified_product_fingerprint": fingerprint,
         }
+        spec_dir = find_spec_dir(
+            spec_id,
+            self._orchestration_root or Path(self._base_dir).resolve(),
+        )
+        if spec_dir is not None:
+            from harness.canonical_requirements import (
+                canonical_requirement_fingerprint,
+                extract_canonical_requirements,
+            )
+            from harness.fulfillment_runner import (
+                _spec_input_hash,
+                fulfillment_contract_hash,
+            )
+            from harness.verified_fulfillment_ledger import (
+                read_verified_ledger,
+                verified_fulfillment_ledger_path,
+            )
+
+            requirements = extract_canonical_requirements(spec_dir)
+
+            updates.update(
+                {
+                    "verified_spec_input_hash": _spec_input_hash(spec_dir),
+                    "verified_requirement_set_fingerprint": (
+                        canonical_requirement_fingerprint(requirements)
+                    ),
+                    "verified_contract_hash": fulfillment_contract_hash(),
+                    "verified_requirement_snapshot": [
+                        {
+                            "id": item.id,
+                            "source_kind": item.source_kind,
+                            "source_file": item.source_file,
+                            "source_line": item.source_line,
+                            "source_text": item.source_text,
+                        }
+                        for item in requirements
+                    ],
+                }
+            )
+            ledger_path = verified_fulfillment_ledger_path(spec_dir)
+            if ledger_path.is_file():
+                updates["verified_fulfillment_rows"] = [
+                    {
+                        "requirement_id": item.requirement_id,
+                        "status": item.status,
+                        "evidence_refs": list(item.selected_evidence or item.evidence_refs),
+                        "verified_at": item.verified_at,
+                    }
+                    for item in read_verified_ledger(ledger_path).rows
+                ]
+        return updates
 
     def _verified_checkpoint_updates(
         self,
@@ -609,6 +661,7 @@ class StrategyCoordinator:
         }
         updates.update(
             self._verified_evidence_updates(
+                spec_id=spec_id,
                 implementation=implementation,
                 worktree_path=worktree_path,
                 verified_commit=verified_commit,

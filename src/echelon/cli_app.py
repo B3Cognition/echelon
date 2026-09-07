@@ -7,6 +7,7 @@ Echelon normalize CLI contracts incrementally without rewriting harness logic.
 
 from __future__ import annotations
 
+import json
 import shlex
 from enum import Enum
 from pathlib import Path
@@ -3477,6 +3478,60 @@ def spec_verify(
         reconcile=reconcile,
         dry_run=dry_run,
     )
+
+
+@spec_app.command("reconcile-fulfillment")
+def spec_reconcile_fulfillment(
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec whose historical delivery receipts to inspect."),
+    write: bool = typer.Option(False, "--write", help="Apply only a receipt-compatible reconciliation."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable preview output."),
+) -> None:
+    """Preview or apply receipt-backed fulfillment reconciliation."""
+    from harness.fulfillment_reconciliation_discovery import reconcile_from_delivery_state
+    from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.verified_fulfillment_ledger import (
+        read_verified_ledger,
+        verified_fulfillment_ledger_path,
+        write_verified_ledger,
+    )
+
+    root = Path.cwd().resolve()
+    spec_dir = find_spec_dir(spec_id, root)
+    if spec_dir is None:
+        raise typer.BadParameter(f"spec not found: {spec_id}")
+    ledger_path = verified_fulfillment_ledger_path(spec_dir)
+    if not ledger_path.is_file():
+        typer.echo("status: reverify_required\nreason: no canonical verified-fulfillment ledger")
+        raise typer.Exit(1)
+    targets = read_targets(spec_dir)
+    if len(targets) != 1 or not (target := (root / targets[0]).resolve()).is_dir():
+        typer.echo("status: reverify_required\nreason: exactly one existing delivery target is required")
+        raise typer.Exit(1)
+    result = reconcile_from_delivery_state(
+        root=root, spec_dir=spec_dir, target=target, ledger=read_verified_ledger(ledger_path)
+    )
+    payload = {
+        "spec_id": spec_dir.name, "status": result.status, "write": write,
+        "rejected_reasons": list(result.rejected_reasons),
+        "rows": [{"requirement_id": row.requirement_id, "status": row.status,
+                  "receipt_refs": [dict(item) for item in row.receipt_refs]}
+                 for row in result.ledger.rows],
+    }
+    if as_json:
+        typer.echo(json.dumps(payload, sort_keys=True))
+    else:
+        typer.echo(f"status: {result.status}")
+        typer.echo("mode: write" if write else "mode: preview (pass --write to apply)")
+        for reason in result.rejected_reasons:
+            typer.echo(f"rejected: {reason}")
+    if write and result.status == "reconciled":
+        write_verified_ledger(ledger_path, result.ledger)
+        typer.echo(f"ledger: updated {ledger_path}")
+        return
+    if result.status != "reconciled":
+        if result.status == "no_candidates":
+            typer.echo(f"next: echelon spec verify {spec_dir.name}")
+        raise typer.Exit(1)
 
 
 def _reject_spec_verify_extra_args(ctx: typer.Context) -> None:

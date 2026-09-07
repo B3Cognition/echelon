@@ -11,7 +11,11 @@ import subprocess
 import tempfile
 from typing import Mapping, Protocol
 
-from harness.canonical_requirements import INVENTORY_JSON, extract_canonical_requirements
+from harness.canonical_requirements import (
+    INVENTORY_JSON,
+    canonical_requirement_fingerprint,
+    extract_canonical_requirements,
+)
 from harness.coverage_evidence import write_coverage_evidence
 from harness.coverage_observation import CoverageObservationResult
 from harness.deferred_scope import active_entries
@@ -73,6 +77,11 @@ MEASURED_EVIDENCE_INPUT_DIRS = (
 )
 
 FULFILLMENT_VERIFIER_VERSION = "verified-ledger-v3-coverage-evidence"
+
+
+def fulfillment_contract_hash() -> str:
+    """Return the stable contract identity for verified-fulfillment rows."""
+    return hashlib.sha256(FULFILLMENT_VERIFIER_VERSION.encode("utf-8")).hexdigest()
 
 IMPLEMENTATION_INPUT_FILES = (
     "pyproject.toml",
@@ -324,6 +333,7 @@ class FulfillmentRunner:
                 implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
                 coverage_observation=coverage_observation,
                 coverage_observation_sha256=coverage_observation_sha256,
                 observer_required=observer_required,
@@ -450,6 +460,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
                 coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
@@ -904,6 +915,7 @@ def _try_direct_no_fallback_refresh(
     implementation_input_hash: str,
     cache_key: str | None,
     verification_evidence_sha256: str | None,
+    verification_evidence: VerificationEvidenceRef | None,
     coverage_observation: CoverageObservationResult | None,
     coverage_observation_sha256: str | None,
     observer_required: bool,
@@ -996,6 +1008,7 @@ def _try_direct_no_fallback_refresh(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         verification_evidence_sha256=verification_evidence_sha256,
+        verification_evidence=verification_evidence,
         coverage_observation_sha256=coverage_observation_sha256,
     )
     return FulfillmentRefreshResult(
@@ -1126,7 +1139,7 @@ def _write_verified_fulfillment_ledger(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
-    verification_evidence: Mapping[str, object] | None = None,
+    verification_evidence: Mapping[str, object] | VerificationEvidenceRef | None = None,
     coverage_observation_sha256: str | None = None,
 ) -> dict[str, int] | None:
     if (
@@ -1138,7 +1151,14 @@ def _write_verified_fulfillment_ledger(
         return None
     artifact_hashes = _implementation_artifact_hashes(worktree)
     receipt = None
-    if isinstance(verification_evidence, Mapping):
+    if isinstance(verification_evidence, VerificationEvidenceRef):
+        raw_receipt = verification_evidence
+        receipt = _validated_verification_evidence(
+            raw_receipt.as_mapping(),
+            worktree=worktree,
+            candidate_commit=raw_receipt.candidate_commit,
+        )
+    elif isinstance(verification_evidence, Mapping):
         try:
             raw_receipt = VerificationEvidenceRef.from_mapping(verification_evidence)
         except (TypeError, ValueError):
@@ -1154,6 +1174,10 @@ def _write_verified_fulfillment_ledger(
         verification_evidence_sha256,
         coverage_observation_sha256,
     )
+    requirement_set_fingerprint = canonical_requirement_fingerprint(
+        extract_canonical_requirements(spec_dir)
+    )
+    contract_hash = fulfillment_contract_hash()
     ledger = build_verified_ledger(
         report_path=report,
         spec_input_hash=spec_input_hash,
@@ -1162,8 +1186,8 @@ def _write_verified_fulfillment_ledger(
         verifier_version=verifier_version,
         receipt_refs=(receipt.as_mapping(),) if receipt is not None else (),
         candidate_content_fingerprint=fingerprint,
-        contract_hash=verifier_version,
-        requirement_set_fingerprint=spec_input_hash,
+        contract_hash=contract_hash,
+        requirement_set_fingerprint=requirement_set_fingerprint,
     )
     write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
