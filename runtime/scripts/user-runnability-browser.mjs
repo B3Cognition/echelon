@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
-import { chromium } from "@playwright/test";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const candidateRequire = createRequire(path.join(process.cwd(), "package.json"));
+const playwrightUrl = pathToFileURL(candidateRequire.resolve("@playwright/test"));
+const playwrightModule = await import(playwrightUrl.href);
+const chromium = playwrightModule.chromium ?? playwrightModule.default?.chromium;
+if (!chromium) throw new Error("@playwright/test does not export chromium");
 
 const planPath = process.argv[2];
 if (!planPath) {

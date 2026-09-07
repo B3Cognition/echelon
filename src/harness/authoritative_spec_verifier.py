@@ -154,6 +154,7 @@ class AuthoritativeSpecVerifier:
             target_id=self._target.name,
             strategy_id="standalone",
             build_id=verify_run_dir.name,
+            runtime_root=self._spec_dir.parent.parent / ".echelon" / "runtime",
         )
 
     @staticmethod

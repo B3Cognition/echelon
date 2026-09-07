@@ -85,6 +85,7 @@ class CandidateEvidenceRunner:
         target_id: str,
         strategy_id: str,
         build_id: str,
+        runtime_root: Path | None = None,
         sensitive_environment: Mapping[str, str] | None = None,
     ) -> None:
         self._provider = provider
@@ -95,6 +96,7 @@ class CandidateEvidenceRunner:
         self._target_id = target_id
         self._strategy_id = strategy_id
         self._build_id = build_id
+        self._runtime_root = Path(runtime_root).resolve() if runtime_root else None
         self._sensitive_environment = sensitive_environment or os.environ
 
     def run_standard(
@@ -371,6 +373,7 @@ class CandidateEvidenceRunner:
             target_id=self._target_id,
             strategy_id=self._strategy_id,
             build_id=self._build_id,
+            browser_helper=self._browser_helper(worktree),
         ).run(
             worktree=worktree,
             contract=contract,
@@ -719,6 +722,26 @@ class CandidateEvidenceRunner:
             observer_required=True,
             state_summary=summary,
         )
+
+    def _browser_helper(self, worktree: Path) -> bytes | None:
+        candidates = []
+        if self._runtime_root is not None:
+            candidates.append(
+                self._runtime_root / "scripts" / "user-runnability-browser.mjs"
+            )
+        candidates.append(
+            Path(worktree)
+            / ".echelon"
+            / "runtime"
+            / "scripts"
+            / "user-runnability-browser.mjs"
+        )
+        for candidate in candidates:
+            try:
+                return candidate.read_bytes()
+            except OSError:
+                continue
+        return None
 
     def _config(self) -> HarnessConfig:
         return (
