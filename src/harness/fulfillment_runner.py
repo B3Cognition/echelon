@@ -185,6 +185,7 @@ class FulfillmentRunner:
         verification_evidence: Mapping[str, object] | None = None,
         coverage_observation: CoverageObservationResult | None = None,
         observer_required: bool = False,
+        verify_run_dir: Path | str | None = None,
     ) -> FulfillmentRefreshResult:
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
@@ -305,6 +306,7 @@ class FulfillmentRunner:
             scope=scope,
             reconcile=reconcile,
             dry_run=dry_run,
+            verify_run_dir=verify_run_dir,
         )
         try:
             _prepare_coverage_observation_context(
@@ -1723,36 +1725,55 @@ def _verify_spec_artifact_write_policy(
     base_full_verify_commit: str | None = None,
     reconcile: bool = False,
     dry_run: bool = False,
+    verify_run_dir: Path | str | None = None,
 ) -> VerifySpecArtifactWritePolicy:
     workspace_root = _run_pointer_root(
         worktree,
         spec_dir=spec_dir,
         orchestration_root=orchestration_root,
     ).resolve()
-    seed = (cache_key or hashlib.sha256(spec_id.encode("utf-8")).hexdigest())[:16]
-    timestamp = f"fulfillment-{scope}-{seed}"
-    if spec_dir is not None and (spec_dir / "spec.md").is_file():
-        verify_run_dir = init_verify_spec_run(
-            project_root=worktree,
-            spec_id=spec_id,
-            spec_dir=spec_dir,
-            verify_scope=scope,
-            scoped_ids=scoped_ids,
-            base_full_verify_commit=base_full_verify_commit,
-            reconcile=reconcile,
-            dry_run=dry_run,
-            timestamp=timestamp,
-        ).verify_run_dir.resolve()
+    if verify_run_dir is not None:
+        selected_run_dir = Path(verify_run_dir).expanduser().resolve()
+        try:
+            selected_run_dir.relative_to((workspace_root / "runs").resolve())
+        except ValueError as exc:
+            raise ValueError("caller-owned verify run is outside workspace runs") from exc
+        state_path = selected_run_dir / "state.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("caller-owned verify run state is unavailable") from exc
+        if not isinstance(state, dict) or state.get("status") != "in_progress":
+            raise ValueError("caller-owned verify run is not in progress")
+        if str(state.get("spec_id") or "") != spec_id:
+            raise ValueError("caller-owned verify run belongs to another spec")
+        if spec_dir is not None and Path(str(state.get("spec_dir") or "")).resolve() != spec_dir.resolve():
+            raise ValueError("caller-owned verify run belongs to another spec directory")
     else:
-        verify_run_dir = (
-            workspace_root / "runs" / f"verify-spec-{spec_id}-{timestamp}"
-        ).resolve()
-        verify_run_dir.mkdir(parents=True, exist_ok=True)
+        seed = (cache_key or hashlib.sha256(spec_id.encode("utf-8")).hexdigest())[:16]
+        timestamp = f"fulfillment-{scope}-{seed}"
+        if spec_dir is not None and (spec_dir / "spec.md").is_file():
+            selected_run_dir = init_verify_spec_run(
+                project_root=worktree,
+                spec_id=spec_id,
+                spec_dir=spec_dir,
+                verify_scope=scope,
+                scoped_ids=scoped_ids,
+                base_full_verify_commit=base_full_verify_commit,
+                reconcile=reconcile,
+                dry_run=dry_run,
+                timestamp=timestamp,
+            ).verify_run_dir.resolve()
+        else:
+            selected_run_dir = (
+                workspace_root / "runs" / f"verify-spec-{spec_id}-{timestamp}"
+            ).resolve()
+            selected_run_dir.mkdir(parents=True, exist_ok=True)
     return VerifySpecArtifactWritePolicy(
         workspace_root=workspace_root,
         spec_dir=spec_dir.resolve() if spec_dir is not None else None,
         spec_id=spec_id,
-        verify_run_dir=verify_run_dir,
+        verify_run_dir=selected_run_dir,
     )
 
 

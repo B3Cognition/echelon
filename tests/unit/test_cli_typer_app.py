@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from typer.testing import CliRunner
@@ -1221,7 +1223,7 @@ def test_spec_verify_resolves_canonical_spec_and_declared_target(
     monkeypatch, tmp_path: Path
 ) -> None:
     from echelon.cli_app import run
-    from harness.fulfillment_runner import FulfillmentRefreshResult
+    from harness.config import HarnessConfig
 
     target = tmp_path / "sources" / "prosaic"
     target.mkdir(parents=True)
@@ -1231,42 +1233,33 @@ def test_spec_verify_resolves_canonical_spec_and_declared_target(
         "---\ntargets:\n  - sources/prosaic\n---\n# Spec\n",
         encoding="utf-8",
     )
-    calls: list[dict[str, object]] = []
-
-    class FakeRunner:
-        def __init__(self, provider: object) -> None:
-            calls.append({"provider": provider})
-
-        def refresh(self, worktree_path: str, spec_id: str, **kwargs: object):
-            calls[-1].update(
-                {"worktree_path": worktree_path, "spec_id": spec_id, **kwargs}
-            )
-            return FulfillmentRefreshResult(
-                status="refreshed",
-                exit_code=0,
-                reason="full verify-spec completed",
-                report_path=str(spec_dir / "fulfillment-report.md"),
-            )
-
+    config = HarnessConfig(
+        target_repo=str(target), target_default_branch="main", provider="docker"
+    )
+    resolved = SimpleNamespace(services=(), runnability=SimpleNamespace(policy="not_applicable"))
     provider = object()
+    verifier = MagicMock()
+    verifier.run.return_value = SimpleNamespace(
+        status="refreshed", exit_code=0, ok=True,
+        reason="full verify-spec completed",
+        report_path=str(spec_dir / "fulfillment-report.md"),
+        verified_ledger=None, verify_run_dir=tmp_path / "runs" / "verify",
+        failure_class="",
+    )
+    verifier_type = MagicMock(return_value=verifier)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr("harness.llm_provider.AICodingCliProvider", lambda _config: provider)
-    monkeypatch.setattr("harness.fulfillment_runner.FulfillmentRunner", FakeRunner)
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", lambda _root: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("harness.verification_stack_runtime.resolve_verification_stacks", lambda *_args: resolved)
+    monkeypatch.setattr("harness.docker_provider.DockerWorktreeProvider", MagicMock(return_value=provider))
+    monkeypatch.setattr("harness.authoritative_spec_verifier.AuthoritativeSpecVerifier", verifier_type)
 
     run(["spec", "verify", "906", "--reconcile"])
 
-    assert calls == [
-        {
-            "provider": provider,
-            "worktree_path": str(target.resolve()),
-            "spec_id": "906-cli-output-styling",
-            "spec_dir": spec_dir.resolve(),
-            "orchestration_root": tmp_path.resolve(),
-            "reconcile": True,
-            "dry_run": False,
-        }
-    ]
+    assert verifier_type.call_args.kwargs["target"] == target.resolve()
+    assert verifier_type.call_args.kwargs["spec_dir"] == spec_dir.resolve()
+    assert verifier_type.call_args.kwargs["provider"] is provider
+    verifier.run.assert_called_once_with(reconcile=True, dry_run=False)
 
 
 @pytest.mark.unit
@@ -1294,27 +1287,29 @@ def test_spec_verify_returns_nonzero_for_failed_runner_status(
     monkeypatch, tmp_path: Path
 ) -> None:
     from echelon.cli_app import app
-    from harness.fulfillment_runner import FulfillmentRefreshResult
+    from harness.config import HarnessConfig
 
     spec_dir = tmp_path / "specs" / "906-cli-output-styling"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
 
-    class FailedRunner:
-        def __init__(self, _provider: object) -> None:
-            pass
-
-        def refresh(self, *_args: object, **_kwargs: object):
-            return FulfillmentRefreshResult(
-                status="failed",
-                exit_code=0,
-                reason="artifact validation failed",
-            )
-
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr("harness.llm_provider.AICodingCliProvider", lambda _config: object())
-    monkeypatch.setattr("harness.fulfillment_runner.FulfillmentRunner", FailedRunner)
+    config = HarnessConfig(
+        target_repo=str(tmp_path), target_default_branch="main", provider="docker"
+    )
+    resolved = SimpleNamespace(services=(), runnability=SimpleNamespace(policy="not_applicable"))
+    verifier = MagicMock()
+    verifier.run.return_value = SimpleNamespace(
+        status="failed", exit_code=1, ok=False,
+        reason="artifact validation failed", report_path=None,
+        verified_ledger=None, verify_run_dir=tmp_path / "runs" / "verify",
+        failure_class="harness_error",
+    )
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", lambda _root: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("harness.verification_stack_runtime.resolve_verification_stacks", lambda *_args: resolved)
+    monkeypatch.setattr("harness.docker_provider.DockerWorktreeProvider", MagicMock())
+    monkeypatch.setattr("harness.authoritative_spec_verifier.AuthoritativeSpecVerifier", MagicMock(return_value=verifier))
 
     result = CliRunner().invoke(app, ["spec", "verify", "906"])
 

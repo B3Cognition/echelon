@@ -3551,10 +3551,14 @@ def _run_spec_verify(
     reconcile: bool,
     dry_run: bool,
 ) -> None:
+    from echelon.prosaic_packages import install_prosaic_bundle
+    from harness.authoritative_spec_verifier import AuthoritativeSpecVerifier
     from harness.config import load_config
+    from harness.docker_provider import DockerWorktreeProvider
     from harness.fulfillment_runner import FulfillmentRunner
     from harness.llm_provider import AICodingCliProvider
     from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.verification_stack_runtime import resolve_verification_stacks
 
     if dry_run and not reconcile:
         typer.echo("spec verify: --dry-run requires --reconcile", err=True)
@@ -3576,16 +3580,36 @@ def _run_spec_verify(
         typer.echo(f"spec verify: target repo not found: {targets[0]}", err=True)
         raise typer.Exit(code=2)
 
-    provider = AICodingCliProvider(load_config(workspace, squad_only=True))
-    result = FulfillmentRunner(provider).refresh(
-        str(target),
-        spec_dir.name,
+    install_prosaic_bundle(workspace)
+    config = load_config(workspace, squad_only=True)
+    config.target_repo = str(target)
+    resolved = resolve_verification_stacks(workspace, target)
+    config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
+    prompt_executor = AICodingCliProvider(config)
+    container_cli = getattr(config, "container_cli", "docker")
+    if container_cli not in {"docker", "podman"}:
+        container_cli = "docker"
+    sandbox_provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=container_cli,
+    )
+    result = AuthoritativeSpecVerifier(
+        target=target,
         spec_dir=spec_dir,
-        orchestration_root=workspace,
+        config=config,
+        fulfillment_runner=FulfillmentRunner(prompt_executor),
+        provider=sandbox_provider,
+    ).run(
         reconcile=reconcile,
         dry_run=dry_run,
     )
+    typer.echo("evidence: authoritative sandbox")
     typer.echo(f"status: {result.status}")
+    typer.echo(f"verify run: {result.verify_run_dir}")
+    if result.failure_class:
+        typer.echo(f"failure class: {result.failure_class}")
     if result.reason:
         typer.echo(f"reason: {result.reason}")
     if result.report_path:

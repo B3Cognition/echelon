@@ -14,6 +14,7 @@ from harness.fulfillment_runner import (
     FulfillmentRunner,
     _write_verified_fulfillment_ledger,
 )
+from harness.verify_spec_run import init_verify_spec_run
 from harness.llm_provider import AICodingCliProvider
 from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
@@ -106,6 +107,52 @@ def _write_passing_fulfillment_receipt(
 
 @pytest.mark.unit
 class TestFulfillmentRunner:
+    def test_refresh_uses_caller_owned_verify_run(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        initialized = init_verify_spec_run(
+            project_root=tmp_path,
+            spec_id=spec_dir.name,
+            spec_dir=spec_dir,
+            reconcile=True,
+            timestamp="caller-owned",
+        )
+        existing_runs = set((tmp_path / "runs").glob("verify-spec-*"))
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_result(_worktree_path: str, _prompt: str) -> int:
+            state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+            state.update(
+                {"topology_evidence": "ready", "fulfillment_artifacts": "valid"}
+            )
+            initialized.state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(spec_dir / "fulfillment-report.md")
+            return 0
+
+        provider.exec_prompt.side_effect = write_result
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                spec_dir.name,
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                reconcile=True,
+                verify_run_dir=initialized.verify_run_dir,
+            )
+
+        assert result.status == "refreshed", result.reason
+        assert json.loads(initialized.state_path.read_text())["status"] == "complete"
+        assert set((tmp_path / "runs").glob("verify-spec-*")) == existing_runs
+
     def test_authoritative_receipt_is_written_into_v2_ledger(self, tmp_path):
         worktree = tmp_path / "worktree"
         worktree.mkdir()
