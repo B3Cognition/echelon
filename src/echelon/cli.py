@@ -31,6 +31,11 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
+from harness.squad_state import (
+    StateAdvanceError,
+    validate_banzai_default_reassessment_record,
+)
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
     RecoveryInstruction,
@@ -3842,6 +3847,13 @@ def _versioned_decision_recovery_action(
                 "once under the current bounded-default policy"
             ),
         )
+    protocol_upgrade_action = _v1_banzai_why2_protocol_upgrade_recovery_action(
+        run_state,
+        decision,
+        project_root=project_root,
+    )
+    if protocol_upgrade_action is not None:
+        return protocol_upgrade_action
     if (
         status == "awaiting_human"
         and decision.get("schema_version") == 3
@@ -4540,6 +4552,63 @@ def _legacy_banzai_why2_reassessment_is_available(
         and run_state.get("banzai_default_candidate_protocol_version") is None
         and run_state.get("banzai_default_reassessment") is None
         and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _v1_banzai_why2_protocol_upgrade_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Identify the one valid legacy marker eligible for an upgrade retry."""
+    try:
+        reassessment = validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and run_state.get("banzai_default_candidate_protocol_version") is None
+        and reassessment is not None
+        and reassessment["schema_version"] == 1
+        and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _v1_banzai_why2_protocol_upgrade_recovery_action(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    """Present the bounded retry only when the active deployed bundle is safe."""
+    if not _v1_banzai_why2_protocol_upgrade_is_available(run_state, decision):
+        return None
+    if project_root is None:
+        return None
+    fingerprint = active_banzai_default_protocol_fingerprint(project_root)
+    if fingerprint.fingerprint is None:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon workspace migrate-to-prosaic",
+            note=(
+                "the deployed candidate-protocol bundle cannot be verified: "
+                + fingerprint.diagnostic
+            ),
+        )
+    return _RunRecoveryAction(
+        "resolve_decision",
+        reason=str(decision["reason_code"]),
+        phase="phase1-why2",
+        command="echelon spec continue",
+        note=(
+            "will re-evaluate this legacy Banzai WHY2 question once using the "
+            "refreshed candidate-protocol bundle"
+        ),
     )
 
 

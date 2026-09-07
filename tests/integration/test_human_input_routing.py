@@ -1374,6 +1374,77 @@ def test_banzai_does_not_reassess_current_why2_question_without_a_candidate(
     provider.exec_agent.assert_not_called()
 
 
+def _write_deployed_banzai_candidate_protocol(project_root: Path) -> None:
+    for relative in (
+        ".echelon/runtime/workflow/definition.yaml",
+        ".echelon/runtime/workflow/phases/phase1-why2.md",
+        ".echelon/prosaic/subagents/echelon.sage.md",
+    ):
+        source = ROOT / relative.removeprefix(".echelon/")
+        destination = project_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+
+
+def test_banzai_reassesses_one_v1_marker_after_protocol_refresh(
+    tmp_path: Path,
+) -> None:
+    """Catch an upgraded workspace that cannot spend its one migration retry."""
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = replace(
+        graph.get("phase1-why2").human_input_policies[0],
+        allowed_target_phases=frozenset({"phase1-why2"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = HumanInputPolicyRegistry((policy,))
+    legacy_state = store.load()
+    legacy_state.pop("banzai_default_candidate_protocol_version")
+    store._path.write_text(json.dumps(legacy_state), encoding="utf-8")
+    _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question="Which inclusive radial boundary should both guards use?",
+    )
+
+    assert controller.resume_pending_human_input() is True
+    assert store.load()["banzai_default_reassessment"]["schema_version"] == 1
+
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+    decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question="Which inclusive radial boundary should both guards use?",
+    )
+
+    assert controller.resume_pending_human_input() is True
+    upgraded = store.load()
+    assert upgraded["status"] == "running"
+    assert upgraded["banzai_default_reassessment"]["schema_version"] == 2
+    assert (
+        upgraded["banzai_default_reassessment"]["upgrade_attempt"]["decision_id"]
+        == decision_id
+    )
+    provider.exec_agent.assert_not_called()
+
+    next_decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question="Which inclusive radial boundary should both guards use?",
+    )
+
+    assert controller.resume_pending_human_input() is False
+    assert store.load()["blocked_decision"]["id"] == next_decision_id
+    provider.exec_agent.assert_not_called()
+
+
 def test_commander_resolution_persists_low_confidence_follow_audit(
     tmp_path: Path,
 ) -> None:

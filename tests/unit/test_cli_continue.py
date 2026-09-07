@@ -270,6 +270,43 @@ def _legacy_banzai_why2_decision() -> dict[str, object]:
     )
 
 
+def _v1_reassessed_banzai_why2_state() -> dict[str, object]:
+    decision = _legacy_banzai_why2_decision()
+    return {
+        "status": "blocked",
+        "phase": "phase1-why2",
+        "autonomy_mode": "banzai",
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-why2",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+        "banzai_default_reassessment": {
+            "schema_version": 1,
+            "decision_id": "dec-first-legacy-why2",
+            "source_phase": "phase1-why2",
+            "question_sha256": "a" * 64,
+            "reassessed_at": "2026-09-06T20:00:00+00:00",
+        },
+    }
+
+
+def _write_deployed_banzai_candidate_protocol(project_root: Path) -> None:
+    for relative in (
+        ".echelon/runtime/workflow/definition.yaml",
+        ".echelon/runtime/workflow/phases/phase1-why2.md",
+        ".echelon/prosaic/subagents/echelon.sage.md",
+    ):
+        path = project_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("deployed candidate protocol\n", encoding="utf-8")
+
+
 def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
     decision = _legacy_banzai_why2_decision()
     state = {
@@ -293,6 +330,59 @@ def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
     assert action.kind == "resolve_decision"
     assert action.command == "echelon spec continue"
     assert "re-evaluate" in action.note
+
+
+def test_continue_requires_workspace_refresh_for_v1_protocol_upgrade(
+    tmp_path: Path,
+) -> None:
+    """Catch a CLI that advertises an upgrade retry without trusted files."""
+    action = _classify_run_recovery(
+        _v1_reassessed_banzai_why2_state(),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "manual_recovery"
+    assert action.command == "echelon workspace migrate-to-prosaic"
+    assert ".echelon/" in action.note
+
+
+def test_continue_exposes_one_v1_protocol_upgrade_retry(
+    tmp_path: Path,
+) -> None:
+    """Catch a refreshed legacy state that is sent back to human answer input."""
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+
+    action = _classify_run_recovery(
+        _v1_reassessed_banzai_why2_state(),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "resolve_decision"
+    assert action.command == "echelon spec continue"
+    assert "refreshed candidate-protocol" in action.note
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("decision_id", "not-a-canonical-decision"),
+        ("reassessed_at", "not-a-timestamp"),
+    ],
+)
+def test_continue_does_not_advertise_malformed_v1_protocol_upgrade(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Catch CLI guidance that the controller's strict ledger parser rejects."""
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+    state = _v1_reassessed_banzai_why2_state()
+    state["banzai_default_reassessment"][field] = value
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "human_resume"
+    assert action.command == 'echelon spec resume "<your answer>"'
 
 
 def test_continue_delegates_legacy_banzai_why2_to_the_controller(

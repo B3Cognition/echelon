@@ -54,6 +54,11 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     validate_blocked_decision,
 )
+from harness.banzai_protocol import (
+    BanzaiProtocolLockError,
+    active_banzai_default_protocol_fingerprint,
+    banzai_default_protocol_bundle_lock,
+)
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -194,6 +199,7 @@ from harness.squad_state import (
     StateDurabilityError,
     SquadStateStore,
     build_human_input_resolution_postimage,
+    validate_banzai_default_reassessment_record,
 )
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
@@ -5762,6 +5768,85 @@ class SquadController:
         ):
             return dict(state)
 
+    def _reassess_awaiting_banzai_why2_after_protocol_upgrade(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Spend the one migration retry only with a verified deployed bundle."""
+        raw_decision = state.get("blocked_decision")
+        reassessment = state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+        if (
+            not isinstance(raw_decision, Mapping)
+            or not isinstance(reassessment, Mapping)
+            or state.get(BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY) is not None
+        ):
+            return dict(state)
+        try:
+            validated_reassessment = validate_banzai_default_reassessment_record(
+                reassessment
+            )
+            if (
+                validated_reassessment is None
+                or validated_reassessment["schema_version"] != 1
+            ):
+                return dict(state)
+            decision = validate_blocked_decision(raw_decision)
+            if (
+                decision["schema_version"] != 3
+                or decision["status"] != "awaiting_human"
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision.get("automatic_eligible") is not False
+            ):
+                return dict(state)
+            policy = self._policy_for_human_input_decision(decision)
+            if (
+                policy.producer_id != "phase1-why2"
+                or policy.reason_code != "human_clarification_required"
+                or policy.classification != "material"
+                or policy.resolution_handler != "clarification_resume"
+                or not policy.allow_free_text
+                or policy.options
+                or "phase1-why2" not in policy.allowed_phase_ids
+                or "phase1-why2" not in policy.allowed_target_phases
+            ):
+                return dict(state)
+            revision = state.get("state_revision")
+            if type(revision) is not int or revision < 0:
+                return dict(state)
+            # The shared lock bridges the identity read and state CAS. Echelon
+            # bundle deployment takes the matching exclusive lock, so the
+            # durable v2 ledger cannot claim a protocol snapshot that the
+            # package installer was concurrently replacing.
+            with banzai_default_protocol_bundle_lock(
+                self._project_root,
+                exclusive=False,
+            ):
+                fingerprint = active_banzai_default_protocol_fingerprint(
+                    self._project_root
+                )
+                if fingerprint.fingerprint is None:
+                    return dict(state)
+                return self._state_store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+                    str(decision["id"]),
+                    protocol_fingerprint=fingerprint.fingerprint,
+                    expected_state_revision=revision,
+                )
+        except (
+            BlockedDecisionError,
+            BanzaiProtocolLockError,
+            HumanInputPolicyError,
+            StateAdvanceError,
+            StateDurabilityError,
+            TypeError,
+            ValueError,
+        ):
+            return dict(state)
+
     def _prepare_v2_controller_migration_decision(
         self,
         state: Mapping[str, object],
@@ -5930,6 +6015,9 @@ class SquadController:
                 return False
         pending = self._state_store.reopen_failed_proportional_controller_decision()
         pending = self._reassess_awaiting_banzai_legacy_why2_decision(pending)
+        pending = self._reassess_awaiting_banzai_why2_after_protocol_upgrade(
+            pending
+        )
         if (
             pending.get("status") == "running"
             and pending.get("phase") == "phase1-why2"
