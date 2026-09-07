@@ -546,6 +546,34 @@ def test_audit_fails_for_active_canonical_duplicate(tmp_path: Path, monkeypatch)
 
 
 @pytest.mark.unit
+def test_audit_ignores_canonical_evidence_family_drawers(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    evidence = current_row(snapshot)
+    evidence["metadata"].update(
+        {
+            "artifact_kind": "spec-documentation-evidence",
+            "requirement_id": "EVID-docs-verification-000",
+            "artifact_path": "specs/003-demo/docs-verification-report.md",
+            "source_file": "specs/003-demo/docs-verification-report.md",
+        }
+    )
+    rows = {"drawer-fr-001": current_row(snapshot), "drawer-evidence": evidence}
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.stale == []
+
+
+@pytest.mark.unit
 def test_cleanup_deletes_only_stale_canonical_rows_for_selected_spec(
     tmp_path: Path, monkeypatch
 ) -> None:
