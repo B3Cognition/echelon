@@ -1206,42 +1206,12 @@ def _refresh_workspace_runtime_for_delivery(project_root: Path) -> None:
 
 def _resolve_delivery_stack_contract(project_root: Path, target_root: Path):
     """Resolve the current installed stack contract for one delivery target."""
-    from harness.config import get_full_resolved_config
+    from harness.verification_stack_runtime import resolve_verification_stacks
 
     project_root = project_root.resolve()
     target_root = target_root.resolve()
     _refresh_workspace_runtime_for_delivery(project_root)
-    target_config_dir = target_root / ".echelon"
-    # A configured source owns its stack selection. Targets without their own
-    # config keep the historical workspace-root selection for compatibility.
-    target_has_source_config = target_root != project_root and any(
-        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
-    )
-    stack_config_root = target_root if target_has_source_config else project_root
-    resolved_config = get_full_resolved_config(stack_config_root)
-    stacks = resolved_config.get("stacks") or {}
-    if not isinstance(stacks, Mapping):
-        raise StackSelectionError("stacks must be a mapping")
-    selected = stacks.get("selected") or []
-    target_archetypes = stacks.get("target_archetypes") or []
-    if not isinstance(selected, list) or not all(
-        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
-    ):
-        raise StackSelectionError(
-            "stacks.selected must be a list of non-empty stack IDs"
-        )
-    if not isinstance(target_archetypes, list) or not all(
-        isinstance(archetype, str) and archetype.strip()
-        for archetype in target_archetypes
-    ):
-        raise StackSelectionError(
-            "stacks.target_archetypes must be a list of non-empty archetype IDs"
-        )
-    return resolve_stacks(
-        selected,
-        _load_stack_definitions_for_project(project_root),
-        target_archetypes=set(target_archetypes) or None,
-    )
+    return resolve_verification_stacks(project_root, target_root)
 
 
 def _resolve_delivery_verification_services(

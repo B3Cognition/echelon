@@ -32,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
+from harness.candidate_evidence import CandidateEvidenceRunner
 from harness.config import HarnessConfig
 from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
@@ -348,6 +349,19 @@ class RalphController:
         self._fresh_branch_base = fresh_branch_base
         self._defer_target_merge = defer_target_merge
         self._resume_worktree_path = resume_worktree_path
+        self._candidate_evidence_runner = CandidateEvidenceRunner(
+            provider=self._provider,
+            config=lambda: self._config,
+            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
+                str(worktree), 0
+            ),
+            evidence_root=self._state_store.state_dir.parent / "evidence",
+            spec_id=self._spec_id,
+            target_id=_runnability_target_id(self._config.target_repo),
+            strategy_id=self._strategy_id,
+            build_id=self._build_id
+            or str(self._state_store.read().get("run_id") or "run"),
+        )
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -2016,157 +2030,11 @@ class RalphController:
             and self._config.verification.execution == "host"
         ):
             return self._exec_verify_locally(worktree_path)
-
-        owned_handle = False
-        try:
-            if handle is None:
-                handle = self._provider.create(
-                    self._build_sandbox_spec(worktree_path, 0)
-                )
-                owned_handle = True
-            verification_plan = build_verification_plan(
-                Path(worktree_path), self._config,
-                services=tuple(self._config.verification_services),
-            )
-            service_env: dict[str, str] = {}
-            verification_stages: list[VerificationStage] = []
-            if verification_plan.services:
-                start_services = getattr(self._provider, "start_services", None)
-                if start_services is None:
-                    raise NotSupportedError(
-                        "sandbox provider does not support verification services"
-                    )
-                materialized_services = materialize_services(
-                    verification_plan.services, session_id=handle.session_id
-                )
-                start_services(handle, materialized_services.services)
-                service_env = dict(materialized_services.verifier_environment)
-            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
-            candidate_path = Path(worktree_path)
-            candidate_commit = (
-                _current_git_commit(candidate_path)
-                if candidate_path.is_dir()
-                else None
-            )
-            sandbox_context = {
-                "mode": "sandbox",
-                "image": verification_plan.image,
-                "network": "internal",
-                "services": [service.service_name for service in verification_plan.services],
-            }
-            for command in verification_plan.bootstrap_commands:
-                bootstrap_started_at = datetime.now(timezone.utc).isoformat()
-                bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
-                verification_stages.append(VerificationStage(
-                    name="bootstrap", command=tuple(shlex.split(command)),
-                    exit_code=bootstrap.exit_code, duration_ms=bootstrap.duration_ms,
-                    stdout=bootstrap.stdout.encode(), stderr=bootstrap.stderr.encode(),
-                    started_at=bootstrap_started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                ))
-                if bootstrap.exit_code != 0:
-                    failures = [FailureEntry(
-                        category=FailureCategory.BUILD,
-                        id="sandbox-bootstrap",
-                        error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
-                    )]
-                    return self._attach_host_verification_receipt(
-                        worktree_path=worktree_path,
-                        candidate_commit=candidate_commit,
-                        fingerprint_before=fingerprint_before,
-                        fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
-                        verifier_source="sandbox",
-                        detection_evidence=("sandbox bootstrap",),
-                        stages=tuple(verification_stages),
-                        failures=failures,
-                        duration_s=bootstrap.duration_ms / 1000.0,
-                        execution_context=sandbox_context,
-                    )
-
-            command = self._config.verify_command
-            detection_evidence: tuple[str, ...] = ("harness verify_command",)
-            legacy_sandbox_verifier = False
-            if not command:
-                if self._llm_build_runner is None:
-                    # Existing sandbox-native build providers return the
-                    # structured result from their harness verifier. Keep that
-                    # contract while LLM delivery uses detected project commands.
-                    command = "echelon verify"
-                    legacy_sandbox_verifier = True
-                else:
-                    detection = detect_verify_command(Path(worktree_path))
-                    if detection.command is None:
-                        return VerifyResult(
-                            passed=False,
-                            failures=[FailureEntry(
-                                category=FailureCategory.BUILD,
-                                id="local-verify-skipped",
-                                error=(
-                                    "no high-confidence verifier was detected; "
-                                    "set harness.verify_command"
-                                ),
-                            )],
-                        )
-                    command = detection.command
-                    detection_evidence = tuple(detection.evidence)
-            stage_started_at = datetime.now(timezone.utc).isoformat()
-            result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
-
-            if legacy_sandbox_verifier:
-                try:
-                    return VerifyResult.from_dict(json.loads(result.stdout))
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    return VerifyResult(
-                        passed=result.exit_code == 0,
-                        failures=[] if result.exit_code == 0 else [FailureEntry(
-                            category=FailureCategory.TEST,
-                            id="verify-command",
-                            error=(result.stdout + result.stderr)[-2000:],
-                        )],
-                        duration_s=result.duration_ms / 1000.0,
-                        token_usage=_estimate_tokens(result),
-                    )
-
-            verify = VerifyResult(
-                passed=result.exit_code == 0,
-                failures=[] if result.exit_code == 0 else [FailureEntry(
-                    category=FailureCategory.TEST,
-                    id="verify-command",
-                    error=(result.stdout + result.stderr)[-2000:],
-                )],
-                duration_s=result.duration_ms / 1000.0,
-                token_usage=_estimate_tokens(result),
-            )
-            return self._attach_host_verification_receipt(
-                worktree_path=worktree_path,
-                candidate_commit=candidate_commit,
-                fingerprint_before=fingerprint_before,
-                fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
-                verifier_source="sandbox",
-                detection_evidence=("sandbox provider", *detection_evidence),
-                stages=(*verification_stages, VerificationStage(
-                    name="verify", command=tuple(shlex.split(command)),
-                    exit_code=result.exit_code, duration_ms=result.duration_ms,
-                    stdout=result.stdout.encode(), stderr=result.stderr.encode(),
-                    started_at=stage_started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )),
-                failures=verify.failures,
-                duration_s=verify.duration_s,
-                execution_context=sandbox_context,
-            )
-        except SandboxError as exc:
-            return VerifyResult(
-                passed=False,
-                failures=[FailureEntry(
-                    category=FailureCategory.OTHER,
-                    id="sandbox-verification-unavailable",
-                    error=str(exc),
-                )],
-            )
-        finally:
-            if owned_handle and handle is not None:
-                self._provider.destroy(handle)
+        return self._candidate_evidence_runner.run_standard(
+            handle=handle,
+            worktree=Path(worktree_path),
+            allow_legacy_structured=self._llm_build_runner is None,
+        )
 
     def _apply_fulfillment_gate(
         self,
@@ -2349,285 +2217,16 @@ class RalphController:
         It runs before fulfillment refresh, where later phases consume the
         recorded observation rather than a green aggregate verifier.
         """
-        if not verify_result.passed or not worktree_path:
-            return verify_result
-
-        resolved = getattr(self._config, "resolved_stacks", None)
-        required_observers = tuple(
-            item
-            for item in getattr(resolved, "coverage_observers", ())
-            if item.observer.required
+        gate = self._candidate_evidence_runner.apply_coverage(
+            verify_result=verify_result,
+            worktree=Path(worktree_path),
+            spec_dir=self._find_existing_spec_dir(worktree_path),
+            evidence_dir=self._coverage_observer_evidence_dir(),
         )
-        if not required_observers:
-            return verify_result
+        if gate.state_summary is not None:
+            self._record_coverage_observation_summary(gate.state_summary)
+        return gate.verify_result
 
-        spec_dir = self._find_existing_spec_dir(worktree_path)
-        if spec_dir is None:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-spec-missing",
-                error="Required coverage observers could not find the active spec.",
-            )
-        coverage_map = spec_dir / "coverage-map.md"
-        if not coverage_map.is_file():
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-map-missing",
-                error="Required coverage observers need the spec coverage-map.md.",
-            )
-        try:
-            canonical_ids = {
-                item.id for item in extract_canonical_requirements(spec_dir)
-            }
-            obligation_rows = parse_coverage_map_obligations(
-                coverage_map, canonical_ids
-            )
-            obligations = tuple(
-                obligation
-                for row in obligation_rows
-                for obligation in row
-            )
-            owner_deferred_ids = {
-                item_id
-                for entry in active_entries(spec_dir)
-                for item_id in entry.selected_ids
-                if not item_id.startswith("T-")
-            }
-            unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
-                canonical_ids=canonical_ids,
-                obligations=obligations,
-                deferred_ids=owner_deferred_ids,
-            )
-            if unmapped_requirement_ids:
-                return self._coverage_observation_failure(
-                    verify_result,
-                    failure_id="coverage-observer-map-incomplete",
-                    error=(
-                        "Required coverage observation has no planned test obligation "
-                        "for active requirement(s): "
-                        + ", ".join(unmapped_requirement_ids[:20])
-                    ),
-                )
-            obligations = tuple(
-                obligation
-                for obligation in obligations
-                if obligation.requirement_id not in owner_deferred_ids
-            )
-            coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
-            runnability_contract_hash = self._runnability_contract_hash(
-                verify_result
-            )
-            if (
-                str(getattr(resolved.runnability, "policy", "not_applicable"))
-                == "required"
-                and runnability_contract_hash is None
-            ):
-                raise CoverageObservationError(
-                    "required runnability contract evidence is missing"
-                )
-        except (OSError, ValueError, CoverageObservationError) as exc:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-contract-invalid",
-                error=f"Coverage observation inputs are invalid: {exc}",
-            )
-
-        if not obligations:
-            state = self._state_store.read()
-            state["coverage_observation"] = {
-                "status": "not_required",
-                "reason": "all planned coverage requirements are owner-deferred",
-            }
-            self._state_store.write(state)
-            return verify_result
-
-        planned_test_types = {item.test_type for item in obligations}
-        unavailable = coverage_observer_preflight_findings(
-            resolved,
-            coverage_test_types=planned_test_types,
-        )
-        if unavailable:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-unavailable",
-                error="; ".join(item.message for item in unavailable),
-            )
-        observers = required_coverage_observers_for_types(
-            resolved,
-            coverage_test_types=planned_test_types,
-        )
-        if not observers:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-unavailable",
-                error=(
-                    "Required coverage observers could not select an observer for "
-                    "the planned coverage test types."
-                ),
-            )
-
-        candidate = Path(worktree_path)
-        candidate_commit = _current_git_commit(candidate)
-        candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
-        if not candidate_commit or not candidate_fingerprint:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-candidate-invalid",
-                error=(
-                    "Required coverage observers could not bind execution to the "
-                    "candidate commit and product fingerprint."
-                ),
-            )
-        standard_receipt = self._verification_receipt_from_result(verify_result)
-        if standard_receipt is None:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-standard-evidence-missing",
-                error=(
-                    "Required coverage observers need the passed Ralph sandbox "
-                    "verification receipt, but none was attached."
-                ),
-            )
-
-        evidence_dir = self._coverage_observer_evidence_dir()
-        bundle = run_coverage_observers(
-            provider=self._provider,
-            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
-                str(worktree), 0
-            ),
-            worktree=candidate,
-            config=self._config,
-            observers=observers,
-            standard_receipt=standard_receipt,
-            candidate_commit=candidate_commit,
-            candidate_fingerprint=candidate_fingerprint,
-            evidence_dir=evidence_dir,
-            spec_id=self._spec_id,
-            target_id=_runnability_target_id(self._config.target_repo),
-            strategy_id=self._strategy_id,
-            build_id=(
-                self._build_id
-                or str(self._state_store.read().get("run_id") or "run")
-            ),
-            sensitive_environment=os.environ,
-        )
-        observer_evidence = {
-            run.observer_id: {
-                "status": run.status,
-                "reason": run.reason,
-                "receipt": run.receipt.as_mapping() if run.receipt else None,
-                "execution_count": len(run.executions),
-            }
-            for run in bundle.observer_runs
-        }
-        failed_runs = [run for run in bundle.observer_runs if run.status != "passed"]
-        if failed_runs:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-failed",
-                error="; ".join(
-                    f"{run.observer_id}: {run.reason or 'observer did not pass'}"
-                    for run in failed_runs
-                ),
-                observer_evidence=observer_evidence,
-            )
-        receipts = {
-            run.observer_id: run.receipt
-            for run in bundle.observer_runs
-            if run.receipt is not None
-        }
-        if len(receipts) != len(observers):
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observer-receipt-missing",
-                error="A required coverage observer did not retain a receipt.",
-                observer_evidence=observer_evidence,
-            )
-        try:
-            observation = write_coverage_observation(
-                evidence_dir=evidence_dir,
-                candidate_commit=candidate_commit,
-                candidate_fingerprint=candidate_fingerprint,
-                coverage_map_hash=coverage_map_hash,
-                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
-                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
-                runnability_contract_hash=runnability_contract_hash,
-                verification_receipt=bundle.standard_receipt,
-                observer_receipts=receipts,
-                observer_test_types={
-                    item.observer.id: item.observer.test_types
-                    for item in observers
-                },
-                obligations=obligations,
-                executions=tuple(
-                    execution
-                    for run in bundle.observer_runs
-                    for execution in run.executions
-                ),
-                candidate_worktree=candidate,
-                attempt_sequence=self._next_coverage_observation_attempt(
-                    evidence_dir
-                ),
-                sensitive_environment=os.environ,
-            )
-        except (CoverageObservationError, OSError, ValueError) as exc:
-            return self._coverage_observation_failure(
-                verify_result,
-                failure_id="coverage-observation-invalid",
-                error=f"Coverage observation could not be recorded: {exc}",
-                observer_evidence=observer_evidence,
-            )
-
-        evidence = dict(verify_result.verification_evidence)
-        evidence["coverage_observation"] = observation.ref.as_mapping()
-        evidence["coverage_observers"] = observer_evidence
-        self._record_coverage_observation_state(observation, observer_evidence)
-        if observation.ref.passed:
-            return VerifyResult(
-                passed=True,
-                failures=list(verify_result.failures),
-                duration_s=verify_result.duration_s,
-                token_usage=verify_result.token_usage,
-                verification_evidence=evidence,
-            )
-        unresolved = [
-            f"{requirement_id}: {item.reason}"
-            for requirement_id, item in sorted(observation.requirements.items())
-            if item.status != "observed"
-        ]
-        return VerifyResult(
-            passed=False,
-            failures=[
-                FailureEntry(
-                    category=FailureCategory.OTHER,
-                    id="coverage-observation-gaps",
-                    error=(
-                        "Required coverage observations did not pass: "
-                        + "; ".join(unresolved[:20])
-                    ),
-                    details={
-                        "observation": observation.ref.as_mapping(),
-                        "requirements": {
-                            item_id: item.status
-                            for item_id, item in observation.requirements.items()
-                            if item.status != "observed"
-                        },
-                        "test_cases": {
-                            item_id: {
-                                "test_type": item.test_type,
-                                "status": item.status,
-                                "reason": item.reason,
-                            }
-                            for item_id, item in observation.test_cases.items()
-                            if item.status != "passed"
-                        },
-                    },
-                )
-            ],
-            duration_s=verify_result.duration_s,
-            token_usage=verify_result.token_usage,
-            verification_evidence=evidence,
-        )
 
     @staticmethod
     def _verification_receipt_from_result(
@@ -2807,6 +2406,13 @@ class RalphController:
         }
         self._state_store.write(state)
 
+    def _record_coverage_observation_summary(
+        self, summary: Mapping[str, object]
+    ) -> None:
+        state = self._state_store.read()
+        state["coverage_observation"] = dict(summary)
+        self._state_store.write(state)
+
     def _coverage_observation_failure(
         self,
         verify_result: VerifyResult,
@@ -2841,163 +2447,17 @@ class RalphController:
         evidence_dir: Path,
     ) -> VerifyResult:
         """Require a fresh composed journey when resolved stacks demand it."""
-        if not verify_result.passed or not worktree_path:
-            return verify_result
-
-        resolved_policy = getattr(self._config, "resolved_runnability", None)
-        policy = str(getattr(resolved_policy, "policy", "not_applicable"))
-        required = policy == "required"
-        spec_dir = self._find_existing_spec_dir(worktree_path)
-        if spec_dir is not None:
-            try:
-                disposition = read_runnability_disposition(spec_dir)
-            except RunnabilityDispositionError as exc:
-                return self._runnability_failure(
-                    verify_result,
-                    failure_id="user-runnability-disposition-invalid",
-                    error=f"Owner runnability disposition is invalid: {exc}",
-                    details={"disposition": str(spec_dir / "runnability-disposition.json")},
-                )
-            if disposition is not None and disposition.status == "deferred":
-                self._record_user_runnability_state(
-                    {
-                        "status": "deferred",
-                        "failed_stage": None,
-                        "failure_class": "owner_deferred",
-                        "summary": disposition.reason,
-                        "report": disposition.evidence_report,
-                        "candidate_fingerprint": "",
-                        "contract_hash": "",
-                        "stack_hash": "",
-                        "user_commands": {},
-                    }
-                )
-                return verify_result
-
-        candidate_contract_path = Path(worktree_path) / RUNNABILITY_CONTRACT_PATH
-        if not candidate_contract_path.exists():
-            if not required:
-                return verify_result
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-missing",
-                error=(
-                    "Selected stacks require a composed user-runnability journey, but "
-                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
-                ),
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Add the project-owned runnability contract and real journey.",
-                },
-            )
-
-        try:
-            contract = load_runnability_contract(Path(worktree_path))
-        except (OSError, RunnabilityContractError) as exc:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-invalid",
-                error=f"Candidate runnability contract is invalid: {exc}",
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Repair the candidate-owned runnability contract.",
-                },
-            )
-
-        if contract is None:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-missing",
-                error=(
-                    "Selected stacks require a composed user-runnability journey, but "
-                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
-                ),
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Add the project-owned runnability contract and real journey.",
-                },
-            )
-        if not contract.enabled:
-            if not required:
-                return verify_result
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-disabled",
-                error="A candidate contract cannot disable a stack-required runnability gate.",
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Enable and complete the candidate runnability contract.",
-                },
-            )
-
-        resolved_stacks = getattr(self._config, "resolved_stacks", None)
-        if resolved_stacks is None:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-stack-resolution-missing",
-                error="Resolved stack evidence is unavailable for the runnability gate.",
-                details={
-                    "required_repair": "Rerun delivery with resolved stack runtime data."
-                },
-            )
-
-        runner = RunnabilityRunner(
-            provider=self._provider,
-            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
-                str(worktree), 0
-            ),
-            spec_id=self._spec_id,
-            target_id=_runnability_target_id(self._config.target_repo),
-            strategy_id=self._strategy_id,
-            build_id=self._build_id or str(self._state_store.read().get("run_id") or "run"),
-        )
-        result = runner.run(
+        gate = self._candidate_evidence_runner.apply_runnability(
+            verify_result=verify_result,
             worktree=Path(worktree_path),
-            contract=contract,
-            resolved=resolved_stacks,
+            spec_dir=self._find_existing_spec_dir(worktree_path),
             candidate_commit=candidate_commit,
             evidence_dir=evidence_dir,
-            attempt_sequence=_next_runnability_attempt_sequence(evidence_dir),
         )
-        self._record_user_runnability_result(result)
-        if result.status == "runnable":
-            evidence = dict(verify_result.verification_evidence)
-            evidence["runnability_evidence"] = result.evidence.as_mapping()
-            return VerifyResult(
-                passed=True,
-                failures=list(verify_result.failures),
-                duration_s=verify_result.duration_s,
-                token_usage=verify_result.token_usage,
-                verification_evidence=evidence,
-            )
+        if gate.state_summary is not None:
+            self._record_user_runnability_state(gate.state_summary)
+        return gate.verify_result
 
-        report_path = str(result.evidence.markdown_path)
-        failure_id = (
-            "user-runnability-sandbox-prerequisite"
-            if result.failure_class == "sandbox_prerequisite_missing"
-            else f"user-runnability-{result.failure_class.replace('_', '-')}"
-        )
-        repair = (
-            "Repair the sandbox/provider prerequisite and retry delivery."
-            if result.failure_class == "sandbox_prerequisite_missing"
-            else "Repair the candidate product or .echelon/runnability.yml, then retry delivery."
-        )
-        return self._runnability_failure(
-            verify_result,
-            failure_id=failure_id,
-            error=(
-                f"User runnability {result.failure_class} failed at "
-                f"{result.failed_stage or 'unknown'}: "
-                f"{result.summary}. Evidence: {report_path}"
-            ),
-            details={
-                "failed_stage": result.failed_stage,
-                "failure_class": result.failure_class,
-                "summary": result.summary,
-                "report": report_path,
-                "required_repair": repair,
-            },
-        )
 
     def _runnability_failure(
         self,
@@ -6723,47 +6183,16 @@ class RalphController:
 
     def _build_sandbox_spec(self, worktree_path: str, outer_iter: int) -> SandboxSpec:
         """Build SandboxSpec from config and context."""
-        from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
-
-        from harness.verification_plan import build_verification_plan
-
-        verification_plan = build_verification_plan(
-            Path(worktree_path),
-            self._config,
-            services=tuple(self._config.verification_services),
+        from harness.verification_stack_runtime import (
+            build_verification_sandbox_spec,
         )
-        return SandboxSpec(
-            image=verification_plan.image,
-            image_source="config_override" if self._config.base_image else "fingerprint",
-            worktree_mount=worktree_path,
-            container_mount="/workspace",
-            resource_limits=ProviderResourceLimits(
-                memory=self._config.resource_limits.memory,
-                cpu=self._config.resource_limits.cpu,
-                pids=self._config.resource_limits.pids,
-                storage=self._config.resource_limits.storage,
-            ),
-            network_policy=NetworkPolicy(
-                allowlist=self._config.network.allowlist,
-                proxy_image=self._config.network.proxy_image,
-            ),
-            env={
-                "ECHELON_HARNESS_RUN": "1",
-                # Corepack uses Node's fetch implementation. Conventional
-                # HTTP(S)_PROXY alone is not honoured unless this opt-in is
-                # present, which would otherwise make clean Node sandboxes try
-                # external DNS from the internal-only network.
-                "NODE_OPTIONS": "--use-env-proxy",
-            },
-            secrets_env={},
-            post_create_command=None,
-            forward_ports=[],
-            labels={
-                "strategy_id": self._strategy_id,
-                "spec_id": self._spec_id,
-                "run_id": str(outer_iter),
-            },
-            ephemeral_volumes=["node_modules"],
+
+        return build_verification_sandbox_spec(
+            self._config,
+            worktree=Path(worktree_path),
+            spec_id=self._spec_id,
+            strategy_id=self._strategy_id,
+            run_id=str(outer_iter),
         )
 
     def _append_iteration_log(

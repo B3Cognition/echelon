@@ -371,6 +371,26 @@ def test_sandbox_setup_error_is_a_typed_verification_failure(tmp_path: Path) -> 
     assert result.failures[0].id == "sandbox-verification-unavailable"
 
 
+def test_standard_verification_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, provider, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    shared.run_standard.return_value = expected
+    controller._candidate_evidence_runner = shared
+
+    result = controller._exec_verify(None, worktree_path=str(tmp_path))
+
+    assert result is expected
+    shared.run_standard.assert_called_once_with(
+        handle=None,
+        worktree=tmp_path,
+        allow_legacy_structured=True,
+    )
+    assert provider.created is False
+
+
 def _required_browser_runnability() -> ResolvedRunnability:
     return ResolvedRunnability(
         classification="user_facing",
@@ -458,6 +478,38 @@ def test_required_user_facing_stack_cannot_pass_gate_without_candidate_contract(
     assert result.passed is False
     assert result.failures[0].id == "user-runnability-contract-missing"
     assert result.failures[0].details["contract"] == ".echelon/runnability.yml"
+
+
+def test_runnability_gate_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    gate = MagicMock(verify_result=expected, state_summary={"status": "runnable"})
+    shared.apply_runnability.return_value = gate
+    controller._candidate_evidence_runner = shared
+    controller._find_existing_spec_dir = MagicMock(return_value=tmp_path / "spec")
+    controller._record_user_runnability_state = MagicMock()
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(tmp_path),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+    )
+
+    assert result is expected
+    shared.apply_runnability.assert_called_once_with(
+        verify_result=shared.apply_runnability.call_args.kwargs["verify_result"],
+        worktree=tmp_path,
+        spec_dir=tmp_path / "spec",
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+    )
+    controller._record_user_runnability_state.assert_called_once_with(
+        {"status": "runnable"}
+    )
 
 
 @pytest.mark.unit
@@ -570,8 +622,10 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
             ),
         ),
     )
-    with patch.object(ralph, "_current_git_commit", return_value="a" * 40), patch.object(
-        ralph, "run_coverage_observers", return_value=bundle
+    with patch(
+        "harness.candidate_evidence._current_git_commit", return_value="a" * 40
+    ), patch(
+        "harness.candidate_evidence.run_coverage_observers", return_value=bundle
     ):
         result = controller._apply_coverage_observation_gate(
             VerifyResult(
@@ -615,7 +669,7 @@ def test_coverage_gate_rejects_an_unavailable_type_before_starting_observers(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True), str(worktree)
         )
@@ -624,6 +678,35 @@ def test_coverage_gate_rejects_an_unavailable_type_before_starting_observers(
     assert result.failures[0].id == "coverage-observer-unavailable"
     assert "rust-unit" in result.failures[0].error
     observers.assert_not_called()
+
+
+def test_coverage_gate_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    gate = MagicMock(
+        verify_result=expected,
+        state_summary={"status": "passed"},
+    )
+    shared.apply_coverage.return_value = gate
+    controller._candidate_evidence_runner = shared
+    controller._find_existing_spec_dir = MagicMock(return_value=tmp_path / "spec")
+    controller._record_coverage_observation_summary = MagicMock()
+
+    result = controller._apply_coverage_observation_gate(
+        VerifyResult(passed=True), str(tmp_path)
+    )
+
+    assert result is expected
+    shared.apply_coverage.assert_called_once()
+    kwargs = shared.apply_coverage.call_args.kwargs
+    assert kwargs["worktree"] == tmp_path
+    assert kwargs["spec_dir"] == tmp_path / "spec"
+    controller._record_coverage_observation_summary.assert_called_once_with(
+        {"status": "passed"}
+    )
 
 
 @pytest.mark.unit
@@ -648,7 +731,7 @@ def test_coverage_gate_does_not_treat_an_unmapped_requirement_as_deferred(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True), str(worktree)
         )
@@ -820,7 +903,7 @@ def test_owner_deferred_coverage_does_not_require_an_observer_run(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True),
             str(worktree),
@@ -945,7 +1028,7 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
         ),
     )
 
-    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+    with patch("harness.candidate_evidence.RunnabilityRunner") as runner_type:
         runner_type.return_value.run.return_value = run_result
         result = controller._apply_user_runnability_gate(
             VerifyResult(passed=True),
@@ -1029,7 +1112,7 @@ def test_passing_runnability_is_attached_to_downstream_verification_evidence(
         verification_evidence={"path": "/tmp/host-receipt.json"},
     )
 
-    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+    with patch("harness.candidate_evidence.RunnabilityRunner") as runner_type:
         runner_type.return_value.run.return_value = run_result
         result = controller._apply_user_runnability_gate(
             original,
