@@ -228,6 +228,50 @@ class TestFulfillmentRunner:
         assert result.used_cache is False
         provider.exec_prompt.assert_not_called()
 
+    def test_refresh_owns_reconciled_lifecycle_after_provider_success(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def leave_reconciliation_incomplete(_worktree_path: str, _prompt: str) -> int:
+            state_path = next(tmp_path.glob("runs/**/state.json"))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.update(
+                {
+                    "topology_evidence": "ready",
+                    "fulfillment_artifacts": "valid",
+                }
+            )
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = leave_reconciliation_incomplete
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path), "spec-001", reconcile=True
+            )
+
+        assert result.status == "refreshed", result.reason
+        assert result.exit_code == 0
+        state_path = next(tmp_path.glob("runs/**/state.json"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "complete"
+        assert state["progress_reconciliation"] == "applied"
+
     def test_refresh_reports_provider_session_limit_without_using_stale_report(
         self, tmp_path
     ):
@@ -1070,7 +1114,13 @@ class TestFulfillmentRunner:
             encoding="utf-8",
         )
         spec_dir = workspace / "specs" / "906-cli-output-styling"
-        _write_spec_inputs(spec_dir)
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
         _write_matching_audit(workspace, "906-cli-output-styling")
         report = spec_dir / "fulfillment-report.md"
         provider = MagicMock()

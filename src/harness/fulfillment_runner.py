@@ -408,6 +408,33 @@ class FulfillmentRunner:
                 report_path=report_path,
             )
         if exit_code == 0:
+            reconciliation_error = _complete_requested_progress_reconciliation(
+                artifact_policy
+            )
+            if reconciliation_error:
+                _block_verify_spec_lifecycle(
+                    artifact_policy.verify_run_dir, reconciliation_error
+                )
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason=f"verify-spec reconciliation failed: {reconciliation_error}",
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
+            lifecycle_error = _finalize_completed_verify_spec_lifecycle(
+                artifact_policy.verify_run_dir
+            )
+            if lifecycle_error:
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason=lifecycle_error,
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
             if not _latest_report_matches_latest_audit(
                 worktree,
                 spec_id,
@@ -1528,6 +1555,160 @@ class VerifySpecArtifactWritePolicy:
         except ValueError:
             return False
         return True
+
+
+def _finalize_completed_verify_spec_lifecycle(verify_run_dir: Path) -> str:
+    """Reject a provider-success result whose Python-owned lifecycle is open.
+
+    Legacy test executors can return a report without executing a verify-spec
+    workflow, so there is no finalizable lifecycle to inspect.  A real workflow
+    stamps `fulfillment_artifacts: valid`; from that point a zero provider exit
+    must be accompanied by the deterministic completion transition.
+    """
+    state_path = verify_run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(state, dict) or state.get("fulfillment_artifacts") != "valid":
+        return ""
+    if state.get("status") == "complete":
+        return ""
+
+    from harness.verify_spec_run import (
+        VerifySpecRunInitError,
+        block_verify_spec_run,
+        complete_verify_spec_run,
+    )
+
+    try:
+        complete_verify_spec_run(verify_run_dir)
+    except VerifySpecRunInitError as exc:
+        detail = str(exc)
+        try:
+            block_verify_spec_run(verify_run_dir, reason=detail)
+        except VerifySpecRunInitError as block_exc:
+            detail = f"{detail}; could not record blocked state: {block_exc}"
+        return f"verify-spec lifecycle finalization failed: {detail}"
+    return ""
+
+
+def _complete_requested_progress_reconciliation(
+    policy: VerifySpecArtifactWritePolicy,
+) -> str:
+    """Run the deterministic reconciliation phase after the provider writes evidence.
+
+    This phase is declared commander-internal, so its completion cannot depend
+    on an LLM deciding to execute a trailing command after it has produced a
+    valid fulfillment report.
+    """
+    if policy.spec_dir is None:
+        return ""
+    state_path = policy.verify_run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return f"verify state is unavailable or malformed: {exc}"
+    if not isinstance(state, dict):
+        return "verify state must be a JSON object"
+    if state.get("reconcile") is not True:
+        return ""
+    if state.get("progress_reconciliation") in {"applied", "dry_run"}:
+        return ""
+
+    from harness.progress_reconciliation import (
+        reconcile_progress,
+        write_progress_reconciliation_candidates,
+    )
+    from harness.task_requirement_mapping import (
+        apply_task_requirement_mapping,
+        write_task_requirement_mapping_candidates,
+    )
+
+    tasks_path = policy.spec_dir / "tasks.md"
+    report_path = policy.spec_dir / "fulfillment-report.md"
+    gaps_path = policy.spec_dir / "fulfillment-gaps.md"
+    if not tasks_path.is_file() or not report_path.is_file():
+        return "tasks.md or fulfillment-report.md is missing"
+    dry_run = state.get("dry_run") is True
+    try:
+        mapping_candidates = write_task_requirement_mapping_candidates(
+            tasks_path=tasks_path,
+            out_path=policy.verify_run_dir / "task-requirement-map.candidates.json",
+        )
+        mapping_result = apply_task_requirement_mapping(
+            tasks_path=tasks_path,
+            candidate_path=policy.verify_run_dir / "task-requirement-map.candidates.json",
+            out_plan_json=policy.verify_run_dir / "task-requirement-map-plan.json",
+            out_plan_md=policy.verify_run_dir / "task-requirement-map-plan.md",
+            out_applied_json=None
+            if dry_run
+            else policy.verify_run_dir / "task-requirement-map-applied.json",
+            out_applied_md=None
+            if dry_run
+            else policy.verify_run_dir / "task-requirement-map-applied.md",
+            dry_run=dry_run,
+        )
+        progress_candidates = write_progress_reconciliation_candidates(
+            tasks_path=tasks_path,
+            fulfillment_report_path=report_path,
+            fulfillment_gaps_path=gaps_path,
+            out_path=policy.verify_run_dir / "progress-reconciliation-candidates.json",
+        )
+        progress_result = reconcile_progress(
+            tasks_path=tasks_path,
+            candidate_path=policy.verify_run_dir / "progress-reconciliation-candidates.json",
+            out_plan_json=policy.verify_run_dir / "progress-reconciliation-plan.json",
+            out_plan_md=policy.verify_run_dir / "progress-reconciliation-plan.md",
+            out_applied_json=None
+            if dry_run
+            else policy.verify_run_dir / "progress-reconciliation-applied.json",
+            out_applied_md=None
+            if dry_run
+            else policy.verify_run_dir / "progress-reconciliation-applied.md",
+            dry_run=dry_run,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return str(exc)
+
+    state.update(
+        {
+            "task_requirement_mapping_candidates": "ready",
+            "task_requirement_mapping_safe_count": len(
+                mapping_candidates["task_requirement_mappings"]
+            ),
+            "task_requirement_mapping_ambiguous_count": len(
+                mapping_candidates["ambiguous_task_requirement_mappings"]
+            ),
+            "task_requirement_mapping": "dry_run" if dry_run else "applied",
+            "task_requirement_mapping_applied_count": mapping_result.applied_count,
+            "progress_reconciliation_candidates": "ready",
+            "progress_reconciliation_safe_count": progress_result.safe_count,
+            "progress_reconciliation_ambiguous_count": progress_result.ambiguous_count,
+            "progress_reconciliation": "dry_run" if dry_run else "applied",
+            "progress_reconciliation_applied_count": progress_result.applied_count,
+        }
+    )
+    try:
+        from harness.durable_json import write_json_atomic
+
+        write_json_atomic(
+            state_path,
+            state,
+            trusted_root=policy.workspace_root,
+        )
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    return ""
+
+
+def _block_verify_spec_lifecycle(verify_run_dir: Path, reason: str) -> None:
+    from harness.verify_spec_run import VerifySpecRunInitError, block_verify_spec_run
+
+    try:
+        block_verify_spec_run(verify_run_dir, reason=reason)
+    except VerifySpecRunInitError:
+        pass
 
 
 def _verify_spec_artifact_write_policy(
