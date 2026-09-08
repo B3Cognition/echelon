@@ -18,6 +18,7 @@ from echelon.context_metadata import (
 from echelon.context_reconciliation import reconcile_drawers
 
 MAX_CONTEXT_SNIPPET_CHARS = 3000
+MAX_DRAWER_SNIPPET_CHARS = 1200
 CONTEXT_OUTPUT_NAMES = (
     "prior-spec-context.md",
     "current-feature-context.md",
@@ -35,6 +36,7 @@ class ContextBuildResult:
     feature_registry: Path
     reconciliation_json: Path
     stale_report: Path
+    accepted_drawer_ids: tuple[str, ...]
 
 
 def build_run_context(
@@ -85,6 +87,18 @@ def build_run_context(
         feature_registry=feature_registry,
         reconciliation_json=reconciliation_json,
         stale_report=stale_report,
+        accepted_drawer_ids=tuple(
+            str(
+                getattr(
+                    drawer,
+                    "drawer_id",
+                    drawer.get("metadata", {}).get("id", "unknown")
+                    if isinstance(drawer, dict)
+                    else "unknown",
+                )
+            )
+            for drawer in reconciliation.accepted
+        ),
     )
 
 
@@ -130,7 +144,7 @@ def _render_prior(metadata: list[FeatureMetadata], drawers: Sequence[Any]) -> st
         for drawer in drawers:
             label = getattr(drawer, "drawer_id", "unknown")
             content = getattr(drawer, "content", "")
-            lines.append(f"- {label}: {content[:300]}")
+            lines.append(f"- {label}: {content[:MAX_DRAWER_SNIPPET_CHARS]}")
     return "\n".join(lines).rstrip() + "\n"
 
 

@@ -344,6 +344,7 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     assert "/runs/" in gitignore
     assert "/.echelon/packages/" in gitignore
     assert "/.echelon/prosaic/" in gitignore
+    assert "/.echelon/.banzai-default-protocol.lock" in gitignore
     assert "/sources/*" in gitignore
     assert "!/sources/README.md" in gitignore
     commit = subprocess.run(

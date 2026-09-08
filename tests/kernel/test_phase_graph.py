@@ -688,7 +688,7 @@ class TestPhaseGraph:
     def test_why2_keeps_global_iteration_routes_for_perfectionist_mode(self):
         why2 = self.graph.get("phase1-why2")
 
-        assert why2.transitions[1:3] == [
+        assert why2.transitions[3:5] == [
             {
                 "to": "phase1-what",
                 "condition": "verdict = FAIL AND iteration < max_iterations",
@@ -1293,6 +1293,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         },
         "phase1_quality_certificate": {
             "spec_quality_certificate",
+            "why2_repair_phase",
         },
         "feasibility_structural": {
             "structural_action",
@@ -1316,7 +1317,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         name: graph.controller_contract(name).state_update_keys
         for name in expected
     } == expected
-    assert len(set().union(*expected.values())) == 25
+    assert len(set().union(*expected.values())) == 26
 
 
 def test_production_contracts_reject_incomplete_success_results() -> None:

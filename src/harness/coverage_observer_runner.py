@@ -10,6 +10,7 @@ import shlex
 from typing import Callable, Mapping, Sequence
 
 from harness.config import HarnessConfig
+from harness.browser_runtime import is_transient_browser_runtime_failure
 from harness.coverage_observation import CoverageObservationResult
 from harness.errors import NotSupportedError, SandboxError
 from harness.playwright_evidence import (
@@ -44,6 +45,7 @@ class CoverageObserverRun:
     executions: tuple[ObservedTestExecution, ...]
     status: str
     reason: str = ""
+    failure_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -229,6 +231,29 @@ def _run_captured_observer(
 
 
 def _run_isolated_observer(
+    **kwargs: object,
+) -> CoverageObserverRun:
+    """Retry one transient browser-process loss in a fresh observer sandbox."""
+    first = _run_isolated_observer_once(**kwargs)
+    if first.failure_kind != "transient_browser_runtime":
+        return first
+    second = _run_isolated_observer_once(**kwargs)
+    if second.failure_kind == "transient_browser_runtime":
+        return CoverageObserverRun(
+            observer_id=second.observer_id,
+            receipt=second.receipt,
+            executions=(),
+            status="failed",
+            reason=(
+                "browser runtime unavailable after one automatic fresh-sandbox "
+                "coverage observer retry"
+            ),
+            failure_kind="browser_runtime_unavailable",
+        )
+    return second
+
+
+def _run_isolated_observer_once(
     *,
     provider: SandboxProvider,
     sandbox_spec_factory: Callable[[Path], SandboxSpec],
@@ -293,7 +318,10 @@ def _run_isolated_observer(
             )
             stages.append(_stage("coverage-observer", observer.command, result))
             if result.exit_code != 0:
-                failure_reason = "coverage observer command failed"
+                if is_transient_browser_runtime_failure(result.stdout, result.stderr):
+                    failure_reason = "transient browser runtime failure"
+                else:
+                    failure_reason = "coverage observer command failed"
         if not failure_reason:
             report_bytes = provider.read_file(handle, sandbox_report_path)
             retained_report = _retain_observer_report(
@@ -353,6 +381,11 @@ def _run_isolated_observer(
             executions=(),
             status="failed",
             reason=failure_reason or "coverage observer receipt did not pass",
+            failure_kind=(
+                "transient_browser_runtime"
+                if failure_reason == "transient browser runtime failure"
+                else ""
+            ),
         )
     try:
         executions = _parse_report(

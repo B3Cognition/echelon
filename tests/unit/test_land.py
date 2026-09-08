@@ -3451,6 +3451,7 @@ def test_prepare_feature_branch_blocks_untracked_output_without_deleting_it(
 
     assert result.status == "blocked"
     assert "untracked" in result.message
+    assert "test-results/result.json" in result.message
     assert output.read_text(encoding="utf-8") == "{}\n"
     assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
     gitops.get_default_branch.assert_not_called()

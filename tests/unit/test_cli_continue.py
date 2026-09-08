@@ -270,6 +270,43 @@ def _legacy_banzai_why2_decision() -> dict[str, object]:
     )
 
 
+def _v1_reassessed_banzai_why2_state() -> dict[str, object]:
+    decision = _legacy_banzai_why2_decision()
+    return {
+        "status": "blocked",
+        "phase": "phase1-why2",
+        "autonomy_mode": "banzai",
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-why2",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+        "banzai_default_reassessment": {
+            "schema_version": 1,
+            "decision_id": "dec-first-legacy-why2",
+            "source_phase": "phase1-why2",
+            "question_sha256": "a" * 64,
+            "reassessed_at": "2026-09-06T20:00:00+00:00",
+        },
+    }
+
+
+def _write_deployed_banzai_candidate_protocol(project_root: Path) -> None:
+    for relative in (
+        ".echelon/runtime/workflow/definition.yaml",
+        ".echelon/runtime/workflow/phases/phase1-why2.md",
+        ".echelon/prosaic/subagents/echelon.sage.md",
+    ):
+        path = project_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("deployed candidate protocol\n", encoding="utf-8")
+
+
 def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
     decision = _legacy_banzai_why2_decision()
     state = {
@@ -293,6 +330,121 @@ def test_continue_reassesses_one_legacy_banzai_why2_question() -> None:
     assert action.kind == "resolve_decision"
     assert action.command == "echelon spec continue"
     assert "re-evaluate" in action.note
+
+
+def test_continue_requires_workspace_refresh_for_v1_protocol_upgrade(
+    tmp_path: Path,
+) -> None:
+    """Catch a CLI that advertises an upgrade retry without trusted files."""
+    action = _classify_run_recovery(
+        _v1_reassessed_banzai_why2_state(),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "manual_recovery"
+    assert action.command == "echelon workspace migrate-to-prosaic"
+    assert ".echelon/" in action.note
+
+
+def test_continue_exposes_one_v1_protocol_upgrade_retry(
+    tmp_path: Path,
+) -> None:
+    """Catch a refreshed legacy state that is sent back to human answer input."""
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+
+    action = _classify_run_recovery(
+        _v1_reassessed_banzai_why2_state(),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "resolve_decision"
+    assert action.command == "echelon spec continue"
+    assert "refreshed candidate-protocol" in action.note
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("decision_id", "not-a-canonical-decision"),
+        ("reassessed_at", "not-a-timestamp"),
+    ],
+)
+def test_continue_does_not_advertise_malformed_v1_protocol_upgrade(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Catch CLI guidance that the controller's strict ledger parser rejects."""
+    _write_deployed_banzai_candidate_protocol(tmp_path)
+    state = _v1_reassessed_banzai_why2_state()
+    state["banzai_default_reassessment"][field] = value
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "human_resume"
+    assert action.command == 'echelon spec resume "<your answer>"'
+
+
+def test_continue_routes_untried_banzai_why2_question_to_evidence_preflight() -> None:
+    decision = _legacy_banzai_why2_decision()
+    state = {
+        "status": "blocked",
+        "phase": "phase1-why2",
+        "autonomy_mode": "banzai",
+        "banzai_default_candidate_protocol_version": 1,
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-why2",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+    }
+
+    action = _classify_run_recovery(state)
+
+    assert action.kind == "resolve_decision"
+    assert "canonical evidence" in action.note
+
+
+def test_continue_keeps_repeated_banzai_why2_evidence_question_human_owned() -> None:
+    decision = _legacy_banzai_why2_decision()
+    question_hash = hashlib.sha256(str(decision["question"]).encode()).hexdigest()
+    state = {
+        "status": "blocked",
+        "phase": "phase1-why2",
+        "autonomy_mode": "banzai",
+        "banzai_default_candidate_protocol_version": 1,
+        "blocked_reason": decision["reason_code"],
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+            reason_code=str(decision["reason_code"]),
+            phase="phase1-why2",
+            requires_human_input=True,
+            schema_version=2,
+            decision_id=str(decision["id"]),
+        ).to_dict(),
+        "banzai_evidence_reassessment": {
+            "schema_version": 1,
+            "attempts": [
+                {
+                    "decision_id": "dec-prior-evidence-question",
+                    "question_sha256": question_hash,
+                    "evidence_sha256": "a" * 64,
+                    "drawer_ids": ["CTX-plan-001"],
+                    "reassessed_at": "2026-09-07T18:00:00+00:00",
+                }
+            ],
+        },
+    }
+
+    action = _classify_run_recovery(state)
+
+    assert action.kind == "human_resume"
 
 
 def test_continue_delegates_legacy_banzai_why2_to_the_controller(
@@ -462,7 +614,7 @@ def test_continue_does_not_revive_a_historical_run_without_current_pointer(
         {
             "run_id": "spec-test",
             "status": "done",
-            "phase": "done",
+            "phase": "DONE",
             "user_message": "prepare the release",
         },
     )
@@ -1005,6 +1157,71 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     )
 
     assert _next_continue_phase(tmp_path) is None
+
+
+def test_continue_routes_invalid_coverage_contract_to_sentinel_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "spec_id": "001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
+    for name in (
+        "00-overview.md", "requirements-overview.md", "plan.md", "research.md",
+        "data-model.md", "tasks.md", "constitution.md", "test-strategy.md",
+        "test-architecture.md", "plan-conformance.md",
+    ):
+        (spec_dir / name).write_text(f"# {name}\n")
+    (spec_dir / "plan-conformance.json").write_text(_valid_plan_conformance_json())
+    (spec_dir / "spec.md").write_text("- **FR-001**: Animate collection.\n")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001; E2E-001/E2E-002 | unit/e2e | planned | planned | tests | implement |\n"
+    )
+    active_spec_dir = run_dir / "specs" / "001-demo"
+    active_spec_dir.mkdir(parents=True)
+    for source in spec_dir.iterdir():
+        if source.is_file():
+            (active_spec_dir / source.name).write_bytes(source.read_bytes())
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase3-sentinel"
+    assert state["status"] == "running"
+    assert state["phase_output_recovery"] == {
+        "phase": "phase3-sentinel",
+        "invalid_outputs": [{
+            "path": "coverage-map.md",
+            "reason": (
+                "coverage test type/case cardinality must be one or match case count"
+            ),
+        }],
+        "prior_state_updates": {},
+    }
+    assert calls == [["", "--mode", "semi"]]
 
 
 def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
@@ -1998,6 +2215,43 @@ def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediat
     assert action.phase == "phase1-what"
 
 
+def test_candidate_integrity_failure_retries_repaired_issue_validation() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_candidate_integrity_failed",
+            "last_dispatch": {"phase_id": "phase1-why2"},
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "repaired"},
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "issue_resolution_revalidation"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+
+
+def test_candidate_integrity_failure_retries_controller_owned_discovery_route() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_candidate_integrity_failed",
+            "last_dispatch": {"phase_id": "phase1-why2"},
+            "why2_repair_phase": "phase1-discover",
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "discovery_artifact_repair"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+
+
 def test_quality_remediation_supersedes_only_its_stale_why_safeguard() -> None:
     decision = build_blocked_decision_v2(
         decision_id="dec-quality-guard",
@@ -2152,6 +2406,66 @@ def test_dispatch_cap_missing_spec_evidence_retries_early_phase_staging(
     assert action.kind == "retry_phase"
     assert action.reason == "phase_dispatch_limit_evidence_retry"
     assert action.phase == "phase1-why1"
+
+
+def test_dispatch_cap_malformed_pass_issues_retries_current_certification_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "echelon.cli.has_current_phase1_quality_prerequisite",
+        lambda *_args, **_kwargs: True,
+    )
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-lexicon-derive",
+            "blocked_reason": "phase_dispatch_limit_evidence_malformed",
+            "phase_dispatch_counts": {"phase1-lexicon-derive": 6},
+            "spec_quality_certificate": {
+                "status": "passed",
+                "source_sha256": "a" * 64,
+            },
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_certification_epoch"
+    assert action.phase == "phase1-lexicon-derive"
+    assert action.command == "echelon spec continue"
+
+
+def test_dispatch_cap_certification_epoch_recovery_is_one_time_per_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "echelon.cli.has_current_phase1_quality_prerequisite",
+        lambda *_args, **_kwargs: True,
+    )
+    state = {
+        "status": "blocked",
+        "phase": "phase1-lexicon-derive",
+        "blocked_reason": "phase_dispatch_limit_evidence_malformed",
+        "phase_dispatch_counts": {"phase1-lexicon-derive": 6},
+        "spec_quality_certificate": {
+            "status": "passed",
+            "source_sha256": "a" * 64,
+        },
+        "phase_dispatch_limit_certification_epoch_recovery": {
+            "schema_version": 1,
+            "phase": "phase1-lexicon-derive",
+            "source_sha256": "a" * 64,
+            "consumed_at": "2026-09-08T00:00:00+00:00",
+        },
+    }
+
+    action = _classify_run_recovery(state, project_root=tmp_path)
+
+    assert action.kind == "manual_recovery"
+    assert action.reason == "phase_dispatch_limit_evidence_malformed"
 
 
 def test_quality_remediation_resets_its_authoring_quality_phase_counts() -> None:
@@ -2410,6 +2724,34 @@ def test_continue_revalidates_repaired_issue_before_requesting_new_decision(
     assert state["why2_metric_stagnation_count"] == 0
     assert "why_failure_baseline" not in state
     assert len(calls) == 1
+
+
+def test_validated_issue_recovery_does_not_mask_phase_a_readiness_repair(
+    tmp_path: Path,
+) -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "phase_a_readiness_blockers": [
+                "coverage-map.md invalid: malformed test mapping"
+            ],
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "from_phase": "phase3-tasks-lexicon",
+                "to_phase": "phase3-how",
+                "reason": "issue_resolution",
+                "status": "validated",
+            },
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_a_readiness_failed"
+    assert action.phase == "phase3-sentinel"
+    assert action.command == "echelon spec continue"
 
 
 def test_continue_consumes_controller_recovery_instruction(

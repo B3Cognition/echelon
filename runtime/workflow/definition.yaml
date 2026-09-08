@@ -625,6 +625,12 @@ phases:
       # proportional mode the harness controller intercepts eligible WHY2
       # failures and owns its bounded repair/debt policy; do not reproduce its
       # counters or sealed-decision logic in workflow conditions.
+      - to: phase1-discover
+        condition: "verdict = FAIL AND why2_repair_phase = phase1-discover AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "verdict = FAIL AND why2_repair_phase = phase1-what AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase1-what
         condition: "verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
@@ -1302,8 +1308,8 @@ phases:
         action: increment_iteration
       - to: terminal-blocked
         condition: "tasks_lexicon_action = block"
-      - to: phase1-what
-        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND quality_gates.fail AND iteration < max_iterations"
+      - to: phase1-discover
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase1-discover AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-what
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase1-what AND iteration < max_iterations"
@@ -1316,6 +1322,9 @@ phases:
         action: increment_iteration
       - to: phase3-plan
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND why3_repair_phase = phase3-plan AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND quality_gates.fail AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-what
         condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND iteration < max_iterations"

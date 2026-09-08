@@ -8,7 +8,11 @@ import sys
 
 import pytest
 
-from harness.verify_spec_run import complete_verify_spec_run, init_verify_spec_run
+from harness.verify_spec_run import (
+    block_verify_spec_run,
+    complete_verify_spec_run,
+    init_verify_spec_run,
+)
 from harness.verify_spec_run import VerifySpecRunInitError
 
 
@@ -59,6 +63,34 @@ def test_init_verify_spec_run_uses_orchestration_current_pointer(
     assert state["verify_scope"] == "full"
     assert state["status"] == "in_progress"
     assert state["structural_evidence"] == "pending"
+
+
+def test_block_verify_spec_run_records_terminal_failure_without_overwriting_evidence(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    result = init_verify_spec_run(
+        project_root=project,
+        spec_id="001-demo",
+        spec_dir=spec_dir,
+        timestamp="20260907-120000",
+    )
+    state_path = result.verify_run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"fulfillment_artifacts": "valid", "topology_evidence": "ready"})
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    block_verify_spec_run(result.verify_run_dir, reason="progress reconciliation is not finalized")
+
+    blocked = json.loads(state_path.read_text(encoding="utf-8"))
+    assert blocked["status"] == "blocked"
+    assert blocked["blocked_reason"] == "progress reconciliation is not finalized"
+    assert blocked["blocked_at"].endswith("+00:00")
+    assert blocked["fulfillment_artifacts"] == "valid"
 
 
 def test_init_verify_spec_run_rejects_path_like_current_pointer(

@@ -127,6 +127,7 @@ def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
             {
                 "status": "running",
                 "checkpoint_commits": [{"commit": candidate}],
+                "spec_id": "012",
             }
         ),
         encoding="utf-8",
@@ -158,6 +159,7 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
                 {
                     "status": "running",
                     "checkpoint_commits": [{"commit": checkpoint}],
+                    "spec_id": "012",
                 }
             ),
             encoding="utf-8",
@@ -170,6 +172,43 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
 
     assert baselines == {}
     gitops.commit_is_ancestor_of_default.assert_called_once_with(landed)
+
+
+def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
+    tmp_path: Path,
+) -> None:
+    """A repairable build failure must not discard newer durable progress."""
+    newest = "a" * 40
+    older = "b" * 40
+    states = (
+        ("build-20260908-043009-777477", "blocked", "build_blocked", newest),
+        ("build-20260908-033257-373367", "interrupted", "interrupted", older),
+    )
+    for build_id, status, reason, checkpoint in states:
+        state_dir = tmp_path / "runs" / build_id / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "default.json").write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "termination_reason": reason,
+                    "checkpoint_commits": [{"commit": checkpoint}],
+                    "spec_id": "012",
+                }
+            ),
+            encoding="utf-8",
+        )
+    marker = tmp_path / "runs" / "current-012.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("build-20260908-043009-777477", encoding="utf-8")
+    intent = RunIntent(spec_id="012", mode="semi", strategies=("default",))
+    gitops = MagicMock()
+    gitops.commit_is_ancestor_of_default.return_value = False
+
+    baselines = _fresh_delivery_baselines(tmp_path, intent, gitops)
+
+    assert baselines == {"default": newest}
+    gitops.commit_is_ancestor_of_default.assert_called_once_with(newest)
 
 
 @pytest.mark.unit
@@ -555,6 +594,7 @@ class TestRunSkillAutoLand:
             "status": "blocked",
             "termination_reason": "task_progress_incomplete",
             "checkpoint_commits": [{"commit": candidate}],
+            "spec_id": "012",
         }), encoding="utf-8")
         marker = current_build_marker(tmp_path, "012")
         marker.parent.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,8 @@ from pathlib import Path
 from harness.verified_fulfillment_ledger import (
     build_verified_ledger,
     plan_verified_ledger_reuse,
+    read_verified_ledger,
+    write_verified_ledger,
 )
 
 
@@ -130,3 +132,41 @@ def test_ledger_invalidates_all_rows_when_spec_or_verifier_policy_changes(tmp_pa
     assert spec_plan.unresolved_requirement_ids == ("FR-003",)
     assert spec_plan.rechecked_requirement_ids == ("FR-001", "FR-002", "FR-003")
     assert verifier_plan.rechecked_requirement_ids == ("FR-001", "FR-002", "FR-003")
+
+
+def test_ledger_writes_v2_receipt_provenance_and_reads_v1_compatibly(tmp_path):
+    report = _report(tmp_path / "fulfillment-report.md")
+    ledger = build_verified_ledger(
+        report_path=report,
+        spec_input_hash="spec-hash",
+        implementation_input_hash="impl-hash",
+        artifact_hashes={"src/a.py": "src-a", "tests/a.test.py": "test-a"},
+        verifier_version="verify-v1",
+        receipt_refs=(
+            {
+                "path": "runs/build/evidence/attempt-0001.json",
+                "receipt_sha256": "receipt-a",
+                "evidence_sha256": "evidence-a",
+            },
+        ),
+        candidate_content_fingerprint="product-a",
+        contract_hash="contract-a",
+        requirement_set_fingerprint="requirements-a",
+    )
+
+    path = tmp_path / "ledger.json"
+    write_verified_ledger(path, ledger)
+
+    written = path.read_text(encoding="utf-8")
+    assert '"schema_version": 2' in written
+    row = read_verified_ledger(path).rows[0]
+    assert row.candidate_content_fingerprint == "product-a"
+    assert row.receipt_refs[0]["receipt_sha256"] == "receipt-a"
+
+    path.write_text(
+        '{"schema_version":1,"rows":[{"requirement_id":"FR-001","status":"IMPLEMENTED","evidence_refs":["src/a.py"],"verified_commit":"abc","verified_at":"","spec_input_hash":"spec-hash","implementation_input_hash":"impl-hash","artifact_hashes":{"src/a.py":"src-a"},"verifier_version":"verify-v1","verify_scope":"full","source_report_path":"report.md"}]}',
+        encoding="utf-8",
+    )
+    legacy = read_verified_ledger(path).rows[0]
+    assert legacy.receipt_refs == ()
+    assert legacy.candidate_content_fingerprint == ""

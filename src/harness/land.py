@@ -182,9 +182,14 @@ def prepare_feature_branch(
         check=False,
     )
     if dirty.stdout.strip():
+        dirty_lines = [line for line in dirty.stdout.splitlines() if line.strip()]
         has_untracked = any(
-            line.startswith("?? ") for line in dirty.stdout.splitlines()
+            line.startswith("?? ") for line in dirty_lines
         )
+        dirty_paths = [line[3:].strip() for line in dirty_lines if len(line) >= 4]
+        detail = ", ".join(dirty_paths[:8])
+        if len(dirty_paths) > 8:
+            detail += f", and {len(dirty_paths) - 8} more"
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
@@ -192,7 +197,7 @@ def prepare_feature_branch(
                 "working tree has untracked changes"
                 if has_untracked
                 else "working tree has tracked changes"
-            ),
+            ) + (f": {detail}" if detail else ""),
         )
 
     default_branch = gitops.get_default_branch()
@@ -1810,7 +1815,7 @@ def _prepare_for_land(
             subtitle=(
                 "Echelon stopped on semantic conflicts."
                 if has_conflicts
-                else "Echelon stopped before mutating the default branch."
+                else "Echelon stopped before mutating the target checkout."
             ),
         )
         return None

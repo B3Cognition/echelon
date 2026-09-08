@@ -28,6 +28,41 @@ def test_find_feature_branch_propagates_fetch_failure(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_fetch_mirror_reports_locked_worktree_as_incomplete(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager = _manager_with_mirror(tmp_path)
+    error = GitOpsError(
+        "fatal: refusing to fetch into branch 'refs/heads/harness/007/default/iter-0' checked out",
+        command="git fetch --all --prune",
+    )
+
+    with patch("harness.gitops._run_git", side_effect=error):
+        manager.fetch_mirror()
+
+    assert "Mirror refresh incomplete" in caplog.text
+    assert "Fetched mirror at" not in caplog.text
+
+
+@pytest.mark.unit
+def test_commit_is_ancestor_checks_selected_delivery_lineage(tmp_path: Path) -> None:
+    manager = _manager_with_mirror(tmp_path)
+
+    with patch(
+        "harness.gitops._run_git",
+        return_value=CompletedProcess([], 0, stdout="", stderr=""),
+    ) as run_git:
+        assert manager.commit_is_ancestor("a" * 40, "b" * 40) is True
+
+    assert run_git.call_args.args[0] == [
+        "merge-base",
+        "--is-ancestor",
+        "a" * 40,
+        "b" * 40,
+    ]
+
+
+@pytest.mark.unit
 def test_find_feature_branch_propagates_branch_listing_failure(
     tmp_path: Path,
 ) -> None:

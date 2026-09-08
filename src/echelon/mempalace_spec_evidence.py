@@ -94,6 +94,7 @@ class SpecEvidenceMemoryAuditReport:
     non_canonical: list[str] = field(default_factory=list)
     lifecycle_excluded: list[str] = field(default_factory=list)
     duplicate: list[str] = field(default_factory=list)
+    historical: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
 
@@ -115,6 +116,7 @@ class SpecEvidenceMemoryAuditReport:
             "non_canonical": list(self.non_canonical),
             "lifecycle_excluded": list(self.lifecycle_excluded),
             "duplicate": list(self.duplicate),
+            "historical": list(self.historical),
             "errors": list(self.errors),
             "recommendations": list(self.recommendations),
         }
@@ -552,6 +554,7 @@ def audit_spec_evidence_memory(
         non_canonical=generic.non_canonical,
         lifecycle_excluded=generic.lifecycle_excluded,
         duplicate=generic.duplicate,
+        historical=generic.historical,
         errors=generic.errors,
         recommendations=generic.recommendations,
     )

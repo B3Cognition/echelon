@@ -54,6 +54,11 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     validate_blocked_decision,
 )
+from harness.banzai_protocol import (
+    BanzaiProtocolLockError,
+    active_banzai_default_protocol_fingerprint,
+    banzai_default_protocol_bundle_lock,
+)
 from harness.human_input import (
     AppliedHumanInputResolution,
     AutonomousDefaultCandidate,
@@ -188,12 +193,14 @@ from echelon.telemetry.store import TelemetryStore
 from harness.squad_state import (
     BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY,
     BANZAI_DEFAULT_REASSESSMENT_KEY,
+    BANZAI_EVIDENCE_REASSESSMENT_KEY,
     AdvanceReceipt,
     RoutingStateSnapshot,
     StateAdvanceError,
     StateDurabilityError,
     SquadStateStore,
     build_human_input_resolution_postimage,
+    validate_banzai_default_reassessment_record,
 )
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
@@ -1211,6 +1218,8 @@ class SquadController:
         user_request: str,
         run_id: str,
         state: Mapping[str, object],
+        *,
+        include_supporting_context: bool = False,
     ) -> list[object]:
         query = user_request.strip()
         if not query:
@@ -1223,7 +1232,11 @@ class SquadController:
         try:
             ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id or "squad-context")
             reader = MemPalaceReader(ctx)
-            drawers = list(reader.search_requirements(query, n_results=10))
+            drawers = list(
+                reader.search(query, room=None, n_results=10).drawers
+                if include_supporting_context
+                else reader.search_requirements(query, n_results=10)
+            )
         except (Exception, SystemExit):
             return []
         retarget = state.get("retarget")
@@ -5762,6 +5775,192 @@ class SquadController:
         ):
             return dict(state)
 
+    def _reassess_awaiting_banzai_why2_after_protocol_upgrade(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Spend the one migration retry only with a verified deployed bundle."""
+        raw_decision = state.get("blocked_decision")
+        reassessment = state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+        if (
+            not isinstance(raw_decision, Mapping)
+            or not isinstance(reassessment, Mapping)
+            or state.get(BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY) is not None
+        ):
+            return dict(state)
+
+        try:
+            validated_reassessment = validate_banzai_default_reassessment_record(
+                reassessment
+            )
+            if (
+                validated_reassessment is None
+                or validated_reassessment["schema_version"] != 1
+            ):
+                return dict(state)
+            decision = validate_blocked_decision(raw_decision)
+            if (
+                decision["schema_version"] != 3
+                or decision["status"] != "awaiting_human"
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision.get("automatic_eligible") is not False
+            ):
+                return dict(state)
+            policy = self._policy_for_human_input_decision(decision)
+            if (
+                policy.producer_id != "phase1-why2"
+                or policy.reason_code != "human_clarification_required"
+                or policy.classification != "material"
+                or policy.resolution_handler != "clarification_resume"
+                or not policy.allow_free_text
+                or policy.options
+                or "phase1-why2" not in policy.allowed_phase_ids
+                or "phase1-why2" not in policy.allowed_target_phases
+            ):
+                return dict(state)
+            revision = state.get("state_revision")
+            if type(revision) is not int or revision < 0:
+                return dict(state)
+            # The shared lock bridges the identity read and state CAS. Echelon
+            # bundle deployment takes the matching exclusive lock, so the
+            # durable v2 ledger cannot claim a protocol snapshot that the
+            # package installer was concurrently replacing.
+            with banzai_default_protocol_bundle_lock(
+                self._project_root,
+                exclusive=False,
+            ):
+                fingerprint = active_banzai_default_protocol_fingerprint(
+                    self._project_root
+                )
+                if fingerprint.fingerprint is None:
+                    return dict(state)
+                return self._state_store.reassess_awaiting_banzai_why2_after_protocol_upgrade(
+                    str(decision["id"]),
+                    protocol_fingerprint=fingerprint.fingerprint,
+                    expected_state_revision=revision,
+                )
+        except (
+            BlockedDecisionError,
+            BanzaiProtocolLockError,
+            HumanInputPolicyError,
+            StateAdvanceError,
+            StateDurabilityError,
+            TypeError,
+            ValueError,
+        ):
+            return dict(state)
+
+    def _refresh_decision_evidence_context(
+        self,
+        question: str,
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        """Retrieve and reconcile canonical evidence for one exact question."""
+        state = self._state_store.load()
+        try:
+            drawers = self._retrieve_mempalace_context_drawers(
+                question,
+                str(state.get("run_id") or ""),
+                state,
+                include_supporting_context=True,
+            )
+            if not drawers:
+                return None
+            run_dir = Path(state.get("squad_dir", self._squad_dir))
+            context_result = build_run_context(
+                self._project_root,
+                run_dir,
+                user_request=str(
+                    state.get("user_request", state.get("user_message", ""))
+                ),
+                drawers=drawers,
+            )
+            if not context_result.accepted_drawer_ids:
+                return None
+            evidence_bytes = context_result.prior_context.read_bytes()
+            evidence_sha256 = hashlib.sha256(evidence_bytes).hexdigest()
+            question_sha256 = hashlib.sha256(question.encode("utf-8")).hexdigest()
+            snapshot_relative = Path("context") / "decision-evidence" / (
+                f"{question_sha256}-{evidence_sha256}.md"
+            )
+            snapshot = run_dir / snapshot_relative
+            if snapshot.exists():
+                if (
+                    snapshot.is_symlink()
+                    or not snapshot.is_file()
+                    or hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                    != evidence_sha256
+                ):
+                    return None
+            else:
+                write_text_atomic(snapshot, evidence_bytes.decode("utf-8"))
+            return (
+                evidence_sha256,
+                snapshot_relative.as_posix(),
+                context_result.accepted_drawer_ids,
+            )
+        except (Exception, SystemExit) as exc:
+            logger.warning(
+                "decision evidence retrieval failed for phase1-why2: %s",
+                type(exc).__name__,
+            )
+            return None
+
+    def _reassess_awaiting_banzai_why2_with_evidence(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Retry WHY2 once when the exact question retrieves trusted evidence."""
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            return dict(state)
+        try:
+            decision = validate_blocked_decision(raw_decision)
+            if (
+                decision["schema_version"] != 3
+                or decision["status"] != "awaiting_human"
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision.get("automatic_eligible") is not False
+            ):
+                return dict(state)
+            question = str(decision["question"])
+            evidence = self._refresh_decision_evidence_context(question)
+            if evidence is None:
+                return dict(state)
+            evidence_sha256, evidence_path, drawer_ids = evidence
+            current = self._state_store.load()
+            current_decision = current.get("blocked_decision")
+            if (
+                not isinstance(current_decision, Mapping)
+                or current_decision.get("id") != decision["id"]
+            ):
+                return dict(current)
+            return self._state_store.reassess_awaiting_banzai_why2_with_evidence(
+                str(decision["id"]),
+                question_sha256=hashlib.sha256(question.encode("utf-8")).hexdigest(),
+                evidence_sha256=evidence_sha256,
+                evidence_path=evidence_path,
+                drawer_ids=drawer_ids,
+                expected_state_revision=int(current["state_revision"]),
+            )
+        except (
+            BlockedDecisionError,
+            StateAdvanceError,
+            StateDurabilityError,
+            TypeError,
+            ValueError,
+        ):
+            return dict(self._state_store.load())
+
     def _prepare_v2_controller_migration_decision(
         self,
         state: Mapping[str, object],
@@ -5929,7 +6128,18 @@ class SquadController:
             if not self._drain_pending_controller_completion().recovered:
                 return False
         pending = self._state_store.reopen_failed_proportional_controller_decision()
+        pending = self._reassess_awaiting_banzai_why2_with_evidence(pending)
+        if (
+            pending.get("status", "running") == "running"
+            and pending.get("phase") == "phase1-why2"
+            and "blocked_decision" not in pending
+            and pending.get(BANZAI_EVIDENCE_REASSESSMENT_KEY) is not None
+        ):
+            return True
         pending = self._reassess_awaiting_banzai_legacy_why2_decision(pending)
+        pending = self._reassess_awaiting_banzai_why2_after_protocol_upgrade(
+            pending
+        )
         if (
             pending.get("status") == "running"
             and pending.get("phase") == "phase1-why2"
@@ -11478,6 +11688,32 @@ class SquadController:
             elif baseline_sha and current_sha == baseline_sha:
                 quality_remediation_override = PHASE_TERMINAL_BLOCKED
         state_removals: set[str] = set()
+        if node.id == "phase1-why2":
+            if (result.verdict or "").upper() == "FAIL":
+                spec_ref = str(state_copy.get("spec_dir") or "").strip()
+                issues_text = ""
+                if spec_ref:
+                    spec_dir = Path(spec_ref)
+                    if not spec_dir.is_absolute():
+                        spec_dir = self._project_root / spec_dir
+                    try:
+                        issues_text = (spec_dir / "issues.md").read_text(
+                            encoding="utf-8"
+                        )
+                    except OSError:
+                        pass
+                repair_phase = (
+                    StagedParallelExecutor._why3_repair_phase_from_issues(
+                        issues_text
+                    )
+                )
+                updates["why2_repair_phase"] = (
+                    repair_phase
+                    if repair_phase in {"phase1-discover", "phase1-what"}
+                    else "phase1-what"
+                )
+            else:
+                state_removals.add("why2_repair_phase")
         if node.id == "phase2-decide":
             state_removals.update(
                 {
@@ -12448,6 +12684,19 @@ class SquadController:
                 prepared,
                 snapshot,
             )
+        if (
+            (prepared.verdict or "").upper() == "FAIL"
+            and prepared.state_updates.get("why2_repair_phase")
+            == "phase1-discover"
+        ):
+            # The controller derives this route from the canonical issues.md
+            # owner after the provider result is prepared.  Discovery
+            # artifacts are inputs to the specification candidate, not part of
+            # that candidate, so proportional spec-body capture and its
+            # provenance checks do not apply.  Let the ordinary workflow take
+            # the explicit owner route; a later WHY2 pass will still apply the
+            # full proportional policy to any remaining WHAT-owned debt.
+            return None, {}, None
         _result, _state, eval_state = self._transition_evaluation_inputs(
             node,
             prepared,
@@ -12490,9 +12739,35 @@ class SquadController:
                 )
             )
             proportional_updates = captured[1] if captured is not None else {}
+            certification_epoch_updates: dict[str, object] = {}
+            previous_certificate = snapshot.state.get(
+                "spec_quality_certificate"
+            )
+            previous_source_sha = (
+                str(previous_certificate.get("source_sha256") or "").strip()
+                if isinstance(previous_certificate, Mapping)
+                else ""
+            )
+            current_source_sha = str(
+                certificate.get("source_sha256") or ""
+            ).strip()
+            if current_source_sha and current_source_sha != previous_source_sha:
+                counts = snapshot.state.get("phase_dispatch_counts")
+                if isinstance(counts, Mapping):
+                    downstream_certification_phases = {
+                        "phase1-lexicon-derive",
+                        "phase1-lexicon",
+                        "checkpoint-assess",
+                    }
+                    certification_epoch_updates["phase_dispatch_counts"] = {
+                        phase: count
+                        for phase, count in counts.items()
+                        if phase not in downstream_certification_phases
+                    }
             return legacy_route, {
                 **legacy_updates,
                 **proportional_updates,
+                **certification_epoch_updates,
                 "spec_quality_certificate": certificate,
             }, request
 
@@ -12587,6 +12862,12 @@ class SquadController:
             raise QualityCandidateIntegrityError(
                 "proportional failure assessment is invalid"
             )
+        completed_repair = self._coordinate_completed_proportional_issue_repair(
+            assessment,
+            snapshot,
+        )
+        if completed_repair is not None:
+            return completed_repair
         issue_request = self._prepare_banzai_quality_issue_resolution(
             snapshot,
             assessment,
@@ -12735,6 +13016,74 @@ class SquadController:
             **proportional_updates,
             **decision_updates,
         }, request
+
+    def _coordinate_completed_proportional_issue_repair(
+        self,
+        assessment: AuthoritativeQualityAssessment,
+        snapshot: RoutingStateSnapshot,
+    ) -> tuple[str, dict[str, object], None] | None:
+        """Close one repaired named issue before score-only remediation.
+
+        After a targeted repair, SAGE can correctly omit that issue while the
+        deterministic Understanding aggregate still fails.  In that narrow
+        state, a provider-invented score route has no authoritative issue row
+        to bind to.  Treating the mismatch as candidate corruption strands a
+        valid repair.  We instead validate the completed ledger entry and
+        start a fresh bounded repair driven only by the current immutable
+        numeric evidence.  Any remaining authoritative SAGE issue, passing
+        numeric evidence, or different integrity blocker still fails closed.
+        """
+        state = snapshot.state
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        ledger = state.get("issue_resolution_ledger")
+        entry = ledger.get(selected) if isinstance(ledger, Mapping) else None
+        actionable_issues = tuple(
+            issue
+            for issue in assessment.authoritative_issues
+            if is_actionable_sage_issue(issue)
+        )
+        tolerated_blockers = {
+            "sage_fail_without_issues",
+            "sage_finding_route_mismatch",
+        }
+        if (
+            not selected
+            or not isinstance(entry, Mapping)
+            or entry.get("status") != "repaired"
+            or assessment.numeric_pass is not False
+            or assessment.provider_verdict != "FAIL"
+            or assessment.sage_verdict != "FAIL"
+            or actionable_issues
+            or not assessment.hard_blockers
+            or not set(assessment.hard_blockers).issubset(tolerated_blockers)
+        ):
+            return None
+
+        validated_ledger = dict(ledger)
+        validated_entry = dict(entry)
+        validated_entry["status"] = "validated"
+        validated_ledger[selected] = validated_entry
+        return "phase1-what", {
+            "issue_resolution_ledger": validated_ledger,
+            "selected_issue_resolution": None,
+            "issue_resolution_repair_baseline": None,
+            "why_fail_count": 0,
+            "why2_metric_stagnation_count": 0,
+            "why_failure_baseline": None,
+            "iteration": 0,
+            "quality_gate_remediation": {
+                "kind": "proportional_quality",
+                "evidence": state.get("understanding_evidence"),
+                "baseline_spec_sha256": self._spec_markdown_sha256(state),
+                "attempt": 1,
+                "qualitative_findings": [],
+                "reason": (
+                    "The selected named issue is repaired and no authoritative "
+                    "SAGE issue remains. Repair only the current certified "
+                    "Understanding metric failures as a fresh bounded cycle."
+                ),
+            },
+        }, None
 
     def _coordinate_why_transition_state_legacy(
         self,

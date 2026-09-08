@@ -75,6 +75,36 @@ export const chromium = {
     )
 
 
+def _write_fake_commonjs_playwright_test(root: Path) -> None:
+    package = root / "node_modules" / "@playwright" / "test"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(
+        json.dumps({"name": "@playwright/test", "main": "./index.js"}),
+        encoding="utf-8",
+    )
+    (package / "index.js").write_text(
+        """\
+module.exports = {
+  chromium: {
+    launch: async () => ({
+      newContext: async () => ({
+        addInitScript: async () => {},
+        newPage: async () => ({
+          goto: async () => {},
+          locator: () => ({}),
+          on: () => {},
+        }),
+        close: async () => {},
+      }),
+      close: async () => {},
+    }),
+  },
+};
+""",
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.integration
 def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path) -> None:
     _write_fake_playwright_test(tmp_path)
@@ -154,6 +184,83 @@ def test_browser_helper_rejects_untyped_candidate_script_action(tmp_path: Path) 
 
     assert result.returncode != 0
     assert "unsupported browser action" in result.stderr
+
+
+@pytest.mark.integration
+def test_browser_helper_resolves_playwright_from_candidate_workdir(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    _write_fake_playwright_test(candidate)
+    harness_dir = tmp_path / "harness"
+    harness_dir.mkdir()
+    helper = harness_dir / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = candidate / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [],
+                "steps": [{"action": "evaluate", "value": "fetch('/mock')"}],
+                "observations": [],
+                "observation_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=candidate,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "unsupported browser action" in result.stderr
+    assert "ERR_MODULE_NOT_FOUND" not in result.stderr
+
+
+@pytest.mark.integration
+def test_browser_helper_accepts_commonjs_playwright_export(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    _write_fake_commonjs_playwright_test(candidate)
+    harness_dir = tmp_path / "harness"
+    harness_dir.mkdir()
+    helper = harness_dir / HELPER.name
+    helper.write_bytes(HELPER.read_bytes())
+    plan = candidate / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "kind": "browser",
+                "url": "http://127.0.0.1:4173",
+                "session_storage": [],
+                "steps": [{"action": "goto", "path": "/"}],
+                "observations": [],
+                "observation_ids": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [_node(), str(helper), str(plan)],
+        cwd=candidate,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"status": "passed", "observations": {}}
 
 
 @pytest.mark.integration

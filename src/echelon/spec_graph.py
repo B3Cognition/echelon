@@ -866,6 +866,13 @@ def _add_verified_ledger(
                     "evidence_refs": list(row.evidence_refs),
                     "verified_commit": row.verified_commit,
                     "verify_scope": row.verify_scope,
+                    "selected_evidence": list(row.selected_evidence),
+                    "receipt_refs": [dict(ref) for ref in row.receipt_refs],
+                    "candidate_content_fingerprint": (
+                        row.candidate_content_fingerprint
+                    ),
+                    "requirement_set_fingerprint": row.requirement_set_fingerprint,
+                    "contract_hash": row.contract_hash,
                     "complete": row.status not in UNRESOLVED_STATUSES,
                 },
             )

@@ -678,6 +678,35 @@ def test_latest_converged_harness_build_is_ready_to_land(tmp_path: Path) -> None
     assert _find_converged_harness_build(tmp_path) == ("001-demo", None)
 
 
+def test_latest_polyrepo_target_build_is_ready_to_land(tmp_path: Path) -> None:
+    state_dir = (
+        tmp_path
+        / "runs"
+        / "targets"
+        / "browser-game"
+        / "runs"
+        / "build-20260908-091159-701868"
+        / "state"
+    )
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "007-animate-character-use-product",
+                "status": "converged",
+                "termination_reason": "converged",
+                "pr_url": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _find_converged_harness_build(tmp_path) == (
+        "007-animate-character-use-product",
+        None,
+    )
+
+
 def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     tmp_path: Path,
     capsys,

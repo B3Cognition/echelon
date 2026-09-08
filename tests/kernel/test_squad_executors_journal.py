@@ -2258,6 +2258,61 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
     assert "manual_phase_runs" not in state_store.load()
 
 
+def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues — WHY3
+
+### ISS-001: Test strategy structure
+- **Responsible agent:** SENTINEL
+- **Action Required:** Amend test-strategy.md.
+""",
+        encoding="utf-8",
+    )
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="FAIL")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "FAIL"
+    assert state_store.load()["why3_repair_phase"] == "phase3-sentinel"
+
+    provider.exec_agent.return_value = _result(verdict="PASS")
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "PASS"
+    assert "why3_repair_phase" not in state_store.load()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -3472,19 +3527,36 @@ def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
     assert "unsupported artifact 'unknown'" in result.state_updates["blocked_reason"]
 
 
-def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):
+@pytest.mark.parametrize("valid_coverage", [True, False])
+def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
+    tmp_path, valid_coverage
+):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
-    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "spec.md").write_text(
+        "# Spec\n- **FR-001**: Create an element.\n", encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        "  **Named Test Ownership:** `UT-001`.\n",
+        encoding="utf-8",
+    )
 
     shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
     shadow_spec_dir.mkdir(parents=True)
     (shadow_spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
     (shadow_spec_dir / "test-architecture.md").write_text("# Test Architecture\n", encoding="utf-8")
-    (shadow_spec_dir / "coverage-map.md").write_text("# Coverage Map\n", encoding="utf-8")
+    coverage = "# Coverage Map\n"
+    if valid_coverage:
+        coverage += (
+            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+        )
+    (shadow_spec_dir / "coverage-map.md").write_text(coverage, encoding="utf-8")
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -3526,11 +3598,18 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_pat
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "COMPLETE"
+    if valid_coverage:
+        assert result.verdict == "COMPLETE"
+        recovery_updates = result.state_updates
+    else:
+        assert isinstance(result, ExecutorBlockedResult)
+        assert result.result.verdict == "BLOCKED"
+        assert result.result.state_updates["invalid_outputs"][0]["path"] == "coverage-map.md"
+        recovery_updates = result.result.state_updates["recovery_state_updates"]
     assert (spec_dir / "test-strategy.md").exists()
     assert (spec_dir / "test-architecture.md").exists()
-    assert (spec_dir / "coverage-map.md").exists()
-    assert result.state_updates["shadow_output_recovered"] == [
+    assert (spec_dir / "coverage-map.md").read_text(encoding="utf-8") == coverage
+    assert recovery_updates["shadow_output_recovered"] == [
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",

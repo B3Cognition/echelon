@@ -438,8 +438,11 @@ class GitOpsManager:
                 # The mirror has stale data for those refs but that is acceptable —
                 # those branches are actively in use and do not need to be updated.
                 logger.warning(
-                    "Mirror fetch skipped branch(es) locked in worktrees: %s", e
+                    "Mirror refresh incomplete because branch(es) are locked in "
+                    "active worktrees; locked refs were left unchanged: %s",
+                    e,
                 )
+                return
             else:
                 raise
         logger.info("Fetched mirror at %s", self._mirror_path)
@@ -1681,6 +1684,17 @@ class GitOpsManager:
             return False
         result = _run_git(
             ["merge-base", "--is-ancestor", commit, self.get_default_branch()],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        return result.returncode == 0
+
+    def commit_is_ancestor(self, commit: str, descendant: str) -> bool:
+        """Return whether two delivery commits belong to one retained lineage."""
+        if not self._mirror_path.exists():
+            return False
+        result = _run_git(
+            ["merge-base", "--is-ancestor", commit, descendant],
             cwd=str(self._mirror_path),
             check=False,
         )

@@ -61,7 +61,8 @@ KNOWN_CONDITION_FIELDS = frozenset({
     "iteration",
     "max_iterations",
     "retry_count",
-    # Controller-derived ownership route from canonical WHY3 issue fields.
+    # Controller-derived ownership routes from canonical WHY issue fields.
+    "why2_repair_phase",
     "why3_repair_phase",
     # Derived evaluator predicates.
     "CRITICAL_issues",

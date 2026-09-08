@@ -128,6 +128,27 @@ def test_graph_build_writes_with_flag(
     assert payload["spec_id"] == "001-demo"
 
 
+def test_graph_refresh_commits_graph_and_failed_audit_together(tmp_path, monkeypatch):
+    from echelon.git_helpers import run_git
+    from echelon.cli_app import app
+
+    _workspace(tmp_path)
+    run_git(tmp_path, "init", "-b", "main")
+    run_git(tmp_path, "config", "user.name", "Test")
+    run_git(tmp_path, "config", "user.email", "test@example.test")
+    run_git(tmp_path, "add", ".")
+    run_git(tmp_path, "commit", "-m", "baseline")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.spec_graph.build_spec_graph", lambda *args: _graph())
+    monkeypatch.setattr("echelon.spec_graph_audit.audit_spec_graph", lambda *args: _audit("fail"))
+    result = CliRunner().invoke(app, ["graph", "refresh", "001-demo", "--write"])
+    assert result.exit_code != 0
+    assert run_git(tmp_path, "status", "--porcelain").stdout == ""
+    paths = run_git(tmp_path, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").stdout
+    assert "spec-artifact-graph.json" in paths
+    assert "spec-artifact-graph-audit.json" in paths
+
+
 @pytest.mark.unit
 def test_graph_audit_json_is_machine_readable(
     tmp_path: Path,

@@ -46,6 +46,11 @@ _RANGE_RE = re.compile(
     r"^(?P<prefix>[A-Z][A-Z0-9_]*)-(?P<start>\d+)\s*[–—]\s*"
     r"(?:(?P=prefix)-)?(?P<end>\d+)$"
 )
+_TASK_BLOCK_START_RE = re.compile(r"^- \[[ xX]\]\s+(T-[0-9]+)\b")
+_NAMED_TEST_OWNERSHIP_RE = re.compile(
+    r"^\s+\*\*Named Test Ownership:\*\*\s*(.+)$"
+)
+_COVERAGE_CASE_ID_RE = re.compile(r"\b(?!T-)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b")
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,27 @@ class CoverageTaskIntegrityGap:
     requirement_ids: tuple[str, ...]
     statuses: tuple[str, ...]
     test_case_ids: tuple[str, ...]
+
+
+def task_owned_coverage_case_ids(tasks_path: Path) -> dict[str, set[str]]:
+    """Return the named coverage cases owned by each canonical task block."""
+    markdown = Path(tasks_path).read_text(encoding="utf-8", errors="replace")
+    result: dict[str, set[str]] = {}
+    current_task: str | None = None
+    for line in markdown.splitlines():
+        task_match = _TASK_BLOCK_START_RE.match(line)
+        if task_match is not None:
+            current_task = task_match.group(1)
+            result.setdefault(current_task, set())
+            continue
+        if current_task is None:
+            continue
+        ownership = _NAMED_TEST_OWNERSHIP_RE.match(line)
+        if ownership is not None:
+            result[current_task].update(
+                _COVERAGE_CASE_ID_RE.findall(ownership.group(1))
+            )
+    return result
 
 
 def build_coverage_evidence(

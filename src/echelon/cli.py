@@ -31,6 +31,12 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
+from harness.squad_state import (
+    StateAdvanceError,
+    validate_banzai_default_reassessment_record,
+    validate_banzai_evidence_reassessment_record,
+)
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
     RecoveryInstruction,
@@ -40,7 +46,8 @@ from harness.recovery_instruction import (
     validate_recovery_instruction,
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
-from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase_a_readiness import coverage_contract_error, validate_phase_a_readiness
+from harness.phase1_quality import has_current_phase1_quality_prerequisite
 from harness.state import state_lock_owner_is_alive
 from harness.issue_identity import (
     issue_fingerprint,
@@ -383,7 +390,8 @@ def _workspace_git_preflight_for_squad_run(
     # existing run before new-spec branch/slug machinery sees its empty description.
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     # An explicit phase is an intentional recovery command.  It must reuse the
     # existing run before any new-spec branch/slug machinery sees its empty
@@ -699,6 +707,12 @@ def _cmd_init(
 ) -> None:
     echelon_cfg = project_dir / ".echelon" / "config.yml"
     runtime_dir = project_dir / ".echelon" / "runtime"
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    setup_commit = OwnedOutputCommit(
+        project_dir, [echelon_cfg, project_dir / ".gitignore"],
+        "chore: record Echelon workspace setup", preserve_dirty=True,
+    )
 
     from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
 
@@ -822,6 +836,7 @@ def _cmd_init(
         if result.returncode != 0:
             sys.exit(result.returncode)
 
+    setup_commit.commit()
     # Step 4: Confirm
     _banner("ECHELON INIT — COMPLETE", [
         ("Config",       str(echelon_cfg)),
@@ -1028,7 +1043,14 @@ def _cmd_land(args: list[str]) -> None:
         _archive_squad_run(project_dir, spec_id)
         sys.exit(0)
     else:
-        _banner("LAND", [("spec", spec_id), ("status", "could not be landed (PR merge blocked?)")], file=sys.stderr)
+        _banner(
+            "LAND",
+            [
+                ("spec", spec_id),
+                ("status", "could not be landed; see the specific blocker above"),
+            ],
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -1224,42 +1246,12 @@ def _refresh_workspace_runtime_for_delivery(project_root: Path) -> None:
 
 def _resolve_delivery_stack_contract(project_root: Path, target_root: Path):
     """Resolve the current installed stack contract for one delivery target."""
-    from harness.config import get_full_resolved_config
+    from harness.verification_stack_runtime import resolve_verification_stacks
 
     project_root = project_root.resolve()
     target_root = target_root.resolve()
     _refresh_workspace_runtime_for_delivery(project_root)
-    target_config_dir = target_root / ".echelon"
-    # A configured source owns its stack selection. Targets without their own
-    # config keep the historical workspace-root selection for compatibility.
-    target_has_source_config = target_root != project_root and any(
-        (target_config_dir / name).is_file() for name in ("config.yml", "local.yml")
-    )
-    stack_config_root = target_root if target_has_source_config else project_root
-    resolved_config = get_full_resolved_config(stack_config_root)
-    stacks = resolved_config.get("stacks") or {}
-    if not isinstance(stacks, Mapping):
-        raise StackSelectionError("stacks must be a mapping")
-    selected = stacks.get("selected") or []
-    target_archetypes = stacks.get("target_archetypes") or []
-    if not isinstance(selected, list) or not all(
-        isinstance(stack_id, str) and stack_id.strip() for stack_id in selected
-    ):
-        raise StackSelectionError(
-            "stacks.selected must be a list of non-empty stack IDs"
-        )
-    if not isinstance(target_archetypes, list) or not all(
-        isinstance(archetype, str) and archetype.strip()
-        for archetype in target_archetypes
-    ):
-        raise StackSelectionError(
-            "stacks.target_archetypes must be a list of non-empty archetype IDs"
-        )
-    return resolve_stacks(
-        selected,
-        _load_stack_definitions_for_project(project_root),
-        target_archetypes=set(target_archetypes) or None,
-    )
+    return resolve_verification_stacks(project_root, target_root)
 
 
 def _resolve_delivery_verification_services(
@@ -3890,6 +3882,24 @@ def _versioned_decision_recovery_action(
                 "once under the current bounded-default policy"
             ),
         )
+    protocol_upgrade_action = _v1_banzai_why2_protocol_upgrade_recovery_action(
+        run_state,
+        decision,
+        project_root=project_root,
+    )
+    if protocol_upgrade_action is not None:
+        return protocol_upgrade_action
+    if _banzai_why2_evidence_reassessment_is_available(run_state, decision):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "will search canonical evidence for this exact Banzai WHY2 "
+                "question before requiring a human answer"
+            ),
+        )
     if (
         status == "awaiting_human"
         and decision.get("schema_version") == 3
@@ -3950,6 +3960,38 @@ def _versioned_decision_recovery_action(
         phase=source_phase,
         command=_command_display("echelon phase run", [source_phase]),
         note="replay the exact failed automatic decision source phase",
+    )
+
+
+def _banzai_why2_evidence_reassessment_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Expose one controller evidence preflight for each distinct question."""
+    if not _is_pre_candidate_banzai_why2_decision(decision):
+        return False
+    try:
+        validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+        record = validate_banzai_evidence_reassessment_record(
+            run_state.get("banzai_evidence_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    attempts = record["attempts"] if record is not None else []
+    question_sha256 = hashlib.sha256(
+        str(decision["question"]).encode("utf-8")
+    ).hexdigest()
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and len(attempts) < 8
+        and all(
+            attempt["question_sha256"] != question_sha256
+            for attempt in attempts
+        )
     )
 
 
@@ -4591,6 +4633,63 @@ def _legacy_banzai_why2_reassessment_is_available(
     )
 
 
+def _v1_banzai_why2_protocol_upgrade_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Identify the one valid legacy marker eligible for an upgrade retry."""
+    try:
+        reassessment = validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and run_state.get("banzai_default_candidate_protocol_version") is None
+        and reassessment is not None
+        and reassessment["schema_version"] == 1
+        and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _v1_banzai_why2_protocol_upgrade_recovery_action(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    """Present the bounded retry only when the active deployed bundle is safe."""
+    if not _v1_banzai_why2_protocol_upgrade_is_available(run_state, decision):
+        return None
+    if project_root is None:
+        return None
+    fingerprint = active_banzai_default_protocol_fingerprint(project_root)
+    if fingerprint.fingerprint is None:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon workspace migrate-to-prosaic",
+            note=(
+                "the deployed candidate-protocol bundle cannot be verified: "
+                + fingerprint.diagnostic
+            ),
+        )
+    return _RunRecoveryAction(
+        "resolve_decision",
+        reason=str(decision["reason_code"]),
+        phase="phase1-why2",
+        command="echelon spec continue",
+        note=(
+            "will re-evaluate this legacy Banzai WHY2 question once using the "
+            "refreshed candidate-protocol bundle"
+        ),
+    )
+
+
 def _is_pre_candidate_banzai_why2_decision(
     decision: Mapping[str, object],
 ) -> bool:
@@ -4924,6 +5023,49 @@ def _classify_run_recovery(
         entry.get("status") == "validated" for entry in ledger_entries
     )
 
+    selected_issue = str(
+        run_state.get("selected_issue_resolution") or ""
+    ).strip()
+    selected_entry = (
+        ledger.get(selected_issue)
+        if selected_issue and isinstance(ledger, dict)
+        else None
+    )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and run_state.get("why2_repair_phase") == "phase1-discover"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="discovery_artifact_repair",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry WHY2 so its controller-owned discovery-artifact route "
+                "can run before proportional specification repair."
+            ),
+        )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and isinstance(selected_entry, dict)
+        and selected_entry.get("status") == "repaired"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="issue_resolution_revalidation",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry the completed named repair against current authoritative "
+                "SAGE and Understanding evidence. Any unrelated integrity "
+                "failure remains blocking."
+            ),
+        )
+
     if reason == "issue_resolution_next":
         if all_ledger_entries_validated:
             return _RunRecoveryAction(
@@ -5007,6 +5149,47 @@ def _classify_run_recovery(
             )
 
     phase = str(run_state.get("phase") or "").strip()
+    certificate = run_state.get("spec_quality_certificate")
+    certificate_source_sha256 = (
+        str(certificate.get("source_sha256") or "").strip()
+        if isinstance(certificate, Mapping)
+        else ""
+    )
+    epoch_recovery = run_state.get(
+        "phase_dispatch_limit_certification_epoch_recovery"
+    )
+    epoch_already_recovered = (
+        isinstance(epoch_recovery, Mapping)
+        and epoch_recovery.get("phase") == phase
+        and epoch_recovery.get("source_sha256") == certificate_source_sha256
+    )
+    if (
+        reason.startswith("phase_dispatch_limit_evidence_")
+        and phase
+        in {
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        and project_root is not None
+        and re.fullmatch(r"[0-9a-f]{64}", certificate_source_sha256) is not None
+        and not epoch_already_recovered
+        and has_current_phase1_quality_prerequisite(
+            run_state,
+            project_root=project_root,
+        )
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="phase_dispatch_limit_certification_epoch",
+            phase=phase,
+            command="echelon spec continue",
+            note=(
+                "The capped downstream phase now has a current Phase 1 "
+                "quality certificate. Retry it in that certification epoch "
+                "instead of interpreting PASS issues.md as repair evidence."
+            ),
+        )
     if (
         reason.startswith("phase_dispatch_limit_evidence_")
         and phase
@@ -5047,7 +5230,7 @@ def _classify_run_recovery(
     recovery = run_state.get("issue_resolution_recovery")
     if (
         isinstance(recovery, dict)
-        and recovery.get("status") != "consumed"
+        and recovery.get("status") not in {"consumed", "validated"}
         and str(recovery.get("issue_id") or "").strip()
     ):
         return _RunRecoveryAction(
@@ -5208,6 +5391,22 @@ def _classify_run_recovery(
         )
 
     if reason == "phase_a_readiness_failed":
+        readiness_blockers = run_state.get("phase_a_readiness_blockers")
+        if isinstance(readiness_blockers, list) and any(
+            isinstance(blocker, str)
+            and blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness_blockers
+        ):
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase="phase3-sentinel",
+                command="echelon spec continue",
+                note=(
+                    "will send the recorded coverage-map contract finding to "
+                    "SENTINEL and validate its replacement before advancing"
+                ),
+            )
         traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
         if traceability_blockers:
             return _RunRecoveryAction(
@@ -6261,7 +6460,6 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
     Returns None when a newer squad run exists than the newest harness build;
     that means new spec work has been done since the last harness run.
     """
-    import json as _json
     runs = project_root / "runs"
     if not runs.exists():
         return None
@@ -6278,23 +6476,16 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
             if ts > latest_squad_ts:
                 latest_squad_ts = ts
 
-    for build in sorted(runs.glob("build-*/"), reverse=True):
-        build_ts = build.name.partition("-")[2]
-        if latest_squad_ts > build_ts:
-            # A squad run is newer than this harness build — new spec work exists
-            return None
-        state_dir = build / "state"
-        if not state_dir.exists():
-            continue
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = _json.loads(state_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    data.setdefault("build_id", build.name)
-                    return data
-            except Exception:
-                pass
-    return None
+    states = _iter_harness_build_states(project_root)
+    if not states:
+        return None
+    latest = states[0]
+    build_id = str(latest.get("build_id") or "")
+    build_ts = build_id.partition("-")[2]
+    if latest_squad_ts > build_ts:
+        # A squad run is newer than this harness build — new spec work exists.
+        return None
+    return latest
 
 
 def _iter_harness_build_states(project_root: Path) -> list[dict]:
@@ -6757,7 +6948,12 @@ def _delivery_status_next_step(
                 f"echelon delivery run {effective_spec}"
             )
         return f"echelon delivery continue {effective_spec}"
-    if status in {"initialized", "running", "interrupted"}:
+    if status == "running":
+        return (
+            "delivery is active; monitor with "
+            f"echelon delivery status {effective_spec}"
+        )
+    if status in {"initialized", "interrupted"}:
         return f"echelon delivery run {effective_spec}"
     if status in {"failed", "cancelled_by_coordinator"}:
         return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
@@ -8508,7 +8704,8 @@ def _select_squad_dir(
     status = state.get("status")
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     if manual_recovery and status == "blocked":
         return existing_dir, False
@@ -9677,7 +9874,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                 if _phase_a_ready_to_build(project_root, current_state):
                     return None
                 if current_state.get("status") == "done":
-                    return "phase4-document"
+                    return _done_phase_a_repair_phase(project_root, current_state)
                 return recommended
         except Exception:
             current_state = {}
@@ -9770,7 +9967,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     if current_state.get("status") == "done" and not _phase_a_ready_to_build(project_root, current_state):
-        return "phase4-document"
+        return _done_phase_a_repair_phase(project_root, current_state)
 
     readiness = validate_phase_a_readiness(
         current_state,
@@ -9783,6 +9980,11 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         ),
     )
     if not readiness.ready:
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
         if "spec.md" in readiness.missing:
             return "phase1-what"
         if any(name in readiness.missing for name in ("plan.md", "research.md", "data-model.md")):
@@ -9792,6 +9994,19 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     return None  # build is ready
+
+
+def _done_phase_a_repair_phase(project_root: Path, state: dict) -> str:
+    """Route a completed run to the owner of its invalid build artifact."""
+    spec_dir = _build_target_continue_spec_dir(project_root, state)
+    if spec_dir is not None:
+        readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
+    return "phase4-document"
 
 
 def _explicit_run_local_spec_needs_publication(
@@ -10458,6 +10673,22 @@ def _cmd_continue_impl(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        if next_phase == "phase3-sentinel":
+            spec_dir = _build_target_continue_spec_dir(project_root, state)
+            coverage_error = (
+                coverage_contract_error(spec_dir)
+                if spec_dir is not None
+                else None
+            )
+            if coverage_error is not None:
+                state["phase_output_recovery"] = {
+                    "phase": "phase3-sentinel",
+                    "invalid_outputs": [{
+                        "path": "coverage-map.md",
+                        "reason": coverage_error,
+                    }],
+                    "prior_state_updates": {},
+                }
         if clear_recovery:
             state["blocked_reason"] = None
             state["escalation_question"] = None
@@ -10587,7 +10818,23 @@ def _cmd_continue_impl(
             subtitle="Run paused. Deterministic recovery required.",
         )
         return
-    if action.reason == "phase_dispatch_limit_evidence_retry":
+    if action.reason in {
+        "phase_dispatch_limit_evidence_retry",
+        "phase_dispatch_limit_certification_epoch",
+    }:
+        if action.reason == "phase_dispatch_limit_certification_epoch":
+            certificate = state.get("spec_quality_certificate")
+            source_sha256 = (
+                str(certificate.get("source_sha256") or "").strip()
+                if isinstance(certificate, dict)
+                else ""
+            )
+            state["phase_dispatch_limit_certification_epoch_recovery"] = {
+                "schema_version": 1,
+                "phase": action.phase,
+                "source_sha256": source_sha256,
+                "consumed_at": datetime.now(timezone.utc).isoformat(),
+            }
         dispatch_counts = state.get("phase_dispatch_counts")
         if isinstance(dispatch_counts, dict):
             dispatch_counts = dict(dispatch_counts)
@@ -18130,8 +18377,13 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         migrate_legacy_deploy_state,
     )
     from harness.phase_graph import load_workspace_phase_graph
+    from echelon.owned_output_commit import OwnedOutputCommit
 
     config_path = project_root / ".echelon" / "config.yml"
+    setup_commit = OwnedOutputCommit(
+        project_root, [config_path, project_root / ".gitignore", project_root / ".echelon/constitution.md"],
+        "chore: record Echelon workspace migration", preserve_dirty=True,
+    )
     legacy_config = project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not config_path.exists():
         if not legacy_config.is_file():
@@ -18178,6 +18430,7 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         print(f"✗ Could not migrate deployment state: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
+    setup_commit.commit()
     print("✓ Prosaic migration complete")
     print(f"  prose:   {project_root / '.echelon' / 'prosaic'}")
     print(f"  runtime: {runtime_root}")
@@ -18215,6 +18468,7 @@ def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",
+        "/.echelon/.banzai-default-protocol.lock",
         "/.prosaic-manifest.json",
         "/.prosaic-backups/",
     )

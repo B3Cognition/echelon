@@ -49,7 +49,7 @@ from harness.coverage_observation import (
 )
 from harness.llm_tool_policy import LlmToolPolicy
 from harness.product_inventory import product_evidence_fingerprint
-from harness.ralph import RalphController
+from harness.ralph import RalphController, _completed_task_coverage_case_ids
 from harness.runnability_contract import LocalBoundaryProbe
 from harness.runnability_evidence import RunnabilityEvidenceRef
 from harness.runnability_runner import RunnabilityRunResult
@@ -168,13 +168,18 @@ class MockProvider(SandboxProvider):
         self._verify_results = verify_results or []
         self._verify_idx = 0
         self.created = False
+        self.create_count = 0
         self.destroyed = False
         self.spec: Optional[SandboxSpec] = None
 
     def create(self, spec: SandboxSpec) -> SandboxHandle:
         self.created = True
+        self.create_count += 1
         self.spec = spec
-        return SandboxHandle(id="mock-sandbox-1", session_id="sess-1")
+        return SandboxHandle(
+            id=f"mock-sandbox-{self.create_count}",
+            session_id=f"sess-{self.create_count}",
+        )
 
     def exec(
         self,
@@ -371,6 +376,122 @@ def test_sandbox_setup_error_is_a_typed_verification_failure(tmp_path: Path) -> 
     assert result.failures[0].id == "sandbox-verification-unavailable"
 
 
+def test_standard_verification_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, provider, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    shared.run_standard.return_value = expected
+    controller._candidate_evidence_runner = shared
+
+    result = controller._exec_verify(None, worktree_path=str(tmp_path))
+
+    assert result is expected
+    shared.run_standard.assert_called_once_with(
+        handle=None,
+        worktree=tmp_path,
+        allow_legacy_structured=True,
+    )
+    assert provider.created is False
+
+
+def test_standard_verification_retries_transient_browser_runtime_crash_once(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.verify_command = "pnpm verify"
+    controller, provider, *_ = _make_controller(
+        tmp_path,
+        config=config,
+        verify_results=[
+            {
+                "passed": False,
+                "failures": [
+                    {
+                        "id": "e2e",
+                        "error": "browserContext.newPage: Target crashed; session closed",
+                    }
+                ],
+            },
+            {"passed": True, "failures": []},
+        ],
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _init_git_repo(worktree)
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(worktree)
+
+    result = controller._exec_verify(None, worktree_path=str(worktree))
+
+    assert result.passed is True
+    assert provider._verify_idx == 2
+    assert provider.create_count == 2
+    receipts = sorted(
+        controller._candidate_evidence_runner._evidence_root.rglob(
+            "verification/attempt-*.json"
+        )
+    )
+    assert len(receipts) == 2
+    assert json.loads(receipts[0].read_text(encoding="utf-8"))["status"] == "failed"
+    assert json.loads(receipts[1].read_text(encoding="utf-8"))["status"] == "passed"
+
+
+def test_standard_verification_does_not_retry_product_assertion(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.verify_command = "pnpm verify"
+    controller, provider, *_ = _make_controller(
+        tmp_path,
+        config=config,
+        verify_results=[
+            {"passed": False, "failures": [{"error": "expected 2, received 1"}]},
+            {"passed": True, "failures": []},
+        ],
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _init_git_repo(worktree)
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(worktree)
+
+    result = controller._exec_verify(None, worktree_path=str(worktree))
+
+    assert result.passed is False
+    assert provider._verify_idx == 1
+
+
+def test_repeated_browser_runtime_crash_is_not_reported_as_product_test_failure(
+    tmp_path: Path,
+) -> None:
+    config = _make_config()
+    config.verify_command = "pnpm verify"
+    crash = {
+        "passed": False,
+        "failures": [{"error": "browserContext.newPage: Target crashed; session closed"}],
+    }
+    controller, provider, *_ = _make_controller(
+        tmp_path,
+        config=config,
+        verify_results=[crash, crash],
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _init_git_repo(worktree)
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(worktree)
+
+    result = controller._exec_verify(None, worktree_path=str(worktree))
+
+    assert result.passed is False
+    assert provider.create_count == 2
+    assert result.failures[0].category == FailureCategory.OTHER
+    assert result.failures[0].id == "sandbox-browser-runtime-unavailable"
+    assert ralph._is_sandbox_browser_runtime_unavailable(result) is True
+
+
 def _required_browser_runnability() -> ResolvedRunnability:
     return ResolvedRunnability(
         classification="user_facing",
@@ -458,6 +579,38 @@ def test_required_user_facing_stack_cannot_pass_gate_without_candidate_contract(
     assert result.passed is False
     assert result.failures[0].id == "user-runnability-contract-missing"
     assert result.failures[0].details["contract"] == ".echelon/runnability.yml"
+
+
+def test_runnability_gate_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    gate = MagicMock(verify_result=expected, state_summary={"status": "runnable"})
+    shared.apply_runnability.return_value = gate
+    controller._candidate_evidence_runner = shared
+    controller._find_existing_spec_dir = MagicMock(return_value=tmp_path / "spec")
+    controller._record_user_runnability_state = MagicMock()
+
+    result = controller._apply_user_runnability_gate(
+        VerifyResult(passed=True),
+        str(tmp_path),
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+    )
+
+    assert result is expected
+    shared.apply_runnability.assert_called_once_with(
+        verify_result=shared.apply_runnability.call_args.kwargs["verify_result"],
+        worktree=tmp_path,
+        spec_dir=tmp_path / "spec",
+        candidate_commit="a" * 40,
+        evidence_dir=tmp_path / "evidence",
+    )
+    controller._record_user_runnability_state.assert_called_once_with(
+        {"status": "runnable"}
+    )
 
 
 @pytest.mark.unit
@@ -570,8 +723,10 @@ def test_green_aggregate_verifier_cannot_converge_with_unbound_coverage(
             ),
         ),
     )
-    with patch.object(ralph, "_current_git_commit", return_value="a" * 40), patch.object(
-        ralph, "run_coverage_observers", return_value=bundle
+    with patch(
+        "harness.candidate_evidence._current_git_commit", return_value="a" * 40
+    ), patch(
+        "harness.candidate_evidence.run_coverage_observers", return_value=bundle
     ):
         result = controller._apply_coverage_observation_gate(
             VerifyResult(
@@ -615,7 +770,7 @@ def test_coverage_gate_rejects_an_unavailable_type_before_starting_observers(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True), str(worktree)
         )
@@ -624,6 +779,102 @@ def test_coverage_gate_rejects_an_unavailable_type_before_starting_observers(
     assert result.failures[0].id == "coverage-observer-unavailable"
     assert "rust-unit" in result.failures[0].error
     observers.assert_not_called()
+
+
+def test_coverage_gate_delegates_to_shared_candidate_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    controller, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True, verification_evidence={"passed": True})
+    gate = MagicMock(
+        verify_result=expected,
+        state_summary={"status": "passed"},
+    )
+    shared.apply_coverage.return_value = gate
+    controller._candidate_evidence_runner = shared
+    controller._find_existing_spec_dir = MagicMock(return_value=tmp_path / "spec")
+    controller._record_coverage_observation_summary = MagicMock()
+
+    result = controller._apply_coverage_observation_gate(
+        VerifyResult(passed=True), str(tmp_path)
+    )
+
+    assert result is expected
+    shared.apply_coverage.assert_called_once()
+    kwargs = shared.apply_coverage.call_args.kwargs
+    assert kwargs["worktree"] == tmp_path
+    assert kwargs["spec_dir"] == tmp_path / "spec"
+    controller._record_coverage_observation_summary.assert_called_once_with(
+        {"status": "passed"}
+    )
+
+
+def test_partial_delivery_coverage_uses_only_completed_task_ownership(
+    tmp_path: Path,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
+        "  **Status:** DONE\n"
+        "  **Named Test Ownership:** `UT-DONE-001`, `E2E-DONE-002`.\n\n"
+        "- [ ] T-002 complexity=standard phase=feature req=FR-002 depends=T-001\n"
+        "  **Named Test Ownership:** `UT-FUTURE-001`.\n",
+        encoding="utf-8",
+    )
+
+    assert _completed_task_coverage_case_ids(tasks) == {
+        "UT-DONE-001",
+        "E2E-DONE-002",
+    }
+
+
+def test_completed_delivery_coverage_uses_full_map(tmp_path: Path) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
+        "  **Status:** DONE\n"
+        "  **Named Test Ownership:** `UT-DONE-001`.\n",
+        encoding="utf-8",
+    )
+
+    assert _completed_task_coverage_case_ids(tasks) is None
+
+
+def test_coverage_gate_passes_partial_delivery_scope_to_evidence_runner(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "tasks.md").write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
+        "  **Status:** DONE\n"
+        "  **Named Test Ownership:** `UT-DONE-001`.\n\n"
+        "- [ ] T-002 complexity=standard phase=feature req=FR-002 depends=T-001\n"
+        "  **Named Test Ownership:** `UT-FUTURE-001`.\n",
+        encoding="utf-8",
+    )
+    controller, *_ = _make_controller(tmp_path)
+    shared = MagicMock()
+    expected = VerifyResult(passed=True)
+    shared.apply_coverage.return_value = MagicMock(
+        verify_result=expected,
+        state_summary={"status": "passed"},
+    )
+    controller._candidate_evidence_runner = shared
+    controller._find_existing_spec_dir = MagicMock(return_value=spec_dir)
+
+    result = controller._apply_coverage_observation_gate(
+        VerifyResult(passed=True), str(tmp_path)
+    )
+
+    assert result is expected
+    assert shared.apply_coverage.call_args.kwargs["required_case_ids"] == {
+        "UT-DONE-001"
+    }
 
 
 @pytest.mark.unit
@@ -648,7 +899,7 @@ def test_coverage_gate_does_not_treat_an_unmapped_requirement_as_deferred(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True), str(worktree)
         )
@@ -820,7 +1071,7 @@ def test_owner_deferred_coverage_does_not_require_an_observer_run(
     state["target_repo"] = "target"
     state_store.write(state)
 
-    with patch("harness.ralph.run_coverage_observers") as observers:
+    with patch("harness.candidate_evidence.run_coverage_observers") as observers:
         result = controller._apply_coverage_observation_gate(
             VerifyResult(passed=True),
             str(worktree),
@@ -945,7 +1196,7 @@ def test_runnability_failure_persists_compact_state_and_actionable_report_contex
         ),
     )
 
-    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+    with patch("harness.candidate_evidence.RunnabilityRunner") as runner_type:
         runner_type.return_value.run.return_value = run_result
         result = controller._apply_user_runnability_gate(
             VerifyResult(passed=True),
@@ -1029,7 +1280,7 @@ def test_passing_runnability_is_attached_to_downstream_verification_evidence(
         verification_evidence={"path": "/tmp/host-receipt.json"},
     )
 
-    with patch("harness.ralph.RunnabilityRunner") as runner_type:
+    with patch("harness.candidate_evidence.RunnabilityRunner") as runner_type:
         runner_type.return_value.run.return_value = run_result
         result = controller._apply_user_runnability_gate(
             original,
@@ -3050,6 +3301,28 @@ class TestOuterLoopConvergence:
 
         assert controller._is_external_spec_artifact_failure(verify) is False
 
+    def test_missing_task_owned_coverage_case_is_external_spec_blocker(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_rest, state_store = _make_controller(tmp_path)
+        state = state_store.read()
+        state["target_repo"] = "target-app"
+        state["target_path"] = str(tmp_path / "target-app")
+        state_store.write(state)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "coverage-observer-scope-invalid",
+                    "Completed task coverage ownership is absent from "
+                    "coverage-map.md: UT-GEST-006",
+                )
+            ],
+        )
+
+        assert controller._is_external_spec_artifact_failure(verify) is True
+
     def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Ralph does not converge when state progress disagrees with tasks.md."""
         controller, provider, gitops, state_store = _make_controller(
@@ -3327,6 +3600,36 @@ class TestOuterLoopConvergence:
         final_state = state_store.read()
         assert final_state["status"] == "running"
         assert final_state["target_merge"]["error"] == "merge conflict"
+
+    def test_mirror_only_publication_reports_unsynced_target_truthfully(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.local_merge.return_value = {
+            "mirror_landed": True,
+            "pushed": False,
+            "target_synced": False,
+            "target_sync_skipped": True,
+            "target_sync_skip_reason": "dirty_local_worktree",
+            "target_repo": str(tmp_path / "target"),
+        }
+        state = state_store.read()
+        state["status"] = "running"
+        state_store.write(state)
+
+        published = controller._merge_verified_branch(
+            str(tmp_path / "worktree"),
+            "harness/spec-001/default/iter-0",
+            VerifyResult(passed=True, failures=[]),
+            force=True,
+        )
+
+        assert published is True
+        assert "target checkout remains unsynced" in caplog.text
+        assert "Merged verified delivery branch" not in caplog.text
 
     def test_downstream_gates_defer_target_merge_after_phase1(
         self, tmp_path: Path
@@ -4690,7 +4993,8 @@ class TestOuterLoopConvergence:
         recoveries = state_store.read()["missing_marker_recoveries"]
         assert recoveries[-1]["all_tasks_complete"] is True
         llm_build_runner.exec_build.assert_called_once()
-        gitops.commit.assert_called()
+        gitops.commit.assert_not_called()
+        gitops.push.assert_called_once_with(str(worktree), "main")
 
     def test_llm_build_missing_marker_with_only_agent_marker_blocks(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -8093,6 +8397,13 @@ class TestOuterLoopConvergence:
         (worktree / "generated.txt").write_text("new code\n", encoding="utf-8")
         gitops.commit.return_value = "abc123def456"
 
+        spec_dir = worktree / "specs/spec-001"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text("- [x] T-002 original definition\n")
+        state = state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
         before = {
             "build": {
                 "completed_tasks": 1,
@@ -8111,7 +8422,9 @@ class TestOuterLoopConvergence:
             }
         }
 
-        with patch.object(controller, "_has_file_changes", return_value=True):
+        with patch.object(
+            controller, "_has_non_verify_worktree_changes", return_value=True
+        ):
             checkpoint = controller._checkpoint_progress_commit(
                 worktree_path=str(worktree),
                 before_state=before,
@@ -8130,6 +8443,13 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["checkpoint_commits"][0]["commit"] == "abc123def456"
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-002"]
+        from harness.task_progress import checkpoint_input_hash
+
+        recorded_hash = state["checkpoint_commits"][0]["checkpoint_input_hash"]
+        assert recorded_hash == checkpoint_input_hash(spec_dir)
+        assert recorded_hash is not None
+        (spec_dir / "tasks.md").write_text("- [x] T-002 CHANGED definition\n")
+        assert recorded_hash != checkpoint_input_hash(spec_dir)
 
     def test_checkpoint_commit_uses_phase_when_task_ids_unknown(self, tmp_path: Path) -> None:
         """Stage 1 records truthful phase/wave metadata instead of fake task IDs."""
@@ -8147,7 +8467,9 @@ class TestOuterLoopConvergence:
             }
         }
 
-        with patch.object(controller, "_has_file_changes", return_value=True):
+        with patch.object(
+            controller, "_has_non_verify_worktree_changes", return_value=True
+        ):
             checkpoint = controller._checkpoint_progress_commit(
                 worktree_path="/tmp/worktree",
                 before_state=before,
@@ -8175,7 +8497,9 @@ class TestOuterLoopConvergence:
         gitops.commit.return_value = "feedface"
         unchanged = {"build": {"completed_tasks": 24, "task_results": {}}}
 
-        with patch.object(controller, "_has_file_changes", return_value=True):
+        with patch.object(
+            controller, "_has_non_verify_worktree_changes", return_value=True
+        ):
             checkpoint = controller._checkpoint_progress_commit(
                 worktree_path="/tmp/worktree",
                 before_state=unchanged,
@@ -8207,7 +8531,9 @@ class TestOuterLoopConvergence:
         )
         unchanged = {"build": {"completed_tasks": 24, "task_results": {}}}
 
-        with patch.object(controller, "_has_file_changes", return_value=True):
+        with patch.object(
+            controller, "_has_non_verify_worktree_changes", return_value=True
+        ):
             checkpoint = controller._checkpoint_progress_commit(
                 worktree_path="/tmp/worktree",
                 before_state=unchanged,
@@ -8229,7 +8555,9 @@ class TestOuterLoopConvergence:
             verify_results=[{"passed": True, "failures": []}],
         )
 
-        with patch.object(controller, "_has_file_changes", return_value=False):
+        with patch.object(
+            controller, "_has_non_verify_worktree_changes", return_value=False
+        ):
             checkpoint = controller._checkpoint_progress_commit(
                 worktree_path="/tmp/worktree",
                 before_state={"build": {"completed_tasks": 0}},
@@ -8242,6 +8570,83 @@ class TestOuterLoopConvergence:
         assert checkpoint is None
         gitops.commit.assert_not_called()
         assert "checkpoint_commits" not in state_store.read()
+
+    def test_checkpoint_commit_skips_verify_owned_artifacts_only(
+        self, tmp_path: Path
+    ) -> None:
+        """Playwright output alone must not create an empty tasks-unknown commit."""
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        results = worktree / "test-results"
+        results.mkdir()
+        (results / ".last-run.json").write_text("{}\n", encoding="utf-8")
+
+        checkpoint = controller._checkpoint_progress_commit(
+            worktree_path=str(worktree),
+            before_state={"build": {"completed_tasks": 12}},
+            after_state={"build": {"completed_tasks": 12}},
+            outer_iter=0,
+            inner_iter=1,
+            phase="fix",
+            allow_without_task_progress=True,
+        )
+
+        assert checkpoint is None
+        gitops.commit.assert_not_called()
+        gitops.push.assert_not_called()
+        assert "checkpoint_commits" not in state_store.read()
+
+    def test_commit_and_push_skips_empty_commit_for_verify_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        """Final publication pushes HEAD without manufacturing an empty commit."""
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        results = worktree / "test-results"
+        results.mkdir()
+        (results / ".last-run.json").write_text("{}\n", encoding="utf-8")
+
+        branch = controller._commit_and_push(str(worktree), 0)
+
+        assert branch == "main"
+        gitops.commit.assert_not_called()
+        gitops.push.assert_called_once_with(str(worktree), "main")
 
     def test_run_loop_checkpoints_after_successful_build_progress(
         self, tmp_path: Path
@@ -9138,6 +9543,102 @@ class TestPromptHelpers:
         assert "CODEX REPAIR 2" in output
         assert "test-results/trace.zip" not in output
         assert controller._state_store.read()["provider_attempts"] == [summary]
+
+    def test_provider_attempt_summary_extracts_named_multiline_failure(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="build",
+            attempt=1,
+            result={
+                "provider_invocation": {"provider": "codex"},
+                "stdout": "Implemented the migration.",
+            },
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    FailureCategory.TEST,
+                    "verify-command",
+                    (
+                        "lots of passing output\n"
+                        " × checked-in PostgreSQL migrations > rejects a schema-version mismatch\n"
+                        "AssertionError: expected rollback error\n"
+                    ),
+                )],
+            ),
+            changed_files=["migrations/002.ts"],
+        )
+
+        assert summary["primary_failure"] == (
+            "verify-command: checked-in PostgreSQL migrations > "
+            "rejects a schema-version mismatch"
+        )
+
+    def test_provider_attempt_summary_extracts_playwright_failure_marker(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="fix",
+            attempt=1,
+            result={"provider_invocation": {"provider": "codex"}, "stdout": ""},
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    FailureCategory.TEST,
+                    "verify-command",
+                    (
+                        "28 tests passed\n"
+                        "  ✘   5 [chromium] › tests/e2e/concurrent-sessions.spec.ts:4:1 "
+                        "› two sessions converge\n"
+                        "attachment #1: screenshot\n"
+                    ),
+                )],
+            ),
+            changed_files=[],
+        )
+
+        assert summary["primary_failure"] == (
+            "verify-command: 5 [chromium] › "
+            "tests/e2e/concurrent-sessions.spec.ts:4:1 › two sessions converge"
+        )
+
+    def test_provider_attempt_summary_extracts_playwright_tail_summary(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        summary = controller._record_provider_attempt_summary(
+            phase="fix",
+            attempt=1,
+            result={"provider_invocation": {"provider": "codex"}, "stdout": ""},
+            verify_result=VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    FailureCategory.TEST,
+                    "verify-command",
+                    (
+                        "r that at /workspace/tests/e2e/concurrent-sessions.spec.ts:37:16\n"
+                        "attachment #1: screenshot\n"
+                        "  1 failed\n"
+                        "    [chromium] › tests/e2e/concurrent-sessions.spec.ts:4:1 "
+                        "› two sessions converge\n"
+                    ),
+                )],
+            ),
+            changed_files=[],
+        )
+
+        assert summary["primary_failure"] == (
+            "verify-command: [chromium] › "
+            "tests/e2e/concurrent-sessions.spec.ts:4:1 › two sessions converge"
+        )
 
     def test_provider_attempt_summary_surfaces_evidence_integrity_counts(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

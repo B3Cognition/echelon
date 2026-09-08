@@ -1,6 +1,7 @@
 """Integration coverage for run-local squad context generation."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 import subprocess
@@ -192,6 +193,147 @@ def test_run_context_refresh_retrieves_and_reconciles_mempalace_drawers(tmp_path
     reader.search_requirements.assert_called_once_with("build upload flow", n_results=10)
     assert "## Reconciled MemPalace Results" in prior_context
     assert "drawer-1" in prior_context
+
+
+def test_decision_evidence_refresh_searches_supporting_context_wing_wide(
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "specs" / "001-photo-album" / "plan.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("Use an inclusive radial distance of 1.75.\n", encoding="utf-8")
+    drawer = SimpleNamespace(
+        drawer_id="CTX-plan-001",
+        content="Use an inclusive radial distance of 1.75.",
+        metadata={
+            "artifact_path": "specs/001-photo-album/plan.md",
+            "artifact_hash": artifact_hash(plan),
+            "lifecycle_status": "active",
+            "artifact_kind": "supporting-context",
+        },
+    )
+    reader = MagicMock()
+    reader.search.return_value = SimpleNamespace(drawers=[drawer])
+    ctrl, store = _controller(tmp_path, provider=_mock_provider())
+    store.initialize("run-test", "brownfield", "animate character", 0, "phase1-why2")
+    question = "Which inclusive boundary and distance model should both guards use?"
+
+    with patch(
+        "codegen.memory.context.MemPalaceContext.from_project",
+        return_value=object(),
+    ):
+        with patch(
+            "codegen.memory.mempalace_reader.MemPalaceReader",
+            return_value=reader,
+        ):
+            evidence = ctrl._refresh_decision_evidence_context(question)
+
+    assert evidence is not None
+    assert evidence[2] == ("CTX-plan-001",)
+    snapshot = tmp_path / "runs" / "run-test" / evidence[1]
+    assert snapshot.is_file()
+    assert artifact_hash(snapshot) == f"sha256:{evidence[0]}"
+    reader.search.assert_called_once_with(question, room=None, n_results=10)
+    prior = (
+        tmp_path / "runs" / "run-test" / "context" / "prior-spec-context.md"
+    ).read_text(encoding="utf-8")
+    assert "inclusive radial distance of 1.75" in prior
+
+
+def test_why2_prompt_binds_and_validates_retrieved_decision_evidence(
+    tmp_path: Path,
+) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    snapshot = squad_dir / "context" / "decision-evidence" / "bound.md"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("The existing product uses radial distance 1.75.\n")
+    digest = artifact_hash(snapshot).removeprefix("sha256:")
+    executor = AgentExecutor(
+        provider=_mock_provider(),
+        phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
+        ext_dir=EXT_ROOT,
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+    state = {
+        "squad_dir": str(squad_dir),
+        "banzai_evidence_reassessment": {
+            "schema_version": 2,
+            "attempts": [{
+                "decision_id": "dec-" + "a" * 32,
+                "question_sha256": "b" * 64,
+                "evidence_sha256": digest,
+                "evidence_path": "context/decision-evidence/bound.md",
+                "drawer_ids": ["CTX-plan-001"],
+                "reassessed_at": "2026-09-08T00:00:00+00:00",
+                "status": "armed",
+                "dispatched_at": None,
+            }],
+        },
+    }
+
+    prompt = executor._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent"), state
+    )
+    assert "Controller-bound decision evidence" in prompt
+    assert "radial distance 1.75" in prompt
+
+    state["banzai_evidence_reassessment"]["attempts"][0].update({
+        "status": "consumed",
+        "dispatched_at": "2026-09-08T00:01:00+00:00",
+    })
+    later_prompt = executor._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent"), state
+    )
+    assert "Controller-bound decision evidence" not in later_prompt
+
+    state["banzai_evidence_reassessment"]["attempts"][0].update({
+        "status": "armed",
+        "dispatched_at": None,
+    })
+
+    snapshot.write_text("tampered\n")
+    with pytest.raises(Exception, match="provenance validation"):
+        executor._assemble_prompt(PhaseNode(id="phase1-why2", type="agent"), state)
+
+
+def test_why2_executor_consumes_only_the_armed_evidence_after_dispatch(
+    tmp_path: Path,
+) -> None:
+    controller, store = _controller(tmp_path, provider=_mock_provider())
+    store.initialize("run-test", "brownfield", "animate", 0, "phase1-why2")
+    snapshot = store.squad_dir / "context" / "decision-evidence" / "bound.md"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("Use the existing radial boundary.\n")
+    state = store.load()
+    state["banzai_evidence_reassessment"] = {
+        "schema_version": 2,
+        "attempts": [{
+            "decision_id": "dec-" + "a" * 32,
+            "question_sha256": "b" * 64,
+            "evidence_sha256": artifact_hash(snapshot).removeprefix("sha256:"),
+            "evidence_path": "context/decision-evidence/bound.md",
+            "drawer_ids": ["CTX-plan-001"],
+            "reassessed_at": "2026-09-08T00:00:00+00:00",
+            "status": "armed",
+            "dispatched_at": None,
+        }],
+    }
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    executor = AgentExecutor(
+        provider=controller._provider,
+        phase_graph=controller._graph,
+        ext_dir=EXT_ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+
+    executor.execute(controller._graph.get("phase1-why2"), store)
+
+    attempt = store.load()["banzai_evidence_reassessment"]["attempts"][0]
+    assert attempt["status"] == "consumed"
+    assert attempt["dispatched_at"] is not None
+    dispatched_prompt = controller._provider.exec_agent.call_args.args[1]
+    assert "Use the existing radial boundary." in dispatched_prompt
 
 
 def test_assemble_prompt_resolves_context_dir_context_pack_entries(tmp_path: Path) -> None:

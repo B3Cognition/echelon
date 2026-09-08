@@ -7,6 +7,12 @@ from pathlib import Path
 import re
 from typing import Mapping
 
+from harness.canonical_requirements import extract_canonical_requirements
+from harness.coverage_contract import CoverageContractError
+from harness.coverage_evidence import (
+    parse_coverage_map_obligations,
+    task_owned_coverage_case_ids,
+)
 from harness.spec_frontmatter import read_canonical_target_entries
 from harness.task_targets import analyze_task_targets
 
@@ -98,6 +104,9 @@ def validate_phase_a_readiness(
             constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
             if constitution_blocker is not None:
                 continue
+            coverage_blocker = _coverage_contract_blocker(spec_dir)
+            if coverage_blocker is not None:
+                continue
             return PhaseAReadinessResult(
                 ready=True,
                 blockers=[],
@@ -129,6 +138,9 @@ def validate_phase_a_readiness(
         constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
         if constitution_blocker is not None and constitution_blocker not in blockers:
             blockers.append(constitution_blocker)
+        coverage_blocker = _coverage_contract_blocker(spec_dir)
+        if coverage_blocker is not None and coverage_blocker not in blockers:
+            blockers.append(coverage_blocker)
 
     if not checked_dirs:
         blockers.append("no Phase A spec directory found")
@@ -224,6 +236,45 @@ def _constitution_blocker(path: Path) -> str | None:
     if markers:
         return "constitution.md contains unresolved template markers: " + ", ".join(markers)
     return None
+
+
+def coverage_contract_error(spec_dir: Path) -> str | None:
+    """Return the repairable semantic error for a candidate coverage map."""
+    path = spec_dir / "coverage-map.md"
+    if not path.is_file():
+        return None
+    try:
+        canonical_ids = {
+            requirement.id for requirement in extract_canonical_requirements(spec_dir)
+        }
+        obligations = parse_coverage_map_obligations(path, canonical_ids)
+        planned_case_ids = {
+            obligation.test_case_id
+            for row in obligations
+            for obligation in row
+        }
+        task_owned = task_owned_coverage_case_ids(spec_dir / "tasks.md")
+        missing_owned = sorted(
+            {
+                case_id
+                for case_ids in task_owned.values()
+                for case_id in case_ids
+            }
+            - planned_case_ids
+        )
+        if missing_owned:
+            return (
+                "task-owned test cases are absent from coverage-map.md: "
+                + ", ".join(missing_owned[:20])
+            )
+    except (CoverageContractError, OSError) as exc:
+        return str(exc)
+    return None
+
+
+def _coverage_contract_blocker(spec_dir: Path) -> str | None:
+    error = coverage_contract_error(spec_dir)
+    return f"coverage-map.md invalid: {error}" if error is not None else None
 
 
 def _plan_conformance_blocker(path: Path) -> str | None:

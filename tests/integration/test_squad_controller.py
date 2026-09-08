@@ -7560,6 +7560,39 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_discovery_owned_why2_failure_routes_before_proportional_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Discovery evidence repair is not a spec-body quality candidate."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("**Affected artifact:** spec.md", "**Affected artifact:** assumptions.md")
+            .replace("**Responsible agent:** WHAT", "**Responsible agent:** DISCOVER"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert next_phase == "phase1-discover"
+        assert persisted["phase"] == "phase1-discover"
+        assert persisted["why2_repair_phase"] == "phase1-discover"
+        assert persisted.get("blocked_reason") != (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+
     @pytest.mark.parametrize("current_id", ["ISS-001", "ISS-017"])
     def test_banzai_does_not_reselect_the_same_resolved_finding(
         self, tmp_path: Path, current_id: str,
@@ -7885,6 +7918,77 @@ class TestProportionalQualityController:
             "qualitative_findings"
         ]
         assert findings[0]["type"] == "contradiction"
+
+    def test_repaired_selected_issue_with_only_numeric_debt_starts_fresh_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A completed named repair must not turn score-only debt into corruption."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            """# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** FAIL
+
+## Issues
+
+No issue remains for the selected repair. The certified aggregate gates still fail.
+""",
+            encoding="utf-8",
+        )
+        result.echelon_result["state_updates"]["finding_routes"] = {
+            "findings": [
+                {
+                    "issue_id": "ISS-SCORE-ONLY",
+                    "route": "spec_repair",
+                    "rationale": "Repair the certified numeric failures.",
+                }
+            ]
+        }
+        state = store.load()
+        state.update(updates)
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                    }
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase1-what",
+                },
+            }
+        )
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-what"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["issue_resolution_ledger"]["ISS-001"]["status"] == (
+            "validated"
+        )
+        assert persisted.get("selected_issue_resolution") is None
+        assert persisted["quality_gate_remediation"]["kind"] == (
+            "proportional_quality"
+        )
+        assert persisted["quality_gate_remediation"]["attempt"] == 1
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
 
     def test_explicit_advisory_sage_issue_does_not_require_a_repair_route(
         self,
@@ -11110,6 +11214,58 @@ class TestProportionalQualityController:
         ]
         assert persisted["spec_quality_certificate"]["schema_version"] == 2
         assert persisted["spec_quality_certificate"]["sage_verdict"] == "PASS"
+
+    def test_new_quality_candidate_resets_only_downstream_dispatch_caps(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A new certified spec gets a fresh downstream validation epoch."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, _failure = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        _make_authoritative_sage_assessment_passing(ctrl)
+        state = store.load()
+        state.update(updates)
+        state["spec_quality_certificate"] = {
+            "status": "passed",
+            "source_sha256": "0" * 64,
+        }
+        state["phase_dispatch_counts"] = {
+            "phase1-what": 4,
+            "phase1-understanding": 4,
+            "phase1-why2": 4,
+            "phase1-lexicon-derive": 5,
+            "phase1-lexicon": 5,
+            "checkpoint-assess": 5,
+            "phase2-decide": 2,
+        }
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        assert next_phase == "phase1-lexicon-derive"
+        assert store.load()["phase_dispatch_counts"] == {
+            "phase1-what": 4,
+            "phase1-understanding": 4,
+            "phase1-why2": 4,
+            "phase2-decide": 2,
+        }
 
     def test_perfectionist_why2_failure_keeps_legacy_route(self, tmp_path: Path) -> None:
         ctrl, store = _controller(tmp_path)
