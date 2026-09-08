@@ -26,7 +26,7 @@ from harness.re_v2.protocol_28.evidence import (
     SnapshotEvidenceCatalogV1,
     TargetSnapshotEvidenceProjectionV1,
 )
-from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1
+from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1, ExhaustivePolicyV2
 
 
 _TARGET_KINDS = frozenset({"domain", "source"})
@@ -560,6 +560,26 @@ def _record_for_evidence(catalog: SnapshotEvidenceCatalogV1) -> dict[str, str]:
     }
 
 
+def _supporting_subjects_for_evidence(
+    subjects: tuple[ExhaustiveSubjectV1, ...],
+    primary_subjects: tuple[ExhaustiveSubjectV1, ...],
+    evidence_ids: tuple[str, ...],
+) -> tuple[ExhaustiveSubjectV1, ...]:
+    """Choose deterministic, relevant support without duplicating primary ownership."""
+    covered = {item for subject in primary_subjects for item in subject.evidence_ids}
+    chosen: dict[str, ExhaustiveSubjectV1] = {}
+    ordered = sorted(subjects, key=lambda subject: subject.identity)
+    for evidence_id in sorted(set(evidence_ids) - covered):
+        if evidence_id in covered:
+            continue
+        subject = next((item for item in ordered if evidence_id in item.evidence_ids), None)
+        if subject is None:
+            raise Protocol28PlanningError("snapshot evidence has no relevant subject mapping")
+        chosen[subject.identity] = subject
+        covered.update(subject.evidence_ids)
+    return tuple(chosen[key] for key in sorted(chosen))
+
+
 def _entry(
     *, target: L3TargetAuthorityProjectionV1,
     evidence: TargetSnapshotEvidenceProjectionV1,
@@ -573,16 +593,24 @@ def _entry(
     evidence_sizes: dict[str, int],
     planned_dependency_root_ids: tuple[str, ...] = (),
     global_lower_authority_ids: tuple[str, ...] = (),
+    supporting_subjects: tuple[ExhaustiveSubjectV1, ...] = (),
+    supporting_evidence: tuple[str, ...] = (),
+    supporting_records: tuple[str, ...] = (),
 ) -> SlicePlanEntryV1:
     context_bytes = sum(
-        len(canonical_json_bytes(item.to_json_dict())) for item in subjects
-    ) + sum(evidence_sizes.get(item, 0) for item in primary_evidence)
+        len(canonical_json_bytes(item.to_json_dict()))
+        for item in (*subjects, *supporting_subjects)
+    ) + sum(evidence_sizes.get(item, 0) for item in (*primary_evidence, *supporting_evidence))
     if context_bytes > policy.max_context_bytes:
         raise Protocol28PlanningError("unsplittable canonical context exceeds policy")
     if len(subjects) > policy.max_primary_subjects:
         raise Protocol28PlanningError("primary subject bin exceeds policy")
     if len(primary_records) > policy.max_primary_records:
         raise Protocol28PlanningError("primary source record bin exceeds policy")
+    if len(supporting_subjects) > policy.max_supporting_subjects:
+        raise Protocol28PlanningError("supporting subject bin exceeds policy")
+    if len(supporting_records) > policy.max_supporting_records:
+        raise Protocol28PlanningError("supporting source record bin exceeds policy")
     subject_ids = tuple(sorted(item.identity for item in subjects))
     lower_ids = tuple(
         sorted(
@@ -592,7 +620,7 @@ def _entry(
                 *global_lower_authority_ids,
                 *(
                     lower_id
-                    for subject in subjects
+                    for subject in (*subjects, *supporting_subjects)
                     for lower_id in subject.lower_authority_ids
                 ),
             }
@@ -600,8 +628,10 @@ def _entry(
     )
     return SlicePlanEntryV1(
         1, target.target_kind, target.source_id, target.target_id, category, ordinal,
-        target.identity, evidence.identity, subject_ids, (), primary_records, (),
-        primary_evidence, (), finding_ids, lower_ids, planned_dependency_root_ids,
+        target.identity, evidence.identity, subject_ids,
+        tuple(sorted(item.identity for item in supporting_subjects)),
+        primary_records, supporting_records,
+        primary_evidence, supporting_evidence, finding_ids, lower_ids, planned_dependency_root_ids,
         policy.producer_contract_hash, policy.verifier_contract_hash,
         context_bytes, context_bytes,
     )
@@ -640,6 +670,17 @@ def _target_plan(
     for subject in subjects:
         for category in subject.category_ids:
             subject_categories[category].append(subject)
+
+    repaired = isinstance(policy, ExhaustivePolicyV2)
+    if repaired:
+        unassessed = sorted(category for category, items in subject_categories.items() if not items)
+        if unassessed:
+            raise Protocol28PlanningError(
+                "unassessed categories require reviewed discovery before activation: "
+                f"source={target.source_id} target={target.target_id} categories={','.join(unassessed)}"
+            )
+        if permitted - {item for subject in subjects for item in subject.evidence_ids}:
+            raise Protocol28PlanningError("snapshot evidence has no relevant subject mapping")
 
     evidence_category: dict[str, str] = {}
     for evidence_id in sorted(permitted):
@@ -716,7 +757,12 @@ def _target_plan(
             current["bytes"] = current_bytes + size
 
         unassigned_records = set(primary_records)
-        for evidence_id in primary_evidence:
+        packing_evidence = (
+            tuple(sorted(set(primary_evidence) | {
+                item for subject in category_subjects for item in subject.evidence_ids
+            })) if repaired else primary_evidence
+        )
+        for evidence_id in packing_evidence:
             size = sizes.get(evidence_id, 0)
             if size > policy.max_context_bytes:
                 raise Protocol28PlanningError("unsplittable snapshot evidence exceeds policy")
@@ -728,10 +774,24 @@ def _target_plan(
             assert isinstance(current_records, list)
             assert isinstance(current_bytes, int)
             adds_record = record_id in unassigned_records
-            if current_evidence and (
-                current_bytes + size > policy.max_context_bytes
-                or (adds_record and len(current_records) >= policy.max_primary_records)
-            ):
+
+            def exceeds_bound() -> bool:
+                support = _supporting_subjects_for_evidence(
+                    category_subjects, tuple(current["subjects"]),  # type: ignore[arg-type]
+                    tuple((*current_evidence, evidence_id)),
+                ) if repaired else ()
+                support_bytes = sum(len(canonical_json_bytes(item.to_json_dict())) for item in support)
+                support_records = {
+                    record_for[item] for item in (*current_evidence, evidence_id)
+                } - set(current_records) - ({record_id} if adds_record else set())
+                return (
+                    current_bytes + size + support_bytes > policy.max_context_bytes
+                    or (adds_record and len(current_records) >= policy.max_primary_records)
+                    or len(support) > policy.max_supporting_subjects
+                    or (repaired and len(support_records) > policy.max_supporting_records)
+                )
+
+            if exceeds_bound():
                 current = new_bin()
                 current_evidence = current["evidence"]
                 current_records = current["records"]
@@ -739,14 +799,8 @@ def _target_plan(
                 assert isinstance(current_evidence, list)
                 assert isinstance(current_records, list)
                 assert isinstance(current_bytes, int)
-            elif current_bytes + size > policy.max_context_bytes:
-                current = new_bin()
-                current_evidence = current["evidence"]
-                current_records = current["records"]
-                current_bytes = current["bytes"]
-                assert isinstance(current_evidence, list)
-                assert isinstance(current_records, list)
-                assert isinstance(current_bytes, int)
+            if repaired and exceeds_bound():
+                raise Protocol28PlanningError("unsplittable grounded evidence context exceeds policy")
             current_evidence.append(evidence_id)
             current["bytes"] = current_bytes + size
             if adds_record:
@@ -766,13 +820,22 @@ def _target_plan(
             assert isinstance(packed_subjects, list)
             assert isinstance(packed_evidence, list)
             assert isinstance(packed_records, list)
-            current_findings = findings if ordinal == 0 else ()
+            bound_support = _supporting_subjects_for_evidence(
+                category_subjects, tuple(packed_subjects), tuple(packed_evidence),
+            ) if repaired else ()
+            owned_evidence = tuple(item for item in packed_evidence if item in primary_evidence)
+            support_evidence = tuple(item for item in packed_evidence if item not in primary_evidence)
             entries.append(_entry(
                 target=target, evidence=evidence_projection, category=category, ordinal=ordinal,
                 subjects=tuple(packed_subjects),
-                primary_evidence=tuple(packed_evidence),
+                primary_evidence=owned_evidence,
                 primary_records=tuple(sorted(packed_records)),
-                finding_ids=current_findings,
+                supporting_subjects=bound_support,
+                supporting_evidence=support_evidence,
+                supporting_records=tuple(sorted({
+                    record_for[item] for item in packed_evidence
+                } - set(packed_records))) if repaired else (),
+                finding_ids=(),
                 policy=policy, evidence_sizes=sizes,
                 planned_dependency_root_ids=(
                     composition_dependency_root_ids
@@ -785,6 +848,45 @@ def _target_plan(
                 content_digest({"subject_id": item.identity, "category_id": category})
                 for item in packed_subjects
             )
+        # A target-wide finding is not a first-bin obligation. Evaluate it in
+        # its own bounded context, with all declared supporting evidence, while
+        # retaining exactly-once primary coverage in the discovery slices.
+        for offset, finding_id in enumerate(findings):
+            finding_subjects = tuple(
+                subject for subject in subjects if finding_id in subject.finding_ids
+            )
+            required_evidence = {
+                item for subject in finding_subjects for item in subject.evidence_ids
+            }
+            # Generated indexes are chunks of a target, not semantic evidence
+            # mappings. Never mistake a finding-only chunk for proof of absence.
+            if not required_evidence or any(
+                subject.subject_id.startswith("authenticated-evidence")
+                for subject in finding_subjects
+            ):
+                required_evidence = permitted | supporting
+            try:
+                if not finding_subjects:
+                    raise Protocol28PlanningError("finding has no declared subject mapping")
+                entries.append(_entry(
+                    target=target, evidence=evidence_projection,
+                    category=category, ordinal=len(nonempty_bins) + offset,
+                    subjects=(), primary_evidence=(), primary_records=(),
+                    finding_ids=(finding_id,), policy=policy, evidence_sizes=sizes,
+                    supporting_subjects=finding_subjects,
+                    supporting_evidence=tuple(sorted(required_evidence)),
+                    supporting_records=tuple(sorted({record_for[item] for item in required_evidence})),
+                    planned_dependency_root_ids=(
+                        composition_dependency_root_ids if category == "source-composition" else ()
+                    ),
+                    global_lower_authority_ids=global_lower_authority_ids,
+                ))
+            except Protocol28PlanningError as exc:
+                raise Protocol28PlanningError(
+                    "finding closure requires a bounded evidence context before dispatch: "
+                    f"source={target.source_id} target={target.target_id} finding={finding_id}; "
+                    "provide a narrower evidence-to-finding mapping or a bounded synthesis stage"
+                ) from exc
     if len(entries) > policy.max_entries_per_target:
         raise Protocol28PlanningError("target plan exceeds entry cap")
     assigned_evidence = tuple(sorted(
@@ -901,8 +1003,118 @@ def build_exhaustive_plan(
     plans = tuple(sorted((*domain_plans, *source_plans), key=lambda item: item.sort_key))
     if sum(len(item.entries) for item in plans) > policy.max_entries_per_run:
         raise Protocol28PlanningError("exhaustive plan exceeds run entry cap")
-    return ExhaustivePlanV1(
+    plan = ExhaustivePlanV1(
         1, parent.source_snapshot_id, parent.partition_manifest_id, selection.identity,
         parent.identity, l3.identity, evidence.identity, subjects.identity, policy.identity,
         "all-scope" if selection.all_sources else "selected-scope", plans,
     )
+    validate_exhaustive_plan_coverage(plan, subjects, evidence, policy)
+    return plan
+
+
+def validate_exhaustive_plan_coverage(
+    plan: ExhaustivePlanV1,
+    subjects: ExhaustiveSubjectCatalogV1,
+    evidence: SnapshotEvidenceCatalogV1,
+    policy: ExhaustivePolicyV1,
+) -> None:
+    """Reject structural false completeness under the pinned repaired contract."""
+    if not isinstance(policy, ExhaustivePolicyV2):
+        return
+    projections = {
+        (item.source_id, item.target_kind, item.target_id): item for item in evidence.projections
+    }
+    if {item.sort_key for item in plan.target_plans} != set(projections):
+        raise Protocol28PlanningError("repaired plan target coverage differs from snapshot")
+    by_subject = {item.identity: item for item in subjects.subjects}
+    record_for = _record_for_evidence(evidence)
+    if sum(len(target.entries) for target in plan.target_plans) > policy.max_entries_per_run:
+        raise Protocol28PlanningError("repaired plan exceeds run entry cap")
+    for target in plan.target_plans:
+        categories = set(policy.domain_categories if target.target_kind == "domain" else policy.source_categories)
+        if target.vacancy_receipts or {entry.category_id for entry in target.entries} != categories:
+            raise Protocol28PlanningError("unassessed categories cannot certify repaired coverage")
+        projection = projections[target.sort_key]
+        if target.evidence_projection_id != projection.identity:
+            raise Protocol28PlanningError("repaired target evidence projection differs from snapshot")
+        target_subjects = tuple(
+            item for item in subjects.subjects
+            if (item.source_id, item.target_kind, item.target_id) == target.sort_key
+        )
+        permitted = set(_all_evidence_ids(projection))
+        available = permitted | set(
+            projection.supporting_shard_ids + projection.supporting_empty_receipt_ids
+            + projection.supporting_nontext_disposition_ids
+        )
+        assigned = [item for entry in target.entries for item in entry.primary_snapshot_evidence_ids]
+        if sorted(assigned) != sorted(permitted):
+            raise Protocol28PlanningError("repaired primary evidence coverage is not exact")
+        subject_assignments = sorted(
+            content_digest({"subject_id": subject_id, "category_id": entry.category_id})
+            for entry in target.entries for subject_id in entry.primary_subject_ids
+        )
+        expected_assignments = sorted(
+            content_digest({"subject_id": subject.identity, "category_id": category})
+            for subject in target_subjects for category in subject.category_ids
+        )
+        if subject_assignments != expected_assignments:
+            raise Protocol28PlanningError("repaired primary subjects are not assigned exactly once per category")
+        records = sorted(item for entry in target.entries for item in entry.primary_source_record_ids)
+        if records != sorted({record_for[item] for item in permitted}):
+            raise Protocol28PlanningError("repaired primary source record coverage is not exact")
+        ledger = target.coverage_ledger
+        if (
+            list(ledger.subject_assignment_ids) != subject_assignments
+            or list(ledger.primary_source_record_ids) != records
+            or list(ledger.primary_snapshot_evidence_ids) != sorted(assigned)
+            or list(ledger.category_ids) != sorted(categories)
+            or list(ledger.assigned_finding_ids) != sorted(
+                item for entry in target.entries for item in entry.assigned_finding_ids
+            )
+        ):
+            raise Protocol28PlanningError("repaired coverage ledger does not match actual obligations")
+        if len(target.entries) > policy.max_entries_per_target:
+            raise Protocol28PlanningError("repaired target exceeds entry cap")
+        for category in categories:
+            required = {item for subject in target_subjects if category in subject.category_ids
+                        for item in subject.evidence_ids}
+            delivered = {item for entry in target.entries if entry.category_id == category
+                         for item in entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids}
+            if required - delivered:
+                raise Protocol28PlanningError("repaired category omits required supporting evidence")
+        for entry in target.entries:
+            if (
+                (entry.source_id, entry.target_kind, entry.target_id) != target.sort_key
+                or entry.target_l3_projection_id != target.l3_projection_id
+                or entry.target_evidence_projection_id != target.evidence_projection_id
+                or entry.producer_contract_hash != policy.producer_contract_hash
+                or entry.verifier_contract_hash != policy.verifier_contract_hash
+            ):
+                raise Protocol28PlanningError("repaired slice differs from its frozen target contract")
+            attached = entry.primary_subject_ids + entry.supporting_subject_ids
+            if not attached or len(attached) != len(set(attached)):
+                raise Protocol28PlanningError("repaired slice requires distinct relevant subjects")
+            bound = []
+            for subject_id in attached:
+                subject = by_subject.get(subject_id)
+                if subject is None or (
+                    subject.source_id, subject.target_kind, subject.target_id
+                ) != target.sort_key or entry.category_id not in subject.category_ids:
+                    raise Protocol28PlanningError("repaired slice subject is outside target/category")
+                bound.append(subject)
+            entry_evidence = set(entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids)
+            if set(entry.primary_snapshot_evidence_ids) & set(entry.supporting_snapshot_evidence_ids):
+                raise Protocol28PlanningError("repaired evidence cannot be both primary and supporting")
+            if entry_evidence - available or entry_evidence - {
+                item for subject in bound for item in subject.evidence_ids
+            }:
+                raise Protocol28PlanningError("repaired slice evidence lacks a relevant subject binding")
+            if (
+                len(entry.primary_subject_ids) > policy.max_primary_subjects
+                or len(entry.supporting_subject_ids) > policy.max_supporting_subjects
+                or len(entry.primary_source_record_ids) > policy.max_primary_records
+                or len(entry.supporting_source_record_ids) > policy.max_supporting_records
+                or entry.canonical_context_bytes > policy.max_context_bytes
+                or entry.conservative_tokens > policy.max_conservative_tokens
+            ):
+                raise Protocol28PlanningError("repaired slice exceeds frozen policy bounds")

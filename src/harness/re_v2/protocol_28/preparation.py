@@ -48,12 +48,19 @@ from harness.re_v2.protocol_28.model import (
 )
 from harness.re_v2.protocol_28.orchestration import DeepenOrchestrationRequestV1
 from harness.re_v2.protocol_28.planning import (
+    ExhaustiveSubjectCatalogV1,
     ExhaustiveSubjectV1,
+    _supporting_subjects_for_evidence,
     build_exhaustive_plan,
     build_exhaustive_subject_catalog,
     realize_slice,
+    validate_exhaustive_plan_coverage,
 )
-from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
+from harness.re_v2.protocol_28.policies import (
+    ExhaustivePolicyV2,
+    build_initial_exhaustive_policy,
+    build_repaired_exhaustive_policy,
+)
 from harness.re_v2.snapshot import (
     CapturedSnapshot,
     load_snapshot_manifest,
@@ -185,6 +192,11 @@ def prepare_protocol_28_request(
         producer_contract_hash=content_digest(producer_agent),
         verifier_contract_hash=content_digest(verifier_agent),
     )
+    if policy.identity != intent.exhaustive_policy_catalog_id:
+        policy = build_repaired_exhaustive_policy(
+            producer_contract_hash=content_digest(producer_agent),
+            verifier_contract_hash=content_digest(verifier_agent),
+        )
     if (
         policy.identity != intent.exhaustive_policy_catalog_id
         or executors.identity != intent.executor_catalog_id
@@ -420,6 +432,7 @@ def _bind_exact_context_sizes(
             target_plans=_rebind_composition_dependencies(tuple(target_plans)),
         )
         if updated == current:
+            validate_exhaustive_plan_coverage(updated, subjects, evidence, policy)
             return updated
         current = updated
     raise Protocol28PreparationError("exact provider context sizing did not converge")
@@ -487,7 +500,34 @@ def _split_oversized_context_entries(
             if size <= maximum:
                 expanded.append(measured)
                 continue
-            evidence_ids = entry.primary_snapshot_evidence_ids
+            if entry.assigned_finding_ids:
+                raise Protocol28PreparationError(
+                    "finding closure cannot be split away from its required evidence: "
+                    f"source={entry.source_id} target={entry.target_id} "
+                    f"actual={size} maximum={maximum}; "
+                    "provide a narrower evidence-to-finding mapping or a bounded synthesis stage"
+                )
+            subjects = (
+                sizing_context.inputs.exhaustive_subject_catalog
+                if isinstance(sizing_context.inputs.exhaustive_policy, ExhaustivePolicyV2)
+                else None
+            )
+            policy = sizing_context.inputs.exhaustive_policy
+
+            def chunk_fits(candidate, size: int) -> bool:  # type: ignore[no-untyped-def]
+                return size <= maximum and (
+                    subjects is None or (
+                        len(candidate.primary_subject_ids) <= policy.max_primary_subjects
+                        and len(candidate.supporting_subject_ids) <= policy.max_supporting_subjects
+                        and len(candidate.primary_source_record_ids) <= policy.max_primary_records
+                        and len(candidate.supporting_source_record_ids) <= policy.max_supporting_records
+                    )
+                )
+
+            evidence_ids = (
+                tuple(sorted(set(entry.primary_snapshot_evidence_ids + entry.supporting_snapshot_evidence_ids)))
+                if subjects is not None else entry.primary_snapshot_evidence_ids
+            )
             if len(evidence_ids) < 2:
                 raise Protocol28PreparationError(
                     "unsplittable exact provider context: "
@@ -511,13 +551,15 @@ def _split_oversized_context_entries(
                     first_for_record,
                     first_chunk=not chunks,
                     ordinal=entry.ordinal + len(chunks),
+                    subjects=subjects,
+                    record_for=record_for,
                 )
                 _candidate, candidate_size = _measure_context_entry(
                     sizing_context,
                     target_plan,
                     candidate,
                 )
-                if candidate_size <= maximum:
+                if chunk_fits(candidate, candidate_size):
                     current_ids = tentative
                     continue
                 if not current_ids:
@@ -533,16 +575,18 @@ def _split_oversized_context_entries(
                     first_for_record,
                     first_chunk=False,
                     ordinal=entry.ordinal + len(chunks),
+                    subjects=subjects,
+                    record_for=record_for,
                 )
                 _candidate, candidate_size = _measure_context_entry(
                     sizing_context,
                     target_plan,
                     candidate,
                 )
-                if candidate_size > maximum:
+                if not chunk_fits(candidate, candidate_size):
                     raise Protocol28PreparationError(
-                        "unsplittable exact provider context: one evidence shard "
-                        f"requires {candidate_size} bytes; maximum={maximum}"
+                        "unsplittable exact provider context: one evidence shard exceeds "
+                        f"byte or subject/record bounds; bytes={candidate_size} maximum={maximum}"
                     )
             chunks.append(current_ids)
             for index, chunk in enumerate(chunks):
@@ -552,6 +596,8 @@ def _split_oversized_context_entries(
                     first_for_record,
                     first_chunk=index == 0,
                     ordinal=entry.ordinal + index,
+                    subjects=subjects,
+                    record_for=record_for,
                 )
                 measured, _size = _measure_context_entry(
                     sizing_context,
@@ -609,6 +655,8 @@ def _entry_for_evidence_chunk(
     *,
     first_chunk: bool,
     ordinal: int,
+    subjects: ExhaustiveSubjectCatalogV1 | None = None,
+    record_for: Mapping[str, str] | None = None,
 ):  # type: ignore[no-untyped-def]
     evidence_set = set(evidence_ids)
     records = tuple(
@@ -616,7 +664,7 @@ def _entry_for_evidence_chunk(
         for record_id in entry.primary_source_record_ids
         if first_for_record.get(record_id) in evidence_set
     )
-    return replace(
+    chunk = replace(
         entry,
         ordinal=ordinal,
         primary_subject_ids=entry.primary_subject_ids if first_chunk else (),
@@ -637,6 +685,29 @@ def _entry_for_evidence_chunk(
         assigned_finding_ids=entry.assigned_finding_ids if first_chunk else (),
         canonical_context_bytes=0,
         conservative_tokens=0,
+    )
+    if subjects is None:
+        return chunk
+    if record_for is None:
+        raise Protocol28PreparationError("grounded evidence split requires record authority")
+    attached = set(entry.primary_subject_ids + entry.supporting_subject_ids)
+    available_subjects = tuple(subject for subject in subjects.subjects if subject.identity in attached)
+    primary_subjects = tuple(
+        subject for subject in available_subjects if subject.identity in chunk.primary_subject_ids
+    )
+    supporting_subjects = _supporting_subjects_for_evidence(
+        available_subjects, primary_subjects, evidence_ids,
+    )
+    return replace(
+        chunk,
+        supporting_subject_ids=tuple(subject.identity for subject in supporting_subjects),
+        primary_snapshot_evidence_ids=tuple(
+            item for item in evidence_ids if item in entry.primary_snapshot_evidence_ids
+        ),
+        supporting_snapshot_evidence_ids=tuple(
+            item for item in evidence_ids if item in entry.supporting_snapshot_evidence_ids
+        ),
+        supporting_source_record_ids=tuple(sorted({record_for[item] for item in evidence_ids} - set(records))),
     )
 
 

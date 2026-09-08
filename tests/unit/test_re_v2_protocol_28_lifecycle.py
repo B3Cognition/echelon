@@ -37,6 +37,41 @@ from tests.re_v2_protocol_28_fixtures import digest
 from tests.unit.test_re_v2_protocol_28_checkpoints import _checkpoint
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("context_bytes,extra_bytes,expected_ms", [
+    (131_072, 0, 300_000),
+    (131_073, 0, 600_000),
+    (262_144, 0, 600_000),
+    (262_144, 327_680, 900_000),
+])
+def test_dispatch_time_reservation_scales_with_bounded_context(
+    context_bytes: int, extra_bytes: int, expected_ms: int,
+) -> None:
+    from harness.re_v2.protocol_28.lifecycle import _reservation
+    entry, *_ = _candidate_fixture()
+    entry = replace(entry, canonical_context_bytes=context_bytes)
+    reservation = _reservation(entry, b"contract", extra_input_bytes=extra_bytes)
+    assert reservation.active_ms == expected_ms
+
+
+@pytest.mark.unit
+def test_large_slice_time_is_reserved_before_dispatch_within_existing_budget(tmp_path: Path) -> None:
+    from harness.re_v2.protocol_28.lifecycle import _reservation
+    _, inputs = _fixture()
+    run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
+    context = load_protocol_28_run_context(run_dir)
+    entry, spec, *_ = _candidate_fixture()
+    entry = replace(entry, canonical_context_bytes=262_144)
+    before = context.resources.decision.active_ms_limit
+    preview = context.resources.preview_pair(
+        spec.identity, 1, _reservation(entry),
+        _reservation(entry, extra_input_bytes=327_680),
+    )
+    assert not preview.allowed
+    assert "active_ms" in preview.exhausted_dimensions
+    assert context.resources.decision.active_ms_limit == before
+
+
 class _PassingBackend:
     def __init__(self) -> None:
         self.roles: list[str] = []
@@ -717,8 +752,11 @@ def test_malformed_producer_consumes_attempt_and_releases_paired_verifier(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("crash_after_capture", [False, True])
 def test_malformed_semantic_repair_receives_durable_contract_correction(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_after_capture: bool,
 ) -> None:
     manifest, inputs = _fixture("re-l4-producer-contract-correction")
     inputs = replace(
@@ -732,6 +770,24 @@ def test_malformed_semantic_repair_receives_durable_contract_correction(
     )
     run_dir = create_or_reuse_protocol_28_child(tmp_path, inputs)
     backend = _FindingDispositionContractRepairBackend()
+
+    if crash_after_capture:
+        import harness.re_v2.protocol_28.lifecycle as lifecycle
+
+        original = lifecycle.record_candidate_result
+        calls = 0
+
+        def crash_on_repair_capture(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("crash-after-malformed-repair-capture")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(lifecycle, "record_candidate_result", crash_on_repair_capture)
+        with pytest.raises(RuntimeError, match="crash-after-malformed-repair-capture"):
+            run_protocol_28_exhaustive(run_dir, lambda: backend)
+        monkeypatch.setattr(lifecycle, "record_candidate_result", original)
 
     completed = run_protocol_28_exhaustive(run_dir, lambda: backend)
     events = load_protocol_28_run_context(run_dir).events.replay()

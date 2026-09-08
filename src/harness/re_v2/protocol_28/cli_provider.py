@@ -82,7 +82,9 @@ class SquadCliProtocol28Backend:
             result = self._shared_provider().exec_agent(
                 str(root),
                 prompt,
-                timeout_ms=reservation.active_ms,
+                # The reservation includes process shutdown and boundary checks,
+                # not just time spent inside the provider. Keep actual usage exact.
+                timeout_ms=max(1, reservation.active_ms - min(5_000, reservation.active_ms // 10)),
                 result_contract=_RESULT_CONTRACT,
                 prompt_metadata=dict(artifact.frontmatter),
                 allow_result_repair=False,
@@ -112,7 +114,8 @@ class SquadCliProtocol28Backend:
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=max(0, int(result.duration_ms)),
-            result_kind="provider_result" if successful else "provider_failure",
+            result_kind=("provider_timeout" if result.timed_out else
+                         "provider_result" if successful else "provider_failure"),
             token_status=usage.status,
             billable_tokens=usage.billable_tokens,
             active_status="trusted_exact",

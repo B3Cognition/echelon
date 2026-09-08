@@ -91,6 +91,34 @@ def _candidate_contract_failure_code(exc: Protocol28ExecutionError) -> str:
     return "malformed-result-contract"
 
 
+def _execution_failure_code(persisted: PersistedL4ExecutionV1, exc: Protocol28ExecutionError) -> str:
+    if persisted.capture.result_kind == "provider_timeout":
+        return "provider-timeout"
+    if persisted.capture.result_kind == "provider_failure":
+        return "provider-execution-failed"
+    return _candidate_contract_failure_code(exc)
+
+
+def _attempts_exhausted_reason(context, slice_spec, role, fallback):  # type: ignore[no-untyped-def]
+    """Use the last durable outcome, including after interrupted capture recovery."""
+    kinds = ({"candidate_rejected", "candidate_recorded"} if role == "producer"
+             else {"verification_rejected", "verification_recorded"})
+    for event in reversed(context.events.replay()):
+        if (event.type in kinds and event.payload.get("output_artifact_key_id")
+                == slice_spec.output_artifact_key_id):
+            reason = event.payload.get("reason_code")
+            if reason in {"provider-timeout", "provider-execution-failed"}:
+                return f"{role}_{reason.replace('-', '_')}_attempts_exhausted"
+            break
+    return fallback
+
+
+def _resource_block_reason(context, preview):  # type: ignore[no-untyped-def]
+    if context.resources.decision.reservation_breaches:
+        return "l4_reservation_breach"
+    return "l4_" + "_and_".join(preview.exhausted_dimensions) + "_budget_exhausted"
+
+
 def _producer_contract_failure_codes(
     context: Protocol28RunContext,
     slice_spec: SliceSpecV1,
@@ -104,6 +132,9 @@ def _producer_contract_failure_codes(
                 if event.type == "candidate_rejected"
                 and event.payload["output_artifact_key_id"]
                 == slice_spec.output_artifact_key_id
+                and event.payload["reason_code"] in {
+                    "malformed-result-contract", "unresolved-findings-not-addressed"
+                }
             }
         )
     )
@@ -122,7 +153,7 @@ class L4DispatchResultV1:
     started_at: str
     ended_at: str
     duration_ms: int
-    result_kind: Literal["provider_result", "provider_failure"] = "provider_result"
+    result_kind: Literal["provider_result", "provider_failure", "provider_timeout"] = "provider_result"
     token_status: Literal["trusted_exact", "unavailable", "untrusted"] = "unavailable"
     billable_tokens: int | None = None
     active_status: Literal["trusted_exact", "unavailable", "untrusted"] = "unavailable"
@@ -133,7 +164,7 @@ class L4DispatchResultV1:
             raise Protocol28LifecycleError("L4 provider result bytes are invalid")
         if not isinstance(self.provider_name, str) or not self.provider_name:
             raise Protocol28LifecycleError("L4 provider name is required")
-        if self.result_kind not in {"provider_result", "provider_failure"}:
+        if self.result_kind not in {"provider_result", "provider_failure", "provider_timeout"}:
             raise Protocol28LifecycleError("L4 provider result kind is invalid")
 
 
@@ -557,7 +588,7 @@ def _execute_slice(
     )
     start_attempt = len(prior_pairs) + 1
     if start_attempt > policy.producer_attempt_limit:
-        reason = "producer_result_contract_attempts_exhausted"
+        reason = _attempts_exhausted_reason(context, slice_spec, "producer", "producer_result_contract_attempts_exhausted")
         _fail_slice(context, slice_spec, reason)
         return reason
 
@@ -594,11 +625,7 @@ def _execute_slice(
             verifier_reservation,
         )
         if not preview.allowed:
-            reason = (
-                "l4_"
-                + "_and_".join(preview.exhausted_dimensions)
-                + "_budget_exhausted"
-            )
+            reason = _resource_block_reason(context, preview)
             context.controller.block_run("resource", reason)
             return reason
         producer_dispatch = _dispatch_id(
@@ -658,7 +685,7 @@ def _execute_slice(
                 producer,
             )
         except Protocol28ExecutionError as exc:
-            failure_code = _candidate_contract_failure_code(exc)
+            failure_code = _execution_failure_code(producer, exc)
             context.controller.append_once(
                 "candidate_rejected",
                 {
@@ -730,7 +757,7 @@ def _execute_slice(
             context.controller.block_run("resource", parsed.reason_code)
             return parsed.reason_code
         if parsed is None:
-            reason = "verifier_result_contract_attempts_exhausted"
+            reason = _attempts_exhausted_reason(context, slice_spec, "verifier", "verifier_result_contract_attempts_exhausted")
             _fail_slice(context, slice_spec, reason)
             return reason
         verdict, persisted = parsed
@@ -795,7 +822,7 @@ def _execute_slice(
         previous_diagnostic_ids = diagnostic_ids
         diagnostics = verdict.diagnostics
 
-    reason = "semantic_repair_attempts_exhausted"
+    reason = _attempts_exhausted_reason(context, slice_spec, "producer", "semantic_repair_attempts_exhausted")
     _fail_slice(context, slice_spec, reason)
     return reason
 
@@ -829,29 +856,47 @@ def _parse_verifier_with_retry(
                 persisted,
             )
             return verification, persisted
-        except Protocol28ExecutionError:
+        except Protocol28ExecutionError as exc:
             context.controller.append_once(
                 "verification_rejected",
                 {
                     "dispatch_id": dispatch_id,
                     "output_artifact_key_id": slice_spec.output_artifact_key_id,
-                    "reason_code": "malformed-result-contract",
+                    "reason_code": _execution_failure_code(persisted, exc),
                 },
             )
         if verifier_attempt == 2:
             return None
+        # Recovery must consume an already-reserved/captured second attempt,
+        # never reserve or dispatch a third verifier for the same candidate.
+        dispatch_id = _dispatch_id(
+            slice_spec, "verifier", producer_attempt, verifier_attempt + 1
+        )
+        existing = replay_protocol_28(context.events.replay()).dispatches.get(dispatch_id)
+        if existing is not None:
+            view = context.ledger.replay()
+            if dispatch_id in view.execution_captures:
+                persisted = PersistedL4ExecutionV1(
+                    view.execution_envelopes[dispatch_id], view.execution_captures[dispatch_id]
+                )
+                continue
+            if existing.stage != "reserved":
+                raise Protocol28LifecycleError("verifier retry has no recoverable capture")
+            verifier_context = build_protocol_28_slice_context(
+                context, target_plan, entry, slice_spec, role="verifier", candidate=candidate,
+                producer_attempt_number=producer_attempt, verifier_attempt_number=2,
+            )
+            persisted = _call_provider(
+                context, backend, "verifier", dispatch_id, 2, entry, slice_spec,
+                agent_bytes, verifier_context, schema_bytes, reservation,
+                candidate_id=candidate.identity,
+            )
+            continue
         preview = context.resources.preview_verifier_retry(
             slice_spec.identity, producer_attempt, reservation
         )
         if not preview.allowed:
-            return _VerifierRetryBlocked(
-                "l4_"
-                + "_and_".join(preview.exhausted_dimensions)
-                + "_budget_exhausted"
-            )
-        dispatch_id = _dispatch_id(
-            slice_spec, "verifier", producer_attempt, verifier_attempt + 1
-        )
+            return _VerifierRetryBlocked(_resource_block_reason(context, preview))
         retry = context.resources.commit_verifier_retry(
             preview, dispatch_id=dispatch_id
         )
@@ -1010,13 +1055,13 @@ def _recover_captured_producer(
                 context.inputs.exhaustive_policy,
                 persisted,
             )
-        except Protocol28ExecutionError:
+        except Protocol28ExecutionError as exc:
             context.controller.append_once(
                 "candidate_rejected",
                 {
                     "dispatch_id": dispatch_id,
                     "output_artifact_key_id": slice_spec.output_artifact_key_id,
-                    "reason_code": "malformed-result-contract",
+                    "reason_code": _execution_failure_code(persisted, exc),
                 },
             )
             pair = next(
@@ -1178,7 +1223,7 @@ def _resume_existing_candidate(
             context.controller.block_run("resource", parsed.reason_code)
             return parsed.reason_code
         if parsed is None:
-            reason = "verifier_result_contract_attempts_exhausted"
+            reason = _attempts_exhausted_reason(context, slice_spec, "verifier", "verifier_result_contract_attempts_exhausted")
             _fail_slice(context, slice_spec, reason)
             return reason
         verification, persisted_verifier = parsed
@@ -1369,7 +1414,12 @@ def _reservation(
         1, sum(len(item) for item in payloads) + extra_input_bytes + 1024
     )
     billable = max(initial, entry.conservative_tokens, 1)
-    return DispatchReservationV1(initial, billable, 300_000)
+    # Size the call allowance to the frozen work, including a verifier's
+    # candidate payload. Reserve it from the existing run-wide budget first;
+    # this does not append authorization or expand the bounded attempt count.
+    context_bytes = max(entry.canonical_context_bytes, extra_input_bytes)
+    time_units = max(1, min(3, (context_bytes + 131_071) // 131_072))
+    return DispatchReservationV1(initial, billable, time_units * 300_000)
 
 
 def _dispatch_id(

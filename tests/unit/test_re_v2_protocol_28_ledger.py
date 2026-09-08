@@ -155,9 +155,10 @@ def test_candidate_record_authenticates_parsed_producer_result(tmp_path: Path) -
 
 
 @pytest.mark.unit
-def test_provider_failure_capture_cannot_authorize_candidate(tmp_path: Path) -> None:
+@pytest.mark.parametrize("result_kind", ["provider_failure", "provider_timeout"])
+def test_provider_failure_capture_cannot_authorize_candidate(tmp_path: Path, result_kind: str) -> None:
     entry, spec, _evidence, candidate, store, ledger, producer, _verifier = _captures(
-        tmp_path, producer_result_kind="provider_failure"
+        tmp_path, producer_result_kind=result_kind
     )
     store.put_blob(canonical_json_bytes(candidate.to_json_dict()))
 

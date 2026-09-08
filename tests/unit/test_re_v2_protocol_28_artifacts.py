@@ -80,6 +80,34 @@ def _candidate_fixture():  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.unit
+def test_dedicated_finding_can_use_support_without_duplicate_primary_coverage() -> None:
+    entry, _, evidence, candidate = _candidate_fixture()
+    finding = digest("dedicated-finding")
+    entry = replace(
+        entry,
+        supporting_subject_ids=entry.primary_subject_ids,
+        supporting_source_record_ids=entry.primary_source_record_ids,
+        supporting_snapshot_evidence_ids=entry.primary_snapshot_evidence_ids,
+        primary_subject_ids=(), primary_source_record_ids=(),
+        primary_snapshot_evidence_ids=(), assigned_finding_ids=(finding,),
+    )
+    spec = realize_slice(entry, {})
+    candidate = replace(
+        candidate, slice_spec_id=spec.identity, plan_entry_id=entry.identity,
+        covered_primary_subject_ids=(), covered_primary_source_record_ids=(),
+        covered_primary_evidence_ids=(), addressed_finding_ids=(finding,),
+    )
+    assert validate_candidate(
+        spec, entry, evidence, candidate.to_json_dict(), build_initial_exhaustive_policy()
+    ) == candidate
+    passed = ExhaustiveVerificationV1(
+        1, spec.identity, candidate.identity, entry.verifier_contract_hash,
+        "PASS", (), (), (finding,),
+    )
+    assert validate_verification(spec, entry, candidate, passed.to_json_dict()) == passed
+
+
+@pytest.mark.unit
 def test_candidate_requires_exact_primary_evidence_acknowledgement() -> None:
     entry, spec, evidence, candidate = _candidate_fixture()
     missing = replace(candidate, covered_primary_evidence_ids=())

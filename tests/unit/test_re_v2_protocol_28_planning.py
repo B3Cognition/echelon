@@ -25,12 +25,59 @@ from harness.re_v2.protocol_28.planning import (
     build_exhaustive_plan,
     build_exhaustive_subject_catalog,
     realize_slice,
+    _target_plan,
 )
 from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
 from tests.re_v2_protocol_28_fixtures import digest
 
 
 RAW_MAGIC = b"re-v2-l4-raw-v1\x00"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("all_evidence_required", [False, True])
+def test_finding_closure_has_its_evidence_or_blocks_before_dispatch(
+    all_evidence_required: bool,
+) -> None:
+    domain, _, _, l3, evidence = _authorities(
+        tuple(bytes([value]) * 60_000 for value in range(5))
+    )
+    finding = digest("cross-slice-finding")
+    target = replace(l3.projections[0], finding_ids=(finding,))
+    ids = tuple(sorted(shard.shard_id for shard in evidence.shards))
+    required = ids if all_evidence_required else (ids[0], ids[-1])
+    subject = ExhaustiveSubjectV1(
+        1, "domain", "api", domain, "operation:cross-slice",
+        ("public-surfaces",), required, (finding,), (),
+    )
+    args = (target, evidence.projections[0], (subject,),
+            build_initial_exhaustive_policy(), evidence)
+    if all_evidence_required:
+        with pytest.raises(Protocol28PlanningError, match="finding closure.*bounded"):
+            _target_plan(*args, required_finding_ids=(finding,))
+        return
+    plan = _target_plan(*args, required_finding_ids=(finding,))
+    assigned = [entry for entry in plan.entries if entry.assigned_finding_ids]
+    assert len(assigned) == 1
+    entry = assigned[0]
+    assert entry.assigned_finding_ids == (finding,)
+    assert entry.primary_snapshot_evidence_ids == ()
+    assert entry.supporting_snapshot_evidence_ids == required
+    assert entry.supporting_subject_ids == (subject.identity,)
+    primary = [item for entry in plan.entries for item in entry.primary_snapshot_evidence_ids]
+    assert sorted(primary) == list(ids)
+
+
+@pytest.mark.unit
+def test_unmapped_finding_stops_before_publishing_an_unanswerable_slice() -> None:
+    _, _, _, l3, evidence = _authorities()
+    finding = digest("unmapped-finding")
+    target = replace(l3.projections[0], finding_ids=(finding,))
+    with pytest.raises(Protocol28PlanningError, match="evidence-to-finding mapping"):
+        _target_plan(
+            target, evidence.projections[0], (), build_initial_exhaustive_policy(),
+            evidence, required_finding_ids=(finding,),
+        )
 
 
 def _selection(domain_key: str) -> SelectionScopeV1:

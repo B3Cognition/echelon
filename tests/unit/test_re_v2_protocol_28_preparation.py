@@ -33,11 +33,31 @@ from harness.re_v2.protocol_28.policies import build_initial_exhaustive_policy
 from harness.re_v2.protocol_28.preparation import (
     Protocol28PreparationError,
     _add_evidence_opaque_authority,
+    _split_oversized_context_entries,
 )
 from harness.re_v2.protocol_28.context import (
     build_protocol_28_slice_context,
     load_protocol_28_run_context,
 )
+
+
+@pytest.mark.unit
+def test_exact_sizing_never_splits_a_finding_from_its_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.test_re_v2_protocol_28_planning import _plan
+    import harness.re_v2.protocol_28.preparation as preparation
+
+    plan, _, evidence = _plan()
+    target = plan.target_plans[0]
+    entry = replace(target.entries[0], assigned_finding_ids=(content_digest(b"finding"),))
+    plan = replace(plan, target_plans=(replace(target, entries=(entry,)),))
+    monkeypatch.setattr(
+        preparation, "_measure_context_entry",
+        lambda _context, _target, item: (item, 300_000),
+    )
+    with pytest.raises(Protocol28PreparationError, match="finding closure cannot be split"):
+        _split_oversized_context_entries(plan, evidence, 262_144, None)
 from harness.re_v2.protocol_28.planning import realize_slice
 from harness.re_v2.snapshot import load_snapshot_manifest
 from tests.unit.test_re_v2_protocol_28_evidence import _fixture
@@ -418,8 +438,10 @@ def test_partial_debt_is_bound_to_every_l4_input_and_context(tmp_path: Path) -> 
     assert protocol_28_input_quality(inputs) == "partial"
     assert protocol_28_residual_debt_acceptance(inputs) == acceptance
     assert protocol_28_residual_debt_acceptance(loaded.inputs) == acceptance
+    assert inputs.parent_authority_bundle.unresolved_deeper_finding_ids == ()
     for target_plan in loaded.inputs.exhaustive_plan.target_plans:
         for entry in target_plan.entries:
+            assert not set(entry.assigned_finding_ids) & set(acceptance.unresolved_finding_ids)
             assert acceptance.identity in entry.required_lower_authority_ids
             payload = json.loads(
                 build_protocol_28_slice_context(

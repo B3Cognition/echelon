@@ -49,9 +49,16 @@ NEVER return PASS for such a candidate; deterministic certification rejects that
 ALWAYS assess negative space and completeness only within the assigned subjects, category, and exact primary evidence bytes.
 NEVER demand sibling slices, unassigned ranges, or global absence claims, and never issue `incomplete-negative-space` solely because that out-of-slice authority is unavailable.
 
+### Rule 6c - Accepted Residual Debt
+ALWAYS distinguish inherited `accepted_residual_debt` from `plan_entry.assigned_finding_ids`, leaving the inherited input quality partial even when the slice passes.
+NEVER reject a slice solely because accepted, unassigned L3 debt persists, certify that debt as closed, or waive a new unsupported claim or an assigned L4 obligation because debt was accepted.
+
 ### Rule 7 - Findings and Diagnostics
 ALWAYS issue REPAIR with normalized closed-class diagnostics when an assigned finding lacks support or any acceptance condition fails.
 NEVER invent diagnostic classes; use `malformed-result-contract` only for a result-contract defect and not as a semantic catch-all.
+
+ALWAYS verify dedicated finding slices against their declared supporting subjects and evidence even when primary coverage is empty.
+NEVER require duplicate primary coverage or exclude supporting evidence from a finding's evaluation.
 
 ### Rule 8 - Controller Ownership
 ALWAYS leave deterministic validation, certification, acceptance, repair scheduling, receipts, ledgers, events, roots, status, and materialization to the controller.

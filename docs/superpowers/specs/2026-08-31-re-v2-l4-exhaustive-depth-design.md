@@ -595,6 +595,21 @@ behavioral subject/category pair required by policy must appear exactly once as
 a primary assignment. Every selected `requires_deeper_evidence` finding must be
 assigned to at least one same-scope slice and has one primary resolving slice.
 
+Findings covered by authenticated residual-debt acceptance are not mandatory
+L4 closure assignments. They remain unresolved in the L3 projections, and the
+exact acceptance remains in every L4 context; L4 cannot turn partial input into
+clean input. Unaccepted deeper-evidence findings retain their closure obligation.
+
+Each mandatory finding gets a dedicated bounded evaluation slice with its
+declared evidence and subjects as supporting authority. Discovery slices retain
+exactly-once primary byte coverage. Generated target indexes are not semantic
+evidence mappings: their findings conservatively require the target evidence.
+If the complete finding context cannot fit, preparation fails before provider
+dispatch with an actionable bounded-context diagnostic. It must not assign the
+finding to the first arbitrary byte bin, split away required evidence, or retry
+an impossible immutable context. A larger cross-slice synthesis strategy is
+separate work, not an implicit increase to context or token limits.
+
 ### `SlicePlanEntryV1` and `SliceSpecV1`
 
 Each frozen plan entry contains:
@@ -928,6 +943,12 @@ restart. `addressed_finding_ids` is exactly the assigned finding set;
 findings occur in both arrays. Invalid output never creates semantic authority
 or receives a nested contract retry.
 
+Provider timeouts and execution failures are distinct durable capture outcomes,
+not malformed candidate contracts. They consume the same bounded attempts, but
+are not injected as content-repair instructions. A timed-out file cannot become
+accepted authority even if its JSON is valid. Exhausted attempts report the last
+provider failure type, including after capture recovery.
+
 ### Phase 3: independent verification
 
 Every valid candidate requires a verifier dispatch. A verifier PASS is parsed,
@@ -938,6 +959,8 @@ Verifier result-contract failure has one fixed retry and does not consume a
 producer repair. If that retry also fails, the slice blocks on verifier
 contract failure without regenerating a valid candidate. Verifier semantic
 REPAIR consumes one producer attempt when another is available.
+Recovery consumes an already captured second verifier attempt without reserving
+or executing it again.
 
 ### Phase 4: bounded repair and plateau
 
@@ -1014,6 +1037,17 @@ Authorization does not alter selection, plan, policy, attempt limits, plateau
 rules, executor contracts, or work identity. Untrusted provider usage follows
 the existing conservative-reservation policy and is not transformed into a
 fabricated observation or a fatal over-reservation breach.
+
+Dispatches reserve five minutes per started 128 KiB of frozen context, bounded
+to five through fifteen minutes; verifier sizing includes the candidate output
+allowance. The entire producer/verifier pair must fit the already authorized
+run-wide budget before dispatch. This does not increase that budget or attempts.
+
+The shared CLI deadline leaves up to five seconds inside the existing dispatch
+active-time reservation for shutdown and boundary checks (10% for reservations
+below 50 seconds). Observed duration is never clamped to the reservation. A genuine
+reservation breach remains blocking and is reported separately from an exhausted
+run budget; increasing the run ceiling cannot repair that breach.
 
 ## Controller, events, and durable state
 

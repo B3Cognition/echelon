@@ -50,6 +50,8 @@ def _schema(function, *args):  # type: ignore[no-untyped-def]
 class ExhaustivePolicyV1:
     """Content-addressed policy whose fixed bounds determine L4 work identity."""
 
+    SCHEMA_VERSION: ClassVar[int] = 1
+
     schema_version: int
     raw_shard_byte_limit: int
     max_primary_subjects: int
@@ -96,7 +98,7 @@ class ExhaustivePolicyV1:
 
     def __post_init__(self) -> None:
         fixed = {
-            "schema_version": 1,
+            "schema_version": self.SCHEMA_VERSION,
             "raw_shard_byte_limit": 65_536,
             "max_primary_subjects": 16,
             "max_supporting_subjects": 32,
@@ -153,7 +155,12 @@ class ExhaustivePolicyV1:
     @classmethod
     def from_json_dict(cls, value: object) -> "ExhaustivePolicyV1":
         raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
-        return cls(
+        policy_type = (
+            ExhaustivePolicyV2
+            if cls is ExhaustivePolicyV1 and raw["schema_version"] == 2
+            else cls
+        )
+        return policy_type(
             **{
                 field: (
                     tuple(raw[field])
@@ -164,6 +171,29 @@ class ExhaustivePolicyV1:
                 for field in cls.FIELDS
             }
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ExhaustivePolicyV2(ExhaustivePolicyV1):
+    """Opt-in repaired coverage; legacy vacancy proofs are not sufficient."""
+
+    SCHEMA_VERSION: ClassVar[int] = 2
+
+
+def build_repaired_exhaustive_policy(
+    *,
+    producer_contract_hash: str | None = None,
+    verifier_contract_hash: str | None = None,
+) -> ExhaustivePolicyV2:
+    """Pin stronger coverage without changing defaults or resource ceilings."""
+    legacy = build_initial_exhaustive_policy(
+        producer_contract_hash=producer_contract_hash,
+        verifier_contract_hash=verifier_contract_hash,
+    )
+    return ExhaustivePolicyV2(**{
+        field: 2 if field == "schema_version" else getattr(legacy, field)
+        for field in legacy.FIELDS
+    })
 
 
 def build_initial_exhaustive_policy(

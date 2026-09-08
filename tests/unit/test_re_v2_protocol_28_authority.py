@@ -180,7 +180,9 @@ def test_exact_partial_parent_accepts_every_authenticated_blocker_class() -> Non
     projections = build_l3_target_projections(partial, _selection(domain))
     bundle = build_parent_authority_bundle_v3(partial, projections)
 
-    assert bundle.unresolved_deeper_finding_ids == (finding,)
+    # Accepted debt remains in L3 authority, not in L4's mandatory closure queue.
+    assert bundle.unresolved_deeper_finding_ids == ()
+    assert projections.projections[0].unresolved_finding_ids == (finding,)
     assert partial.parent.to_json_dict() == raw.to_json_dict()
 
 

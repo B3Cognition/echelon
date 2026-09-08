@@ -491,6 +491,11 @@ def _banner(context, state, orchestration):  # type: ignore[no-untyped-def]
 def _next_action(context, state, blocker, orchestration):  # type: ignore[no-untyped-def]
     del blocker
     if state.blocker_kind == "resource":
+        if context.resources.decision.reservation_breaches:
+            return (
+                "investigate the executor reservation overrun and repair it before "
+                "starting a new L4 child; a larger run budget cannot repair this breach"
+            )
         return (
             "raise the required ceiling with "
             f"`echelon re continue {context.run_dir.name}`"

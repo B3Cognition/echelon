@@ -975,7 +975,10 @@ def build_parent_authority_bundle_v3(
         selected_epoch_membership_ids=tuple(
             membership_by_projection[item].identity for item in projection_ids
         ),
-        unresolved_deeper_finding_ids=unresolved,
+        # The exact acceptance and unresolved findings remain authenticated in
+        # the L3 projections and every slice's lower authority. Accepted debt is
+        # not a demand to close those findings again in L4.
+        unresolved_deeper_finding_ids=() if accepted_partial else unresolved,
         staged_checkpoint_provenance_ids=(),
     )
 

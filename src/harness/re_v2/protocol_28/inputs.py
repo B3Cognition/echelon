@@ -49,8 +49,10 @@ from harness.re_v2.protocol_28.model import (
 from harness.re_v2.protocol_28.planning import (
     ExhaustivePlanV1,
     ExhaustiveSubjectCatalogV1,
+    Protocol28PlanningError,
+    validate_exhaustive_plan_coverage,
 )
-from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1
+from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1, ExhaustivePolicyV2
 from harness.re_v2.protocol_25.debt import (
     Protocol25DebtError,
     ResidualDebtAcceptanceV1,
@@ -384,6 +386,49 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
         )
     ):
         raise Protocol28InputError("exhaustive request does not authenticate staged inputs")
+    try:
+        validate_exhaustive_plan_coverage(plan, subjects, evidence, policy)
+    except Protocol28PlanningError as exc:
+        raise Protocol28InputError(f"invalid repaired coverage: {exc}") from exc
+    if isinstance(policy, ExhaustivePolicyV2):
+        _validate_repaired_parent_obligations(inputs)
+
+
+def _validate_repaired_parent_obligations(
+    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+) -> None:
+    """Authenticate obligations independently of the plan's own coverage ledger."""
+    parent, l3 = inputs.parent_authority_bundle, inputs.l3_projection_catalog
+    plan, subjects = inputs.exhaustive_plan, inputs.exhaustive_subject_catalog
+    if (
+        parent.l3_projection_catalog_id != l3.identity
+        or set(parent.selected_projection_ids) != {item.identity for item in l3.projections}
+        or set(parent.selected_epoch_membership_ids) != {item.identity for item in l3.memberships}
+        or subjects.l3_projection_catalog_id != l3.identity
+        or subjects.source_snapshot_id != parent.source_snapshot_id
+        or subjects.partition_manifest_id != parent.partition_manifest_id
+        or plan.source_snapshot_id != parent.source_snapshot_id
+        or plan.partition_manifest_id != parent.partition_manifest_id
+        or plan.selection_id != parent.selection_id
+    ):
+        raise Protocol28InputError("repaired target authority differs from the selected parent")
+    projections = {(p.source_id, p.target_kind, p.target_id): p for p in l3.projections}
+    if {target.sort_key for target in plan.target_plans} != set(projections):
+        raise Protocol28InputError("repaired plan omits or adds a selected L3 target")
+    if any((s.source_id, s.target_kind, s.target_id) not in projections for s in subjects.subjects):
+        raise Protocol28InputError("repaired subject references an unselected L3 target")
+    assigned = []
+    for target in plan.target_plans:
+        projection = projections[target.sort_key]
+        if (target.l3_projection_id != projection.identity
+                or target.target_content_id != projection.target_content_id):
+            raise Protocol28InputError("repaired target differs from its accepted L3 projection")
+        for entry in target.entries:
+            if not set(entry.assigned_finding_ids).issubset(projection.finding_ids):
+                raise Protocol28InputError("repaired finding assigned outside its L3 target")
+            assigned.extend(entry.assigned_finding_ids)
+    if sorted(assigned) != list(parent.unresolved_deeper_finding_ids):
+        raise Protocol28InputError("repaired plan does not cover required parent findings exactly once")
 
 
 def _required_opaque_ids(

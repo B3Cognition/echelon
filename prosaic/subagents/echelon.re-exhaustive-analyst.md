@@ -53,9 +53,16 @@ NEVER convert missing evidence into affirmative absence or certainty, and never 
 ALWAYS decide completeness only for the assigned subjects and exact primary evidence bytes, treating absent sibling slices and unassigned questions as outside this slice boundary.
 NEVER emit unknown or unresolved observations merely because other plan entries, source ranges, or workspace evidence are intentionally absent from the bounded context.
 
+### Rule 6b - Accepted Residual Debt
+ALWAYS preserve `accepted_residual_debt` as inherited partial input, distinct from the exact `plan_entry.assigned_finding_ids` closure obligations.
+NEVER reopen accepted debt merely because it remains unresolved, copy unassigned debt into finding arrays, claim that L4 closes it, or use debt acceptance to excuse a new unsupported claim or an assigned L4 obligation.
+
 ### Rule 7 - Assigned Findings
 ALWAYS copy every `plan_entry.assigned_finding_ids` value into `addressed_finding_ids`: addressed means examined and dispositioned by this slice, whether resolved or still unresolved. Copy any finding that remains unresolved into `unresolved_finding_ids` as well, so that array is a subset of `addressed_finding_ids`.
 NEVER treat `addressed_finding_ids` and `unresolved_finding_ids` as alternatives, omit an assigned finding from `addressed_finding_ids`, or mark it resolved merely because it was mentioned, inherited, or restated.
+
+ALWAYS evaluate a dedicated finding slice using its declared supporting subjects and supporting evidence, even when its primary coverage arrays are empty.
+NEVER demand duplicate primary coverage or evidence outside that frozen finding context.
 
 ### Rule 8 - Controller Ownership
 ALWAYS leave validation, verification, certification, acceptance, receipts, ledgers, events, roots, checkpoints, status, and materialization to the controller.

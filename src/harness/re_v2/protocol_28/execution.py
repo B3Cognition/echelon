@@ -36,7 +36,7 @@ from harness.re_v2.protocol_28.policies import ExhaustivePolicyV1
 
 
 _ROLES = frozenset({"producer", "verifier"})
-_RESULT_KINDS = frozenset({"provider_result", "provider_failure"})
+_RESULT_KINDS = frozenset({"provider_result", "provider_failure", "provider_timeout"})
 _T = TypeVar("_T")
 
 
@@ -139,7 +139,7 @@ class L4ExecutionCaptureV1:
     role: Literal["producer", "verifier"]
     raw_result_hash: str
     raw_byte_count: int
-    result_kind: Literal["provider_result", "provider_failure"]
+    result_kind: Literal["provider_result", "provider_failure", "provider_timeout"]
     provider_name: str
     model_revision: str | None
     started_at: str
@@ -365,7 +365,7 @@ def persist_provider_result(
     started_at: str,
     ended_at: str,
     duration_ms: int,
-    result_kind: Literal["provider_result", "provider_failure"] = "provider_result",
+    result_kind: Literal["provider_result", "provider_failure", "provider_timeout"] = "provider_result",
     ledger: _L4Ledger | None = None,
     fault: Callable[[str], None] | None = None,
 ) -> PersistedL4ExecutionV1:
