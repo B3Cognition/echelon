@@ -3527,19 +3527,36 @@ def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
     assert "unsupported artifact 'unknown'" in result.state_updates["blocked_reason"]
 
 
-def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):
+@pytest.mark.parametrize("valid_coverage", [True, False])
+def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
+    tmp_path, valid_coverage
+):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
-    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "spec.md").write_text(
+        "# Spec\n- **FR-001**: Create an element.\n", encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        "  **Named Test Ownership:** `UT-001`.\n",
+        encoding="utf-8",
+    )
 
     shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
     shadow_spec_dir.mkdir(parents=True)
     (shadow_spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
     (shadow_spec_dir / "test-architecture.md").write_text("# Test Architecture\n", encoding="utf-8")
-    (shadow_spec_dir / "coverage-map.md").write_text("# Coverage Map\n", encoding="utf-8")
+    coverage = "# Coverage Map\n"
+    if valid_coverage:
+        coverage += (
+            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+        )
+    (shadow_spec_dir / "coverage-map.md").write_text(coverage, encoding="utf-8")
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -3581,11 +3598,18 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_pat
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "COMPLETE"
+    if valid_coverage:
+        assert result.verdict == "COMPLETE"
+        recovery_updates = result.state_updates
+    else:
+        assert isinstance(result, ExecutorBlockedResult)
+        assert result.result.verdict == "BLOCKED"
+        assert result.result.state_updates["invalid_outputs"][0]["path"] == "coverage-map.md"
+        recovery_updates = result.result.state_updates["recovery_state_updates"]
     assert (spec_dir / "test-strategy.md").exists()
     assert (spec_dir / "test-architecture.md").exists()
-    assert (spec_dir / "coverage-map.md").exists()
-    assert result.state_updates["shadow_output_recovered"] == [
+    assert (spec_dir / "coverage-map.md").read_text(encoding="utf-8") == coverage
+    assert recovery_updates["shadow_output_recovered"] == [
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
