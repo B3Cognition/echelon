@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from time import monotonic
 
 from harness.canonical_requirements import extract_canonical_requirements
 from harness.durable_json import write_json_atomic
@@ -21,6 +22,7 @@ _FAILURES = {"coverage-observation-gaps", "coverage-observer-contract-invalid",
 _DISPOSITIONS = {"matching_test", "insufficient_assertions", "missing_test",
                  "invalid_obligation", "insufficient_evidence"}
 _LIMIT = 20
+_BUDGET_MS = 120_000
 
 
 def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
@@ -31,6 +33,7 @@ def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
     No source/spec mutations or provider retries are permitted. The caller keeps
     the original verification failure even when this optional review cannot run.
     """
+    deadline = monotonic() + _BUDGET_MS / 1000
     failures = [f for f in result.failures if f.id in _FAILURES]
     if result.passed or not failures:
         return None
@@ -45,7 +48,8 @@ def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
                     if r.id not in deferred and (not unresolved or r.id in unresolved)]
     selected = sorted(requirements, key=lambda r: r.id)[:_LIMIT]
     inputs = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "dispatch_policy": {"batch_size": 1, "budget_ms": _BUDGET_MS},
         "candidate_fingerprint": product_evidence_fingerprint(target),
         "spec_input_hash": _spec_input_hash(spec_dir),
         "requirements": [{"id": r.id, "text": r.source_text} for r in selected],
@@ -68,14 +72,26 @@ def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
         directory.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
         return report_path if report_path.is_file() else None
-    report = {"schema_version": 1, "authority": "advisory_only", "status": "pending",
+    report = {"schema_version": 2, "authority": "advisory_only", "status": "pending",
               "input_fingerprint": fingerprint, "findings": [],
+              "batches": [],
               "reviewed_requirement_ids": [],
               "unreviewed_requirement_ids": [r.id for r in requirements]}
     def save():
         safe = json.loads(redact_verification_text(json.dumps(report), os.environ))
         write_json_atomic(report_path, safe, trusted_root=workspace)
         return report_path
+
+    def inputs_changed():
+        return (product_evidence_fingerprint(target) != inputs["candidate_fingerprint"]
+                or _spec_input_hash(spec_dir) != inputs["spec_input_hash"])
+
+    def invalidate():
+        report.update(status="inputs_changed", stop_reason="inputs_changed", findings=[],
+                      reviewed_requirement_ids=[],
+                      unreviewed_requirement_ids=sorted(r.id for r in requirements))
+        return save()
+
     save()  # A crash retains a durable attempt marker; never loop automatically.
     try:
         safe_inputs = json.loads(redact_verification_text(json.dumps(inputs), os.environ))
@@ -93,7 +109,7 @@ def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
                 report["status"] = "agent_unavailable"
                 return save()
             agent_body = artifact.body
-        prompt = (
+        prompt_prefix = (
             "Mode: COVERAGE_DIAGNOSIS. Advisory only. Do not execute tests or change files.\n"
             + agent_body
             + "\nReview only the supplied requirement IDs against current assertions and retained evidence.\n"
@@ -106,37 +122,73 @@ def run_coverage_diagnostic(*, workspace: Path, target: Path, spec_dir: Path,
             + "Allowed dispositions: " + ", ".join(sorted(_DISPOSITIONS)) + ".\n"
             + "A matching test is a proposal, not fulfillment proof. Use insufficient_evidence when review is incomplete.\n"
             + "Use missing_test only after inspecting the relevant test inventory; name the searched scope in reason.\n"
-            + json.dumps(inputs, sort_keys=True)
+            + "This is one incremental batch. Review only its one requirement, then return immediately. "
+              "Do not survey other requirements; the controller retains earlier batches separately.\n"
         )
-        invocation = executor.run_agent_result(
-            str(workspace), prompt, timeout_ms=120_000,
-            request_metadata={"prompt_metadata": {
-                "model_tier": "strong", "effort": "medium",
-                "tool_read_roots": [str(workspace)], "tool_write_paths": [],
-                "tool_write_scope_exclusive": True,
-            }},
-        )
-        if invocation.exit_code != 0 or invocation.timed_out:
-            report["status"] = "provider_failed"
-            report["provider_failure"] = {
-                "exit_code": invocation.exit_code,
-                "timed_out": invocation.timed_out,
-                "stderr_tail": str(getattr(invocation, "stderr", ""))[-4000:],
-            }
-            return save()
-        if (product_evidence_fingerprint(target) != inputs["candidate_fingerprint"]
-                or _spec_input_hash(spec_dir) != inputs["spec_input_hash"]):
-            report["status"] = "inputs_changed"
-            return save()
-        if len(invocation.stdout.encode()) > 100_000:
-            raise ValueError("diagnostic output too large")
-        findings = _validate_findings(json.loads(invocation.stdout), {r.id for r in selected}, target)
-        reviewed = {f["requirement_id"] for f in findings}
-        report.update(status="advisory", findings=findings,
-                      reviewed_requirement_ids=sorted(reviewed),
-                      unreviewed_requirement_ids=sorted(r.id for r in requirements if r.id not in reviewed))
+        for requirement in selected:
+            if inputs_changed():
+                return invalidate()
+            remaining_ms = int((deadline - monotonic()) * 1000)
+            if remaining_ms < 1:
+                report.update(status="advisory" if report["findings"] else "budget_exhausted",
+                              stop_reason="budget_exhausted")
+                return save()
+            batch = {"requirement_id": requirement.id, "status": "running"}
+            report["batches"].append(batch)
+            save()  # Preserve previous batches before any subsequent provider failure.
+            batch_inputs = {**inputs, "requirements": [
+                {"id": requirement.id, "text": requirement.source_text}],
+                "omitted_requirement_ids": sorted(r.id for r in requirements if r.id != requirement.id)}
+            prompt = prompt_prefix + json.dumps(batch_inputs, sort_keys=True)
+            remaining_ms = int((deadline - monotonic()) * 1000)
+            if remaining_ms < 1:
+                batch["status"] = "budget_exhausted"
+                report.update(status="advisory" if report["findings"] else "budget_exhausted",
+                              stop_reason="budget_exhausted")
+                return save()
+            invocation = executor.run_agent_result(
+                str(workspace), prompt + f"\nTime budget remaining: {remaining_ms / 1000:.1f} seconds. "
+                "Return the current finding promptly; use insufficient_evidence if the review is incomplete.",
+                timeout_ms=remaining_ms,
+                request_metadata={"prompt_metadata": {
+                    "model_tier": "strong", "effort": "medium",
+                    "tool_read_roots": [str(workspace)], "tool_write_paths": [],
+                    "tool_write_scope_exclusive": True,
+                }},
+            )
+            if inputs_changed():
+                return invalidate()
+            if invocation.exit_code != 0 or invocation.timed_out:
+                batch["status"] = "budget_exhausted" if invocation.timed_out else "provider_failed"
+                report.update(status="advisory" if report["findings"] else "provider_failed",
+                              stop_reason=batch["status"])
+                report["provider_failure"] = {
+                    "exit_code": invocation.exit_code,
+                    "timed_out": invocation.timed_out,
+                    "stderr_tail": str(getattr(invocation, "stderr", ""))[-4000:],
+                }
+                return save()
+            if len(invocation.stdout.encode()) > 100_000:
+                raise ValueError("diagnostic output too large")
+            findings = _validate_findings(json.loads(invocation.stdout), {requirement.id}, target)
+            batch["status"] = "advisory"
+            report["findings"].extend(findings)
+            reviewed = {f["requirement_id"] for f in report["findings"]}
+            report.update(status="advisory", reviewed_requirement_ids=sorted(reviewed),
+                          unreviewed_requirement_ids=sorted(r.id for r in requirements if r.id not in reviewed))
+            save()
+        report["stop_reason"] = "batch_limit" if len(requirements) > len(selected) else "selected_scope_finished"
     except (ValueError, OSError, RuntimeError, TypeError, AttributeError) as exc:
-        report.update(status="invalid_output", reason=str(exc)[:500], findings=[])
+        try:
+            changed = inputs_changed()
+        except (ValueError, OSError, RuntimeError, TypeError, AttributeError):
+            changed = True  # Unreadable inputs cannot support retained advice.
+        if changed:
+            return invalidate()
+        if report["batches"]:
+            report["batches"][-1]["status"] = "invalid_output"
+        report.update(status="advisory" if report["findings"] else "invalid_output",
+                      stop_reason="invalid_output", reason=str(exc)[:500])
     return save()
 
 

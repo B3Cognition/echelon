@@ -46,7 +46,7 @@ def test_diagnostic_is_advisory_bounded_and_does_not_repeat(tmp_path):
     metadata = calls[0][2]["request_metadata"]["prompt_metadata"]
     assert metadata["tool_write_scope_exclusive"] is True
     assert metadata["tool_write_paths"] == []
-    assert calls[0][2]["timeout_ms"] == 120_000
+    assert 0 < calls[0][2]["timeout_ms"] <= 120_000
 
 
 def test_success_and_unrelated_failure_do_not_dispatch(tmp_path):
@@ -153,3 +153,87 @@ def test_diagnostic_scopes_to_unresolved_requirement_beyond_budget(tmp_path):
         exit_code=0, timed_out=False, stdout='{"findings": []}')
     report = json.loads(run_coverage_diagnostic(**kwargs).read_text())
     assert report["unreviewed_requirement_ids"] == ["FR-025"]
+
+
+def test_later_timeout_keeps_durably_saved_first_batch(tmp_path):
+    from harness.coverage_diagnostic import run_coverage_diagnostic
+    kwargs, _ = setup_review(tmp_path)
+    (kwargs["spec_dir"] / "spec.md").write_text(
+        "- **FR-001**: Save one item.\n- **FR-002**: Restore item.\n")
+    original = kwargs["executor"].run_agent_result
+    calls = []
+    def execute(cwd, prompt, **options):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return original(cwd, prompt, **options)
+        saved = json.loads(next(kwargs["verify_run_dir"].rglob("report.json")).read_text())
+        assert saved["reviewed_requirement_ids"] == ["FR-001"]
+        assert saved["findings"][0]["requirement_id"] == "FR-001"
+        return SimpleNamespace(exit_code=-1, timed_out=True, stdout="", stderr="deadline")
+    kwargs["executor"].run_agent_result = execute
+    report = json.loads(run_coverage_diagnostic(**kwargs).read_text())
+    assert len(calls) == 2
+    assert report["status"] == "advisory"
+    assert report["stop_reason"] == "budget_exhausted"
+    assert report["reviewed_requirement_ids"] == ["FR-001"]
+    assert report["unreviewed_requirement_ids"] == ["FR-002"]
+    assert report["provider_failure"]["timed_out"] is True
+
+
+def test_overall_deadline_does_not_restart_for_each_batch(tmp_path, monkeypatch):
+    import harness.coverage_diagnostic as diagnostic
+    kwargs, _ = setup_review(tmp_path)
+    (kwargs["spec_dir"] / "spec.md").write_text(
+        "- **FR-001**: Save one item.\n- **FR-002**: Restore item.\n- **FR-003**: Delete item.\n")
+    clock = [0.0]
+    monkeypatch.setattr(diagnostic, "monotonic", lambda: clock[0], raising=False)
+    timeouts = []
+    def execute(cwd, prompt, **options):
+        timeouts.append(options["timeout_ms"])
+        identity = f"FR-{len(timeouts):03}"
+        clock[0] += 70
+        return SimpleNamespace(exit_code=0, timed_out=False, stdout=json.dumps({
+            "findings": [{"requirement_id": identity, "disposition": "matching_test",
+                          "reason": "count assertion", "evidence": ["test.ts:1"]}]}))
+    kwargs["executor"].run_agent_result = execute
+    report = json.loads(diagnostic.run_coverage_diagnostic(**kwargs).read_text())
+    assert timeouts == [120_000, 50_000]
+    assert report["stop_reason"] == "budget_exhausted"
+    assert report["reviewed_requirement_ids"] == ["FR-001", "FR-002"]
+    assert report["unreviewed_requirement_ids"] == ["FR-003"]
+
+
+@pytest.mark.parametrize("failure", ["malformed", "changed", "changed_exception", "unreadable"])
+def test_later_invalid_batch_never_adds_unvalidated_findings(tmp_path, failure):
+    from harness.coverage_diagnostic import run_coverage_diagnostic
+    kwargs, _ = setup_review(tmp_path)
+    (kwargs["spec_dir"] / "spec.md").write_text(
+        "- **FR-001**: Save one item.\n- **FR-002**: Restore item.\n")
+    original = kwargs["executor"].run_agent_result
+    calls = []
+    def execute(cwd, prompt, **options):
+        calls.append(prompt)
+        if len(calls) == 1:
+            return original(cwd, prompt, **options)
+        if failure in {"changed", "changed_exception"}:
+            (kwargs["target"] / "test.ts").write_text("changed\n")
+        if failure == "changed_exception":
+            raise RuntimeError("provider stopped")
+        if failure == "unreadable":
+            (kwargs["spec_dir"] / "spec.md").write_bytes(b"\xff")
+        return SimpleNamespace(exit_code=0, timed_out=False, stdout="not JSON")
+    kwargs["executor"].run_agent_result = execute
+    report = json.loads(run_coverage_diagnostic(**kwargs).read_text())
+    assert len(calls) == 2
+    if failure != "malformed":
+        assert report["status"] == "inputs_changed"
+        assert report["findings"] == []
+        assert report["reviewed_requirement_ids"] == []
+    else:
+        assert report["status"] == "advisory"
+        assert report["stop_reason"] == "invalid_output"
+        assert report["reviewed_requirement_ids"] == ["FR-001"]
+    assert "FR-002" in report["unreviewed_requirement_ids"]
+    if failure == "malformed":
+        assert run_coverage_diagnostic(**kwargs) == next(kwargs["verify_run_dir"].rglob("report.json"))
+        assert len(calls) == 2

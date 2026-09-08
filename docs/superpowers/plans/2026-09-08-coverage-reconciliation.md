@@ -30,11 +30,11 @@
 
 - [x] Validate the existing provider containment mechanism before adding an automatic dispatch. The diagnostic must not be able to modify product/spec files; prompt-only prohibitions are insufficient.
 - [x] Build harness-owned input from canonical obligations, source-bound observer receipts and current source/test identity. Bound work and mark omitted evidence explicitly; an incomplete search cannot justify `missing_test`.
-- [x] Invoke the existing TEST GUARDIAN diagnostic mode at most once per immutable input fingerprint within a verify run. Preserve the original failed verification result even on diagnostic error, timeout or unsupported containment.
+- [x] Run one diagnostic session per immutable input fingerprint within a verify run. Following the approved incremental adjustment, use one-requirement batches with a shared 120-second budget and at most 20 batches; save each completed batch before the next dispatch. Preserve the original failed verification result even on diagnostic error, timeout or unsupported containment.
 - [x] Validate structured recommendations against input IDs and source locations. Keep `matching_test`, `insufficient_assertions`, `missing_test`, and `invalid_obligation` separate. Do not permit a recommendation to claim verified/complete.
 - [x] Store advisory output under the verify run (or `.echelon/coverage-diagnostics/<run-key>` when the run is inside the product inventory), expose its path in CLI output, and retain blocked status. Ordinary successful verification must not dispatch this review.
 - [x] Add fake-provider tests for no dispatch on success, bounded dispatch on coverage debt, invalid output, timeout, unchanged inputs, and no ledger/spec mutation.
-- [ ] Validate with the retained demo receipts before spending another browser/DB run. Do not apply recommendations to the demo automatically.
+- [x] Validate with compatible demo receipts. Do not apply recommendations to the demo automatically.
 
 ## Phase 3: Repair and fresh verification
 
@@ -49,3 +49,12 @@
 - Containment currently supports Codex with the existing enforced host boundary. Other provider/platform combinations return an explicit unsupported-boundary report without dispatch; prompt-only restrictions are not accepted.
 - CLI installed from this feature worktree, not merged to main. Retained-demo validation produced `provider_failed` with no advice. A narrowed follow-up rejected a changed candidate fingerprint as `stale_evidence` before dispatch. Live successful diagnosis remains unvalidated; no automatic demo repair or graph promotion occurred. Provider failures now retain bounded redacted exit/timeout/stderr diagnostics.
 - Phase 3 remains owner-controlled application of reviewed recommendations followed by fresh verification; it does not add an automatic repair loop.
+
+### Incremental diagnostic validation
+
+- Fresh run `verify-spec-003-create-browser-first-3d-20260908-123207` passed standard verification after the existing one-time browser retry (35 browser tests passed), then passed the composed journey and persistence checks. It remained blocked by the legacy symbolic coverage case `C-HTTP-001..N`.
+- The original 20-requirement diagnostic timed out at 120 seconds while inspecting source; a one-requirement probe returned successfully. This led to the owner-approved incremental adjustment, without changing requirements or observer acceptance.
+- The incremental live run retained three source-cited advisory findings (AC-001 through AC-003) before the fourth batch exhausted the shared budget at 120.09 seconds. All 73 other requirements remain unreviewed. Findings are recommendations needing review, not new fulfillment evidence. No demo repair or graph promotion occurred.
+- Live report: `runs/verify-spec-003-create-browser-first-3d-20260908-123207/coverage-diagnostic/2b6933af6c4944ec463dd099731a93bbc31eba6af2673559226f4952f452a9bb/report.json` in the demo workspace. This retained report predates the final stop-label refinement; future deadline stops are labeled `budget_exhausted`.
+- Regression coverage includes durable partial results, one shared decreasing timeout, batch-local IDs, malformed later output, input changes, and exceptions/unreadable inputs invalidating earlier findings. Independent review's exception-path finding was fixed and re-reviewed.
+- Final relevant regression run: 533 passed in 54.94 seconds. Reinstalled the CLI from this feature worktree; no merge to main or demo repair was performed.
