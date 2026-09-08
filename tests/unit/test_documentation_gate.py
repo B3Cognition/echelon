@@ -1,6 +1,8 @@
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from harness.documentation_gate import (
     evaluate_documentation_gate,
     validate_documentation_coverage,
@@ -230,6 +232,49 @@ def _write_runnability_docs_project(
         encoding="utf-8",
     )
     return spec_dir
+
+
+@pytest.mark.parametrize(
+    "omitted",
+    ["pnpm 9", "pnpm local:session", "pnpm db:probe-local", "unverified"],
+)
+def test_no_docs_change_cannot_bypass_local_journey_findings(
+    tmp_path: Path, omitted: str,
+) -> None:
+    report = _passing_runnability_report(
+        tmp_path,
+        local_journey_status="unverified",
+        local_user_commands=COMPLETE_LOCAL_USER_COMMANDS,
+        local_boundary_probes=COMPLETE_LOCAL_BOUNDARY_PROBES,
+    )
+    spec_dir = _write_runnability_docs_project(
+        tmp_path,
+        _combined_user_commands(COMPLETE_LOCAL_USER_COMMANDS),
+        extra_readme="\nLocal journey unverified.\npnpm db:probe-local\n",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\n"
+        "not_applicable_reason: No new user-facing changes in this slice.\n---\n",
+        encoding="utf-8",
+    )
+
+    # A truthful, complete existing README does not need artificial doc edits.
+    assert evaluate_documentation_gate(
+        tmp_path, spec_dir, runnability_report=report, runnability_required=True,
+    ).passed
+
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(omitted, ""),
+        encoding="utf-8",
+    )
+    result = evaluate_documentation_gate(
+        tmp_path, spec_dir, runnability_report=report, runnability_required=True,
+    )
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "docs-runnability-commands-stale"
 
 
 def test_docs_runnability_gate_rejects_readme_that_omits_observed_start_command(
