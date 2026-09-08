@@ -15,13 +15,13 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Neutral Prosaic agent roles | 64 | Canonical subagent files with neutral `echelon.*` identities |
-| Workflow-referenced roles | 39 | Neutral IDs used by structured `agent` or nested dispatch contracts, including one disabled internal role |
+| Neutral Prosaic agent roles | 65 | Canonical subagent files with neutral `echelon.*` identities |
+| Workflow-referenced roles | 40 | Neutral IDs used by structured `agent` or nested dispatch contracts, including two disabled internal roles |
 | Direct-use roles | 25 | Available roles invoked outside ordinary workflow agent nodes |
 | Support prose files | 14 | Appendices and templates that are not independent agent entry points |
 
 Every workflow-referenced ID resolves to a canonical Prosaic subagent. RE-DISCOVERER
-is an internal offline contract with installed routing disabled; the other 38
+and RE-DISCOVERY-REVIEWER are internal contracts with installed routing disabled; the other 38
 workflow-referenced roles retain their existing routing. Direct-use
 does not mean unused: COMMANDER, for example, is invoked by the Python controller
 for judgment and routing rather than declared as an ordinary agent phase.
@@ -37,7 +37,7 @@ for judgment and routing rather than declared as an ordinary agent phase.
 | Specialists | 6 | 6 | 0 |
 | Learning | 8 | 0 | 8 |
 | Build | 15 | 10 | 5 |
-| Reverse engineering | 16 | 10 | 6 |
+| Reverse engineering | 17 | 11 | 6 |
 
 ## Workflow-Referenced Roles
 
@@ -52,7 +52,7 @@ These roles occur in structured dispatch fields in
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
 | Build | IMPLEMENTER, SPEC GUARD, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, DOCS VERIFIER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER |
-| Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER, RE-DISCOVERER (disabled internal contract) |
+| Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER, RE-DISCOVERER and RE-DISCOVERY-REVIEWER (disabled internal contracts) |
 
 ## Direct-Use Roles
 

@@ -12,8 +12,9 @@ import json
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_evidence import (
-    EvidenceSelectorV1, SafeEvidenceBoundary,
+    EvidenceSelectorV1, KnowledgeEvidenceError, SafeEvidenceBoundary,
     screen_provider_output, security_policy_id,
+    validate_provider_output,
 )
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
 from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
@@ -100,6 +101,13 @@ def _load(payload):
 
 def _selector(value):
     return EvidenceSelectorV1(**_obj(value, ("source_id", "path", "byte_start", "byte_end")))
+
+
+def _validate_replay_bytes(payload):
+    try:
+        return validate_provider_output(payload)
+    except KnowledgeEvidenceError as exc:
+        raise DiscoveryError(str(exc)) from None
 
 
 class DiscoveryBoundary:
@@ -239,6 +247,44 @@ class DiscoveryBoundary:
             raise DiscoveryError("request-receipt-mismatch")
         return rows
 
+    @_closed_errors
+    def read_proposal(self, binding_id: str, receipt_id: str) -> dict:
+        """Authenticate and reconstruct a staged proposal without repairing it."""
+        context = _load(self.provider_bytes(binding_id))
+        receipt_bytes = self._objects.read_blob(receipt_id)
+        receipt = _load(receipt_bytes)
+        response_id = None
+        if receipt.get("schema_version") == 1:
+            _obj(receipt, (
+                "schema_version", "state", "binding_id", "proposal_id",
+                "review_required", "unassigned_paths", "subject_ids",
+            ))
+            proposal_source = self._objects.read_blob(receipt["proposal_id"])
+        elif receipt.get("schema_version") == 2:
+            _obj(receipt, (
+                "schema_version", "state", "binding_id", "authorial_response_id",
+                "proposal_id", "review_required", "unassigned_paths", "subject_ids",
+            ))
+            response_id = receipt["authorial_response_id"]
+            proposal_source = self._objects.read_blob(response_id)
+        else:
+            raise DiscoveryError("invalid-discovery-receipt-version")
+        _validate_replay_bytes(proposal_source)
+        proposal = _load(proposal_source)
+        if receipt["binding_id"] != binding_id:
+            raise DiscoveryError("proposal-receipt-mismatch")
+        normalized = self._normalize_proposal(proposal, context)
+        proposal_bytes = canonical_json_bytes(normalized)
+        stored_proposal = self._objects.read_blob(receipt["proposal_id"])
+        _validate_replay_bytes(stored_proposal)
+        if (content_digest(proposal_bytes) != receipt["proposal_id"]
+                or stored_proposal != proposal_bytes):
+            raise DiscoveryError("proposal-object-mismatch")
+        expected = self._proposal_receipt(binding_id, normalized, response_id)
+        if content_digest(expected) != receipt_id or expected != receipt_bytes:
+            raise DiscoveryError("proposal-receipt-mismatch")
+        return normalized
+
     def _request_outcome(self, binding_id, batch_id, request, *, persist=True):
         projection = None
         reason = request["reason_code"]
@@ -308,6 +354,15 @@ class DiscoveryBoundary:
             if capture_bound:
                 self._objects.put_blob(safe_output)
             return self._objects.put_blob(receipt)
+        normalized = self._normalize_proposal(proposal, context)
+        proposal_bytes = canonical_json_bytes(normalized)
+        result = self._proposal_receipt(binding_id, normalized, response_id)
+        if capture_bound:
+            self._objects.put_blob(safe_output)
+        self._objects.put_blob(proposal_bytes)
+        return self._objects.put_blob(result)
+
+    def _normalize_proposal(self, proposal, context):
         _obj(proposal, ("schema_version", "kind", "source_id", "domains", "subjects", "inventory", "obligations", "questions"))
         if (type(proposal["schema_version"]) is not int or proposal["schema_version"] != 1
                 or proposal["kind"] != "discovery_proposal" or proposal["source_id"] != self._source_id):
@@ -375,20 +430,22 @@ class DiscoveryBoundary:
                       "inventory": [inventory[key] for key in sorted(inventory)],
                       "obligations": [{"target": target, "category": category} for target, category in sorted(obligations)],
                       "questions": sorted(questions, key=canonical_json_bytes)}
+        return normalized
+
+    def _proposal_receipt(self, binding_id, normalized, response_id):
         proposal_bytes = canonical_json_bytes(normalized)
         proposal_id = content_digest(proposal_bytes)
-        result = canonical_json_bytes({
-            "schema_version": 2 if capture_bound else 1, "state": "proposal_validated", "binding_id": binding_id,
-            **({"authorial_response_id": response_id} if capture_bound else {}),
+        inventory = {row["path"]: row for row in normalized["inventory"]}
+        subjects = {row["key"]: row for row in normalized["subjects"]}
+        return canonical_json_bytes({
+            "schema_version": 2 if response_id is not None else 1,
+            "state": "proposal_validated", "binding_id": binding_id,
+            **({"authorial_response_id": response_id} if response_id is not None else {}),
             "proposal_id": proposal_id, "review_required": True,
             "unassigned_paths": sorted(path for path, row in inventory.items() if row["owner"] is None),
             "subject_ids": {key: content_digest({"binding_id": binding_id, "proposal_id": proposal_id,
                                                   "subject_key": key}) for key in sorted(subjects)},
         })
-        if capture_bound:
-            self._objects.put_blob(safe_output)
-        self._objects.put_blob(proposal_bytes)
-        return self._objects.put_blob(result)
 
     def _request_receipt(self, binding_id, response, context, response_id):
         _obj(response, ("schema_version", "kind", "source_id", "requests"))

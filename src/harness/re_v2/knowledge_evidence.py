@@ -262,11 +262,11 @@ def _quarantine_output(payload: bytes, quarantine: ObjectStore) -> None:
         raise KnowledgeEvidenceError("unsafe-quarantine-store") from None
 
 
-def screen_provider_output(payload: bytes, quarantine: ObjectStore) -> bytes:
-    """Screen before ordinary logs/artifacts; preserve clean output for parsing.
+def validate_provider_output(payload: bytes) -> bytes:
+    """Purely validate complete provider bytes without retaining or quarantining.
 
-    This does not accept a schema or certify claims. Callers must quarantine here
-    before retaining raw provider output or formatting provider exception text.
+    Admission callers use :func:`screen_provider_output`; authenticated replay
+    uses this pure form so forged unsafe objects fail closed without any write.
     """
     if not isinstance(payload, bytes) or len(payload) > _MAX_CONTEXT_BYTES:
         raise KnowledgeEvidenceError("provider-output-bound")
@@ -296,8 +296,19 @@ def screen_provider_output(payload: bytes, quarantine: ObjectStore) -> bytes:
         if not unsafe:
             return payload
     except (ValueError, RecursionError):
-        # Uninspectable output is not safe merely because no rule matched.
-        _quarantine_output(payload, quarantine)
         raise KnowledgeEvidenceError("uninspectable-provider-output") from None
-    _quarantine_output(payload, quarantine)
     raise KnowledgeEvidenceError("unsafe-provider-output")
+
+
+def screen_provider_output(payload: bytes, quarantine: ObjectStore) -> bytes:
+    """Screen before ordinary logs/artifacts; preserve clean output for parsing.
+
+    This does not accept a schema or certify claims. Callers must quarantine here
+    before retaining raw provider output or formatting provider exception text.
+    """
+    try:
+        return validate_provider_output(payload)
+    except KnowledgeEvidenceError as exc:
+        if str(exc) in {"unsafe-provider-output", "uninspectable-provider-output"}:
+            _quarantine_output(payload, quarantine)
+        raise
