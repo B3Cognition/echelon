@@ -22,6 +22,7 @@ import yaml
 
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
+from harness.squad_executors import StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
@@ -97,9 +98,11 @@ def test_why3_fail_routes_to_the_controller_owned_repair_phase():
     ]
     assert why3, "no transition keyed on 'why3-verdict = FAIL'"
     targets = {t["to"] for t in why3}
-    assert {"phase1-what", "phase3-how"}.issubset(targets), targets
+    assert {"phase1-discover", "phase1-what", "phase3-how"}.issubset(
+        targets
+    ), targets
     owned = [t for t in why3 if "why3_repair_phase" in t["condition"]]
-    assert len(owned) == 4
+    assert len(owned) == 5
     fallback = [t for t in why3 if "why3_repair_phase" not in t["condition"]]
     assert [t["to"] for t in fallback] == ["phase1-what"]
     # Bounded re-dispatch: increment + cap, like every other re-dispatch edge.
@@ -128,6 +131,77 @@ def test_why3_task_repair_routes_to_how_only_when_explicitly_owned():
             condition = t.get("condition", "")
             if "why3-verdict = FAIL" in condition:
                 assert "why3_repair_phase = phase3-how" in condition
+
+
+@pytest.mark.unit
+def test_why3_discovery_owner_routes_to_discovery_phase():
+    issues = """### ISS-001: Stale discovery evidence
+- **Responsible agent:** DISCOVER
+- **Action Required:** Amend assumptions.md.
+"""
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase1-discover"
+    )
+
+
+@pytest.mark.unit
+def test_why2_failure_prepares_controller_owned_discovery_route(tmp_path):
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+    spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Stale discovery evidence
+- **Responsible agent:** DISCOVER
+- **Action Required:** Amend assumptions.md.
+""",
+        encoding="utf-8",
+    )
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    store = SquadStateStore(tmp_path / "runs" / "run-test")
+    store.initialize("r", "banzai", "msg", 0, "phase1-why2")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+    ctrl = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ROOT / "runtime",
+        project_root=tmp_path,
+        token_budget=0,
+        squad_dir=store.squad_dir,
+    )
+    node = graph.get("phase1-why2")
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "FAIL",
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {
+                    "findings": [
+                        {
+                            "issue_id": "ISS-001",
+                            "route": "spec_repair",
+                            "rationale": "Discovery evidence is stale.",
+                        }
+                    ]
+                },
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+
+    assert prepared.state_updates["why2_repair_phase"] == "phase1-discover"
 
 
 @pytest.mark.unit
@@ -165,7 +239,7 @@ def test_certified_metric_failure_precedes_consensus_success_and_risk_acceptance
         if "why3-verdict = FAIL" in transition.get("condition", "")
     )
 
-    assert quality_failure < qualitative_failure < success < accept_risk
+    assert qualitative_failure < quality_failure < success < accept_risk
 
 
 @pytest.mark.unit
@@ -194,6 +268,33 @@ def test_runtime_why3_fail_routes_to_what_before_cap(tmp_path):
         {"why3_verdict": "FAIL", "assess2_verdict": "PASS"},
         iteration=4,
     ) == "phase1-what"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("repair_phase", "expected"),
+    [
+        ("phase1-discover", "phase1-discover"),
+        ("phase1-what", "phase1-what"),
+        ("phase3-how", "phase3-how"),
+        ("phase3-sentinel", "phase3-sentinel"),
+        ("phase3-plan", "phase3-plan"),
+    ],
+)
+def test_runtime_why3_fail_honors_controller_owned_repair_phase(
+    tmp_path,
+    repair_phase,
+    expected,
+):
+    assert _runtime_route(
+        tmp_path,
+        {
+            "why3_verdict": "FAIL",
+            "assess2_verdict": "PASS",
+            "why3_repair_phase": repair_phase,
+        },
+        iteration=4,
+    ) == expected
 
 
 @pytest.mark.unit

@@ -35,6 +35,7 @@ from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
 from harness.squad_state import (
     StateAdvanceError,
     validate_banzai_default_reassessment_record,
+    validate_banzai_evidence_reassessment_record,
 )
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
@@ -46,6 +47,7 @@ from harness.recovery_instruction import (
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase1_quality import has_current_phase1_quality_prerequisite
 from harness.state import state_lock_owner_is_alive
 from harness.issue_identity import (
     issue_fingerprint,
@@ -3854,6 +3856,17 @@ def _versioned_decision_recovery_action(
     )
     if protocol_upgrade_action is not None:
         return protocol_upgrade_action
+    if _banzai_why2_evidence_reassessment_is_available(run_state, decision):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "will search canonical evidence for this exact Banzai WHY2 "
+                "question before requiring a human answer"
+            ),
+        )
     if (
         status == "awaiting_human"
         and decision.get("schema_version") == 3
@@ -3914,6 +3927,38 @@ def _versioned_decision_recovery_action(
         phase=source_phase,
         command=_command_display("echelon phase run", [source_phase]),
         note="replay the exact failed automatic decision source phase",
+    )
+
+
+def _banzai_why2_evidence_reassessment_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Expose one controller evidence preflight for each distinct question."""
+    if not _is_pre_candidate_banzai_why2_decision(decision):
+        return False
+    try:
+        validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+        record = validate_banzai_evidence_reassessment_record(
+            run_state.get("banzai_evidence_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    attempts = record["attempts"] if record is not None else []
+    question_sha256 = hashlib.sha256(
+        str(decision["question"]).encode("utf-8")
+    ).hexdigest()
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and len(attempts) < 8
+        and all(
+            attempt["question_sha256"] != question_sha256
+            for attempt in attempts
+        )
     )
 
 
@@ -4945,6 +4990,49 @@ def _classify_run_recovery(
         entry.get("status") == "validated" for entry in ledger_entries
     )
 
+    selected_issue = str(
+        run_state.get("selected_issue_resolution") or ""
+    ).strip()
+    selected_entry = (
+        ledger.get(selected_issue)
+        if selected_issue and isinstance(ledger, dict)
+        else None
+    )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and run_state.get("why2_repair_phase") == "phase1-discover"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="discovery_artifact_repair",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry WHY2 so its controller-owned discovery-artifact route "
+                "can run before proportional specification repair."
+            ),
+        )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and isinstance(selected_entry, dict)
+        and selected_entry.get("status") == "repaired"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="issue_resolution_revalidation",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry the completed named repair against current authoritative "
+                "SAGE and Understanding evidence. Any unrelated integrity "
+                "failure remains blocking."
+            ),
+        )
+
     if reason == "issue_resolution_next":
         if all_ledger_entries_validated:
             return _RunRecoveryAction(
@@ -5028,6 +5116,47 @@ def _classify_run_recovery(
             )
 
     phase = str(run_state.get("phase") or "").strip()
+    certificate = run_state.get("spec_quality_certificate")
+    certificate_source_sha256 = (
+        str(certificate.get("source_sha256") or "").strip()
+        if isinstance(certificate, Mapping)
+        else ""
+    )
+    epoch_recovery = run_state.get(
+        "phase_dispatch_limit_certification_epoch_recovery"
+    )
+    epoch_already_recovered = (
+        isinstance(epoch_recovery, Mapping)
+        and epoch_recovery.get("phase") == phase
+        and epoch_recovery.get("source_sha256") == certificate_source_sha256
+    )
+    if (
+        reason.startswith("phase_dispatch_limit_evidence_")
+        and phase
+        in {
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        and project_root is not None
+        and re.fullmatch(r"[0-9a-f]{64}", certificate_source_sha256) is not None
+        and not epoch_already_recovered
+        and has_current_phase1_quality_prerequisite(
+            run_state,
+            project_root=project_root,
+        )
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="phase_dispatch_limit_certification_epoch",
+            phase=phase,
+            command="echelon spec continue",
+            note=(
+                "The capped downstream phase now has a current Phase 1 "
+                "quality certificate. Retry it in that certification epoch "
+                "instead of interpreting PASS issues.md as repair evidence."
+            ),
+        )
     if (
         reason.startswith("phase_dispatch_limit_evidence_")
         and phase
@@ -10207,7 +10336,23 @@ def _cmd_continue_impl(
             subtitle="Run paused. Deterministic recovery required.",
         )
         return
-    if action.reason == "phase_dispatch_limit_evidence_retry":
+    if action.reason in {
+        "phase_dispatch_limit_evidence_retry",
+        "phase_dispatch_limit_certification_epoch",
+    }:
+        if action.reason == "phase_dispatch_limit_certification_epoch":
+            certificate = state.get("spec_quality_certificate")
+            source_sha256 = (
+                str(certificate.get("source_sha256") or "").strip()
+                if isinstance(certificate, dict)
+                else ""
+            )
+            state["phase_dispatch_limit_certification_epoch_recovery"] = {
+                "schema_version": 1,
+                "phase": action.phase,
+                "source_sha256": source_sha256,
+                "consumed_at": datetime.now(timezone.utc).isoformat(),
+            }
         dispatch_counts = state.get("phase_dispatch_counts")
         if isinstance(dispatch_counts, dict):
             dispatch_counts = dict(dispatch_counts)
@@ -17835,6 +17980,7 @@ def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",
+        "/.echelon/.banzai-default-protocol.lock",
         "/.prosaic-manifest.json",
         "/.prosaic-backups/",
     )

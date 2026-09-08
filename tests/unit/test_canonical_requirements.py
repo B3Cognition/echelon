@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from harness.canonical_requirements import (
+    extract_canonical_requirements,
     write_canonical_requirements,
     write_requirement_audit,
 )
@@ -71,6 +72,26 @@ def test_write_canonical_requirements_extracts_stable_ids_from_spec_inputs(tmp_p
     ]
     markdown = (verify_run_dir / "canonical-requirements.md").read_text()
     assert "| FR-005 | task_metadata | tasks.md |" in markdown
+
+
+def test_explicit_requirement_definition_supersedes_earlier_reference(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **AC-001**: Boundary behavior. Verification: FR-014.\n"
+        "- **FR-014**: Apply the inclusive boundary.\n",
+        encoding="utf-8",
+    )
+
+    rows = {row.id: row for row in extract_canonical_requirements(spec_dir)}
+
+    assert rows["FR-014"].source_line == 2
+    assert rows["FR-014"].source_text == (
+        "- **FR-014**: Apply the inclusive boundary."
+    )
+    assert rows["AC-001"].source_line == 1
 
 
 def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(

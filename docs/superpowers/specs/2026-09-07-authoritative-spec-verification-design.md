@@ -85,6 +85,70 @@ After a successful refresh, ordinary graph regeneration consumes the corrected
 ledger. If graph audit still fails, that is a separate defect; graph audit is not
 weakened to hide missing evidence.
 
+### Decision-time evidence retrieval
+
+Graph health must not make canonical product decisions invisible. Before a
+Banzai WHY2 clarification becomes human-owned, the controller queries MemPalace
+with the exact pending question across every room, including supporting context.
+It reconciles every returned drawer against the current canonical artifact hash
+and lifecycle status, rebuilds the existing prior-spec context, and retries WHY2
+only when at least one drawer survives reconciliation.
+
+The retry is controller-owned and durable. The controller writes an immutable,
+question-specific evidence snapshot below the run directory, then a bounded
+ledger records the decision ID, question hash, snapshot path and content hash,
+accepted drawer IDs, timestamp, and `armed`/`consumed` status. Only the armed
+retry dispatch reads that snapshot, after verifying its regular-file type, run
+containment, size, and content hash. The executor atomically consumes the binding
+at the provider-dispatch boundary, so later WHY2 work cannot inherit historical
+question evidence; mutable context files are not authoritative. The same
+question can be retried once; distinct questions can each be retried, up to a
+small run-level cap. No retrieved answer is applied directly—the SAGE pass must
+still cite and interpret the supplied evidence. If retrieval is unavailable,
+stale, empty, or already consumed, the existing human/default decision policy is
+unchanged.
+
+If a WHY2 or later WHY3 review identifies an agent-repairable artifact defect,
+the controller derives and persists the smallest responsible repair phase from
+the current `issues.md` before routing. DISCOVER-owned evidence returns to
+DISCOVER rather than being collapsed into CARTOGRAPHER. Likewise, WHY3 must not
+fall back through Phase 1 when HOW, SENTINEL, or PLAN owns the repair: that replay
+can replace the current WHY report and erase the repair evidence before its
+owner receives it.
+Owner-specific WHY3 transitions are evaluated before the generic quality-gate
+fallback, so a simultaneous metric failure cannot preempt the persisted owner.
+
+### Repair epochs and canonical graph provenance
+
+A discovery-owned WHY2 failure is not a proportional `spec.md` candidate.
+Controller-derived DISCOVER ownership therefore routes before proportional
+candidate capture; all proportional integrity, budget, and no-progress checks
+remain authoritative for WHAT-owned specification repairs.
+
+When WHY2 certifies a changed `spec.md` content fingerprint, downstream Lexicon
+and checkpoint dispatch counters start a new certification epoch. Authoring and
+WHY counters are retained. This prevents legitimate repaired candidates from
+inheriting lifetime one-shot counts while preserving the existing bounded
+authoring policies. Recovery from an older malformed dispatch-cap state is
+allowed only when the persisted Phase 1 quality prerequisite is still current,
+and only once for the same phase and certified source fingerprint. The
+compatibility recovery records that consumed epoch before dispatch; a repeated
+identical state fails closed.
+
+Graph requirement provenance prefers an explicit requirement definition over
+an earlier textual reference to the same ID. Reference-only IDs remain valid
+fallback inventory entries, but an acceptance criterion such as `Verification:
+FR-014` must never replace the canonical `FR-014` definition in graph or memory
+evidence.
+
+### Deferred autonomy policy
+
+This design does not add the proposed owner-enabled “super-Banzai” authority.
+When no trusted evidence exists, reversible bounded defaults remain a separate
+SAGE policy improvement. Security, safety, legal, external-fact, and
+irreversible product commitments continue to require the existing authority
+boundary until that explicit opt-in mode is designed and approved.
+
 ## Phased Rollout
 
 1. Extract the delivery evidence sequence behind a shared service with behavior-
@@ -106,6 +170,7 @@ weakened to hide missing evidence.
 - No zero-change delivery workaround.
 - No evidence carry-forward/cache until fresh execution is proven.
 - No SAGE policy change in the evidence-pipeline phases.
+- No weakening of human ownership when trusted decision evidence is absent.
 
 ## Acceptance
 

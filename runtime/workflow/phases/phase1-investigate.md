@@ -12,8 +12,11 @@ architecture decisions and it does not rewrite the specification.
 Read the harness-injected **Product Input Contract** before acting. It provides
 the immutable `REFERENCE_INPUTS`, manifest, and catalog paths. Read the current
 state's `evidence_requests` object; it is the authoritative list of questions
-to resolve. Use only declared references and the directly relevant primary
-material reachable from them.
+to resolve. Use declared references and the directly relevant primary material
+reachable from them first. For a brownfield fact about existing behavior, the
+injected **Workspace Source Roots** and **Implementation Target Contract** also
+authorize declared implementation targets as read-only primary evidence,
+without requiring the user to redeclare the same target as a product reference.
 
 ## Reference Acquisition Protocol
 
@@ -42,6 +45,12 @@ For an authenticated URL or documentation portal:
 
 ALWAYS exhaust the declared source's reachable primary material before general
 web research or a human escalation.
+Then inspect relevant files and tests in declared implementation targets when
+the evidence request concerns existing brownfield behavior. Record the target
+path and current repository revision when available so the observation is
+reproducible. Only after exhausting both declared product references and
+relevant declared implementation targets may you report that source access is
+missing.
 NEVER guess conventional schema or API paths (for example `/openapi.json` or
 `/swagger.json`) before inspecting the declared entry point and its links.
 

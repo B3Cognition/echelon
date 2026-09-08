@@ -116,12 +116,31 @@ def _collect_markdown_ids(
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for lineno, line in enumerate(lines, start=1):
         for item_id in REQ_ID_RE.findall(line):
-            rows.setdefault(
-                item_id,
-                CanonicalRequirement(
-                    item_id, source_kind, path.name, lineno, line.strip()
-                ),
+            candidate = CanonicalRequirement(
+                item_id, source_kind, path.name, lineno, line.strip()
             )
+            existing = rows.get(item_id)
+            if existing is None or (
+                _is_explicit_requirement_definition(line, item_id)
+                and not _is_explicit_requirement_definition(
+                    existing.source_text,
+                    item_id,
+                )
+            ):
+                rows[item_id] = candidate
+
+
+def _is_explicit_requirement_definition(line: str, item_id: str) -> bool:
+    """Return whether ``line`` defines, rather than merely cites, an ID."""
+    return (
+        re.match(
+            rf"^[ \t]*(?:#{{1,6}}[ \t]+)?"
+            rf"(?:(?:[-*+]|\d+[.)])[ \t]+)?"
+            rf"(?:\*\*)?{re.escape(item_id)}(?:\*\*)?[ \t]*:",
+            line,
+        )
+        is not None
+    )
 
 
 def _collect_task_metadata_ids(

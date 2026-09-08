@@ -1,10 +1,12 @@
 """Phase executors for SquadController — one class per definition.yaml type."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import inspect
 import shutil
+import stat
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -571,6 +573,81 @@ def _render_controller_owned_prompt_context(state: dict) -> str:
         stack_context
         + "## Resolved Clarifications\n\n"
         + receipt.strip()
+        + "\n\n"
+    )
+
+
+def _render_banzai_evidence_reassessment_context(
+    state: dict,
+    phase_id: str,
+) -> str:
+    """Bind a WHY2 retry to its immutable, controller-recorded evidence."""
+    if phase_id != "phase1-why2":
+        return ""
+    from harness.squad_state import (
+        StateAdvanceError,
+        validate_banzai_evidence_reassessment_record,
+    )
+
+    try:
+        record = validate_banzai_evidence_reassessment_record(
+            state.get("banzai_evidence_reassessment")
+        )
+    except StateAdvanceError as exc:
+        raise ControllerStateContractViolation(
+            "Banzai evidence reassessment ledger is invalid",
+            contract="phase1-why2",
+            json_path="$.banzai_evidence_reassessment",
+            validator="evidence_binding",
+        ) from exc
+    if record is None or record["schema_version"] != 2:
+        return ""
+    squad_dir = Path(str(state.get("squad_dir") or ""))
+    if not squad_dir.is_absolute():
+        raise ControllerStateContractViolation(
+            "Banzai evidence root is invalid",
+            contract="phase1-why2",
+            json_path="$.squad_dir",
+            validator="evidence_binding",
+        )
+    sections: list[str] = []
+    armed = [attempt for attempt in record["attempts"] if attempt["status"] == "armed"]
+    if not armed:
+        return ""
+    for attempt in armed:
+        candidate = squad_dir / str(attempt["evidence_path"])
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(squad_dir.resolve(strict=True))
+            metadata = candidate.lstat()
+            content = candidate.read_bytes()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ControllerStateContractViolation(
+                "Banzai evidence snapshot is unavailable or escapes its run",
+                contract="phase1-why2",
+                json_path="$.banzai_evidence_reassessment.attempts",
+                validator="evidence_binding",
+            ) from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or candidate.is_symlink()
+            or len(content) > 262_144
+            or hashlib.sha256(content).hexdigest() != attempt["evidence_sha256"]
+        ):
+            raise ControllerStateContractViolation(
+                "Banzai evidence snapshot failed provenance validation",
+                contract="phase1-why2",
+                json_path="$.banzai_evidence_reassessment.attempts",
+                validator="evidence_binding",
+            )
+        sections.append(content.decode("utf-8"))
+    if not sections:
+        return ""
+    return (
+        "## Controller-bound decision evidence\n\n"
+        "The controller retrieved and sealed this evidence for the exact "
+        "question that triggered the retry. Reassess the decision against it.\n\n"
+        + "\n\n---\n\n".join(section.strip() for section in sections)
         + "\n\n"
     )
 
@@ -1968,6 +2045,7 @@ class PhaseExecutor(ABC):
             f"PROJECT_ROOT={self._project_root}\n"
             f"{self._stack_context(spec_dir_ref)}"
             f"{_render_controller_owned_prompt_context(state)}"
+            f"{_render_banzai_evidence_reassessment_context(state, node.id)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
@@ -2261,6 +2339,30 @@ class AgentExecutor(PhaseExecutor):
             result_contract,
             prompt_metadata,
         )
+        if node.id == "phase1-why2":
+            reassessment = state.get("banzai_evidence_reassessment")
+            armed = (
+                [
+                    attempt
+                    for attempt in reassessment.get("attempts", [])
+                    if isinstance(attempt, dict) and attempt.get("status") == "armed"
+                ]
+                if isinstance(reassessment, dict)
+                and reassessment.get("schema_version") == 2
+                else []
+            )
+            if armed:
+                if len(armed) != 1:
+                    raise ControllerStateContractViolation(
+                        "WHY2 dispatch has multiple armed evidence attempts",
+                        contract="phase1-why2",
+                        json_path="$.banzai_evidence_reassessment.attempts",
+                        validator="evidence_binding",
+                    )
+                state_store.consume_armed_banzai_evidence_reassessment(
+                    expected_state_revision=int(state["state_revision"]),
+                    expected_evidence_sha256=str(armed[0]["evidence_sha256"]),
+                )
         result = self._validate_result_state_updates(
             node, result, result_contract=result_contract
         )
@@ -2688,13 +2790,15 @@ class StagedParallelExecutor(PhaseExecutor):
     def _why3_repair_phase_from_issues(issues_text: str) -> str:
         """Choose the earliest phase capable of repairing WHY3-owned issues."""
         phase_order = (
+            "phase1-discover",
             "phase1-what",
             "phase3-how",
             "phase3-sentinel",
             "phase3-plan",
         )
         owner_phases = {
-            "DISCOVER": "phase1-what",
+            "DISCOVER": "phase1-discover",
+            "SCOUT": "phase1-discover",
             "WHAT": "phase1-what",
             "CARTOGRAPHER": "phase1-what",
             "HOW": "phase3-how",
@@ -2729,6 +2833,7 @@ class StagedParallelExecutor(PhaseExecutor):
         )
         action_text = "\n".join(action_fields).upper()
         for phase, agents in (
+            ("phase1-discover", ("DISCOVER", "SCOUT")),
             ("phase1-what", ("CARTOGRAPHER",)),
             ("phase3-how", ("ARCHITECT",)),
             ("phase3-sentinel", ("SENTINEL",)),
@@ -2740,6 +2845,43 @@ class StagedParallelExecutor(PhaseExecutor):
             ):
                 return phase
         return "phase1-what"
+
+    def _persist_why3_repair_phase(
+        self,
+        state_store: "SquadStateStore",
+    ) -> None:
+        """Persist the controller-owned owner route for a completed WHY3 review.
+
+        WHY3 reports ownership in ``issues.md``; the reviewing agent is not
+        permitted to write controller routing state.  Resolve that report only
+        after the parallel stage has completed so the following deterministic
+        gate can dispatch the smallest capable repair phase.
+        """
+        state = state_store.load()
+        if str(state.get("why3_verdict") or "").upper() != "FAIL":
+            if "why3_repair_phase" in state:
+                state.pop("why3_repair_phase", None)
+                state_store.save(state)
+            return
+
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(),
+            self._project_root,
+        )
+        issues_text = ""
+        if spec_dir_ref:
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            issues_path = spec_dir / "issues.md"
+            try:
+                issues_text = issues_path.read_text(encoding="utf-8")
+            except OSError:
+                pass
+        state["why3_repair_phase"] = self._why3_repair_phase_from_issues(
+            issues_text
+        )
+        state_store.save(state)
 
     @staticmethod
     def _normalize_completed_assess2_rejection(
@@ -3030,6 +3172,8 @@ class StagedParallelExecutor(PhaseExecutor):
             for k, v in result.state_updates.items():
                 state[k] = v
             state_store.save(state)
+
+        self._persist_why3_repair_phase(state_store)
 
         # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None

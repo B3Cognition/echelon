@@ -1374,6 +1374,47 @@ def test_banzai_does_not_reassess_current_why2_question_without_a_candidate(
     provider.exec_agent.assert_not_called()
 
 
+def test_banzai_reassesses_current_why2_question_when_canonical_evidence_is_retrieved(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+    policy = graph.get("phase1-why2").human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    question = "Which inclusive radial boundary should both guards use?"
+    decision_id, _ = _seal_awaiting_provider_human(
+        controller,
+        store,
+        policy,
+        question=question,
+    )
+    controller._refresh_decision_evidence_context = MagicMock(
+        return_value=(
+            "c" * 64,
+            "context/decision-evidence/question-evidence.md",
+            ("CTX-plan-001",),
+        )
+    )
+
+    assert controller.resume_pending_human_input() is True
+
+    reopened = store.load()
+    assert reopened["status"] == "running"
+    assert reopened["phase"] == "phase1-why2"
+    assert "blocked_decision" not in reopened
+    assert (
+        reopened["banzai_evidence_reassessment"]["attempts"][0]["decision_id"]
+        == decision_id
+    )
+    controller._refresh_decision_evidence_context.assert_called_once_with(question)
+    provider.exec_agent.assert_not_called()
+
+
 def _write_deployed_banzai_candidate_protocol(project_root: Path) -> None:
     for relative in (
         ".echelon/runtime/workflow/definition.yaml",

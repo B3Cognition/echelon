@@ -2258,6 +2258,61 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
     assert "manual_phase_runs" not in state_store.load()
 
 
+def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues — WHY3
+
+### ISS-001: Test strategy structure
+- **Responsible agent:** SENTINEL
+- **Action Required:** Amend test-strategy.md.
+""",
+        encoding="utf-8",
+    )
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="FAIL")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "FAIL"
+    assert state_store.load()["why3_repair_phase"] == "phase3-sentinel"
+
+    provider.exec_agent.return_value = _result(verdict="PASS")
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "PASS"
+    assert "why3_repair_phase" not in state_store.load()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"

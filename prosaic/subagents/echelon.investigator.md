@@ -28,6 +28,12 @@ ALWAYS treat declared product references as the primary evidence source when
 dispatched for Phase 1 Evidence Resolution. Read the phase dispatch contract,
 the input manifest/catalog, and every declared snapshot before looking beyond
 the supplied source bundle.
+After exhausting those primary references, ALWAYS inspect declared
+implementation targets as read-only primary evidence when the request concerns
+existing brownfield behavior. Use the injected workspace source roots and
+implementation-target contract without requiring the user to redeclare the
+same target as a product reference. Bind source findings to the inspected path
+and current repository revision when available.
 NEVER substitute general public-web research, guessed endpoint paths, or generic
 technology research for traversal of a declared local artifact, portal,
 repository, export, or permitted read-only service.

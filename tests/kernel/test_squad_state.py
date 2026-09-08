@@ -572,6 +572,88 @@ def test_protocol_upgrade_reassessment_rejects_malformed_v2_timestamp(
     assert store.load() == before
 
 
+def test_evidence_reassessment_reopens_each_distinct_why2_question_once(
+    tmp_path: Path,
+) -> None:
+    store = _blocked_banzai_why2_store(tmp_path)
+    before = store.load()
+    decision_id = before["blocked_decision"]["id"]
+    question = before["blocked_decision"]["question"]
+
+    reopened = store.reassess_awaiting_banzai_why2_with_evidence(
+        decision_id,
+        question_sha256=hashlib.sha256(question.encode()).hexdigest(),
+        evidence_sha256="a" * 64,
+        evidence_path="context/decision-evidence/question-evidence.md",
+        drawer_ids=("CTX-plan-001",),
+        expected_state_revision=before["state_revision"],
+    )
+
+    assert reopened["status"] == "running"
+    assert reopened["phase"] == "phase1-why2"
+    assert "blocked_decision" not in reopened
+    attempt = reopened["banzai_evidence_reassessment"]["attempts"][0]
+    assert attempt["decision_id"] == decision_id
+    assert attempt["drawer_ids"] == ["CTX-plan-001"]
+    assert attempt["evidence_path"] == (
+        "context/decision-evidence/question-evidence.md"
+    )
+    assert attempt["status"] == "armed"
+    assert attempt["dispatched_at"] is None
+
+    reopened = store.consume_armed_banzai_evidence_reassessment(
+        expected_state_revision=reopened["state_revision"],
+        expected_evidence_sha256="a" * 64,
+    )
+    consumed = reopened["banzai_evidence_reassessment"]["attempts"][0]
+    assert consumed["status"] == "consumed"
+    assert consumed["dispatched_at"] is not None
+
+    policy = HumanInputPolicy(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        reason_code="human_clarification_required",
+        classification="material",
+        semi_policy="require_human",
+        resolution_handler="clarification_resume",
+        allow_free_text=True,
+        allowed_phase_ids=frozenset({"phase1-why2"}),
+        allowed_target_phases=frozenset({"phase1-why2"}),
+        context_state_keys=("phase",),
+        context_paths=(),
+        options=(),
+    )
+    request = HumanInputPolicyRegistry((policy,)).prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-why2",
+        phase_id="phase1-why2",
+        reason_code="human_clarification_required",
+        question=question,
+        source_state_revision=reopened["state_revision"],
+    )
+    _advance(
+        store,
+        "phase1-why2",
+        "phase1-why2",
+        _result("DONE", phase_id="phase1-why2"),
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+    repeated = store.load()
+
+    with pytest.raises(StateAdvanceError, match="already reassessed"):
+        store.reassess_awaiting_banzai_why2_with_evidence(
+            repeated["blocked_decision"]["id"],
+                question_sha256=hashlib.sha256(question.encode()).hexdigest(),
+                evidence_sha256="b" * 64,
+                evidence_path="context/decision-evidence/question-evidence-2.md",
+                drawer_ids=("CTX-plan-002",),
+            expected_state_revision=repeated["state_revision"],
+        )
+
+    assert store.load() == repeated
+
+
 def _prepare_completion(
     tmp_path: Path,
     store: SquadStateStore,

@@ -99,6 +99,19 @@ class TestInvestigatorTemplates:
         assert "Phase 1 Evidence Resolution" in agent_text
         assert "declared product references take priority" in agent_text
 
+    def test_phase1_uses_declared_brownfield_targets_before_requesting_access(
+        self,
+    ) -> None:
+        phase_text = PHASE1.read_text(encoding="utf-8")
+        agent_text = AGENT.read_text(encoding="utf-8")
+
+        for text in (phase_text, agent_text):
+            normalized = " ".join(text.split())
+            assert "declared implementation targets" in normalized
+            assert "read-only primary evidence" in normalized
+            assert "without requiring the user to redeclare" in normalized
+        assert "Only after exhausting both" in " ".join(phase_text.split())
+
     def test_phase1_investigate_repairs_missing_artifacts_without_repeating_research(self) -> None:
         text = PHASE1.read_text(encoding="utf-8")
 
