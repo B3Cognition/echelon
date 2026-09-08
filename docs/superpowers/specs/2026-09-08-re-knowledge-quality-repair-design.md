@@ -1,6 +1,6 @@
 # General-purpose RE knowledge-quality repair
 
-Status: Revised for the approved two-action user workflow; implementation not started.
+Status: M1 containment implemented; M2 safe-evidence foundation in progress. Not release-ready.
 Date: 2026-09-08
 Decision owner: Echelon maintainer.
 
