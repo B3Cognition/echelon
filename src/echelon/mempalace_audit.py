@@ -479,6 +479,7 @@ def cleanup_stale_spec_memory(
         drawer_id
         for drawer_id, (_document, metadata) in parsed.rows.items()
         if drawer_id not in expected_ids
+        and not _belongs_to_evidence_memory(metadata)
         and metadata.get("canonical") is True
         and (metadata.get("artifact_path") or metadata.get("source_file"))
         in source_paths

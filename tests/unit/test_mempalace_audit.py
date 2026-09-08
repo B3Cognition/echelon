@@ -592,6 +592,11 @@ def test_cleanup_deletes_only_stale_canonical_rows_for_selected_spec(
         "drawer-stale": stale,
         "drawer-other-spec": other_spec,
     }
+    evidence = current_row(snapshot)
+    evidence["metadata"].update(
+        requirement_id="EVID-001", artifact_kind="spec-fulfillment-evidence",
+    )
+    rows["drawer-evidence"] = evidence
     collection = FakeCollection(rows)
     monkeypatch.setattr(
         "echelon.mempalace_audit.create_requirement_memory_adapter",
@@ -604,7 +609,7 @@ def test_cleanup_deletes_only_stale_canonical_rows_for_selected_spec(
     assert report.deleted_count == 1
     assert report.deleted_ids == ["drawer-stale"]
     assert collection.deleted_ids == ["drawer-stale"]
-    assert sorted(collection.rows) == ["drawer-fr-001", "drawer-other-spec"]
+    assert sorted(collection.rows) == ["drawer-evidence", "drawer-fr-001", "drawer-other-spec"]
 
 
 @pytest.mark.unit
