@@ -601,6 +601,7 @@ class CandidateEvidenceRunner:
                         "coverage-observer-map-incomplete",
                         "Required coverage observation has no planned test obligation "
                         "for active requirement(s): " + ", ".join(unmapped[:20]),
+                        details={"requirements": {identity: "unmapped" for identity in unmapped}},
                     ),
                     observer_required=True,
                 )
@@ -1092,6 +1093,8 @@ def _coverage_failure(
     failure_id: str,
     error: str,
     observer_evidence: Mapping[str, object] | None = None,
+    *,
+    details: dict | None = None,
 ) -> VerifyResult:
     evidence = dict(source.verification_evidence)
     if observer_evidence is not None:
@@ -1103,6 +1106,7 @@ def _coverage_failure(
                 category=FailureCategory.OTHER,
                 id=failure_id,
                 error=error,
+                details=details or {},
             )
         ],
         duration_s=source.duration_s,

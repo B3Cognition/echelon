@@ -906,6 +906,7 @@ def test_coverage_gate_does_not_treat_an_unmapped_requirement_as_deferred(
 
     assert result.passed is False
     assert result.failures[0].id == "coverage-observer-map-incomplete"
+    assert result.failures[0].details["requirements"] == {"FR-001": "unmapped"}
     assert "FR-001" in result.failures[0].error
     observers.assert_not_called()
 

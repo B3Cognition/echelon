@@ -10,6 +10,39 @@ from harness.fulfillment_runner import FulfillmentRefreshResult
 from harness.verify_result import VerifyResult
 
 
+def test_coverage_diagnostic_never_replaces_verification_failure(tmp_path, monkeypatch):
+    from harness.authoritative_spec_verifier import AuthoritativeSpecVerifier
+    from harness.verify_result import FailureEntry, FailureCategory
+    target = tmp_path / "target"
+    spec = tmp_path / "specs" / "001-demo"
+    target.mkdir()
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("- **FR-001**: Save.\n")
+    passed = VerifyResult(passed=True)
+    failed = VerifyResult(passed=False, failures=[FailureEntry(
+        FailureCategory.OTHER, "coverage-observation-gaps", "unbound")])
+    evidence = MagicMock()
+    evidence.run_standard.return_value = passed
+    evidence.apply_runnability.return_value = RunnabilityGateResult(passed)
+    evidence.apply_coverage.return_value = CoverageGateResult(failed)
+    fulfillment = MagicMock()
+    calls = []
+    def diagnostic(**kwargs):
+        calls.append(kwargs)
+        return kwargs["verify_run_dir"] / "diagnostic.json"
+    monkeypatch.setattr("harness.coverage_diagnostic.run_coverage_diagnostic", diagnostic)
+    result = AuthoritativeSpecVerifier(
+        target=target, spec_dir=spec, config=HarnessConfig(target_repo=str(target)),
+        evidence_runner=evidence, fulfillment_runner=fulfillment,
+        diagnostic_executor=object(),
+    ).run(reconcile=False, dry_run=False)
+    assert len(calls) == 1
+    assert not result.ok
+    assert result.reason == "coverage-observation-gaps"
+    assert result.diagnostic_path.endswith("diagnostic.json")
+    fulfillment.refresh.assert_not_called()
+
+
 @pytest.mark.unit
 def test_authoritative_verifier_acquires_all_evidence_before_fulfillment(
     tmp_path: Path,

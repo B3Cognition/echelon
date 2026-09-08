@@ -74,6 +74,11 @@ class AICodingCliProvider:
         return CLI_PROVIDER_CAPABILITIES
 
     @property
+    def supports_read_only_review(self) -> bool:
+        """Only advertise an implemented, enforced exclusive read-only scope."""
+        return self._cli == "codex" and self.enforces_workspace_synthesis_boundary
+
+    @property
     def enforces_workspace_synthesis_boundary(self) -> bool:
         """Return whether workspace synthesis cannot access live source roots."""
         if self._cli == "openai-compatible":

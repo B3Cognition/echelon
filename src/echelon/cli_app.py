@@ -3631,6 +3631,7 @@ def _run_spec_verify(
         config=config,
         fulfillment_runner=FulfillmentRunner(prompt_executor),
         provider=sandbox_provider,
+        diagnostic_executor=prompt_executor,
     ).run(
         reconcile=reconcile,
         dry_run=dry_run,
@@ -3645,6 +3646,8 @@ def _run_spec_verify(
         typer.echo(f"reason: {result.reason}")
     if result.report_path:
         typer.echo(f"report: {result.report_path}")
+    if getattr(result, "diagnostic_path", None):
+        typer.echo(f"coverage diagnosis (advisory only): {result.diagnostic_path}")
     if result.verified_ledger is not None:
         ledger = " ".join(
             f"{key}={value}" for key, value in result.verified_ledger.items()

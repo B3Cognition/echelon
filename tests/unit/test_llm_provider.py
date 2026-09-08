@@ -60,6 +60,14 @@ def _patch_claude_popen(lines: list[dict] | None = None, returncode: int = 0):
 @pytest.mark.unit
 class TestAICodingCliProvider:
 
+    @pytest.mark.parametrize("cli,available,expected", [
+        ("codex", True, True), ("codex", False, False),
+        ("claude", True, False), ("openai-compatible", True, False),
+    ])
+    def test_read_only_review_requires_implemented_boundary(self, cli, available, expected):
+        with patch("harness.llm_provider.host_workspace_synthesis_boundary_available", return_value=available):
+            assert AICodingCliProvider(_config(cli=cli)).supports_read_only_review is expected
+
     @pytest.mark.parametrize("method", ("run_prompt_result", "run_agent_result"))
     def test_provider_applies_product_plane_boundary_to_every_dispatch(
         self, tmp_path, method

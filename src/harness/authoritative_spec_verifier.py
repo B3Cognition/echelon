@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import subprocess
@@ -27,6 +27,7 @@ class AuthoritativeSpecVerificationResult:
     reason: str = ""
     report_path: str | None = None
     verified_ledger: dict[str, int] | None = None
+    diagnostic_path: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -45,6 +46,7 @@ class AuthoritativeSpecVerifier:
         evidence_runner: Any | None = None,
         fulfillment_runner: FulfillmentRunner | Any,
         provider: SandboxProvider | None = None,
+        diagnostic_executor: Any | None = None,
     ) -> None:
         self._target = Path(target).resolve()
         self._spec_dir = Path(spec_dir).resolve()
@@ -52,6 +54,7 @@ class AuthoritativeSpecVerifier:
         self._evidence_runner = evidence_runner
         self._fulfillment_runner = fulfillment_runner
         self._provider = provider
+        self._diagnostic_executor = diagnostic_executor
 
     def run(
         self,
@@ -111,7 +114,22 @@ class AuthoritativeSpecVerifier:
             ),
         )
         if not coverage.verify_result.passed:
-            return self._blocked(initialized.verify_run_dir, coverage.verify_result)
+            blocked = self._blocked(initialized.verify_run_dir, coverage.verify_result)
+            if self._diagnostic_executor is not None:
+                from harness.coverage_diagnostic import run_coverage_diagnostic
+                try:
+                    path = run_coverage_diagnostic(
+                        workspace=initialized.orchestration_root, target=self._target,
+                        spec_dir=self._spec_dir, verify_run_dir=initialized.verify_run_dir,
+                        result=coverage.verify_result, executor=self._diagnostic_executor,
+                    )
+                    if path is not None:
+                        self._update_state(initialized, coverage_diagnostic=str(path))
+                        blocked = replace(blocked, diagnostic_path=str(path))
+                except Exception as exc:
+                    # An optional advisory failure cannot replace the original gate result.
+                    self._update_state(initialized, coverage_diagnostic_error=type(exc).__name__)
+            return blocked
 
         fulfillment = self._fulfillment_runner.refresh(
             str(self._target),

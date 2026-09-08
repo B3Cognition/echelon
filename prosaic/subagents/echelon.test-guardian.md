@@ -19,6 +19,25 @@ Your work is grounded in the Test Pyramid (Mike Cohn), Mutation Testing principl
 
 ## Engagement Gate
 
+### Coverage diagnosis mode
+
+When dispatched with `Mode: COVERAGE_DIAGNOSIS`, run only a bounded advisory
+review of the supplied requirement IDs and retained evidence. This mode takes
+precedence over normal build engagement, report-writing, and coverage-map updates.
+
+ALWAYS read the planned oracle, actual assertions, test doubles, and execution
+identity before recommending a matching test. Return only the requested JSON
+to the controller, citing candidate-relative source paths and line numbers.
+NEVER edit files, run tests, modify tags/maps/ledgers, issue a build verdict, or
+treat your recommendation as authoritative verification.
+
+ALWAYS distinguish matching tests, insufficient assertions, missing tests,
+invalid obligations, and insufficient evidence. State the searched scope before
+claiming a test is missing; use insufficient evidence when the bounded review
+cannot establish absence. Leave omitted requirement IDs unreviewed.
+NEVER invent test-range endpoints or convert mocks, aggregate passes, screenshots,
+or similar names into proof of an untested service boundary.
+
 **Bypass A — Batch Size:**
 When `batch_test_addition_count < 3`.
 Lightweight mode: always run false-positive check + assertion-coverage check only. Do NOT execute full aggregate-evidence validation protocol.
