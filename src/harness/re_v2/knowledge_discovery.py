@@ -101,7 +101,7 @@ class DiscoveryBoundary:
         self._objects, self._quarantine = objects, quarantine
         self._files = next(source.files for source in partition.sources if source.source_id == source_id)
 
-    def _context(self, selectors):
+    def _context(self, selectors, *, persist=True):
         if not isinstance(selectors, tuple) or len(selectors) > 64:
             raise DiscoveryError("discovery-evidence-bound")
         normalized = []
@@ -120,7 +120,8 @@ class DiscoveryBoundary:
                               "object_kind": record.object_kind, "text_status": record.text_status})
         evidence, mappings = [], []
         for row in normalized:
-            projection = self._evidence.project(_selector(row))
+            project = self._evidence.project if persist else self._evidence.read_projection
+            projection = project(_selector(row))
             evidence.append({"projection_id": projection.projection_id,
                              "projection": _load(projection.provider_bytes())})
             mappings.append(projection.mapping_receipt_id)
@@ -148,18 +149,102 @@ class DiscoveryBoundary:
         return self._objects.put_blob(binding)
 
     @_closed_errors
+    def verify_selection(self, selectors: tuple[EvidenceSelectorV1, ...]) -> str:
+        context, binding = self._context(selectors, persist=False)
+        if (self._objects.read_blob(content_digest(context)) != context
+                or self._objects.read_blob(content_digest(binding)) != binding):
+            raise DiscoveryError("discovery-context-mismatch")
+        return content_digest(binding)
+
+    @_closed_errors
     def provider_bytes(self, binding_id: str) -> bytes:
         binding_bytes = self._objects.read_blob(binding_id)
         binding = _load(binding_bytes)
         # Replay from the real pinned reader, not caller-constructed projection
         # handles or a content-addressed but unauthenticated replacement context.
-        expected_context, expected_binding = self._context(tuple(_selector(row) for row in _rows(binding["selectors"], 64)))
+        expected_context, expected_binding = self._context(
+            tuple(_selector(row) for row in _rows(binding["selectors"], 64)), persist=False)
         if expected_binding != binding_bytes:
             raise DiscoveryError("discovery-binding-mismatch")
         context = self._objects.read_blob(binding["context_id"])
         if context != expected_context:
             raise DiscoveryError("discovery-context-mismatch")
         return context
+
+    @property
+    def object_store(self) -> ObjectStore:
+        """Private controller storage; never include its location in model input."""
+        return self._objects
+
+    @_closed_errors
+    def binding_details(self, binding_id: str) -> dict:
+        """Authenticate before exposing private scope metadata to the controller."""
+        self.provider_bytes(binding_id)
+        return _load(self._objects.read_blob(binding_id))
+
+    @_closed_errors
+    def read_requests(self, binding_id: str, batch_id: str) -> list[dict]:
+        """Reconstruct admission: a content address alone is not request authority."""
+        context = _load(self.provider_bytes(binding_id))
+        receipt = _obj(_load(self._objects.read_blob(batch_id)),
+                       ("schema_version", "state", "binding_id", "requests"))
+        rows = _rows(receipt["requests"], 16)
+        response = {"schema_version": 1, "kind": "evidence_requests", "source_id": self._source_id,
+                    "requests": [{key: row[key] for key in ("obligation_id", "reason_class", "selector")}
+                                 for row in rows]}
+        expected_id = content_digest(self._request_receipt(binding_id, response, context))
+        if expected_id != batch_id:
+            raise DiscoveryError("request-receipt-mismatch")
+        return rows
+
+    def _request_outcome(self, binding_id, batch_id, request, *, persist=True):
+        projection = None
+        reason = request["reason_code"]
+        if request["state"] == "pending":
+            project = self._evidence.project if persist else self._evidence.read_projection
+            projection = project(_selector(request["selector"]))
+            reason = _load(projection.provider_bytes())["reason_code"]
+        return {
+            "schema_version": 1, "kind": "discovery_evidence_outcome",
+            "binding_id": binding_id, "batch_id": batch_id, "request_id": request["request_id"],
+            "selector": request["selector"], "reason_class": request["reason_class"],
+            "obligation_id": request["obligation_id"],
+            "disposition": "unknown" if reason else "resolved", "reason_code": reason,
+            "projection_id": projection.projection_id if projection else None,
+            "mapping_id": projection.mapping_receipt_id if projection else None,
+        }
+
+    @_closed_errors
+    def resolve_request(self, binding_id: str, batch_id: str, request_id: str) -> str:
+        requests = self.read_requests(binding_id, batch_id)
+        request = next((row for row in requests if row["request_id"] == request_id), None)
+        if request is None:
+            raise DiscoveryError("unknown-evidence-request")
+        return self._objects.put_blob(canonical_json_bytes(self._request_outcome(binding_id, batch_id, request)))
+
+    @_closed_errors
+    def validate_outcome(self, outcome_id: str) -> dict:
+        """Authenticate stored evidence against the pinned reader before dispatch.
+
+        This is verification, not a new acquisition attempt or a new reservation.
+        No model work runs here and the controller's request receipt is unchanged.
+        """
+        outcome = _load(self._objects.read_blob(outcome_id))
+        requests = self.read_requests(outcome["binding_id"], outcome["batch_id"])
+        request = next((row for row in requests if row["request_id"] == outcome["request_id"]), None)
+        return self._validate_admitted_outcome(outcome_id, outcome["binding_id"], outcome["batch_id"], request)
+
+    def _validate_admitted_outcome(self, outcome_id, binding_id, batch_id, request):
+        """Internal replay fast path: request already authenticated in this replay.
+
+        Only the admission boundary and acquisition replay call this helper. The
+        selected evidence is still authenticated afresh; we do not re-screen the
+        entire old context for each individual request in the same batch.
+        """
+        outcome = _load(self._objects.read_blob(outcome_id))
+        if request is None or self._request_outcome(binding_id, batch_id, request, persist=False) != outcome:
+            raise DiscoveryError("evidence-outcome-mismatch")
+        return outcome
 
     @_closed_errors
     def admit(self, binding_id: str, output: bytes) -> str:
@@ -249,6 +334,9 @@ class DiscoveryBoundary:
         return self._objects.put_blob(result)
 
     def _admit_requests(self, binding_id, response, context):
+        return self._objects.put_blob(self._request_receipt(binding_id, response, context))
+
+    def _request_receipt(self, binding_id, response, context):
         _obj(response, ("schema_version", "kind", "source_id", "requests"))
         if (type(response["schema_version"]) is not int or response["schema_version"] != 1
                 or response["source_id"] != self._source_id):
@@ -277,7 +365,7 @@ class DiscoveryBoundary:
             normalized.append({**request, "request_id": content_digest({"binding_id": binding_id, **request}),
                                "state": "pending" if available else "unavailable",
                                "reason_code": None if available else "unavailable-evidence"})
-        return self._objects.put_blob(canonical_json_bytes({
+        return canonical_json_bytes({
             "schema_version": 1, "state": "evidence_requested", "binding_id": binding_id,
             "requests": sorted(normalized, key=lambda row: row["request_id"]),
-        }))
+        })

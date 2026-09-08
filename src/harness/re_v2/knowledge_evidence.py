@@ -158,7 +158,7 @@ class SafeEvidenceBoundary:
         self._partition_id = partition.identity
         self._objects = objects
 
-    def project(self, selector: EvidenceSelectorV1) -> SafeEvidenceProjectionV1:
+    def _projection_bytes(self, selector: EvidenceSelectorV1) -> tuple[bytes, bytes]:
         if not isinstance(selector, EvidenceSelectorV1):
             raise KnowledgeEvidenceError("invalid-evidence-selector")
         record = self._records.get((selector.source_id, selector.path))
@@ -212,6 +212,19 @@ class SafeEvidenceBoundary:
             "selector": selector.to_json_dict(), "security_policy_id": security_policy_id(),
             "projection_id": content_digest(provider),
         })
+        return provider, receipt
+
+    def read_projection(self, selector: EvidenceSelectorV1) -> SafeEvidenceProjectionV1:
+        """Verify stored safe evidence afresh without creating or repairing objects."""
+        provider, receipt = self._projection_bytes(selector)
+        projection_id, receipt_id = content_digest(provider), content_digest(receipt)
+        if (self._objects.read_blob(projection_id) != provider
+                or self._objects.read_blob(receipt_id) != receipt):
+            raise KnowledgeEvidenceError("evidence-store-mismatch")
+        return SafeEvidenceProjectionV1(projection_id, receipt_id, provider)
+
+    def project(self, selector: EvidenceSelectorV1) -> SafeEvidenceProjectionV1:
+        provider, receipt = self._projection_bytes(selector)
         try:
             projection_id = self._objects.put_blob(provider)
             receipt_id = self._objects.put_blob(receipt)
