@@ -134,14 +134,21 @@ For each acceptance criterion in the task:
 
 ### Step 5: Update Coverage Map
 
-Add new mappings to `coverage-map.md`:
+Use `.echelon/runtime/templates/coverage-map-template.md`, preserving its seven
+columns and all existing required observations. Cite concrete test paths and
+titles in Evidence; do not substitute a different table schema.
 
-```markdown
-| Requirement | Test File | Test Name | Type |
-|-------------|-----------|-----------|------|
-| FR-001 | `file.test.ts` | "renders user name" | Unit |
-| FR-001 | `file.test.ts` | "handles missing name" | Unit |
-```
+ALWAYS retain explicit uppercase hyphenated case IDs (for example `UT-001`)
+and lowercase test types (`unit`, `integration`, `e2e`, `contract`). Enumerate
+individual IDs instead of symbolic ranges such as `C-HTTP-001..N`.
+NEVER invent range endpoints, drop obligations, lower their required test
+boundary, or treat a renamed test as equivalent without reading its assertions.
+
+ALWAYS distinguish a matching test from sufficient execution evidence. A case
+tag must identify exactly one physical test; that test may carry multiple IDs
+only when its assertions substantiate each obligation.
+NEVER treat matching names, passing aggregate suites, screenshots without
+comparison assertions, or mocked durable state as proof of real persistence.
 
 ---
 

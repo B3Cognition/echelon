@@ -10,6 +10,18 @@ from harness.coverage_contract import (
 )
 
 
+@pytest.mark.parametrize("case_id", [
+    "C-HTTP-001..N", "E-VIS-001..004", "UT-001–004", "UT-001...",
+    "TBD", "test one", "ut-001", "UT_001", "UT--001", "`UT-001`",
+])
+def test_planning_rejects_case_ids_that_cannot_be_bound(case_id: str) -> None:
+    with pytest.raises(CoverageContractError, match="explicit.*case ID"):
+        parse_coverage_obligations(
+            "FR-001", case_id, "unit", "automated", "automated",
+            "assert actual outcome", "implement", {"FR-001"},
+        )
+
+
 @pytest.mark.unit
 def test_parse_coverage_obligations_expands_coupled_requirements_and_types() -> None:
     obligations = parse_coverage_obligations(

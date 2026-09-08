@@ -149,7 +149,7 @@ def test_build_coverage_evidence_expands_ranges_and_preserves_test_ids(
     spec_dir = tmp_path / "specs" / "001-demo"
     _write_map(
         spec_dir,
-        "| FR-001–FR-003 | E-SMOKE-001 / E-VIS-001..004 | e2e | automated | automated | test-results/playwright.json | |\n",
+        "| FR-001–FR-003 | E-SMOKE-001 / E-VIS-001 / E-VIS-002 / E-VIS-003 / E-VIS-004 | e2e | automated | automated | test-results/playwright.json | |\n",
     )
 
     result = build_coverage_evidence(
@@ -161,7 +161,7 @@ def test_build_coverage_evidence_expands_ranges_and_preserves_test_ids(
     assert result.by_requirement["FR-001"].status == "automated"
     assert result.by_requirement["FR-003"].test_case_ids == (
         "E-SMOKE-001",
-        "E-VIS-001..004",
+        "E-VIS-001", "E-VIS-002", "E-VIS-003", "E-VIS-004",
     )
     assert result.by_requirement["FR-004"].status == "missing"
 

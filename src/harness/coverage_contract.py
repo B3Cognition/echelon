@@ -18,6 +18,12 @@ _RANGE_RE = re.compile(
 _TEST_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _DELIMITER_RE = re.compile(r"\s*(?:,|/|;)\s*")
 _REQUIREMENT_DELIMITER_RE = re.compile(r"\s*(?:,|/)\s*")
+_CASE_ID_RE = re.compile(r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+")
+
+
+def is_coverage_case_id(value: str) -> bool:
+    """Whether a logical case can be represented by an executable case tag."""
+    return _CASE_ID_RE.fullmatch(value) is not None
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,12 @@ def parse_coverage_obligations(
         return ()
 
     test_case_ids = _split_non_empty(test_case_cell, field_name="test case")
+    for test_case_id in test_case_ids:
+        if not is_coverage_case_id(test_case_id):
+            raise CoverageContractError(
+                f"coverage row requires an explicit uppercase hyphenated case ID: "
+                f"{test_case_id!r}; enumerate each case separately, without ranges or placeholders"
+            )
     test_types = _split_non_empty(test_type_cell, field_name="test type")
     for test_type in test_types:
         if not _TEST_TYPE.fullmatch(test_type):

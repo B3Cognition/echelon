@@ -89,6 +89,26 @@ def test_coverage_contract_error_returns_repairable_reason(tmp_path: Path) -> No
     )
 
 
+def test_readiness_rejects_symbolic_case_without_rewriting_spec(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "spec.md").write_text("- **FR-001**: Collect one item.\n")
+    coverage = (
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | C-HTTP-001..N | contract | automated | automated | tests | implement |\n"
+    )
+    path = spec_dir / "coverage-map.md"
+    path.write_text(coverage)
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert not result.ready
+    assert "C-HTTP-001..N" in result.blockers[0]
+    assert "enumerate each case" in result.blockers[0]
+    assert path.read_text() == coverage
+
+
 def test_ready_state_rejects_task_owned_case_missing_from_coverage_map(
     tmp_path: Path,
 ) -> None:

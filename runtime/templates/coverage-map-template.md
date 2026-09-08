@@ -4,6 +4,11 @@ Use this template for `coverage-map.md`.
 
 NEVER use `manual` as Coverage Type or Automation Status. Use `automated`, `deferred-automation`, or `escalate`.
 
+Declare individual uppercase hyphenated Test Case IDs, such as `UT-001` or
+`E2E-COL-001`. Comma, slash, and semicolon separated lists are supported. Do not
+use symbolic ranges or placeholders (`E-VIS-001..004`, `C-HTTP-001..N`, `TBD`):
+enumerate each required case explicitly. Preserve the seven-column schema.
+
 ## Coverage Table
 
 | Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |

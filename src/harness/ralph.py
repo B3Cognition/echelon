@@ -5436,7 +5436,7 @@ class RalphController:
         provider the mutable coverage map or raw reporter output as authority.
         """
         cases: list[tuple[str, str, str, str]] = []
-        case_id_pattern = re.compile(r"[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+")
+        from harness.coverage_contract import is_coverage_case_id
         valid_types = {"unit", "integration", "e2e", "contract"}
         valid_statuses = {
             "unbound",
@@ -5454,7 +5454,7 @@ class RalphController:
                 continue
             for raw_case_id, raw_case in raw_cases.items():
                 case_id = str(raw_case_id).strip()
-                if not case_id_pattern.fullmatch(case_id) or not isinstance(raw_case, Mapping):
+                if not is_coverage_case_id(case_id) or not isinstance(raw_case, Mapping):
                     continue
                 test_type = str(raw_case.get("test_type") or "").strip()
                 status = str(raw_case.get("status") or "").strip()
