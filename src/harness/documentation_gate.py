@@ -99,7 +99,9 @@ def evaluate_documentation_gate(
         runnability_findings = [
             finding
             for finding in runnability_docs.findings
-            if finding.section in {"Observed First Run", "User Runnability Evidence"}
+            if finding.section in {
+                "Observed First Run", "Local User Journey", "User Runnability Evidence",
+            }
         ]
         if runnability_findings:
             finding = runnability_findings[0]
