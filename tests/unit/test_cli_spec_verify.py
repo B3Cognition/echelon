@@ -9,8 +9,9 @@ from harness.config import HarnessConfig
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("git_workspace", [False, True])
 def test_spec_verify_runs_authoritative_stack_evidence_before_fulfillment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_workspace: bool
 ) -> None:
     workspace = tmp_path / "workspace"
     target = workspace / "sources" / "game"
@@ -21,6 +22,13 @@ def test_spec_verify_runs_authoritative_stack_evidence_before_fulfillment(
         "---\ntargets:\n  - sources/game\n---\n# Game\n",
         encoding="utf-8",
     )
+    if git_workspace:
+        from echelon.git_helpers import run_git
+        run_git(workspace, "init", "-b", "main")
+        run_git(workspace, "config", "user.name", "Test")
+        run_git(workspace, "config", "user.email", "test@example.test")
+        run_git(workspace, "add", ".")
+        run_git(workspace, "commit", "-m", "baseline")
     config = HarnessConfig(
         target_repo=str(target),
         target_default_branch="main",
@@ -53,6 +61,12 @@ def test_spec_verify_runs_authoritative_stack_evidence_before_fulfillment(
         ok=True,
     )
     verifier_type = MagicMock(return_value=verifier)
+    if git_workspace:
+        def write_outputs(**kwargs):
+            for name in ("fulfillment-report.md", "fulfillment-gaps.md", "verified-fulfillment-ledger.json"):
+                (spec_dir / name).write_text("{}\n")
+            return verifier.run.return_value
+        verifier.run.side_effect = write_outputs
     monkeypatch.setattr(
         "harness.authoritative_spec_verifier.AuthoritativeSpecVerifier",
         verifier_type,
@@ -65,6 +79,9 @@ def test_spec_verify_runs_authoritative_stack_evidence_before_fulfillment(
     )
 
     assert result.exit_code == 0, result.output
+    if git_workspace:
+        assert run_git(workspace, "status", "--porcelain").stdout == ""
+        assert "record verification evidence" in run_git(workspace, "log", "-1", "--format=%s").stdout
     assert "evidence: authoritative sandbox" in result.output
     assert config.verification_services == ["postgres-service"]
     assert config.resolved_stacks is resolved

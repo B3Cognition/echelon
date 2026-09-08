@@ -80,6 +80,17 @@ def banzai_default_protocol_bundle_lock(
     lock_fd: int | None = None
     locked = False
     try:
+        # The guard must stay ignored across branch switches, including older
+        # branches whose tracked .gitignore predates this runtime protocol.
+        from echelon.git_helpers import run_git
+        from harness.gitops import GitOpsManager
+
+        git_path = run_git(project_root, "rev-parse", "--git-path", "info/exclude", check=False)
+        if git_path.returncode == 0:
+            exclude = Path(git_path.stdout.strip())
+            if not exclude.is_absolute():
+                exclude = project_root / exclude
+            GitOpsManager._append_unique_line(exclude, "/.echelon/" + _LOCK_FILENAME)
         echelon_fd = _open_echelon_directory(project_root, create=exclusive)
         lock_fd = os.open(
             _LOCK_FILENAME,

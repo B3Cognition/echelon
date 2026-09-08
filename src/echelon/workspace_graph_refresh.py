@@ -204,10 +204,18 @@ def _refresh_spec_graph(root: Path, spec_dir: Path) -> WorkspaceGraphRefreshOutc
             ),
         )
     try:
+        from echelon.owned_output_commit import OwnedOutputCommit
+
+        output_commit = OwnedOutputCommit(
+            root,
+            [spec_dir / "spec-artifact-graph.json", spec_dir / "spec-artifact-graph-audit.json"],
+            f"chore: record graph evidence for {spec_id}",
+        )
         graph = build_spec_graph(root, spec_id)
         write_spec_graph(graph, spec_dir)
         refreshed = audit_spec_graph(root, spec_id)
         write_spec_graph_audit(refreshed, spec_dir)
+        output_commit.commit()
     except Exception as exc:
         return _failed(spec_id, "spec_graph", exc)
     return _outcome(spec_id, "spec_graph", "refreshed", _status(refreshed))

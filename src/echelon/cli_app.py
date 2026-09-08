@@ -2538,8 +2538,10 @@ def graph_build(
         graph = build_spec_graph(Path.cwd(), spec_selector)
         spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
         if write:
+            commit = _graph_output_commit(spec_dir, audit=False)
             write_spec_graph(graph, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="built")
@@ -2873,8 +2875,10 @@ def graph_audit(
         report = audit_spec_graph(Path.cwd(), spec_selector)
         if write:
             spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+            commit = _graph_output_commit(spec_dir, graph=False)
             write_spec_graph_audit(report, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
@@ -2904,17 +2908,31 @@ def graph_refresh(
     try:
         spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
         graph = build_spec_graph(Path.cwd(), spec_selector)
+        commit = _graph_output_commit(spec_dir) if write else None
         if write:
             write_spec_graph(graph, spec_dir)
         report = audit_spec_graph(Path.cwd(), spec_selector)
         if write:
             write_spec_graph_audit(report, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="refreshed")
     _echo_spec_graph_audit(report)
     raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+def _graph_output_commit(spec_dir: Path, *, graph: bool = True, audit: bool = True):
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    names = (["spec-artifact-graph.json"] if graph else []) + (
+        ["spec-artifact-graph-audit.json"] if audit else []
+    )
+    return OwnedOutputCommit(
+        Path.cwd(), [spec_dir / name for name in names],
+        f"chore: record graph evidence for {spec_dir.name}",
+    )
 
 
 @graph_app.command("export")
@@ -3595,6 +3613,16 @@ def _run_spec_verify(
         buffer_limit_bytes=config.buffer_limit_bytes,
         container_cli=container_cli,
     )
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    output_commit = OwnedOutputCommit(
+        workspace,
+        [spec_dir / name for name in (
+            "fulfillment-report.md", "fulfillment-gaps.md",
+            "verified-fulfillment-ledger.json",
+        )] + ([spec_dir / "tasks.md"] if reconcile and not dry_run else []),
+        f"chore: record verification evidence for {spec_dir.name}",
+    )
     result = AuthoritativeSpecVerifier(
         target=target,
         spec_dir=spec_dir,
@@ -3605,6 +3633,7 @@ def _run_spec_verify(
         reconcile=reconcile,
         dry_run=dry_run,
     )
+    output_commit.commit()
     typer.echo("evidence: authoritative sandbox")
     typer.echo(f"status: {result.status}")
     typer.echo(f"verify run: {result.verify_run_dir}")

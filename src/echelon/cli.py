@@ -689,6 +689,12 @@ def _cmd_init(
 ) -> None:
     echelon_cfg = project_dir / ".echelon" / "config.yml"
     runtime_dir = project_dir / ".echelon" / "runtime"
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    setup_commit = OwnedOutputCommit(
+        project_dir, [echelon_cfg, project_dir / ".gitignore"],
+        "chore: record Echelon workspace setup", preserve_dirty=True,
+    )
 
     from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
 
@@ -812,6 +818,7 @@ def _cmd_init(
         if result.returncode != 0:
             sys.exit(result.returncode)
 
+    setup_commit.commit()
     # Step 4: Confirm
     _banner("ECHELON INIT — COMPLETE", [
         ("Config",       str(echelon_cfg)),
@@ -17951,8 +17958,13 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         migrate_legacy_deploy_state,
     )
     from harness.phase_graph import load_workspace_phase_graph
+    from echelon.owned_output_commit import OwnedOutputCommit
 
     config_path = project_root / ".echelon" / "config.yml"
+    setup_commit = OwnedOutputCommit(
+        project_root, [config_path, project_root / ".gitignore", project_root / ".echelon/constitution.md"],
+        "chore: record Echelon workspace migration", preserve_dirty=True,
+    )
     legacy_config = project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not config_path.exists():
         if not legacy_config.is_file():
@@ -17999,6 +18011,7 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         print(f"✗ Could not migrate deployment state: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
+    setup_commit.commit()
     print("✓ Prosaic migration complete")
     print(f"  prose:   {project_root / '.echelon' / 'prosaic'}")
     print(f"  runtime: {runtime_root}")

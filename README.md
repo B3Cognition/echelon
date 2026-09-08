@@ -425,6 +425,15 @@ echelon graph view <spec> --no-open
 echelon graph export <spec> --format dot --output graph.dot
 ```
 
+In an initialized Git workspace, these `--write` commands commit their durable
+graph evidence, including failed-audit diagnostics. Standalone `spec verify`
+also commits its reports and ledger (and reconciled tasks when requested).
+Only the command's output paths are committed; unrelated staged work is left
+alone. Resolve existing edits to those outputs before regenerating them.
+Workspace setup/migration similarly commit clean configuration outputs, but
+preserve overlapping pre-existing edits with a warning. Runtime locks are
+excluded locally from Git, including when switching to older branches.
+
 Every graph records hashes for its canonical input set and its MemPalace audit
 receipts. The audits distinguish three stale transitions:
 
