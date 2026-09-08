@@ -26,6 +26,14 @@ class DiscoveryError(ValueError):
     """Closed diagnostic code; never include model or source values."""
 
 
+class DiscoveryStorageError(DiscoveryError):
+    """Local authority could not be read/persisted; not a model rejection."""
+
+
+class DiscoveryAdmissionError(DiscoveryError):
+    """A screened response violates the authorial contract."""
+
+
 def _closed_errors(function):
     @wraps(function)
     def call(*args, **kwargs):
@@ -33,8 +41,24 @@ def _closed_errors(function):
             return function(*args, **kwargs)
         except DiscoveryError:
             raise
-        except (ValueError, TypeError, KeyError, OSError, ReV2LedgerError, RecursionError):
+        except (OSError, ReV2LedgerError):
+            raise DiscoveryStorageError("discovery-storage-unavailable") from None
+        except (ValueError, TypeError, KeyError, RecursionError):
             raise DiscoveryError("invalid-discovery-input") from None
+    return call
+
+
+def _admission_errors(function):
+    @wraps(function)
+    def call(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except (DiscoveryStorageError, OSError, ReV2LedgerError):
+            raise DiscoveryStorageError("discovery-storage-unavailable") from None
+        except DiscoveryError as exc:
+            raise DiscoveryAdmissionError(str(exc)) from None
+        except (ValueError, TypeError, KeyError, RecursionError):
+            raise DiscoveryAdmissionError("invalid-discovery-input") from None
     return call
 
 
@@ -100,6 +124,12 @@ class DiscoveryBoundary:
         self._source_id, self._depth, self._origin = source_id, depth, origin_obligation_id
         self._objects, self._quarantine = objects, quarantine
         self._files = next(source.files for source in partition.sources if source.source_id == source_id)
+        self._source_ids = tuple(source.source_id for source in partition.sources)
+
+    def run_authority(self):
+        """Frozen snapshot/partition and declared sources; account may select a subset."""
+        return {"snapshot_id": self._snapshot_id, "partition_id": self._partition_id,
+                "security_policy_id": security_policy_id(), "source_ids": list(self._source_ids)}
 
     def _context(self, selectors, *, persist=True):
         if not isinstance(selectors, tuple) or len(selectors) > 64:
@@ -176,6 +206,10 @@ class DiscoveryBoundary:
         """Private controller storage; never include its location in model input."""
         return self._objects
 
+    def screen_output(self, payload: bytes) -> bytes:
+        """Screen before the controller retains even a failed provider capture."""
+        return screen_provider_output(payload, self._quarantine)
+
     @_closed_errors
     def binding_details(self, binding_id: str) -> dict:
         """Authenticate before exposing private scope metadata to the controller."""
@@ -186,13 +220,21 @@ class DiscoveryBoundary:
     def read_requests(self, binding_id: str, batch_id: str) -> list[dict]:
         """Reconstruct admission: a content address alone is not request authority."""
         context = _load(self.provider_bytes(binding_id))
-        receipt = _obj(_load(self._objects.read_blob(batch_id)),
-                       ("schema_version", "state", "binding_id", "requests"))
-        rows = _rows(receipt["requests"], 16)
-        response = {"schema_version": 1, "kind": "evidence_requests", "source_id": self._source_id,
-                    "requests": [{key: row[key] for key in ("obligation_id", "reason_class", "selector")}
-                                 for row in rows]}
-        expected_id = content_digest(self._request_receipt(binding_id, response, context))
+        receipt = _load(self._objects.read_blob(batch_id))
+        response_id = None
+        if receipt.get("schema_version") == 1:
+            _obj(receipt, ("schema_version", "state", "binding_id", "requests"))
+            rows = _rows(receipt["requests"], 16)
+            response = {"schema_version": 1, "kind": "evidence_requests", "source_id": self._source_id,
+                        "requests": [{key: row[key] for key in ("obligation_id", "reason_class", "selector")} for row in rows]}
+        elif receipt.get("schema_version") == 2:
+            _obj(receipt, ("schema_version", "state", "binding_id", "requests", "authorial_response_id"))
+            rows = _rows(receipt["requests"], 16)
+            response_id = receipt["authorial_response_id"]
+            response = _load(self._objects.read_blob(response_id))
+        else:
+            raise DiscoveryError("invalid-discovery-receipt-version")
+        expected_id = content_digest(self._request_receipt(binding_id, response, context, response_id))
         if expected_id != batch_id:
             raise DiscoveryError("request-receipt-mismatch")
         return rows
@@ -247,13 +289,25 @@ class DiscoveryBoundary:
         return outcome
 
     @_closed_errors
-    def admit(self, binding_id: str, output: bytes) -> str:
+    def admit(self, binding_id: str, output: bytes, *, capture_bound: bool = False) -> str:
         # This gate must precede any ordinary response retention or diagnostics.
         safe_output = screen_provider_output(output, self._quarantine)
         context = _load(self.provider_bytes(binding_id))
+        if type(capture_bound) is not bool:
+            raise DiscoveryError("invalid-discovery-admission-mode")
+        return self._admit_payload(binding_id, safe_output, context, capture_bound)
+
+    @_admission_errors
+    def _admit_payload(self, binding_id, safe_output, context, capture_bound):
         proposal = _load(safe_output)
+        # Passive normalized identity stays stable under row/key reordering.
+        # Execution capture receipts additionally bind the exact response bytes.
+        response_id = content_digest(safe_output) if capture_bound else None
         if isinstance(proposal, dict) and proposal.get("kind") == "evidence_requests":
-            return self._admit_requests(binding_id, proposal, context)
+            receipt = self._request_receipt(binding_id, proposal, context, response_id)
+            if capture_bound:
+                self._objects.put_blob(safe_output)
+            return self._objects.put_blob(receipt)
         _obj(proposal, ("schema_version", "kind", "source_id", "domains", "subjects", "inventory", "obligations", "questions"))
         if (type(proposal["schema_version"]) is not int or proposal["schema_version"] != 1
                 or proposal["kind"] != "discovery_proposal" or proposal["source_id"] != self._source_id):
@@ -324,19 +378,19 @@ class DiscoveryBoundary:
         proposal_bytes = canonical_json_bytes(normalized)
         proposal_id = content_digest(proposal_bytes)
         result = canonical_json_bytes({
-            "schema_version": 1, "state": "proposal_validated", "binding_id": binding_id,
+            "schema_version": 2 if capture_bound else 1, "state": "proposal_validated", "binding_id": binding_id,
+            **({"authorial_response_id": response_id} if capture_bound else {}),
             "proposal_id": proposal_id, "review_required": True,
             "unassigned_paths": sorted(path for path, row in inventory.items() if row["owner"] is None),
             "subject_ids": {key: content_digest({"binding_id": binding_id, "proposal_id": proposal_id,
                                                   "subject_key": key}) for key in sorted(subjects)},
         })
+        if capture_bound:
+            self._objects.put_blob(safe_output)
         self._objects.put_blob(proposal_bytes)
         return self._objects.put_blob(result)
 
-    def _admit_requests(self, binding_id, response, context):
-        return self._objects.put_blob(self._request_receipt(binding_id, response, context))
-
-    def _request_receipt(self, binding_id, response, context):
+    def _request_receipt(self, binding_id, response, context, response_id):
         _obj(response, ("schema_version", "kind", "source_id", "requests"))
         if (type(response["schema_version"]) is not int or response["schema_version"] != 1
                 or response["source_id"] != self._source_id):
@@ -366,6 +420,7 @@ class DiscoveryBoundary:
                                "state": "pending" if available else "unavailable",
                                "reason_code": None if available else "unavailable-evidence"})
         return canonical_json_bytes({
-            "schema_version": 1, "state": "evidence_requested", "binding_id": binding_id,
+            "schema_version": 1 if response_id is None else 2, "state": "evidence_requested", "binding_id": binding_id,
+            **({"authorial_response_id": response_id} if response_id is not None else {}),
             "requests": sorted(normalized, key=lambda row: row["request_id"]),
         })

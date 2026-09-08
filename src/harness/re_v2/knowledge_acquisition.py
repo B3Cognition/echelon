@@ -272,42 +272,47 @@ class DiscoveryAcquisition:
     @_closed_errors
     def provider_bytes(self) -> bytes:
         with protocol_22_run_lock(self.paths):
-            state = self.ledger.replay()
-            if state.progress.pending_id is not None:
-                raise DiscoveryError("evidence-expansion-pending")
-            base = self.boundary.provider_bytes(state.progress.binding_id)
-            outcomes = [state.outcomes[oid] for oid in state.outcome_ids]
-            context = _public_context(base, outcomes)
-            if self.objects.read_blob(state.context_id) != context:
-                raise DiscoveryError("discovery-expanded-context-mismatch")
-            return context
+            return self._provider_bytes_locked()
+
+    def _provider_bytes_locked(self):
+        state = self.ledger.replay()
+        if state.progress.pending_id is not None:
+            raise DiscoveryError("evidence-expansion-pending")
+        base = self.boundary.provider_bytes(state.progress.binding_id)
+        outcomes = [state.outcomes[oid] for oid in state.outcome_ids]
+        context = _public_context(base, outcomes)
+        if self.objects.read_blob(state.context_id) != context:
+            raise DiscoveryError("discovery-expanded-context-mismatch")
+        return context
 
     @_closed_errors
     def resolve(self, binding_id: str, batch_id: str) -> DiscoveryProgress:
         with protocol_22_run_lock(self.paths):
-            state = self.ledger.replay()
-            rows = self.boundary.read_requests(binding_id, batch_id)
-            if batch_id in state.completed:
-                # Reuse is a no-op on the active pointer. Never hand a caller a
-                # historical revision/counter as though it were current state.
+            return self._resolve_locked(binding_id, batch_id)
+
+    def _resolve_locked(self, binding_id, batch_id):
+        state = self.ledger.replay()
+        rows = self.boundary.read_requests(binding_id, batch_id)
+        if batch_id in state.completed:
+            # A retry must return current progress, never an old counter.
+            return state.progress
+        if state.pending is not None:
+            if batch_id != state.pending["batch_id"] or binding_id != state.pending["binding_id"]:
+                raise DiscoveryError("evidence-expansion-pending")
+        else:
+            if binding_id != state.progress.binding_id:
+                raise DiscoveryError("stale-discovery-binding")
+            if all(_semantic_key(row) in state.reusable() for row in rows):
                 return state.progress
-            if state.pending is not None:
-                if batch_id != state.pending["batch_id"] or binding_id != state.pending["binding_id"]:
-                    raise DiscoveryError("evidence-expansion-pending")
-            else:
-                if binding_id != state.progress.binding_id:
-                    raise DiscoveryError("stale-discovery-binding")
-                if all(_semantic_key(row) in state.reusable() for row in rows):
-                    return state.progress
-                if state.progress.rounds >= 2:
-                    raise DiscoveryError("evidence-expansion-limit")
-                intent = {"schema_version": 1, "kind": "discovery_expansion_intent",
-                          "scope_id": content_digest(self.opening), "binding_id": binding_id, "batch_id": batch_id,
-                          "previous_revision_id": state.progress.revision_id, "round": state.progress.rounds + 1,
-                          "request_keys": _request_keys(self.opening, state.progress.revision_id, rows)}
-                self._record("expansion_requested", self.objects.put_blob(canonical_json_bytes(intent)))
-                self._fault("request_recorded")
-            return self._recover_locked()
+            if state.progress.rounds >= 2:
+                raise DiscoveryError("evidence-expansion-limit")
+            intent = {"schema_version": 1, "kind": "discovery_expansion_intent",
+                      "scope_id": content_digest(self.opening), "binding_id": binding_id, "batch_id": batch_id,
+                      "previous_revision_id": state.progress.revision_id, "round": state.progress.rounds + 1,
+                      "request_keys": _request_keys(self.opening, state.progress.revision_id, rows)}
+            self._record("expansion_requested", self.objects.put_blob(canonical_json_bytes(intent)))
+            self._fault("request_recorded")
+        return self._recover_locked()
 
     @_closed_errors
     def recover(self) -> DiscoveryProgress:

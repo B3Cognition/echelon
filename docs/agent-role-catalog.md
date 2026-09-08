@@ -1,7 +1,7 @@
 # Echelon Agent Role Catalog
 
 This catalog reconciles Echelon's public architecture with its canonical
-Prosaic prose and runtime workflow. It distinguishes roles dispatched by the
+Prosaic prose and runtime workflow. It distinguishes roles referenced by the
 structured workflow graph from roles invoked directly by controllers, commands,
 or supporting workflows.
 
@@ -15,18 +15,20 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Neutral Prosaic agent roles | 63 | Canonical subagent files with neutral `echelon.*` identities |
-| Workflow-dispatched roles | 38 | Neutral IDs used by structured `agent` or nested dispatch nodes |
+| Neutral Prosaic agent roles | 64 | Canonical subagent files with neutral `echelon.*` identities |
+| Workflow-referenced roles | 39 | Neutral IDs used by structured `agent` or nested dispatch contracts, including one disabled internal role |
 | Direct-use roles | 25 | Available roles invoked outside ordinary workflow agent nodes |
 | Support prose files | 14 | Appendices and templates that are not independent agent entry points |
 
-Every workflow-dispatched ID resolves to a canonical Prosaic subagent. Direct-use
+Every workflow-referenced ID resolves to a canonical Prosaic subagent. RE-DISCOVERER
+is an internal offline contract with installed routing disabled; the other 38
+workflow-referenced roles retain their existing routing. Direct-use
 does not mean unused: COMMANDER, for example, is invoked by the Python controller
 for judgment and routing rather than declared as an ordinary agent phase.
 
 ## Layer Inventory
 
-| Layer | Prosaic roles | Workflow-dispatched | Direct-use |
+| Layer | Prosaic roles | Workflow-referenced | Direct-use |
 |---|---:|---:|---:|
 | Control | 7 | 3 | 4 |
 | Exploration | 7 | 6 | 1 |
@@ -35,9 +37,9 @@ for judgment and routing rather than declared as an ordinary agent phase.
 | Specialists | 6 | 6 | 0 |
 | Learning | 8 | 0 | 8 |
 | Build | 15 | 10 | 5 |
-| Reverse engineering | 15 | 9 | 6 |
+| Reverse engineering | 16 | 10 | 6 |
 
-## Workflow-Dispatched Roles
+## Workflow-Referenced Roles
 
 These roles occur in structured dispatch fields in
 `runtime/workflow/definition.yaml`.
@@ -50,7 +52,7 @@ These roles occur in structured dispatch fields in
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
 | Build | IMPLEMENTER, SPEC GUARD, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, DOCS VERIFIER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER |
-| Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER |
+| Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER, RE-DISCOVERER (disabled internal contract) |
 
 ## Direct-Use Roles
 
