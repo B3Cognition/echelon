@@ -33,6 +33,10 @@ independent real-model review. Passive admission receipts retain
 Neither path can activate a plan, grant debt acceptance or mark analysis complete.
 Production transport isolation, pre-log screening, bounded execution and actual
 independent-invocation certification remain required before live routing.
+The Codex adapter's opt-in `run_prompt_screened` supports bounded, non-streaming
+Echelon-side response screening with the existing RE quarantine callback. It does
+not certify native Codex logs/storage, tools-free execution, complete-wire token
+bounds or invocation independence, and is not wired into this offline operation.
 
 ## Authorial response
 

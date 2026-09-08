@@ -22,6 +22,12 @@ before returning authorial JSON bytes and normalized usage to the controller.
 The production backend is not enabled by this increment. Offline scripted backends
 exercise the controller seam; proving production tool isolation, ceilings and
 pre-log screening is still required before live routing.
+The opt-in Codex adapter `run_prompt_screened` is a capture prerequisite: it
+bounds and screens Echelon's stdout/stderr capture without streaming it or using
+a last-message file. Its trusted screening callback can use the existing RE
+quarantine. This does not prove native Codex storage safety, tools-free execution,
+full-request token bounds or independent invocation; do not connect it to live RE
+until those gates are verified. Ordinary adapter execution is unchanged.
 The current stored contract accepts only `offline-scripted` execution and
 `utf8-byte-upper-bound` input accounting. The controller's byte check is a necessary
 lower bound, not validation of an exact-token or fully framed production request.

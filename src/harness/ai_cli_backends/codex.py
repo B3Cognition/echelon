@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -8,9 +9,13 @@ import tempfile
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.ai_cli_backends.codex_capture import (
+    CodexCaptureError,
+    capture_codex_pipes,
+)
 from harness.ai_cli_backends.claude import (
     _sandbox_exec_path,
     _workspace_sandbox_profile,
@@ -41,11 +46,39 @@ class CodexCliBackend:
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
         return self._run_codex(request, use_final_message=True)
 
+    def run_prompt_screened(
+        self,
+        request: CliRunRequest,
+        *,
+        screen_output: Callable[[bytes], bytes],
+        max_capture_bytes: int,
+    ) -> CliRunResult:
+        timeout = request.timeout_s
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+            or isinstance(max_capture_bytes, bool)
+            or not isinstance(max_capture_bytes, int)
+            or max_capture_bytes <= 0
+            or not callable(screen_output)
+        ):
+            return _screened_failure("invalid_request")
+        return self._run_codex(
+            request,
+            use_final_message=False,
+            screen_output=screen_output,
+            max_capture_bytes=max_capture_bytes,
+        )
+
     def _run_codex(
         self,
         request: CliRunRequest,
         *,
         use_final_message: bool,
+        screen_output: Callable[[bytes], bytes] | None = None,
+        max_capture_bytes: int | None = None,
     ) -> CliRunResult:
         final_path = ""
         if use_final_message:
@@ -183,13 +216,29 @@ class CodexCliBackend:
                 ),
                 *cmd,
             ]
-        proc = subprocess.Popen(
-            cmd,
-            cwd=request.cwd,
-            env=dict(request.env),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=request.cwd,
+                env=dict(request.env),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except Exception:
+            if screen_output is not None:
+                return _screened_failure("process_start_error")
+            raise
+
+        if screen_output is not None:
+            assert max_capture_bytes is not None
+            return _run_screened_process(
+                proc,
+                screen_output=screen_output,
+                max_capture_bytes=max_capture_bytes,
+                timeout_s=float(request.timeout_s),
+                request_model=model,
+                isolated_user_config=isolated_user_config,
+            )
 
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -264,6 +313,253 @@ class CodexCliBackend:
             timed_out=timed_out,
             metadata=metadata,
         )
+
+
+_SCREENED_FAILURE_TEXT = "screened Codex capture failed"
+
+
+def _screened_failure(reason: str, *, timed_out: bool = False) -> CliRunResult:
+    return CliRunResult(
+        exit_code=124 if timed_out else 125,
+        stdout="",
+        stderr=_SCREENED_FAILURE_TEXT,
+        timed_out=timed_out,
+        metadata={"failure_reason": reason},
+    )
+
+
+def _screen_identical(
+    screen_output: Callable[[bytes], bytes], value: bytes
+) -> bool:
+    try:
+        screened = screen_output(value)
+    except Exception:
+        return False
+    return type(screened) is bytes and screened == value
+
+
+class _JsonObjectPairs(list[tuple[str, object]]):
+    """JSON object representation that retains duplicate keys until screening."""
+
+
+class _DuplicateJsonKey(ValueError):
+    pass
+
+
+def _screened_json_event(
+    raw_record: bytes,
+    screen_output: Callable[[bytes], bytes],
+) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        decoded = json.loads(
+            raw_record.decode("utf-8", errors="strict"),
+            object_pairs_hook=_JsonObjectPairs,
+        )
+        decoded_record = _encode_json_preserving_pairs(decoded)
+    except (UnicodeError, ValueError, TypeError, OverflowError, RecursionError):
+        return None, "malformed_capture"
+    if not _screen_identical(screen_output, decoded_record):
+        return None, "screen_rejected"
+    try:
+        event = _unique_json_value(decoded)
+    except (_DuplicateJsonKey, RecursionError):
+        return None, "malformed_capture"
+    if not isinstance(event, dict):
+        return None, "malformed_capture"
+    return event, None
+
+
+def _encode_json_preserving_pairs(value: object) -> bytes:
+    if isinstance(value, _JsonObjectPairs):
+        members = (
+            json.dumps(key, ensure_ascii=False).encode("utf-8")
+            + b":"
+            + _encode_json_preserving_pairs(member)
+            for key, member in value
+        )
+        return b"{" + b",".join(members) + b"}"
+    if isinstance(value, list):
+        return b"[" + b",".join(_encode_json_preserving_pairs(item) for item in value) + b"]"
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _unique_json_value(value: object) -> object:
+    if isinstance(value, _JsonObjectPairs):
+        result: dict[str, object] = {}
+        for key, member in value:
+            if key in result:
+                raise _DuplicateJsonKey
+            result[key] = _unique_json_value(member)
+        return result
+    if isinstance(value, list):
+        return [_unique_json_value(item) for item in value]
+    return value
+
+
+def _run_screened_process(
+    proc: subprocess.Popen,
+    *,
+    screen_output: Callable[[bytes], bytes],
+    max_capture_bytes: int,
+    timeout_s: float,
+    request_model: str | None,
+    isolated_user_config: bool,
+) -> CliRunResult:
+    try:
+        captured = capture_codex_pipes(
+            proc,
+            max_capture_bytes=max_capture_bytes,
+            timeout_s=timeout_s,
+        )
+    except CodexCaptureError as exc:
+        return _screened_failure(exc.reason, timed_out=exc.timed_out)
+
+    stdout = captured.stdout
+    stderr = captured.stderr
+    if not _screen_identical(screen_output, stdout):
+        return _screened_failure("screen_rejected")
+    if not _screen_identical(screen_output, stderr):
+        return _screened_failure("screen_rejected")
+
+    try:
+        text = stdout.decode("utf-8", errors="strict")
+        stderr.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return _screened_failure("malformed_capture")
+
+    final_text: str | None = None
+    pending_modern_answer: str | None = None
+    modern_turn_unfinished = False
+    token_usage: int | None = None
+    token_usage_details: dict[str, int] = {}
+    for raw_record in stdout.splitlines():
+        if not raw_record.strip():
+            continue
+        if not _screen_identical(screen_output, raw_record):
+            return _screened_failure("screen_rejected")
+        event, parse_failure = _screened_json_event(raw_record, screen_output)
+        if parse_failure is not None:
+            return _screened_failure(parse_failure)
+        assert event is not None
+        if not _screened_event_is_inspectable(event):
+            return _screened_failure("malformed_capture")
+
+        event_type = event.get("type")
+        item = event.get("item")
+        if event_type in {"error", "turn.failed"} or (
+            isinstance(item, dict) and item.get("type") == "error"
+        ):
+            return _screened_failure("provider_event_failure")
+        if isinstance(item, dict) and item.get("type") in {
+            "command_execution",
+            "file_change",
+            "mcp_tool_call",
+            "web_search",
+        }:
+            return _screened_failure("tool_event")
+        if event_type == "turn.started":
+            pending_modern_answer = None
+            modern_turn_unfinished = True
+        if event_type == "item.completed" and isinstance(item, dict):
+            if item.get("type") == "agent_message":
+                candidate = item.get("text")
+                if isinstance(candidate, str):
+                    pending_modern_answer = candidate
+                    modern_turn_unfinished = True
+
+        payload = event.get("payload")
+        payload_type = payload.get("type") if isinstance(payload, dict) else None
+        if event_type == "event_msg" and isinstance(payload_type, str):
+            if _legacy_tool_event(payload_type):
+                return _screened_failure("tool_event")
+            if _legacy_failure_event(payload_type):
+                return _screened_failure("provider_event_failure")
+            if payload_type == "task_complete":
+                candidate = payload.get("last_agent_message")
+                if isinstance(candidate, str):
+                    final_text = candidate
+                    pending_modern_answer = None
+                    modern_turn_unfinished = False
+
+        if event_type == "turn.completed":
+            final_text = pending_modern_answer
+            pending_modern_answer = None
+            modern_turn_unfinished = False
+            token_usage_details = _extract_token_usage_details(event.get("usage"))
+            token_usage = token_usage_details.get("total_tokens")
+        elif event_type == "event_msg" and payload_type == "token_count":
+            assert isinstance(payload, dict)
+            token_usage_details = _extract_token_usage_details(payload.get("info"))
+            token_usage = token_usage_details.get("total_tokens")
+
+    if captured.returncode != 0:
+        return _screened_failure("provider_exit")
+    if final_text is None or modern_turn_unfinished:
+        return _screened_failure("missing_final_answer")
+    try:
+        final_bytes = final_text.encode("utf-8")
+    except UnicodeEncodeError:
+        return _screened_failure("malformed_capture")
+    if not _screen_identical(screen_output, final_bytes):
+        return _screened_failure("screen_rejected")
+
+    metadata: dict[str, object] = {
+        "task_complete": True,
+        "request_model": request_model or "",
+        "isolated_user_config": isolated_user_config,
+    }
+    if token_usage_details:
+        metadata["token_usage_details"] = token_usage_details
+    return CliRunResult(
+        exit_code=0,
+        stdout=final_text,
+        stderr="",
+        token_usage=token_usage,
+        metadata=metadata,
+    )
+
+
+def _screened_event_is_inspectable(event: dict[object, object]) -> bool:
+    event_type = event.get("type")
+    if not isinstance(event_type, str) or not event_type:
+        return False
+    if "item" in event:
+        item = event.get("item")
+        if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+            return False
+    if event_type in {"item.started", "item.completed"}:
+        item = event.get("item")
+        if not isinstance(item, dict):
+            return False
+        if event_type == "item.completed" and item.get("type") == "agent_message":
+            return isinstance(item.get("text"), str)
+        return True
+    if event_type == "turn.completed":
+        usage = event.get("usage")
+        return usage is None or isinstance(usage, dict)
+    if event_type == "event_msg":
+        payload = event.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("type"), str):
+            return False
+        if payload.get("type") == "task_complete":
+            return isinstance(payload.get("last_agent_message"), str)
+        return True
+    return True
+
+
+def _legacy_tool_event(payload_type: str) -> bool:
+    return payload_type == "tool" or payload_type.startswith(
+        ("exec_command_", "tool_", "mcp_tool_", "web_search_", "apply_patch_")
+    )
+
+
+def _legacy_failure_event(payload_type: str) -> bool:
+    return payload_type == "error" or payload_type.endswith("_error")
 
 
 def _codex_model_for_request(request: CliRunRequest) -> str | None:
