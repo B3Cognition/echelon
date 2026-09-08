@@ -1,6 +1,6 @@
 # General-purpose RE knowledge-quality repair
 
-Status: M1 containment implemented; M2 safe-evidence foundation in progress. Not release-ready.
+Status: M1 containment implemented; M2 safe evidence and discovery admission implemented, controller integration pending. Not release-ready.
 Date: 2026-09-08
 Decision owner: Echelon maintainer.
 

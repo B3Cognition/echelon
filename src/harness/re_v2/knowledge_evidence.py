@@ -57,6 +57,7 @@ def security_policy_id() -> str:
         "screen_bytes": _MAX_SCREEN_BYTES,
         "range_bytes": _MAX_RANGE_BYTES,
         "context_bytes": _MAX_CONTEXT_BYTES,
+        "output_json_encoding": "utf-8-sig",
     })
 
 
@@ -257,7 +258,9 @@ def screen_provider_output(payload: bytes, quarantine: ObjectStore) -> bytes:
     if not isinstance(payload, bytes) or len(payload) > _MAX_CONTEXT_BYTES:
         raise KnowledgeEvidenceError("provider-output-bound")
     try:
-        text = payload.decode("utf-8")
+        # Match JSON byte decoding: a UTF-8 BOM must not suppress inspection of
+        # escaped values that a downstream JSON parser will subsequently expose.
+        text = payload.decode("utf-8-sig")
         unsafe = bool(_secret_spans(text))
 
         def screen_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
