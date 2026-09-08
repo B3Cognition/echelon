@@ -16,6 +16,7 @@ from harness.stacks.resolver import (
 from harness.stacks.schema import (
     StackCoverageObserver,
     StackDefinition,
+    StackLocalRunner,
     StackProvisioner,
     StackProvisionerSatisfier,
     StackRunnability,
@@ -269,6 +270,68 @@ def test_resolve_runnability_rejects_incompatible_runners() -> None:
 
 
 @pytest.mark.unit
+def test_resolve_runnability_merges_stack_owned_local_runner() -> None:
+    definitions = {
+        "browser": _stack(
+            "browser",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(profiles=("macos-compose-v1",)),
+            ),
+        ),
+        "persistence": _stack(
+            "persistence",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    allowed_services=("postgres",),
+                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
+                ),
+            ),
+        ),
+    }
+
+    resolved = resolve_stacks(["browser", "persistence"], definitions)
+
+    assert resolved.runnability.local_runner.profiles == ("macos-compose-v1",)
+    assert resolved.runnability.local_runner.allowed_services == ("postgres",)
+    assert resolved.runnability.local_runner.environment_bindings == (
+        ("DATABASE_URL", "postgres_url"),
+    )
+    assert resolved.runnability.local_runner.sources == ("browser", "persistence")
+
+
+@pytest.mark.unit
+def test_resolve_runnability_rejects_conflicting_local_environment_binding() -> None:
+    definitions = {
+        "primary": _stack(
+            "primary",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
+                )
+            ),
+        ),
+        "conflict": _stack(
+            "conflict",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    environment_bindings=(("DATABASE_URL", "browser_base_url"),),
+                )
+            ),
+        ),
+    }
+
+    with pytest.raises(
+        StackConflictError,
+        match="local runner environment binding conflict",
+    ):
+        resolve_stacks(["primary", "conflict"], definitions)
+
+
+@pytest.mark.unit
 def test_resolved_stack_contract_hash_is_selection_order_stable() -> None:
     definitions = {
         "web": _stack(
@@ -301,6 +364,39 @@ def test_resolved_stack_contract_hash_is_selection_order_stable() -> None:
 
 
 @pytest.mark.unit
+def test_resolved_stack_contract_hash_changes_with_local_runner_contract() -> None:
+    without_local_runner = resolve_stacks(
+        ["browser"],
+        {
+            "browser": _stack(
+                "browser",
+                provides={"web_app.framework": "vite"},
+                runnability=StackRunnability(policy="advisory"),
+            )
+        },
+    )
+    with_local_runner = resolve_stacks(
+        ["browser"],
+        {
+            "browser": _stack(
+                "browser",
+                provides={"web_app.framework": "vite"},
+                runnability=StackRunnability(
+                    policy="advisory",
+                    local_runner=StackLocalRunner(
+                        profiles=("macos-compose-v1",),
+                    )
+                ),
+            )
+        },
+    )
+
+    assert resolved_stack_contract_sha256(without_local_runner) != (
+        resolved_stack_contract_sha256(with_local_runner)
+    )
+
+
+@pytest.mark.unit
 def test_rendered_resolution_explains_runnability_obligations() -> None:
     resolved = resolve_stacks(
         ["web"],
@@ -329,6 +425,12 @@ def test_rendered_resolution_explains_runnability_obligations() -> None:
         "capabilities": ["start", "primary_journey"],
         "required_observations": ["browser_dom"],
         "sources": ["web"],
+        "local_runner": {
+            "profiles": [],
+            "allowed_services": [],
+            "environment_bindings": {},
+            "sources": [],
+        },
     }
     assert "## User Runnability" in markdown
     assert "Policy: `required`" in markdown

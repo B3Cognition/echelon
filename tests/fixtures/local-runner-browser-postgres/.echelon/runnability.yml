@@ -1,0 +1,89 @@
+schema_version: 2
+enabled: true
+install_commands:
+  - pnpm install --frozen-lockfile
+bootstrap_commands:
+  - pnpm migrate
+start_commands:
+  - pnpm start
+stop_commands:
+  - pnpm stop
+readiness:
+  url: http://127.0.0.1:${ECHELON_PORT}/health/ready
+  timeout_ms: 30000
+identity:
+  command: node scripts/issue-session.mjs
+  stdout_json:
+    token: ECHELON_SESSION_TOKEN
+primary_journey:
+  kind: browser
+  url: ${ECHELON_BASE_URL}
+  requirements: [FR-001]
+  real_services_required: [web, postgres]
+  session_storage:
+    echelonSessionToken: ${ECHELON_SESSION_TOKEN}
+  steps:
+    - action: goto
+      path: /
+  observations:
+    - id: marker-visible
+      kind: browser_dom
+      selector: '[data-marker="${ECHELON_MARKER}"]'
+      expectation: visible
+    - id: marker-persisted
+      kind: postgres_query
+      statement: select marker from markers where marker = $1
+      parameters: ['${ECHELON_MARKER}']
+      expectation: one_row_exact
+persistence_probe:
+  restart_commands: [pnpm start]
+  observations: [marker-visible, marker-persisted]
+local_journey:
+  prerequisites: [Docker Desktop or Podman, pnpm]
+  provision_commands: [docker compose up -d postgres]
+  readiness_commands: [docker compose exec -T postgres pg_isready]
+  prepare_commands: [pnpm migrate]
+  verify_commands: [pnpm db:probe]
+  start_commands: [pnpm start]
+  session_commands: [pnpm issue-session]
+  open_urls: ['http://127.0.0.1:${ECHELON_PORT}']
+  boundary_probes:
+    - id: postgres-from-app
+      service: postgres
+      command: pnpm db:probe
+    - id: web-from-browser
+      service: web
+      command: curl -fsS http://127.0.0.1:${ECHELON_PORT}/health/ready
+  stop_commands: [pnpm stop]
+  cleanup_commands: [docker compose down -v]
+  execution:
+    profile: macos-compose-v1
+    compose:
+      file: docker-compose.yml
+      services: [postgres]
+    lifecycle:
+      install:
+        - [pnpm, install, --frozen-lockfile]
+      bootstrap:
+        - [pnpm, migrate]
+      start:
+        - [pnpm, start]
+      stop:
+        - [pnpm, stop]
+    manual_equivalents:
+      install:
+        - field: install_commands
+          index: 0
+          transform: same_argv
+      bootstrap:
+        - field: bootstrap_commands
+          index: 0
+          transform: same_argv
+      start:
+        - field: local_journey.start_commands
+          index: 0
+          transform: same_argv
+      stop:
+        - field: stop_commands
+          index: 0
+          transform: same_argv

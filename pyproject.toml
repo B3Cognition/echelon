@@ -70,6 +70,7 @@ markers = [
   "docker: Tests that require Docker daemon",
   "docker_image(name): Tests that require a local Docker image",
   "slow: Tests that take > 30s",
+  "macos_engine: Explicit real-engine macOS local runner acceptance",
 ]
 
 [tool.hatch.metadata]

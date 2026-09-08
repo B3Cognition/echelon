@@ -53,6 +53,8 @@ delivery_app = typer.Typer(
         "  init\n"
         "  target <spec_id>\n"
         "  status [<spec_id>] [--strategy <s>]\n"
+        "  verify-local <spec_id> [--target <target-id>] [--engine auto|docker|podman]\n"
+        "  cleanup-local <local-run-id>\n"
         "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
         "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
         "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
@@ -3818,6 +3820,60 @@ def delivery_status(
     if json_output:
         args.append("--json")
     command(args)
+
+
+@delivery_app.command("verify-local")
+def delivery_verify_local(
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Converged spec to verify locally."),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Declared target id when the spec has multiple targets.",
+    ),
+    engine: str = typer.Option(
+        "auto",
+        "--engine",
+        help="Local macOS engine: auto, docker, or podman.",
+    ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Confirm the displayed host-local action plan.",
+    ),
+    keep_on_failure: bool = typer.Option(
+        False,
+        "--keep-on-failure",
+        help="Leave only journalled resources for explicit cleanup after a failure.",
+    ),
+) -> None:
+    """Explicit macOS verification; it never changes delivery landing authority."""
+    from echelon import cli as legacy_cli
+
+    try:
+        legacy_cli._cmd_delivery_verify_local(
+            spec_id,
+            target_id=target,
+            engine=engine,
+            assume_yes=assume_yes,
+            keep_on_failure=keep_on_failure,
+        )
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@delivery_app.command("cleanup-local")
+def delivery_cleanup_local(
+    local_run_id: str = typer.Argument(..., metavar="LOCAL_RUN_ID", help="Journal-bound run id to recover."),
+) -> None:
+    """Clean one interrupted local verification using its ownership journal."""
+    from echelon import cli as legacy_cli
+
+    try:
+        legacy_cli._cmd_delivery_cleanup_local(local_run_id)
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @delivery_app.command(

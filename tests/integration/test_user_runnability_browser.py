@@ -78,8 +78,6 @@ export const chromium = {
 @pytest.mark.integration
 def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path) -> None:
     _write_fake_playwright_test(tmp_path)
-    helper = tmp_path / HELPER.name
-    helper.write_bytes(HELPER.read_bytes())
     plan = tmp_path / "plan.json"
     plan.write_text(
         json.dumps(
@@ -107,7 +105,7 @@ def test_browser_helper_executes_typed_steps_and_dom_observation(tmp_path: Path)
     )
 
     result = subprocess.run(
-        [_node(), str(helper), str(plan)],
+        [_node(), str(HELPER), str(plan)],
         cwd=tmp_path,
         capture_output=True,
         text=True,

@@ -78,6 +78,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "docker: Tests that require Docker daemon")
     config.addinivalue_line("markers", "docker_image(name): Tests that require a local Docker image")
     config.addinivalue_line("markers", "slow: Tests that take > 30s")
+    config.addinivalue_line("markers", "macos_engine: Explicit real-engine macOS local runner acceptance")
 
 
 # --- Auto-deselect tests whose external substrate is unavailable ---

@@ -47,6 +47,16 @@ def resolved_to_dict(resolved: ResolvedStacks) -> dict:
                 resolved.runnability.required_observations
             ),
             "sources": list(resolved.runnability.sources),
+            "local_runner": {
+                "profiles": list(resolved.runnability.local_runner.profiles),
+                "allowed_services": list(
+                    resolved.runnability.local_runner.allowed_services
+                ),
+                "environment_bindings": dict(
+                    resolved.runnability.local_runner.environment_bindings
+                ),
+                "sources": list(resolved.runnability.local_runner.sources),
+            },
         },
         "coverage_observers": [
             {
@@ -115,6 +125,24 @@ def render_resolved_markdown(resolved: ResolvedStacks) -> str:
                 f"- Sources: {', '.join(resolved.runnability.sources)}",
             ]
         )
+        local_runner = resolved.runnability.local_runner
+        if local_runner.sources:
+            lines.extend(
+                [
+                    "- Local runner profiles: "
+                    + ", ".join(local_runner.profiles),
+                    "- Local runner services: "
+                    + (", ".join(local_runner.allowed_services) or "none"),
+                    "- Local runner bindings: "
+                    + (
+                        ", ".join(
+                            f"{name}={source}"
+                            for name, source in local_runner.environment_bindings
+                        )
+                        or "none"
+                    ),
+                ]
+            )
 
     if resolved.coverage_observers:
         lines.extend(["", "## Coverage Observers", ""])

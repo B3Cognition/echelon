@@ -495,6 +495,30 @@ def resolve_land_repo(project_dir: Path, spec_dir: Path) -> Path:
     return target
 
 
+def read_landed_candidate_commit(
+    workspace_root: Path,
+    spec_id: str,
+    target_id: str,
+) -> str | None:
+    """Return the current landed target revision for an explicitly landed spec.
+
+    The spec lifecycle status is the canonical landing record.  This helper is
+    deliberately read-only: it neither refreshes Git nor changes a checkout,
+    and the caller must still prove that this revision has the sandbox-approved
+    content tuple before executing it locally.
+    """
+    del target_id  # Target routing is canonicalized by the spec's target list.
+    root = Path(workspace_root).expanduser().resolve(strict=True)
+    spec_dir = find_spec_dir(spec_id, root)
+    if spec_dir is None:
+        return None
+    status = str(read_frontmatter(spec_dir).get("status") or "").strip().lower()
+    if status != "landed":
+        return None
+    target = resolve_land_repo(root, spec_dir)
+    return _current_git_commit(target)
+
+
 def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     """Return the unambiguous newest legacy harness iteration for a spec.
 

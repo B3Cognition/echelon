@@ -26,6 +26,7 @@ from harness.stacks.provisioning import (
 )
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
 from harness.stacks.resolver import (
+    ResolvedLocalRunner,
     ResolvedRunnability,
     ResolvedStackProvisioner,
     ResolvedStacks,
@@ -33,6 +34,7 @@ from harness.stacks.resolver import (
     resolve_stacks,
 )
 from harness.stacks.schema import (
+    StackLocalRunner,
     StackProvisioner,
     StackProvisionerSatisfier,
     StackRunnability,
@@ -42,6 +44,7 @@ __all__ = [
     "DetectedStack",
     "ResolvedStacks",
     "ResolvedRunnability",
+    "ResolvedLocalRunner",
     "ResolvedStackProvisioner",
     "StackDecision",
     "StackDetectionReport",
@@ -50,6 +53,7 @@ __all__ = [
     "StackProvisioner",
     "StackProvisionerSatisfier",
     "StackRunnability",
+    "StackLocalRunner",
     "ProvisioningError",
     "ProvisioningStatus",
     "detect_stacks",

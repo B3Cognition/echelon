@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from harness.stacks.errors import StackValidationError
-from harness.stacks.schema import StackRunnability, parse_stack_definition
+from harness.stacks.schema import (
+    StackLocalRunner,
+    StackRunnability,
+    parse_stack_definition,
+)
 
 
 VALID_STACK = {
@@ -115,6 +119,52 @@ def test_stack_schema_parses_required_linux_runnability() -> None:
         ),
         required_observations=("browser_dom",),
     )
+
+
+@pytest.mark.unit
+def test_stack_schema_parses_schema_1_4_local_runner() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.4",
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+            "local_runner": {
+                "profiles": ["macos-compose-v1"],
+                "allowed_services": ["postgres"],
+                "environment_bindings": {"DATABASE_URL": "postgres_url"},
+            },
+        },
+    }
+
+    parsed = parse_stack_definition(raw, Path("stack.yml"))
+
+    assert parsed.runnability.local_runner == StackLocalRunner(
+        profiles=("macos-compose-v1",),
+        allowed_services=("postgres",),
+        environment_bindings=(("DATABASE_URL", "postgres_url"),),
+    )
+
+
+@pytest.mark.unit
+def test_stack_schema_rejects_local_runner_before_schema_1_4() -> None:
+    raw = {
+        **VALID_STACK,
+        "schema_version": "1.3",
+        "runnability": {
+            "classification": "user_facing",
+            "policy": "required",
+            "runner": "linux_container",
+            "local_runner": {"profiles": ["macos-compose-v1"]},
+        },
+    }
+
+    with pytest.raises(
+        StackValidationError,
+        match="local_runner requires stack schema_version 1.4",
+    ):
+        parse_stack_definition(raw, Path("stack.yml"))
 
 
 @pytest.mark.unit

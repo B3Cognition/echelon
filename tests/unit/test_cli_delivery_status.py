@@ -571,3 +571,75 @@ def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budge
     payload = json.loads(capsys.readouterr().out)
     assert payload["latest"]["next"].startswith("echelon delivery run 001")
     assert "escalation" not in payload["latest"]
+
+
+@pytest.mark.unit
+def test_delivery_status_keeps_matching_local_pass_after_later_preflight_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A host preflight retry must not erase a content-matching earlier pass."""
+    from harness.local_runner_candidate import EffectiveLocalCandidate
+    from harness.local_runner_evidence import (
+        LocalRunnabilityAttestationInput,
+        local_runner_profile_digest,
+        write_local_runnability_attestation,
+    )
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    stack_snapshot = {
+        "schema_version": 1,
+        "resolved_stack_hash": "e" * 64,
+        "observer_plan_hash": "f" * 64,
+        "resolved": {"runnability": {"local_runner": {"profiles": ["macos-compose-v1"]}}},
+    }
+    state["delivery_stack_snapshot"] = stack_snapshot
+    state["coverage_observation"] = {
+        "status": "passed",
+        "fingerprints": {
+            "candidate_fingerprint": "a" * 64,
+            "runnability_contract_hash": "d" * 64,
+            "resolved_stack_hash": "e" * 64,
+            "observer_plan_hash": "f" * 64,
+        },
+        "ref": {"receipt_sha256": "1" * 64},
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    candidate = EffectiveLocalCandidate(
+        build_id="build-20260710-101500-000000",
+        sandbox_candidate_commit="b" * 40,
+        effective_candidate_commit="c" * 40,
+        product_fingerprint="a" * 64,
+        contract_hash="d" * 64,
+        stack_hash="e" * 64,
+        observer_plan_hash="f" * 64,
+        sandbox_receipt_sha256="1" * 64,
+        mirror_path=tmp_path / "runs" / "mirror.git",
+        stack_snapshot=stack_snapshot,
+    )
+    evidence_root = state_file.parents[1] / "evidence" / "local-runnability"
+    for sequence, status in ((1, "passed"), (2, "host_preflight_failed")):
+        write_local_runnability_attestation(
+            evidence_root,
+            LocalRunnabilityAttestationInput(
+                status=status,
+                candidate=candidate,
+                sandbox_receipt_sha256="1" * 64,
+                runner_profile_digest=local_runner_profile_digest(candidate),
+                cleanup_complete=status == "passed",
+                redacted_logs="safe",
+                attempt_sequence=sequence,
+                local_run_id=f"local-{('a' if sequence == 1 else 'b') * 32}",
+            ),
+        )
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    output = capsys.readouterr().out
+    assert "local verification" in output
+    assert "passed" in output
+    assert "last local attempt" in output
+    assert "host_preflight_failed" in output

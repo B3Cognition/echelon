@@ -51,6 +51,7 @@ VALID_RUNNABILITY_FIELDS = {
     "runner",
     "capabilities",
     "required_observations",
+    "local_runner",
 }
 VALID_RUNNABILITY_CLASSIFICATIONS = {"user_facing", "non_runnable"}
 VALID_RUNNABILITY_POLICIES = {"required", "advisory", "not_applicable"}
@@ -72,6 +73,21 @@ VALID_RUNNABILITY_OBSERVATIONS = {
     "exec",
     "postgres_query",
 }
+VALID_LOCAL_RUNNER_FIELDS = {
+    "profiles",
+    "allowed_services",
+    "environment_bindings",
+}
+VALID_LOCAL_RUNNER_PROFILES = {"macos-compose-v1"}
+VALID_LOCAL_RUNNER_SERVICES = {"postgres"}
+VALID_LOCAL_RUNNER_BINDING_SOURCES = {
+    "postgres_url",
+    "browser_port",
+    "browser_base_url",
+    "marker",
+    "session_token",
+}
+_LOCAL_RUNNER_ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 VALID_COVERAGE_OBSERVER_FIELDS = {
     "id",
     "test_types",
@@ -164,6 +180,14 @@ class StackRunnability:
     runner: str | None = None
     capabilities: tuple[str, ...] = ()
     required_observations: tuple[str, ...] = ()
+    local_runner: "StackLocalRunner" = field(default_factory=lambda: StackLocalRunner())
+
+
+@dataclass(frozen=True)
+class StackLocalRunner:
+    profiles: tuple[str, ...] = ()
+    allowed_services: tuple[str, ...] = ()
+    environment_bindings: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -274,14 +298,16 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
             path=source_path,
             field_path="provisioning",
         )
-    if "runnability" in raw and schema_version not in {"1.2", "1.3"}:
+    if "runnability" in raw and schema_version not in {"1.2", "1.3", "1.4"}:
         raise StackValidationError(
             "runnability requires stack schema_version 1.2",
             path=source_path,
             field_path="runnability",
         )
-    runnability = _parse_runnability(raw.get("runnability"), source_path)
-    if "coverage_observers" in raw and schema_version != "1.3":
+    runnability = _parse_runnability(
+        raw.get("runnability"), source_path, schema_version=schema_version
+    )
+    if "coverage_observers" in raw and schema_version not in {"1.3", "1.4"}:
         raise StackValidationError(
             "coverage_observers requires stack schema_version 1.3",
             path=source_path,
@@ -319,7 +345,12 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
     )
 
 
-def _parse_runnability(value: Any, source_path: Path) -> StackRunnability:
+def _parse_runnability(
+    value: Any,
+    source_path: Path,
+    *,
+    schema_version: str,
+) -> StackRunnability:
     if value is None:
         return StackRunnability()
     raw = _mapping(value, source_path, "runnability")
@@ -375,12 +406,80 @@ def _parse_runnability(value: Any, source_path: Path) -> StackRunnability:
         "runnability.required_observations",
         "observation",
     )
+    if "local_runner" in raw and schema_version != "1.4":
+        raise StackValidationError(
+            "local_runner requires stack schema_version 1.4",
+            path=source_path,
+            field_path="runnability.local_runner",
+        )
     return StackRunnability(
         classification=classification,
         policy=policy,
         runner=runner,
         capabilities=tuple(capabilities),
         required_observations=tuple(observations),
+        local_runner=_parse_local_runner(raw.get("local_runner"), source_path),
+    )
+
+
+def _parse_local_runner(value: Any, source_path: Path) -> StackLocalRunner:
+    if value is None:
+        return StackLocalRunner()
+    raw = _mapping(value, source_path, "runnability.local_runner")
+    _reject_unknown_keys(
+        raw,
+        VALID_LOCAL_RUNNER_FIELDS,
+        source_path,
+        "runnability.local_runner",
+    )
+    profiles = _validated_unique_values(
+        raw.get("profiles", []),
+        VALID_LOCAL_RUNNER_PROFILES,
+        source_path,
+        "runnability.local_runner.profiles",
+        "profile",
+    )
+    allowed_services = _validated_unique_values(
+        raw.get("allowed_services", []),
+        VALID_LOCAL_RUNNER_SERVICES,
+        source_path,
+        "runnability.local_runner.allowed_services",
+        "service",
+    )
+    bindings_raw = _mapping(
+        raw.get("environment_bindings", {}),
+        source_path,
+        "runnability.local_runner.environment_bindings",
+    )
+    bindings: list[tuple[str, str]] = []
+    for variable, source in bindings_raw.items():
+        name = _non_empty_str(
+            variable,
+            source_path,
+            "runnability.local_runner.environment_bindings key",
+        )
+        if not _LOCAL_RUNNER_ENVIRONMENT_NAME.fullmatch(name):
+            raise StackValidationError(
+                "local runner environment binding name must be uppercase",
+                path=source_path,
+                field_path=f"runnability.local_runner.environment_bindings.{name}",
+            )
+        binding_source = _non_empty_str(
+            source,
+            source_path,
+            f"runnability.local_runner.environment_bindings.{name}",
+        )
+        if binding_source not in VALID_LOCAL_RUNNER_BINDING_SOURCES:
+            raise StackValidationError(
+                f"unsupported local runner environment binding source: {binding_source}",
+                path=source_path,
+                field_path=f"runnability.local_runner.environment_bindings.{name}",
+            )
+        bindings.append((name, binding_source))
+    return StackLocalRunner(
+        profiles=tuple(profiles),
+        allowed_services=tuple(allowed_services),
+        environment_bindings=tuple(bindings),
     )
 
 
@@ -971,7 +1070,7 @@ def _schema_version(value: Any, source_path: Path) -> str:
             field_path=field_path,
         )
     result = value.strip()
-    if result not in {"1.0", "1.1", "1.2", "1.3"}:
+    if result not in {"1.0", "1.1", "1.2", "1.3", "1.4"}:
         raise StackValidationError(
             "unsupported stack schema_version",
             path=source_path,
