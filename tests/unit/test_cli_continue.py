@@ -614,7 +614,7 @@ def test_continue_does_not_revive_a_historical_run_without_current_pointer(
         {
             "run_id": "spec-test",
             "status": "done",
-            "phase": "done",
+            "phase": "DONE",
             "user_message": "prepare the release",
         },
     )
@@ -1157,6 +1157,71 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     )
 
     assert _next_continue_phase(tmp_path) is None
+
+
+def test_continue_routes_invalid_coverage_contract_to_sentinel_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "spec_id": "001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
+    for name in (
+        "00-overview.md", "requirements-overview.md", "plan.md", "research.md",
+        "data-model.md", "tasks.md", "constitution.md", "test-strategy.md",
+        "test-architecture.md", "plan-conformance.md",
+    ):
+        (spec_dir / name).write_text(f"# {name}\n")
+    (spec_dir / "plan-conformance.json").write_text(_valid_plan_conformance_json())
+    (spec_dir / "spec.md").write_text("- **FR-001**: Animate collection.\n")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001; E2E-001/E2E-002 | unit/e2e | planned | planned | tests | implement |\n"
+    )
+    active_spec_dir = run_dir / "specs" / "001-demo"
+    active_spec_dir.mkdir(parents=True)
+    for source in spec_dir.iterdir():
+        if source.is_file():
+            (active_spec_dir / source.name).write_bytes(source.read_bytes())
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase3-sentinel"
+    assert state["status"] == "running"
+    assert state["phase_output_recovery"] == {
+        "phase": "phase3-sentinel",
+        "invalid_outputs": [{
+            "path": "coverage-map.md",
+            "reason": (
+                "coverage test type/case cardinality must be one or match case count"
+            ),
+        }],
+        "prior_state_updates": {},
+    }
+    assert calls == [["", "--mode", "semi"]]
 
 
 def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
@@ -2659,6 +2724,34 @@ def test_continue_revalidates_repaired_issue_before_requesting_new_decision(
     assert state["why2_metric_stagnation_count"] == 0
     assert "why_failure_baseline" not in state
     assert len(calls) == 1
+
+
+def test_validated_issue_recovery_does_not_mask_phase_a_readiness_repair(
+    tmp_path: Path,
+) -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "phase_a_readiness_blockers": [
+                "coverage-map.md invalid: malformed test mapping"
+            ],
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "from_phase": "phase3-tasks-lexicon",
+                "to_phase": "phase3-how",
+                "reason": "issue_resolution",
+                "status": "validated",
+            },
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_a_readiness_failed"
+    assert action.phase == "phase3-sentinel"
+    assert action.command == "echelon spec continue"
 
 
 def test_continue_consumes_controller_recovery_instruction(

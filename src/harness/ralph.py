@@ -43,6 +43,7 @@ from harness.documentation_gate import (
 from harness.coverage_evidence import (
     active_unmapped_coverage_requirement_ids,
     parse_coverage_map_obligations,
+    task_owned_coverage_case_ids,
 )
 from harness.deferred_scope import active_entries
 from harness.coverage_observation import (
@@ -129,7 +130,7 @@ _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
-_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
+_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS = {"coverage-observer-scope-invalid"}
 _TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
 _TASK_FILE_BULLET_RE = re.compile(r"^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)")
 _VERIFICATION_ARTIFACT_PATHS = (
@@ -452,8 +453,8 @@ class RalphController:
         # Resolve the spec's feature branch once. When found, all worktrees are
         # checked out on that branch so spec artifacts (spec.md, tasks.md,
         # constitution.md, etc.) are available without the build agent needing to
-        # merge them in manually.  Falls back to legacy harness/* branching when no
-        # feature branch exists (first-time or pure-harness workflows).
+        # merge them in manually. Falls back to an ordinary harness delivery
+        # branch when no source-owned feature branch exists.
         feature_branch: Optional[str] = None
         try:
             feature_branch = self._gitops.find_feature_branch(self._spec_id)
@@ -465,13 +466,14 @@ class RalphController:
                 )
             else:
                 logger.info(
-                    "No feature branch found for spec '%s' — using legacy harness/* branching",
+                    "No source-owned feature branch found for spec '%s' — using "
+                    "a harness delivery branch",
                     self._spec_id,
                 )
         except Exception as e:
             logger.warning(
                 "Could not resolve feature branch for spec '%s' (continuing with "
-                "legacy harness/* mode): %s",
+                "a harness delivery branch): %s",
                 self._spec_id, e,
             )
 
@@ -1545,6 +1547,15 @@ class RalphController:
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
             }
+        if _is_sandbox_browser_runtime_unavailable(verify_result):
+            return {
+                "converged": False,
+                "blocked": True,
+                "blocked_reason": "verification_infrastructure",
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
 
         failure_history: List[List[str]] = []
         current_verify = verify_result
@@ -2217,11 +2228,16 @@ class RalphController:
         It runs before fulfillment refresh, where later phases consume the
         recorded observation rather than a green aggregate verifier.
         """
+        spec_dir = self._find_existing_spec_dir(worktree_path)
+        required_case_ids = _completed_task_coverage_case_ids(
+            spec_dir / "tasks.md" if spec_dir is not None else None
+        )
         gate = self._candidate_evidence_runner.apply_coverage(
             verify_result=verify_result,
             worktree=Path(worktree_path),
-            spec_dir=self._find_existing_spec_dir(worktree_path),
+            spec_dir=spec_dir,
             evidence_dir=self._coverage_observer_evidence_dir(),
+            required_case_ids=required_case_ids,
         )
         if gate.state_summary is not None:
             self._record_coverage_observation_summary(gate.state_summary)
@@ -3016,6 +3032,12 @@ class RalphController:
                 else None
             ),
         }
+        delivery_state = self._state_store.read()
+        source_id = str(delivery_state.get("source_id") or "").strip()
+        source_root = str(delivery_state.get("source_root") or "").strip()
+        if source_id and source_root:
+            refresh_kwargs["source_id"] = source_id
+            refresh_kwargs["source_root"] = source_root
         if observer_required:
             refresh_kwargs["observer_required"] = True
             refresh_kwargs["coverage_observation"] = coverage_observation
@@ -5597,7 +5619,7 @@ class RalphController:
             and not allow_without_task_progress
         ):
             return None
-        if not self._has_file_changes(worktree_path):
+        if not self._has_non_verify_worktree_changes(worktree_path):
             return None
 
         task_ids = _newly_completed_task_ids(before_build, after_build)
@@ -5883,17 +5905,18 @@ class RalphController:
                 worktree_path=worktree_path,
                 stage="dirty_adjudication",
             )
-        try:
-            self._gitops.commit(
-                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
-            )
-        except Exception as e:
-            logger.warning("Commit failed for %s: %s", worktree_path, e)
-            raise CommitPushError(
-                f"Commit failed: {e}",
-                branch=branch,
-                worktree_path=worktree_path,
-            ) from e
+        if self._has_non_verify_worktree_changes(worktree_path):
+            try:
+                self._gitops.commit(
+                    worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+                )
+            except Exception as e:
+                logger.warning("Commit failed for %s: %s", worktree_path, e)
+                raise CommitPushError(
+                    f"Commit failed: {e}",
+                    branch=branch,
+                    worktree_path=worktree_path,
+                ) from e
 
         # Detect the actual branch rather than assuming a harness/* name.
         # create_worktree() checks out the feature branch directly in
@@ -6011,12 +6034,22 @@ class RalphController:
                 self._state_store.write(state)
             except Exception as state_exc:
                 logger.warning("Could not persist target merge evidence: %s", state_exc)
-            logger.info(
-                "Merged verified delivery branch %s into %s for %s",
-                branch,
-                default_branch,
-                self._spec_id,
-            )
+            if merge_evidence.get("target_synced") is False:
+                logger.warning(
+                    "Published verified delivery branch %s into harness mirror %s "
+                    "for %s; target checkout remains unsynced (%s)",
+                    branch,
+                    default_branch,
+                    self._spec_id,
+                    merge_evidence.get("target_sync_skip_reason") or "unknown reason",
+                )
+            else:
+                logger.info(
+                    "Merged verified delivery branch %s into %s for %s",
+                    branch,
+                    default_branch,
+                    self._spec_id,
+                )
             return True
         except Exception as exc:
             logger.warning(
@@ -6269,7 +6302,7 @@ class RalphController:
             return None
         note = _compact_provider_note(str(result.get("stdout") or ""))
         failures = verify_result.failures or []
-        primary_failure = _compact_provider_note(failures[0].error) if failures else ""
+        primary_failure = _compact_failure_summary(failures[0]) if failures else ""
         summary: dict[str, object] = {
             "provider": provider,
             "phase": phase,
@@ -7163,6 +7196,14 @@ def _is_provider_session_limit_verify_result(verify_result: VerifyResult) -> boo
     )
 
 
+def _is_sandbox_browser_runtime_unavailable(verify_result: VerifyResult) -> bool:
+    return any(
+        failure.category == FailureCategory.OTHER
+        and failure.id == "sandbox-browser-runtime-unavailable"
+        for failure in verify_result.failures
+    )
+
+
 def _provider_session_limit_failure_text(verify_result: VerifyResult) -> str:
     for failure in verify_result.failures:
         if failure.id == "fulfillment-refresh-provider-session-limit":
@@ -7274,6 +7315,56 @@ def _compact_provider_note(value: object, *, limit: int = 360) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
+
+
+def _completed_task_coverage_case_ids(tasks_path: Path | None) -> set[str] | None:
+    """Return coverage cases owned by completed tasks in a partial delivery.
+
+    ``None`` means the task ledger is complete and the full coverage map must
+    be observed.  An empty set is meaningful for a partial ledger whose
+    completed tasks declare no direct test ownership.
+    """
+    if tasks_path is None or not tasks_path.is_file():
+        return None
+    markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    summary = summarize_task_progress(markdown)
+    if not summary.valid:
+        return None
+    if summary.terminal_tasks == summary.total_tasks:
+        return None
+
+    completed = {
+        task_id
+        for task_id, status in summary.task_statuses.items()
+        if status in {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}
+    }
+    ownership = task_owned_coverage_case_ids(tasks_path)
+    return {
+        case_id
+        for task_id in completed
+        for case_id in ownership.get(task_id, set())
+    }
+
+
+def _compact_failure_summary(failure: object, *, limit: int = 360) -> str:
+    """Prefer a named failed test over an arbitrary slice of verbose output."""
+    error = redact_verification_text(str(getattr(failure, "error", "") or ""), os.environ)
+    failure_id = str(getattr(failure, "id", "") or "").strip()
+    for raw_line in error.splitlines():
+        line = " ".join(raw_line.split())
+        match = re.match(
+            r"^(?:×|✗|✕|✘|FAIL(?:ED)?)\s+(.+)$",
+            line,
+            re.IGNORECASE,
+        )
+        if match is None:
+            match = re.match(r"^(\[[^]]+\]\s+›\s+.+)$", line)
+        if not match:
+            continue
+        detail = match.group(1).strip()
+        rendered = f"{failure_id}: {detail}" if failure_id else detail
+        return _compact_provider_note(rendered, limit=limit)
+    return _compact_provider_note(error, limit=limit)
 
 
 def _safe_int(value: object) -> int:

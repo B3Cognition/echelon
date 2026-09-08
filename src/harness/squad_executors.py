@@ -2312,6 +2312,24 @@ class AgentExecutor(PhaseExecutor):
                 missing.append(rel)
         return missing
 
+    def _required_phase_outputs_invalid(
+        self,
+        node: "PhaseNode",
+        state: dict,
+    ) -> list[dict[str, str]]:
+        """Validate semantic contracts owned by the phase that wrote them."""
+        if node.id != "phase3-sentinel":
+            return []
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return []
+        from harness.phase_a_readiness import coverage_contract_error
+
+        error = coverage_contract_error(spec_dir)
+        if error is None:
+            return []
+        return [{"path": "coverage-map.md", "reason": error}]
+
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult | ExecutorBlockedResult":
@@ -2380,7 +2398,12 @@ class AgentExecutor(PhaseExecutor):
                 else:
                     updates["shadow_output_recovered"] = recovered
             missing_outputs = self._required_phase_outputs_missing(node, state)
-            if missing_outputs:
+            invalid_outputs = (
+                self._required_phase_outputs_invalid(node, state)
+                if not missing_outputs
+                else []
+            )
+            if missing_outputs or invalid_outputs:
                 recovery_state_updates = dict(result.state_updates)
                 prior_recovery = state.get("phase_output_recovery")
                 prior_invalid_outputs = (
@@ -2393,7 +2416,9 @@ class AgentExecutor(PhaseExecutor):
                     "missing_outputs": missing_outputs,
                     "recovery_state_updates": recovery_state_updates,
                 }
-                if isinstance(prior_invalid_outputs, list) and prior_invalid_outputs:
+                if invalid_outputs:
+                    recovery_updates["invalid_outputs"] = invalid_outputs
+                elif isinstance(prior_invalid_outputs, list) and prior_invalid_outputs:
                     recovery_updates["invalid_outputs"] = prior_invalid_outputs
                 blocked_result = SquadAgentResult(
                     exit_code=0,

@@ -186,6 +186,8 @@ class FulfillmentRunner:
         coverage_observation: CoverageObservationResult | None = None,
         observer_required: bool = False,
         verify_run_dir: Path | str | None = None,
+        source_id: str | None = None,
+        source_root: Path | str | None = None,
     ) -> FulfillmentRefreshResult:
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
@@ -381,6 +383,8 @@ class FulfillmentRunner:
             prompt=prompt,
             policy=artifact_policy,
             verification_evidence=evidence,
+            source_id=source_id,
+            source_root=source_root,
         )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
@@ -426,7 +430,11 @@ class FulfillmentRunner:
                     report_path=report_path,
                 )
             lifecycle_error = _finalize_completed_verify_spec_lifecycle(
-                artifact_policy.verify_run_dir
+                artifact_policy.verify_run_dir,
+                project_root=worktree,
+                policy=artifact_policy,
+                source_id=source_id,
+                source_root=source_root,
             )
             if lifecycle_error:
                 return FulfillmentRefreshResult(
@@ -1559,7 +1567,14 @@ class VerifySpecArtifactWritePolicy:
         return True
 
 
-def _finalize_completed_verify_spec_lifecycle(verify_run_dir: Path) -> str:
+def _finalize_completed_verify_spec_lifecycle(
+    verify_run_dir: Path,
+    *,
+    project_root: Path,
+    policy: VerifySpecArtifactWritePolicy,
+    source_id: str | None,
+    source_root: Path | str | None,
+) -> str:
     """Reject a provider-success result whose Python-owned lifecycle is open.
 
     Legacy test executors can return a report without executing a verify-spec
@@ -1577,6 +1592,31 @@ def _finalize_completed_verify_spec_lifecycle(verify_run_dir: Path) -> str:
     if state.get("status") == "complete":
         return ""
 
+    if state.get("topology_evidence") not in {"ready", "degraded", "unavailable"}:
+        if policy.spec_dir is None or not source_id or source_root is None:
+            detail = "verify topology source binding is unavailable"
+            _block_verify_spec_lifecycle(verify_run_dir, detail)
+            return f"verify-spec lifecycle finalization failed: {detail}"
+        from harness.topology_evidence import (
+            TopologyEvidenceError,
+            write_topology_evidence_receipt,
+        )
+
+        try:
+            write_topology_evidence_receipt(
+                project_root,
+                verify_run_dir,
+                policy.spec_dir,
+                workspace_root=policy.workspace_root,
+                source_id=source_id,
+                source_root=Path(source_root),
+            )
+            _reopen_provider_topology_block(verify_run_dir)
+        except (OSError, ValueError, DurableJsonError, TopologyEvidenceError) as exc:
+            detail = f"verify topology evidence finalization failed: {exc}"
+            _block_verify_spec_lifecycle(verify_run_dir, detail)
+            return f"verify-spec lifecycle finalization failed: {detail}"
+
     from harness.verify_spec_run import (
         VerifySpecRunInitError,
         block_verify_spec_run,
@@ -1593,6 +1633,20 @@ def _finalize_completed_verify_spec_lifecycle(verify_run_dir: Path) -> str:
             detail = f"{detail}; could not record blocked state: {block_exc}"
         return f"verify-spec lifecycle finalization failed: {detail}"
     return ""
+
+
+def _reopen_provider_topology_block(verify_run_dir: Path) -> None:
+    """Clear only the provider's now-resolved deterministic topology block."""
+    state_path = verify_run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict) or state.get("status") != "blocked":
+        return
+    if state.get("blocked_reason") != "verify topology evidence is not finalized":
+        return
+    state["status"] = "in_progress"
+    state.pop("blocked_at", None)
+    state.pop("blocked_reason", None)
+    write_json_atomic(state_path, state, trusted_root=verify_run_dir)
 
 
 def _complete_requested_progress_reconciliation(
@@ -1784,14 +1838,20 @@ def _exec_verify_spec_prompt(
     prompt: str,
     policy: VerifySpecArtifactWritePolicy,
     verification_evidence: VerificationEvidenceRef | None = None,
+    source_id: str | None = None,
+    source_root: Path | str | None = None,
 ) -> int:
     """Run fulfillment with narrowly scoped access to external artifacts."""
     from harness.llm_provider import AICodingCliProvider
 
     topology_env = {
         "ECHELON_WORKSPACE_ROOT": str(policy.workspace_root.resolve()),
-        "ECHELON_SOURCE_ROOT": str(Path(worktree_path).resolve()),
-        "ECHELON_SOURCE_ID": Path(worktree_path).resolve().name or ".",
+        "ECHELON_SOURCE_ROOT": str(
+            Path(source_root).resolve()
+            if source_root is not None
+            else Path(worktree_path).resolve()
+        ),
+        "ECHELON_SOURCE_ID": source_id or Path(worktree_path).resolve().name or ".",
     }
 
     if not isinstance(prompt_executor, AICodingCliProvider):

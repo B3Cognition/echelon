@@ -14,6 +14,7 @@ import subprocess
 from typing import Callable, Mapping
 
 from harness.config import HarnessConfig
+from harness.browser_runtime import is_transient_browser_runtime_failure
 from harness.canonical_requirements import extract_canonical_requirements
 from harness.coverage_evidence import (
     active_unmapped_coverage_requirement_ids,
@@ -210,12 +211,113 @@ class CandidateEvidenceRunner:
                         token_usage=_estimate_tokens(result.stdout, result.stderr),
                     )
 
+            if result.exit_code != 0 and is_transient_browser_runtime_failure(
+                result.stdout, result.stderr
+            ):
+                transient_failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="transient-browser-runtime",
+                    error=(result.stdout + result.stderr)[-2000:],
+                )
+                recorded = self._attach_receipt(
+                    candidate=candidate,
+                    candidate_commit=candidate_commit,
+                    fingerprint_before=fingerprint_before,
+                    stages=(*stages, _stage("verify", command, result, started_at)),
+                    failures=[transient_failure],
+                    duration_s=result.duration_ms / 1000.0,
+                    detection_evidence=(
+                        "sandbox provider",
+                        *detection_evidence,
+                        "transient browser runtime failure",
+                    ),
+                    execution_context=execution_context,
+                )
+                if any(
+                    failure.id == "verification-evidence-invalid"
+                    for failure in recorded.failures
+                ):
+                    return recorded
+                retry_stages: list[VerificationStage] = []
+                if owned_handle:
+                    self._provider.destroy(handle)
+                    handle = self._provider.create(self._sandbox_spec_factory(candidate))
+                    service_env = {}
+                    if plan.services:
+                        materialized = materialize_services(
+                            plan.services, session_id=handle.session_id
+                        )
+                        self._provider.start_services(handle, materialized.services)
+                        service_env = dict(materialized.verifier_environment)
+                    for bootstrap_command in plan.bootstrap_commands:
+                        bootstrap_started_at = _now()
+                        bootstrap_result = self._provider.exec(
+                            handle,
+                            bootstrap_command,
+                            env=service_env,
+                            timeout_ms=600_000,
+                        )
+                        retry_stages.append(
+                            _stage(
+                                "bootstrap",
+                                bootstrap_command,
+                                bootstrap_result,
+                                bootstrap_started_at,
+                            )
+                        )
+                        if bootstrap_result.exit_code != 0:
+                            return self._attach_receipt(
+                                candidate=candidate,
+                                candidate_commit=candidate_commit,
+                                fingerprint_before=fingerprint_before,
+                                stages=tuple(retry_stages),
+                                failures=[
+                                    FailureEntry(
+                                        category=FailureCategory.BUILD,
+                                        id="sandbox-bootstrap",
+                                        error=(
+                                            bootstrap_result.stdout
+                                            + bootstrap_result.stderr
+                                        )[-2000:],
+                                    )
+                                ],
+                                duration_s=bootstrap_result.duration_ms / 1000.0,
+                                detection_evidence=(
+                                    "fresh sandbox after transient browser runtime failure",
+                                ),
+                                execution_context=execution_context,
+                            )
+                started_at = _now()
+                result = self._provider.exec(
+                    handle, command, env=service_env, timeout_ms=600_000
+                )
+                stages = retry_stages
+                detection_evidence = (
+                    *detection_evidence,
+                    "one automatic fresh-sandbox browser runtime retry",
+                )
+
             failures = []
             if result.exit_code != 0:
+                transient_after_retry = (
+                    "one automatic fresh-sandbox browser runtime retry"
+                    in detection_evidence
+                    and is_transient_browser_runtime_failure(
+                        result.stdout, result.stderr
+                    )
+                )
                 failures.append(
                     FailureEntry(
-                        category=FailureCategory.TEST,
-                        id="verify-command",
+                        category=(
+                            FailureCategory.OTHER
+                            if transient_after_retry
+                            else FailureCategory.TEST
+                        ),
+                        id=(
+                            "sandbox-browser-runtime-unavailable"
+                            if transient_after_retry
+                            else "verify-command"
+                        ),
                         error=(result.stdout + result.stderr)[-2000:],
                     )
                 )
@@ -431,8 +533,15 @@ class CandidateEvidenceRunner:
         worktree: Path,
         spec_dir: Path | None,
         evidence_dir: Path,
+        required_case_ids: set[str] | None = None,
     ) -> CoverageGateResult:
-        """Apply required per-requirement coverage observation."""
+        """Apply required per-requirement coverage observation.
+
+        ``required_case_ids`` scopes an intermediate delivery slice to test
+        obligations owned by tasks already completed.  ``None`` remains the
+        full-map, fail-closed contract used by standalone verification and by
+        a fully completed delivery.
+        """
         if not verify_result.passed:
             return CoverageGateResult(verify_result)
         config = self._config()
@@ -498,6 +607,24 @@ class CandidateEvidenceRunner:
             obligations = tuple(
                 item for item in obligations if item.requirement_id not in deferred_ids
             )
+            if required_case_ids is not None:
+                available_case_ids = {item.test_case_id for item in obligations}
+                missing_case_ids = sorted(required_case_ids - available_case_ids)
+                if missing_case_ids:
+                    return CoverageGateResult(
+                        _coverage_failure(
+                            verify_result,
+                            "coverage-observer-scope-invalid",
+                            "Completed task coverage ownership is absent from "
+                            "coverage-map.md: " + ", ".join(missing_case_ids[:20]),
+                        ),
+                        observer_required=True,
+                    )
+                obligations = tuple(
+                    item
+                    for item in obligations
+                    if item.test_case_id in required_case_ids
+                )
             coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
             contract_hash = _runnability_contract_hash(verify_result)
             if (
@@ -523,7 +650,11 @@ class CandidateEvidenceRunner:
                 observer_required=False,
                 state_summary={
                     "status": "not_required",
-                    "reason": "all planned coverage requirements are owner-deferred",
+                    "reason": (
+                        "completed tasks own no coverage obligations"
+                        if required_case_ids is not None
+                        else "all planned coverage requirements are owner-deferred"
+                    ),
                 },
             )
         test_types = {item.test_type for item in obligations}
@@ -595,6 +726,7 @@ class CandidateEvidenceRunner:
             run.observer_id: {
                 "status": run.status,
                 "reason": run.reason,
+                "failure_kind": run.failure_kind,
                 "receipt": run.receipt.as_mapping() if run.receipt else None,
                 "execution_count": len(run.executions),
             }
@@ -602,10 +734,17 @@ class CandidateEvidenceRunner:
         }
         failed = [run for run in bundle.observer_runs if run.status != "passed"]
         if failed:
+            browser_runtime_unavailable = any(
+                run.failure_kind == "browser_runtime_unavailable" for run in failed
+            )
             return CoverageGateResult(
                 _coverage_failure(
                     verify_result,
-                    "coverage-observer-failed",
+                    (
+                        "sandbox-browser-runtime-unavailable"
+                        if browser_runtime_unavailable
+                        else "coverage-observer-failed"
+                    ),
                     "; ".join(
                         f"{run.observer_id}: {run.reason or 'observer did not pass'}"
                         for run in failed

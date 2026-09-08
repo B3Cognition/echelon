@@ -319,6 +319,66 @@ class TestFulfillmentRunner:
         assert state["status"] == "complete"
         assert state["progress_reconciliation"] == "applied"
 
+    def test_refresh_finalizes_provider_omitted_topology_receipt(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        initialized = init_verify_spec_run(
+            project_root=tmp_path,
+            spec_id=spec_dir.name,
+            spec_dir=spec_dir,
+            reconcile=True,
+            timestamp="topology-finalization",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def omit_topology_receipt(_worktree_path: str, _prompt: str) -> int:
+            state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+            state.update(
+                {
+                    "fulfillment_artifacts": "valid",
+                    "status": "blocked",
+                    "blocked_reason": "verify topology evidence is not finalized",
+                    "blocked_at": "2026-09-08T00:00:00+00:00",
+                }
+            )
+            initialized.state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(spec_dir / "fulfillment-report.md")
+            return 0
+
+        provider.exec_prompt.side_effect = omit_topology_receipt
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                spec_dir.name,
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                reconcile=True,
+                verify_run_dir=initialized.verify_run_dir,
+                source_id=".",
+                source_root=tmp_path,
+            )
+
+        assert result.status == "refreshed", result.reason
+        state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "complete"
+        assert state["topology_evidence"] == "unavailable"
+        receipt = json.loads(
+            (initialized.verify_run_dir / "topology-receipt.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert receipt["source_id"] == "."
+
     def test_refresh_reports_provider_session_limit_without_using_stale_report(
         self, tmp_path
     ):

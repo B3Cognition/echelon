@@ -26,16 +26,19 @@ class _CoverageProvider(SandboxProvider):
         *,
         mutate_candidate: bool = False,
         absolute_report_paths: bool = False,
+        transient_browser_failures: int = 0,
     ) -> None:
         self.worktree = worktree
         self.mutate_candidate = mutate_candidate
         self.absolute_report_paths = absolute_report_paths
+        self.transient_browser_failures = transient_browser_failures
         self.created_session_ids: list[str] = []
         self.destroyed_session_ids: list[str] = []
         self.service_environments: list[dict[str, str]] = []
         self.exec_calls: list[tuple[str, str, dict[str, str]]] = []
         self.host_exec_calls: list[str] = []
         self.remote_files: dict[str, bytes] = {}
+        self.observer_attempts = 0
 
     def create(self, spec: SandboxSpec) -> SandboxHandle:
         del spec
@@ -58,6 +61,15 @@ class _CoverageProvider(SandboxProvider):
         del timeout_ms
         self.exec_calls.append((handle.session_id, cmd, dict(env or {})))
         if cmd == "run-vitest-observer":
+            self.observer_attempts += 1
+            if self.observer_attempts <= self.transient_browser_failures:
+                return ExecResult(
+                    1,
+                    "",
+                    "browserContext.newPage: Target crashed; session closed",
+                    15,
+                    None,
+                )
             if self.mutate_candidate:
                 (self.worktree / "candidate-mutation.txt").write_text(
                     "observer must not change product files\n", encoding="utf-8"
@@ -267,6 +279,75 @@ def test_isolated_observer_normalizes_report_paths_under_its_sandbox_mount(
 
     assert bundle.observer_runs[0].status == "passed"
     assert bundle.observer_runs[0].executions[0].file == "tests/feature.test.ts"
+
+
+def test_isolated_observer_retries_transient_browser_loss_in_fresh_sandbox(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "feature.test.ts").write_text(
+        'it("persists checkpoint [echelon:UT-PERSIST-001]", () => {});\n',
+        encoding="utf-8",
+    )
+    provider = _CoverageProvider(tmp_path, transient_browser_failures=1)
+    fingerprint = product_evidence_fingerprint(tmp_path)
+    evidence_dir = tmp_path.parent / f"{tmp_path.name}-evidence"
+
+    bundle = run_coverage_observers(
+        provider=provider,
+        sandbox_spec_factory=_sandbox_spec,
+        worktree=tmp_path,
+        config=_config(),
+        observers=(_observer(mode="isolated"),),
+        standard_receipt=_standard_receipt(evidence_dir, fingerprint),
+        candidate_commit="a" * 40,
+        candidate_fingerprint=fingerprint,
+        evidence_dir=evidence_dir,
+        spec_id="spec-001",
+        target_id="game",
+        strategy_id="default",
+        build_id="build-001",
+        sensitive_environment={},
+    )
+
+    assert provider.created_session_ids == ["standard", "observer-vitest-1"]
+    assert provider.destroyed_session_ids == ["standard", "observer-vitest-1"]
+    assert bundle.observer_runs[0].status == "passed"
+    assert len(list((evidence_dir / "coverage-observers" / "vitest").glob("attempt-*.json"))) == 2
+
+
+def test_isolated_observer_classifies_repeated_browser_loss_as_infrastructure(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    provider = _CoverageProvider(tmp_path, transient_browser_failures=2)
+    fingerprint = product_evidence_fingerprint(tmp_path)
+    evidence_dir = tmp_path.parent / f"{tmp_path.name}-evidence"
+
+    bundle = run_coverage_observers(
+        provider=provider,
+        sandbox_spec_factory=_sandbox_spec,
+        worktree=tmp_path,
+        config=_config(),
+        observers=(_observer(mode="isolated"),),
+        standard_receipt=_standard_receipt(evidence_dir, fingerprint),
+        candidate_commit="a" * 40,
+        candidate_fingerprint=fingerprint,
+        evidence_dir=evidence_dir,
+        spec_id="spec-001",
+        target_id="game",
+        strategy_id="default",
+        build_id="build-001",
+        sensitive_environment={},
+    )
+
+    run = bundle.observer_runs[0]
+    assert run.status == "failed"
+    assert run.failure_kind == "browser_runtime_unavailable"
+    assert "fresh-sandbox" in run.reason
 
 
 def test_captured_observer_reuses_passing_standard_receipt_without_session(

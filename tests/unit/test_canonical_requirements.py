@@ -120,6 +120,27 @@ def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
     assert [row["id"] for row in payload["requirements"]] == ["FR-001"]
 
 
+def test_canonical_requirements_do_not_extract_suffixes_from_test_case_ids(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Users can collect an item.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement | Test cases |\n"
+        "| --- | --- |\n"
+        "| FR-001 | E2E-EDGE-001; UT-AC-002; E2E-FR-003 |\n",
+        encoding="utf-8",
+    )
+
+    rows = extract_canonical_requirements(spec_dir)
+
+    assert [row.id for row in rows] == ["FR-001"]
+
+
 def test_write_canonical_requirements_supports_suffix_ids_without_inventing_ranges(
     tmp_path,
 ):

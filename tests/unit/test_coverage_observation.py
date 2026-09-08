@@ -194,6 +194,31 @@ def test_coverage_observation_marks_an_untagged_planned_case_unbound(
 
 
 @pytest.mark.unit
+def test_coverage_observation_ignores_tags_owned_by_other_specs(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "candidate"
+    _source(worktree)
+    legacy_title = "legacy feature [echelon:UT-LEGACY-001]"
+    _source(worktree, file="tests/legacy.test.ts", title=legacy_title)
+
+    result = _write_observation(
+        tmp_path,
+        worktree=worktree,
+        executions=(
+            _execution(),
+            _execution(
+                file="tests/legacy.test.ts",
+                title=legacy_title,
+            ),
+        ),
+    )
+
+    assert result.ref.passed is True
+    assert result.test_cases["E2E-001"].status == "passed"
+
+
+@pytest.mark.unit
 def test_coverage_observation_accepts_each_type_owned_by_one_multi_type_observer(
     tmp_path: Path,
 ) -> None:

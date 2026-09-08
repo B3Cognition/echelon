@@ -32,6 +32,37 @@ from harness.verification_evidence import VerificationStage, write_verification_
 from harness.visual_evidence import VisualEvidenceRef
 
 
+@pytest.mark.unit
+def test_fresh_checkpoint_progress_is_restored_before_provider_dispatch(
+    tmp_path: Path,
+) -> None:
+    tasks_file = tmp_path / "tasks.md"
+    tasks_file.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        "\n  **Acceptance Criteria:**\n  - [ ] implemented\n"
+        "\n- [ ] T-002 complexity=standard phase=build req=FR-002 depends=T-001\n"
+        "\n  **Acceptance Criteria:**\n  - [ ] implemented\n",
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state", "007", "default")
+    store.initialize(run_id="run-1", mode="semi")
+    store.transition("running")
+
+    StrategyCoordinator._inherit_fresh_task_progress(
+        state_store=store,
+        tasks_file=tasks_file,
+        task_ids=("T-001", "T-999"),
+    )
+
+    assert "- [x] T-001" in tasks_file.read_text(encoding="utf-8")
+    assert "- [ ] T-002" in tasks_file.read_text(encoding="utf-8")
+    state = store.read()
+    assert state["inherited_checkpoint_task_ids"] == ["T-001"]
+    assert state["build"]["task_results"] == {"T-001": {"status": "DONE"}}
+    assert state["build"]["completed_tasks"] == 1
+
+
 class MockProvider(SandboxProvider):
     """Mock provider that converges on first verify."""
 

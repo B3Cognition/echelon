@@ -158,7 +158,7 @@ def write_coverage_observation(
 
     case_types, requirement_cases = _planned_cases(obligations)
     grouped = _group_executions(executions)
-    identity_details, unknown_tags = _identity_details(
+    identity_details, _out_of_scope_tags = _identity_details(
         grouped,
         candidate_worktree=Path(candidate_worktree),
         case_types=case_types,
@@ -178,9 +178,11 @@ def write_coverage_observation(
         for observer_id in observer_receipts
         if not any(item.observer_id == observer_id for item in executions)
     }
+    # A repository can retain tagged tests from other published specs.  Tags
+    # outside this observation's obligation set are not evidence for the active
+    # spec and must not invalidate it.  Misspelled active tags still fail
+    # closed because their planned obligation remains unbound below.
     failure_reasons = [
-        f"unknown planned-case tag: {tag}" for tag in sorted(unknown_tags)
-    ] + [
         f"observer {observer_id} reported zero tests"
         for observer_id in sorted(empty_observers)
     ]

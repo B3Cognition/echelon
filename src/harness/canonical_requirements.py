@@ -10,7 +10,7 @@ import re
 from typing import Iterable
 
 REQ_ID_RE = re.compile(
-    r"\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
+    r"(?<![A-Z0-9]-)\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
     r"(?:-[A-Z0-9]+(?:[_.:][A-Z0-9]+)*[a-z]?)+"
     r"\b(?!-[A-Za-z0-9])"
 )

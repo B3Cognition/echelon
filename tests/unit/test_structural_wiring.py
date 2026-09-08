@@ -11,6 +11,7 @@ Tests that:
 """
 import pathlib
 import json
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -80,6 +81,52 @@ def test_controller_repair_context_names_governance_report():
     assert "/tmp/feasibility-report.json" in prompt
     assert "repair every listed finding" in prompt
     assert "Do not report `feasibility_structural_pass`" in prompt
+
+
+@pytest.mark.unit
+def test_controller_repair_context_names_invalid_coverage_finding():
+    from harness.squad_executors import _render_controller_repair_context
+
+    prompt = _render_controller_repair_context({
+        "phase_output_recovery": {
+            "phase": "phase3-sentinel",
+            "invalid_outputs": [{
+                "path": "coverage-map.md",
+                "reason": "coverage test type/case cardinality must match",
+            }],
+            "prior_state_updates": {},
+        },
+    })
+
+    assert "Phase Output Repair" in prompt
+    assert "coverage-map.md: coverage test type/case cardinality must match" in prompt
+    assert "replacement for every invalid artifact" in prompt
+
+
+@pytest.mark.unit
+def test_sentinel_output_validation_rejects_invalid_coverage_contract(tmp_path):
+    from harness.squad_executors import AgentExecutor
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("- **FR-001**: Animate collection.\n")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001; E2E-001/E2E-002 | unit/e2e | planned | planned | tests | implement |\n"
+    )
+    executor = object.__new__(AgentExecutor)
+    executor._project_root = tmp_path
+
+    invalid = executor._required_phase_outputs_invalid(
+        SimpleNamespace(id="phase3-sentinel"),
+        {"spec_dir": "specs/001-demo"},
+    )
+
+    assert invalid == [{
+        "path": "coverage-map.md",
+        "reason": "coverage test type/case cardinality must be one or match case count",
+    }]
 
 
 @pytest.mark.unit

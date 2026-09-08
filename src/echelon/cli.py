@@ -46,7 +46,7 @@ from harness.recovery_instruction import (
     validate_recovery_instruction,
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
-from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase_a_readiness import coverage_contract_error, validate_phase_a_readiness
 from harness.phase1_quality import has_current_phase1_quality_prerequisite
 from harness.state import state_lock_owner_is_alive
 from harness.issue_identity import (
@@ -372,7 +372,8 @@ def _workspace_git_preflight_for_squad_run(
     # existing run before new-spec branch/slug machinery sees its empty description.
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     # An explicit phase is an intentional recovery command.  It must reuse the
     # existing run before any new-spec branch/slug machinery sees its empty
@@ -1017,7 +1018,14 @@ def _cmd_land(args: list[str]) -> None:
         _archive_squad_run(project_dir, spec_id)
         sys.exit(0)
     else:
-        _banner("LAND", [("spec", spec_id), ("status", "could not be landed (PR merge blocked?)")], file=sys.stderr)
+        _banner(
+            "LAND",
+            [
+                ("spec", spec_id),
+                ("status", "could not be landed; see the specific blocker above"),
+            ],
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -5197,7 +5205,7 @@ def _classify_run_recovery(
     recovery = run_state.get("issue_resolution_recovery")
     if (
         isinstance(recovery, dict)
-        and recovery.get("status") != "consumed"
+        and recovery.get("status") not in {"consumed", "validated"}
         and str(recovery.get("issue_id") or "").strip()
     ):
         return _RunRecoveryAction(
@@ -5358,6 +5366,22 @@ def _classify_run_recovery(
         )
 
     if reason == "phase_a_readiness_failed":
+        readiness_blockers = run_state.get("phase_a_readiness_blockers")
+        if isinstance(readiness_blockers, list) and any(
+            isinstance(blocker, str)
+            and blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness_blockers
+        ):
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase="phase3-sentinel",
+                command="echelon spec continue",
+                note=(
+                    "will send the recorded coverage-map contract finding to "
+                    "SENTINEL and validate its replacement before advancing"
+                ),
+            )
         traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
         if traceability_blockers:
             return _RunRecoveryAction(
@@ -6411,7 +6435,6 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
     Returns None when a newer squad run exists than the newest harness build;
     that means new spec work has been done since the last harness run.
     """
-    import json as _json
     runs = project_root / "runs"
     if not runs.exists():
         return None
@@ -6428,23 +6451,16 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
             if ts > latest_squad_ts:
                 latest_squad_ts = ts
 
-    for build in sorted(runs.glob("build-*/"), reverse=True):
-        build_ts = build.name.partition("-")[2]
-        if latest_squad_ts > build_ts:
-            # A squad run is newer than this harness build — new spec work exists
-            return None
-        state_dir = build / "state"
-        if not state_dir.exists():
-            continue
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = _json.loads(state_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    data.setdefault("build_id", build.name)
-                    return data
-            except Exception:
-                pass
-    return None
+    states = _iter_harness_build_states(project_root)
+    if not states:
+        return None
+    latest = states[0]
+    build_id = str(latest.get("build_id") or "")
+    build_ts = build_id.partition("-")[2]
+    if latest_squad_ts > build_ts:
+        # A squad run is newer than this harness build — new spec work exists.
+        return None
+    return latest
 
 
 def _iter_harness_build_states(project_root: Path) -> list[dict]:
@@ -6617,7 +6633,12 @@ def _delivery_status_next_step(
                 f"echelon delivery run {effective_spec}"
             )
         return f"echelon delivery continue {effective_spec}"
-    if status in {"initialized", "running", "interrupted"}:
+    if status == "running":
+        return (
+            "delivery is active; monitor with "
+            f"echelon delivery status {effective_spec}"
+        )
+    if status in {"initialized", "interrupted"}:
         return f"echelon delivery run {effective_spec}"
     if status in {"failed", "cancelled_by_coordinator"}:
         return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
@@ -8257,7 +8278,8 @@ def _select_squad_dir(
     status = state.get("status")
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     if manual_recovery and status == "blocked":
         return existing_dir, False
@@ -9426,7 +9448,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                 if _phase_a_ready_to_build(project_root, current_state):
                     return None
                 if current_state.get("status") == "done":
-                    return "phase4-document"
+                    return _done_phase_a_repair_phase(project_root, current_state)
                 return recommended
         except Exception:
             current_state = {}
@@ -9519,7 +9541,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     if current_state.get("status") == "done" and not _phase_a_ready_to_build(project_root, current_state):
-        return "phase4-document"
+        return _done_phase_a_repair_phase(project_root, current_state)
 
     readiness = validate_phase_a_readiness(
         current_state,
@@ -9532,6 +9554,11 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         ),
     )
     if not readiness.ready:
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
         if "spec.md" in readiness.missing:
             return "phase1-what"
         if any(name in readiness.missing for name in ("plan.md", "research.md", "data-model.md")):
@@ -9541,6 +9568,19 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     return None  # build is ready
+
+
+def _done_phase_a_repair_phase(project_root: Path, state: dict) -> str:
+    """Route a completed run to the owner of its invalid build artifact."""
+    spec_dir = _build_target_continue_spec_dir(project_root, state)
+    if spec_dir is not None:
+        readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
+    return "phase4-document"
 
 
 def _explicit_run_local_spec_needs_publication(
@@ -10207,6 +10247,22 @@ def _cmd_continue_impl(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        if next_phase == "phase3-sentinel":
+            spec_dir = _build_target_continue_spec_dir(project_root, state)
+            coverage_error = (
+                coverage_contract_error(spec_dir)
+                if spec_dir is not None
+                else None
+            )
+            if coverage_error is not None:
+                state["phase_output_recovery"] = {
+                    "phase": "phase3-sentinel",
+                    "invalid_outputs": [{
+                        "path": "coverage-map.md",
+                        "reason": coverage_error,
+                    }],
+                    "prior_state_updates": {},
+                }
         if clear_recovery:
             state["blocked_reason"] = None
             state["escalation_question"] = None

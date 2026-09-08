@@ -139,13 +139,23 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("status", ["initialized", "running", "interrupted"])
+@pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
     from echelon.cli import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": status}, "001")
 
     assert next_step == "echelon delivery run 001"
+
+
+@pytest.mark.unit
+def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step({"status": "running"}, "001")
+
+    assert next_step == "delivery is active; monitor with echelon delivery status 001"
+    assert "delivery run" not in next_step
 
 
 @pytest.mark.unit
