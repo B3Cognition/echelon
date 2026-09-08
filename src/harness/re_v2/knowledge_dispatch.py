@@ -47,6 +47,43 @@ class DiscoveryStep:
     reason_code: str | None = None
 
 
+def _capture_dispatch(account, screen_output, backend, agent_bytes, context,
+                      reservation, dispatch_id):
+    """Invoke one already-reserved offline dispatch and durably capture it."""
+    usage = NormalizedUsageV1("unavailable", None, {})
+    output_id, reason = None, None
+    active_ms, active_status = None, "unavailable"
+    started = time.monotonic_ns()
+    try:
+        reply = backend(agent_bytes, context, reservation)
+    except Exception:
+        # The call may have spent resources before failing. Never refund it
+        # or expose exception text (which can contain source/provider data).
+        reason = "provider-failed"
+    else:
+        active_ms = max(0, (time.monotonic_ns() - started + 999_999) // 1_000_000)
+        active_status = "trusted_exact"
+        if (not isinstance(reply, ProviderReply) or not isinstance(reply.usage, NormalizedUsageV1)
+                or not isinstance(reply.output, bytes)):
+            reason = "invalid-provider-result"
+            active_ms, active_status = None, "unavailable"
+        else:
+            usage = reply.usage
+            try:
+                output = screen_output(reply.output)
+            except KnowledgeEvidenceError as exc:
+                if str(exc) == "unsafe-quarantine-store":
+                    raise
+                reason = "unsafe-provider-output"
+            else:
+                output_id = account.objects.put_blob(output)
+    account._record("dispatch_captured", {
+        "dispatch_id": dispatch_id, "output_id": output_id, "reason_code": reason,
+        "usage": _load(canonical_normalized_usage_bytes(usage)),
+        "active_ms": active_ms, "active_status": active_status,
+    })
+
+
 class DiscoveryController:
     @staticmethod
     def _matches_run(acquisition, account):
@@ -90,7 +127,7 @@ class DiscoveryController:
                 raise DiscoveryError("discovery-provider-contract-mismatch")
             state = self.account._state()
             source = self.acquisition.opening["evidence_scope"]["source_id"]
-            history = state.sources.get(source, [])
+            history = state.discovery_sources.get(source, [])
             if history:
                 first = state.dispatches[history[0]]
                 if (first["scope_id"] != content_digest(self.acquisition.opening)
@@ -144,36 +181,10 @@ class DiscoveryController:
         self.acquisition.boundary.provider_bytes(binding)
 
     def _invoke(self, dispatch_id, context):
-        usage = NormalizedUsageV1("unavailable", None, {})
-        output_id, reason = None, None
-        active_ms, active_status = None, "unavailable"
-        started = time.monotonic_ns()
-        try:
-            reply = self.backend(self.agent_bytes, context, self.reservation)
-        except Exception:
-            # The call may have spent resources before failing. Never refund it
-            # or expose exception text (which can contain source/provider data).
-            reason = "provider-failed"
-        else:
-            active_ms = max(0, (time.monotonic_ns() - started + 999_999) // 1_000_000)
-            active_status = "trusted_exact"
-            if (not isinstance(reply, ProviderReply) or not isinstance(reply.usage, NormalizedUsageV1)
-                    or not isinstance(reply.output, bytes)):
-                reason = "invalid-provider-result"
-                active_ms, active_status = None, "unavailable"
-            else:
-                usage = reply.usage
-                try:
-                    output = self.acquisition.boundary.screen_output(reply.output)
-                except KnowledgeEvidenceError:
-                    reason = "unsafe-provider-output"
-                else:
-                    output_id = self.account.objects.put_blob(output)
-        self.account._record("dispatch_captured", {
-            "dispatch_id": dispatch_id, "output_id": output_id, "reason_code": reason,
-            "usage": _load(canonical_normalized_usage_bytes(usage)),
-            "active_ms": active_ms, "active_status": active_status,
-        })
+        _capture_dispatch(
+            self.account, self.acquisition.boundary.screen_output, self.backend,
+            self.agent_bytes, context, self.reservation, dispatch_id,
+        )
 
     def _apply(self, dispatch_id):
         state = self.account._state()

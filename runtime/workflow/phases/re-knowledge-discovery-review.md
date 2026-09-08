@@ -1,7 +1,9 @@
 # Phase: re-knowledge-discovery-review (internal; installed routing disabled)
 
 Agent: `echelon.re-discovery-reviewer`. Mode: independent discovery review before
-analysis-plan activation. Admission: `DiscoveryReviewBoundary`.
+analysis-plan activation. Admission: `DiscoveryReviewBoundary`. The existing RE
+owner invokes `DiscoveryReviewController.step()` under its run ownership lock;
+the operation is not a second scheduler.
 
 ## Context pack and execution owner
 
@@ -17,10 +19,20 @@ logical-run resource account used by discovery. Reserve before dispatch, persist
 the screened capture before applying it, and retain unsettled charges on restart.
 Do not create a review-local budget or nested result-repair loop.
 
-Installed review dispatch is not enabled by this increment. Passive admission
-cannot prove an independent invocation occurred. It cannot activate a plan, grant
-debt acceptance, or mark analysis complete. Production transport isolation,
-pre-log screening and bounded execution remain required before live routing.
+The internal operation accepts only a ledger-committed producer proposal and
+uses the producer's existing account. Discovery and review share token, active
+time and source-turn ceilings. A review is a separate reserved call with its own
+frozen role/phase and context identities; it never runs the producer implicitly.
+The existing capture and application records preserve the exact result and
+feedback. Reopening cannot change provider, role, reservation or proposal.
+
+Installed review dispatch remains disabled. The current backend contract permits
+only `offline-scripted` execution; a recorded scripted call does not certify
+independent real-model review. Passive admission receipts retain
+`execution_certification_required: true` and `analysis_certified: false`.
+Neither path can activate a plan, grant debt acceptance or mark analysis complete.
+Production transport isolation, pre-log screening, bounded execution and actual
+independent-invocation certification remain required before live routing.
 
 ## Authorial response
 
@@ -77,3 +89,12 @@ analysis. The controller must also ensure the candidate is the active committed
 revision before activation. Repeated terminal output cannot reset attempts,
 expand scope or allocate resources. A malformed review or unavailable local
 authority remains a failure, not accepted uncertainty.
+
+The operation returns `review_ready` or `revision_required` with that exact passive
+receipt, or `blocked` with a closed reason. Repeating a completed/terminal step
+returns its stored result without a call. An uncaptured reserved dispatch is
+indeterminate and retains its full charge; do not automatically repeat it.
+A captured but unapplied response is recovered by admission only, without another
+provider call. A local storage failure preserves this recovery opportunity instead
+of converting it to model rejection. Revision findings remain available through
+`read_review`; this increment does not launch producer repair or reset counters.

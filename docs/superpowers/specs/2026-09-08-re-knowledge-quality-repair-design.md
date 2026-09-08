@@ -1,6 +1,6 @@
 # General-purpose RE knowledge-quality repair
 
-Status: M1 containment implemented; M2 safe evidence, discovery admission, durable pre-analysis acquisition, offline bounded discovery dispatch/accounting and passive discovery-review admission implemented. Independent reviewer execution/certification, production provider integration, target/source semantic reconciliation and analysis revision/invalidation remain pending. Not release-ready.
+Status: M1 containment implemented; M2 safe evidence, discovery admission, durable pre-analysis acquisition, offline bounded discovery/review dispatch with shared accounting and passive discovery-review admission implemented. Real independent reviewer execution/certification, production provider integration, target/source semantic reconciliation and analysis revision/invalidation remain pending. Not release-ready.
 Date: 2026-09-08
 Decision owner: Echelon maintainer.
 

@@ -63,6 +63,10 @@ The controller records reservation, safe capture and applied-result receipts.
 the next owner invocation may request another provider turn on the same account.
 `proposal_ready` is a staged proposal requiring independent review, orphan
 reconciliation and category assessment. It cannot publish an analysis plan.
+The internal `DiscoveryReviewController.step()` may review that committed staged
+proposal using a separate role/context and the same run-wide account. Review also
+consumes the source-turn ceiling. Repeating discovery after this handoff returns
+the staged producer result; it does not start another producer call or reset work.
 `blocked` reports a fixed reason and retains charges/capture. Repeating an unknown
 dispatch or a terminal invalid/no-progress response never invokes a provider again.
 

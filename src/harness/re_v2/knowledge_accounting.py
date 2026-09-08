@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_discovery import DiscoveryError, _closed_errors, _load, _obj
+from harness.re_v2.knowledge_discovery_review import _overlap_pairs
 from harness.re_v2.ledger import DurableLedger, ObjectStore
 from harness.re_v2.protocol_22.budget import conservative_charge
 from harness.re_v2.protocol_22.provider import DispatchReservationV1, decode_normalized_usage_bytes
@@ -84,7 +85,8 @@ class _DispatchProtocol:
         self.opening = opening
 
     def canonical_payload(self, kind, payload):
-        if kind not in {"account_opened", "dispatch_reserved", "dispatch_captured", "discovery_applied"}:
+        if kind not in {"account_opened", "dispatch_reserved", "review_reserved",
+                        "dispatch_captured", "discovery_applied", "review_applied"}:
             raise DiscoveryError("invalid-knowledge-dispatch-event")
         _obj(payload, ("receipt_id",))
         digest_value(payload["receipt_id"], "receipt")
@@ -98,6 +100,7 @@ class _DispatchState:
     def __init__(self, opening):
         self.opening, self.opened = opening, False
         self.dispatches, self.captures, self.applied, self.sources = {}, {}, {}, {}
+        self.dispatch_kinds, self.discovery_sources, self.review_sources = {}, {}, {}
 
     def view(self):
         return self
@@ -130,7 +133,7 @@ class _DispatchState:
         return (conservative_charge(usage.billable_tokens, usage.status, reserve["billable_tokens"]) > reserve["billable_tokens"]
                 or conservative_charge(capture["active_ms"], capture["active_status"], reserve["active_ms"]) > reserve["active_ms"])
 
-    def refusal(self, request):
+    def _resource_refusal(self, request):
         usage, policy = self.usage(), self.opening["policy"]
         if usage.reservation_breached:
             return "reservation-exceeded"
@@ -141,6 +144,13 @@ class _DispatchState:
         previous = self.sources.get(request["source_id"], [])
         if len(previous) >= policy["max_source_turns"]:
             return "discovery-turn-limit"
+        return None
+
+    def refusal(self, request):
+        refusal = self._resource_refusal(request)
+        if refusal:
+            return refusal
+        previous = self.discovery_sources.get(request["source_id"], [])
         if previous:
             first, last = self.dispatches[previous[0]], self.applied.get(previous[-1])
             if any(request[key] != first[key] for key in ("scope_id", "agent_id", "reservation")):
@@ -149,6 +159,28 @@ class _DispatchState:
                 return "discovery-dispatch-not-ready"
             if request["revision_id"] != last["revision_id"]:
                 return "stale-discovery-revision"
+        return None
+
+    def review_refusal(self, request):
+        refusal = self._resource_refusal(request)
+        if refusal:
+            return refusal
+        source = request["source_id"]
+        producer_id = request["producer_dispatch_id"]
+        producer_history = self.discovery_sources.get(source, [])
+        if (not producer_history or producer_id != producer_history[-1]
+                or self.sources.get(source, [])[-1] != producer_id):
+            return "discovery-review-proposal-required"
+        producer = self.dispatches[producer_id]
+        application = self.applied.get(producer_id)
+        if (application is None or application["state"] != "proposal_ready"
+                or application["receipt_id"] != request["proposal_receipt_id"]):
+            return "discovery-review-proposal-required"
+        if any(request[key] != producer[key]
+               for key in ("source_id", "scope_id", "binding_id", "revision_id")):
+            return "discovery-review-authority-mismatch"
+        if request["agent_id"] == producer["agent_id"]:
+            return "discovery-review-agent-not-distinct"
         return None
 
     def consume(self, record, objects):
@@ -163,9 +195,12 @@ class _DispatchState:
             return
         if not self.opened:
             raise DiscoveryError("missing-knowledge-account")
-        if record.type == "dispatch_reserved":
-            _obj(row, ("source_id", "scope_id", "agent_id", "binding_id", "revision_id", "context_id",
-                       "reservation", "turn"))
+        if record.type in {"dispatch_reserved", "review_reserved"}:
+            fields = ("source_id", "scope_id", "agent_id", "binding_id", "revision_id", "context_id",
+                      "reservation", "turn")
+            if record.type == "review_reserved":
+                fields += ("producer_dispatch_id", "proposal_receipt_id")
+            _obj(row, fields)
             safe_id(row["source_id"], "source")
             for key in ("scope_id", "agent_id", "binding_id", "revision_id", "context_id"):
                 digest_value(row[key], key)
@@ -183,12 +218,17 @@ class _DispatchState:
             if (type(row["turn"]) is not int
                     or row["turn"] != len(self.sources.get(row["source_id"], [])) + 1):
                 raise DiscoveryError("invalid-discovery-turn")
-            refusal = self.refusal(row)
+            refusal = self.review_refusal(row) if record.type == "review_reserved" else self.refusal(row)
             if refusal:
                 raise DiscoveryError(refusal)
+            if record.type == "review_reserved":
+                self._validate_review_request(row, objects)
             key = record.payload["receipt_id"]
             self.dispatches[key] = row
+            self.dispatch_kinds[key] = "review" if record.type == "review_reserved" else "discovery"
             self.sources.setdefault(row["source_id"], []).append(key)
+            selected = self.review_sources if record.type == "review_reserved" else self.discovery_sources
+            selected.setdefault(row["source_id"], []).append(key)
         elif record.type == "dispatch_captured":
             _obj(row, ("dispatch_id", "output_id", "reason_code", "usage", "active_ms", "active_status"))
             key = row["dispatch_id"]
@@ -209,14 +249,106 @@ class _DispatchState:
             key = row["dispatch_id"]
             if key not in self.captures or key in self.applied:
                 raise DiscoveryError("invalid-discovery-application")
-            if row["state"] not in {"proposal_ready", "evidence_ready", "blocked"}:
+            expected_kind = "review" if record.type == "review_applied" else "discovery"
+            if self.dispatch_kinds.get(key) != expected_kind:
                 raise DiscoveryError("invalid-discovery-application")
-            self._validate_application(row, objects)
+            allowed = ({"review_ready", "revision_required", "blocked"}
+                       if expected_kind == "review" else {"proposal_ready", "evidence_ready", "blocked"})
+            if row["state"] not in allowed:
+                raise DiscoveryError("invalid-discovery-application")
+            if expected_kind == "review":
+                self._validate_review_application(row, objects)
+            else:
+                self._validate_application(row, objects)
             if row["receipt_id"] is not None:
                 objects.read_blob(row["receipt_id"])
             digest_value(row["revision_id"], "revision")
             objects.read_blob(row["revision_id"])
             self.applied[key] = row
+
+    def _validate_review_request(self, row, objects):
+        producer = self.dispatches[row["producer_dispatch_id"]]
+        application = self.applied[row["producer_dispatch_id"]]
+        proposal_receipt = _load(objects.read_blob(application["receipt_id"]))
+        proposal = _load(objects.read_blob(proposal_receipt["proposal_id"]))
+        context_bytes = objects.read_blob(row["context_id"])
+        context = _load(context_bytes)
+        _obj(context, ("schema_version", "kind", "candidate_id", "candidate",
+                       "safe_discovery_context", "overlap_pairs", "review_obligations"))
+        obligations = {
+            "independence": "fresh-independent-execution-certification-required",
+            "candidate_integrity": "review-without-editing-candidate-ownership",
+            "domains": "cover-every-candidate-domain-key-exactly-once",
+            "subjects": "cover-every-candidate-subject-key-exactly-once",
+            "inventory": "reconcile-every-candidate-inventory-path-exactly-once",
+            "overlaps": "reconcile-every-common-path-subject-pair-exactly-once",
+            "questions": "preserve-all-candidate-questions",
+            "categories": "preserve-all-candidate-category-obligations-without-completeness-claim",
+            "execution": "passive-review-does-not-certify-execution-or-analysis",
+        }
+        binding = _load(objects.read_blob(producer["binding_id"]))
+        safe_context = canonical_json_bytes(context["safe_discovery_context"])
+        expected_pairs = [
+            list(pair) for pair in _overlap_pairs(proposal, context["safe_discovery_context"])
+        ]
+        if (context_bytes != canonical_json_bytes(context)
+                or context["schema_version"] != 1
+                or context["kind"] != "untrusted_discovery_review_context"
+                or context["candidate"] != proposal
+                or context["candidate_id"] != content_digest(canonical_json_bytes(proposal))
+                or context["review_obligations"] != obligations
+                or context["overlap_pairs"] != expected_pairs
+                or content_digest(safe_context) != binding.get("context_id")
+                or objects.read_blob(binding["context_id"]) != safe_context):
+            raise DiscoveryError("discovery-review-context-mismatch")
+
+    def _validate_review_application(self, row, objects):
+        key = row["dispatch_id"]
+        request, capture = self.dispatches[key], self.captures[key]
+        reasons = {"provider-failed", "unsafe-provider-output", "invalid-provider-result",
+                   "reservation-exceeded", "review-result-invalid"}
+        if ((row["state"] == "blocked" and row["reason_code"] not in reasons)
+                or (row["state"] != "blocked" and row["reason_code"] is not None)
+                or row["revision_id"] != request["revision_id"]):
+            raise DiscoveryError("invalid-discovery-application")
+        if self.dispatch_breached(key):
+            if row["reason_code"] != "reservation-exceeded":
+                raise DiscoveryError("invalid-discovery-application")
+        elif row["reason_code"] == "reservation-exceeded":
+            raise DiscoveryError("invalid-discovery-application")
+        transport_reasons = {"provider-failed", "unsafe-provider-output", "invalid-provider-result"}
+        if row["reason_code"] in transport_reasons and row["reason_code"] != capture["reason_code"]:
+            raise DiscoveryError("invalid-discovery-application")
+        if capture["reason_code"] is not None and row["reason_code"] not in {
+                capture["reason_code"], "reservation-exceeded"}:
+            raise DiscoveryError("invalid-discovery-application")
+        receipt = _load(objects.read_blob(row["receipt_id"])) if row["receipt_id"] is not None else None
+        if row["state"] == "blocked":
+            if receipt is not None:
+                raise DiscoveryError("invalid-discovery-application")
+            return
+        if receipt is None:
+            raise DiscoveryError("invalid-discovery-application")
+        _obj(receipt, ("schema_version", "state", "binding_id", "proposal_receipt_id",
+                       "proposal_id", "review_id", "authorial_response_id", "reviewer_context_id",
+                       "outcome", "execution_certification_required", "analysis_certified", "findings"))
+        outcomes = {"ready_for_planning": "review_ready", "revision_required": "revision_required"}
+        expected_state = outcomes.get(receipt["outcome"])
+        if (receipt["schema_version"] != 1 or receipt["state"] != "review_validated"
+                or expected_state is None or row["state"] != expected_state
+                or receipt["binding_id"] != request["binding_id"]
+                or receipt["proposal_receipt_id"] != request["proposal_receipt_id"]
+                or receipt["authorial_response_id"] != capture["output_id"]
+                or receipt["reviewer_context_id"] != request["context_id"]
+                or receipt["execution_certification_required"] is not True
+                or receipt["analysis_certified"] is not False):
+            raise DiscoveryError("invalid-discovery-application")
+        review = objects.read_blob(receipt["review_id"])
+        if content_digest(review) != receipt["review_id"]:
+            raise DiscoveryError("invalid-discovery-application")
+        producer_receipt = _load(objects.read_blob(request["proposal_receipt_id"]))
+        if receipt["proposal_id"] != producer_receipt.get("proposal_id"):
+            raise DiscoveryError("invalid-discovery-application")
 
     def _validate_application(self, row, objects):
         key = row["dispatch_id"]
