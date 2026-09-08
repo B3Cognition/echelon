@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from harness.reopen_planner import plan_reopen_gaps
+from harness.task_targets import analyze_task_targets
 
 
 def _tasks_md() -> str:
@@ -18,6 +20,72 @@ def _tasks_md() -> str:
 - [ ] T-096 complexity=standard phase=fulfillment-gap req=FR-004 depends=T-095
   **Title:** FG-T4.2 - Implement key card type from deck draw
 """
+
+
+def test_reopened_tasks_inherit_unique_requirement_owner(tmp_path):
+    gaps, tasks, out = _write_inputs(tmp_path, gaps="""# Gaps
+| ID | Missing | Next Action |
+| --- | --- | --- |
+| FR-007 | Assertion missing | Add assertion |
+""")
+    tasks.write_text(
+        "- [x] T-001 complexity=standard phase=core req=FR-007 depends=none target=sources/game\n"
+        "- [x] T-002 complexity=standard phase=core req=FR-008 depends=none target=sources/other\n")
+    result = plan_reopen_gaps(gaps_path=gaps, tasks_path=tasks, existing_reopen_paths=[],
+                             out_plan_json=out / "plan.json", out_plan_md=out / "plan.md")
+    assert result.status == "ready"
+    ownership = analyze_task_targets("\n".join(task["row"] for task in result.proposed_tasks))
+    assert ownership.unowned_tasks == ()
+    assert ownership.target_tasks == {"sources/game": ("T-003", "T-004", "T-005")}
+
+
+def test_reopen_does_not_guess_ambiguous_workspace_target(tmp_path):
+    gaps, tasks, out = _write_inputs(tmp_path, gaps="""# Gaps
+| ID | Missing | Next Action |
+| --- | --- | --- |
+| FR-007 | Assertion missing | Add assertion |
+""")
+    tasks.write_text(
+        "- [x] T-001 complexity=standard phase=core req=FR-007 depends=none target=sources/game\n"
+        "- [x] T-002 complexity=standard phase=core req=FR-007 depends=none target=sources/other\n")
+    result = plan_reopen_gaps(gaps_path=gaps, tasks_path=tasks, existing_reopen_paths=[],
+                             out_plan_json=out / "plan.json", out_plan_md=out / "plan.md")
+    assert result.status == "manual_review"
+    assert result.proposed_tasks == []
+    assert "target" in result.manual_followups[0]["reason"]
+
+
+@pytest.mark.parametrize("declared, rows, expected", [
+    (["sources/game"], "", "sources/game"),
+    (["sources/game", "sources/other"], "", None),
+    (["sources/game", "sources/other"], "- [x] T-001 complexity=standard phase=core req=FR-009 depends=none target=sources/game\n", None),
+    ([], "- [x] T-001 complexity=standard phase=core req=FR-009 depends=none target=sources/game\n", "sources/game"),
+    (["sources/game"], "- [x] T-001 complexity=standard phase=core req=FR-007 depends=none target=sources/other\n", None),
+])
+def test_reopen_respects_declared_target_scope(tmp_path, declared, rows, expected):
+    gaps, tasks, out = _write_inputs(tmp_path, "| FR-007 | Missing assertion | Add assertion |\n")
+    tasks.write_text(rows)
+    (tmp_path / "spec.md").write_text("---\ntargets: " + str(declared) + "\n---\n")
+    result = plan_reopen_gaps(gaps_path=gaps, tasks_path=tasks, existing_reopen_paths=[],
+                             out_plan_json=out / "plan.json", out_plan_md=out / "plan.md")
+    if expected is None:
+        assert result.status == "manual_review"
+        assert result.proposed_tasks == []
+    else:
+        assert result.status == "ready"
+        assert all(f"target={expected}" in task["row"] for task in result.proposed_tasks)
+
+
+@pytest.mark.parametrize("files", ["sources/other/test.ts", "sources/game/test.ts, sources/other/test.ts"])
+def test_reopen_does_not_inherit_conflicting_source_ownership(tmp_path, files):
+    gaps, tasks, out = _write_inputs(tmp_path, "| FR-007 | Missing assertion | Add assertion |\n")
+    tasks.write_text(
+        "- [x] T-001 complexity=standard phase=core req=FR-007 depends=none target=sources/game\n"
+        f"  **Files:**\n  {files}\n")
+    result = plan_reopen_gaps(gaps_path=gaps, tasks_path=tasks, existing_reopen_paths=[],
+                             out_plan_json=out / "plan.json", out_plan_md=out / "plan.md")
+    assert result.status == "manual_review"
+    assert result.proposed_tasks == []
 
 
 def _gaps_md() -> str:

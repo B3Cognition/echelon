@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from kernel.task_contract import parse_task_rows
+from harness.task_targets import analyze_task_targets
+from harness.spec_frontmatter import read_targets
 
 
 MAX_ROOT_CAUSE_SEQUENCES = 20
@@ -48,6 +50,16 @@ def plan_reopen_gaps(
     gaps_text = gaps_path.read_text(encoding="utf-8", errors="replace")
     tasks_text = tasks_path.read_text(encoding="utf-8", errors="replace")
     task_rows = parse_task_rows(tasks_text)
+    ownership = analyze_task_targets(tasks_text)
+    declared_targets = {
+        target.removeprefix("./").replace("\\", "/").rstrip("/") or "."
+        for target in read_targets(tasks_path.parent)
+    }
+    task_owners = {
+        task_id: target
+        for target, task_ids in ownership.target_tasks.items()
+        for task_id in task_ids
+    }
     fulfillment_reqs = {
         req
         for task in task_rows
@@ -100,6 +112,26 @@ def plan_reopen_gaps(
             skipped.append(_skip(gap, "planned work already exists in base tasks"))
             continue
 
+        related_tasks = {task.task_id for task in task_rows if req in task.requirements}
+        conflicting_tasks = set(ownership.cross_target_tasks) | set(ownership.path_target_mismatches)
+        ownership_conflict = bool(conflicting_tasks & (related_tasks or set(ownership.all_task_ids)))
+        owners = {
+            task_owners[task.task_id]
+            for task in task_rows
+            if req in task.requirements and task.task_id in task_owners
+        }
+        if not owners:
+            owners = declared_targets or set(ownership.target_tasks)
+        if ownership_conflict or len(owners) > 1 or (declared_targets and not owners <= declared_targets):
+            manual_followups.append({
+                "id": req,
+                "section": gap["section"],
+                "reason": "ambiguous implementation target; explicit ownership required",
+                "missing": gap["missing"],
+                "next_action": gap["next_action"],
+            })
+            continue
+        target = next(iter(owners), "")
         cluster_key = _cluster_key(gap)
         if cluster_key in seen_cluster_keys:
             skipped.append(_skip(gap, "duplicate root-cause cluster"))
@@ -112,6 +144,7 @@ def plan_reopen_gaps(
                 "missing": gap["missing"],
                 "next_action": gap["next_action"],
                 "cluster_key": cluster_key,
+                **({"target": target} if target else {}),
             }
         )
 
@@ -276,6 +309,7 @@ def _proposed_tasks(
     task_number = next_task_number
     for index, cluster in enumerate(clusters, start=1):
         req = cluster["primary_req"]
+        target_suffix = f" target={cluster['target']}" if cluster.get("target") else ""
         if req == "TASK-PROGRESS":
             task_id = _format_task_id(task_number)
             tasks.append(
@@ -283,7 +317,7 @@ def _proposed_tasks(
                     "task_id": task_id,
                     "row": (
                         f"- [ ] {task_id} complexity=standard "
-                        "phase=fulfillment-gap req=TASK-PROGRESS depends=none"
+                        f"phase=fulfillment-gap req=TASK-PROGRESS depends=none{target_suffix}"
                     ),
                     "title": (
                         f"FG-T{index}.1 - Reconcile task progress evidence for "
@@ -305,7 +339,7 @@ def _proposed_tasks(
                     "task_id": first,
                     "row": (
                         f"- [ ] {first} complexity=standard "
-                        f"phase=fulfillment-gap req={req} depends=none"
+                        f"phase=fulfillment-gap req={req} depends=none{target_suffix}"
                     ),
                     "title": f"FG-T{index}.1 - Add failing test for {gap_label}",
                     "cluster_req": req,
@@ -314,7 +348,7 @@ def _proposed_tasks(
                     "task_id": second,
                     "row": (
                         f"- [ ] {second} complexity=standard "
-                        f"phase=fulfillment-gap req={req} depends={first}"
+                        f"phase=fulfillment-gap req={req} depends={first}{target_suffix}"
                     ),
                     "title": f"FG-T{index}.2 - Implement missing or deviated behavior for {gap_label}",
                     "cluster_req": req,
@@ -323,7 +357,7 @@ def _proposed_tasks(
                     "task_id": third,
                     "row": (
                         f"- [ ] {third} complexity=standard "
-                        f"phase=fulfillment-gap req={req} depends={second}"
+                        f"phase=fulfillment-gap req={req} depends={second}{target_suffix}"
                     ),
                     "title": f"FG-T{index}.3 - Rerun verify-spec and update fulfillment evidence",
                     "cluster_req": req,

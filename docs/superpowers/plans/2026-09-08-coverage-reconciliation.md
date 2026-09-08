@@ -10,7 +10,7 @@
 
 ## Constraints
 
-- No edits to the demo specification, tests, requirements, or evidence receipts.
+- Fix Echelon, not the demo manually. Demo changes are permitted only through Echelon's CLI to validate its workflow; canonical requirements and authoritative receipts remain protected. The owner rejected manual demo repair as scope drift.
 - No new agent, SOAR execution, automatic tag guessing, or relaxed observer matching.
 - Retain valid case lists separated by comma, slash or semicolon and coupled requirement rows.
 - Do not expand symbolic case ranges or invent their endpoints.
@@ -38,6 +38,7 @@
 
 ## Phase 3: Repair and fresh verification
 
+- [ ] Reconcile the authoritative coverage map on the planning side before dispatching implementation. Delivery intentionally treats it as read-only: do not ask a build provider to rewrite it or weaken that boundary. Review concrete case identities and test types against canonical oracles; do not translate symbolic ranges mechanically.
 - [ ] Feed owner-approved dispositions into the existing implementation flow. Keep requirements/required test boundaries intact; missing assertions need test repairs, not aliases.
 - [ ] Reacquire authoritative evidence after any accepted source/test or coverage-map change. Rebuild graphs only from resulting compatible verified rows.
 
@@ -58,3 +59,11 @@
 - Live report: `runs/verify-spec-003-create-browser-first-3d-20260908-123207/coverage-diagnostic/2b6933af6c4944ec463dd099731a93bbc31eba6af2673559226f4952f452a9bb/report.json` in the demo workspace. This retained report predates the final stop-label refinement; future deadline stops are labeled `budget_exhausted`.
 - Regression coverage includes durable partial results, one shared decreasing timeout, batch-local IDs, malformed later output, input changes, and exceptions/unreadable inputs invalidating earlier findings. Independent review's exception-path finding was fixed and re-reviewed.
 - Final relevant regression run: 533 passed in 54.94 seconds. Reinstalled the CLI from this feature worktree; no merge to main or demo repair was performed.
+
+### Phase 3 handoff validation
+
+- Owner-approved repair handoff committed in the demo workspace as `92d64d7`. The actual `echelon spec reopen` generated nine tasks (T-016 through T-024), but omitted all target ownership. No delivery was started.
+- Fixed deterministic reopen planning to inherit an unambiguous requirement owner or sole declared target, preserve target-free legacy projects, and require manual ownership for ambiguous or conflicting sources. Relevant regression suite: 85 passed.
+- Recovered only the nine generated demo task rows' target metadata. Actual `echelon spec targets 003-create-browser-first-3d` now reports 24 assigned, zero unowned, zero cross-target, valid.
+- Inspection also confirmed delivery explicitly prohibits coverage-map edits. The generated repair tasks therefore do not yet constitute an executable end-to-end handoff: planning-side map reconciliation must precede delivery. No verification waiver, graph promotion, product edit, or evidence mutation was made.
+- Owner requested returning to Echelon-only fixes and clearing the abandoned demo handoff before a manually initiated new-spec trial. Preserved the complete handoff in demo recovery branch `recovery/abandoned-003-coverage-handoff` at `1ec41fc`; main cleanup commit `f3a50bc` restores the exact pre-handoff tracked tree (`a297721`). The previously reopened spec is no longer left in progress. No product-repository changes were included in this cleanup.
