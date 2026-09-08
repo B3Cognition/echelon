@@ -8397,6 +8397,13 @@ class TestOuterLoopConvergence:
         (worktree / "generated.txt").write_text("new code\n", encoding="utf-8")
         gitops.commit.return_value = "abc123def456"
 
+        spec_dir = worktree / "specs/spec-001"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text("- [x] T-002 original definition\n")
+        state = state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
         before = {
             "build": {
                 "completed_tasks": 1,
@@ -8436,6 +8443,13 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["checkpoint_commits"][0]["commit"] == "abc123def456"
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-002"]
+        from harness.task_progress import checkpoint_input_hash
+
+        recorded_hash = state["checkpoint_commits"][0]["checkpoint_input_hash"]
+        assert recorded_hash == checkpoint_input_hash(spec_dir)
+        assert recorded_hash is not None
+        (spec_dir / "tasks.md").write_text("- [x] T-002 CHANGED definition\n")
+        assert recorded_hash != checkpoint_input_hash(spec_dir)
 
     def test_checkpoint_commit_uses_phase_when_task_ids_unknown(self, tmp_path: Path) -> None:
         """Stage 1 records truthful phase/wave metadata instead of fake task IDs."""

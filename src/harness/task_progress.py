@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,6 +30,29 @@ _ALLOWED_STATUSES = _TERMINAL_STATUSES | _OPEN_STATUSES
 
 class TaskProgressError(RuntimeError):
     """Raised when canonical task progress cannot be updated or reconciled."""
+
+
+def checkpoint_input_hash(spec_dir: Path | None) -> str | None:
+    """Bind recoverable progress to definitions, excluding progress-only edits."""
+    from harness.fulfillment_runner import SCOPE_INPUT_FILENAMES, _normalized_scope_input_bytes
+
+    if spec_dir is None or not (spec_dir / "tasks.md").is_file():
+        return None
+    digest = hashlib.sha256(b"checkpoint-input-v1\0")
+    for filename in SCOPE_INPUT_FILENAMES:
+        path = spec_dir / filename
+        digest.update(filename.encode() + b"\0")
+        if not path.is_file():
+            digest.update(b"0\0")
+            continue
+        content = _normalized_scope_input_bytes(filename, path)
+        if filename == "tasks.md":
+            text = content.decode("utf-8")
+            text = re.sub(r"(?m)^(\s*- )\[[ xX]\]", r"\1[ ]", text)
+            text = re.sub(r"(?m)^[ \t]+\*\*Status:\*\*[ \t]*(?:PENDING|DONE)[ \t]*\n?", "", text)
+            content = text.encode("utf-8")
+        digest.update(b"1\0" + content)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)

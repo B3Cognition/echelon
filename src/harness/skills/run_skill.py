@@ -139,6 +139,8 @@ def _fresh_delivery_baselines(
                 state = json.loads(state_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
+            if not isinstance(state, dict) or state.get("spec_id") != intent.spec_id:
+                continue
             status = str(state.get("status") or "")
             if status == "running" and state_lock_owner_is_alive(state_path):
                 raise RunContextError(
@@ -186,6 +188,8 @@ def _fresh_delivery_completed_tasks(
     intent: Any,
     baselines: Mapping[str, str],
     gitops: Any | None = None,
+    *,
+    spec_dir: Path | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Recover Python-checkpointed task progress on each retained lineage.
 
@@ -195,6 +199,11 @@ def _fresh_delivery_completed_tasks(
     ancestors of the selected baseline are inherited by a fresh budget.
     """
     if not baselines or gitops is None:
+        return {}
+    from harness.task_progress import checkpoint_input_hash
+
+    current_input_hash = checkpoint_input_hash(spec_dir)
+    if current_input_hash is None:
         return {}
     ancestry = getattr(gitops, "commit_is_ancestor", None)
     if not callable(ancestry):
@@ -219,6 +228,8 @@ def _fresh_delivery_completed_tasks(
             continue
         for checkpoint in checkpoints:
             if not isinstance(checkpoint, dict):
+                continue
+            if checkpoint.get("checkpoint_input_hash") != current_input_hash:
                 continue
             commit = checkpoint.get("commit")
             task_ids = checkpoint.get("task_ids")
@@ -917,6 +928,7 @@ def _execute_delivery_run(
         intent,
         fresh_branch_bases,
         gitops,
+        spec_dir=spec_dir,
     )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)

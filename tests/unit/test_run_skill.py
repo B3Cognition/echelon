@@ -127,6 +127,7 @@ def test_fresh_delivery_ignores_checkpoint_already_landed_on_default_branch(
             {
                 "status": "running",
                 "checkpoint_commits": [{"commit": candidate}],
+                "spec_id": "012",
             }
         ),
         encoding="utf-8",
@@ -158,6 +159,7 @@ def test_fresh_delivery_does_not_resurrect_older_checkpoint_after_landed_one(
                 {
                     "status": "running",
                     "checkpoint_commits": [{"commit": checkpoint}],
+                    "spec_id": "012",
                 }
             ),
             encoding="utf-8",
@@ -191,6 +193,7 @@ def test_fresh_delivery_prefers_newest_checkpoint_from_build_blocked_run(
                     "status": status,
                     "termination_reason": reason,
                     "checkpoint_commits": [{"commit": checkpoint}],
+                    "spec_id": "012",
                 }
             ),
             encoding="utf-8",
@@ -591,6 +594,7 @@ class TestRunSkillAutoLand:
             "status": "blocked",
             "termination_reason": "task_progress_incomplete",
             "checkpoint_commits": [{"commit": candidate}],
+            "spec_id": "012",
         }), encoding="utf-8")
         marker = current_build_marker(tmp_path, "012")
         marker.parent.mkdir(parents=True, exist_ok=True)

@@ -5656,6 +5656,11 @@ class RalphController:
             "completed_tasks_after": after_completed,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        from harness.task_progress import checkpoint_input_hash
+
+        checkpoint["checkpoint_input_hash"] = checkpoint_input_hash(
+            self._find_existing_spec_dir(worktree_path)
+        )
         state = self._state_store.read()
         checkpoints = state.get("checkpoint_commits")
         if not isinstance(checkpoints, list):
