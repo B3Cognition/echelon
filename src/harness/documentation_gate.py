@@ -13,6 +13,7 @@ import yaml
 from harness.docs_verifier import (
     DOCS_VERIFICATION_REPORT_NAME,
     REPORT_NAME,
+    first_run_inputs_changed,
     verify_docs,
 )
 from harness.runnability_evidence import RunnabilityEvidenceRef
@@ -90,11 +91,19 @@ def evaluate_documentation_gate(
             "final documentation convergence requires current passing user-runnability evidence",
         )
 
-    if runnability_report is not None:
+    changed = (
+        _normalize_changed_paths(changed_files)
+        if changed_files is not None
+        else _changed_paths(worktree)
+    )
+    setup_changed = first_run_inputs_changed(changed)
+
+    if runnability_report is not None or setup_changed:
         runnability_docs = verify_docs(
             worktree,
             spec,
             runnability_report=runnability_report,
+            changed_files=changed,
         )
         runnability_findings = [
             finding
@@ -106,6 +115,19 @@ def evaluate_documentation_gate(
         if runnability_findings:
             finding = runnability_findings[0]
             return _fail("docs-runnability-commands-stale", finding.issue)
+        # An internal-change disposition cannot exempt changed setup inputs
+        # from rechecking the existing first-run manual. Correct docs need no
+        # cosmetic edits; changelog policy remains a separate impact decision.
+        first_run_findings = [
+            finding for finding in runnability_docs.findings
+            if finding.document == "README.md"
+        ]
+        if first_run_findings:
+            finding = first_run_findings[0]
+            return _fail(
+                "readme-first-run-manual-incomplete",
+                f"{finding.issue}. {finding.required_repair}",
+            )
 
     if docs_required is False:
         reason = str(metadata.get("not_applicable_reason") or "").strip()
@@ -116,6 +138,19 @@ def evaluate_documentation_gate(
                 "`not_applicable_reason`. Narrative prose and aliases such as "
                 "`reason` do not satisfy the report schema.",
             )
+        # Preserve the independent agent's semantic judgment (command order,
+        # failure handling, auth, evidence claims), even on a no-impact slice.
+        if (spec / DOCS_VERIFICATION_REPORT_NAME).exists():
+            failure = _docs_verification_report_failure(
+                spec,
+                runnability_required=runnability_required,
+                expected_runnability_sha256=(
+                    runnability_report.evidence_sha256 if runnability_report else ""
+                ),
+                no_impact=runnability_report is None,
+            )
+            if failure:
+                return _fail(*failure)
         return DocumentationGateResult(passed=True)
 
     readme_updated = metadata.get("readme_updated") is True
@@ -135,11 +170,6 @@ def evaluate_documentation_gate(
             "docs are required but README.md or CHANGELOG.md is missing",
         )
 
-    changed = (
-        _normalize_changed_paths(changed_files)
-        if changed_files is not None
-        else _changed_paths(worktree)
-    )
     if "README.md" not in changed or "CHANGELOG.md" not in changed:
         return _fail(
             "documentation-required-without-doc-changes",
@@ -347,9 +377,7 @@ def _normalize_changed_paths(paths: Iterable[str]) -> set[str]:
         path = str(raw_path).strip()
         if not path:
             continue
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        changed.add(path.strip('"'))
+        changed.update(part.strip('"') for part in path.split(" -> "))
     return changed
 
 
@@ -397,6 +425,7 @@ def _docs_verification_report_failure(
     *,
     runnability_required: bool = False,
     expected_runnability_sha256: str = "",
+    no_impact: bool = False,
 ) -> tuple[str, str] | None:
     report = spec_dir / DOCS_VERIFICATION_REPORT_NAME
     if not report.exists():
@@ -425,7 +454,10 @@ def _docs_verification_report_failure(
         "impact_report_valid",
         "project_evidence_checked",
     )
-    missing_true = [key for key in required_true if metadata.get(key) is not True]
+    missing_true = [
+        key for key in required_true if metadata.get(key) is not True
+        and not (no_impact and key == "project_evidence_checked")
+    ]
     if missing_true:
         return (
             "docs-verification-report-invalid",
@@ -445,6 +477,13 @@ def _docs_verification_report_failure(
             f"{report} has {blocking_findings} blocking documentation finding(s)",
         )
 
+    unsupported = _nonempty_string_list(metadata.get("unsupported_claims"))
+    if unsupported:
+        return ("documentation-claim-unsupported", "; ".join(unsupported))
+    uncovered = _nonempty_string_list(metadata.get("uncovered_change_ids"))
+    if uncovered:
+        return ("documentation-coverage-incomplete", "Uncovered changes: " + ", ".join(uncovered))
+
     try:
         evidence_items_checked = int(metadata.get("evidence_items_checked"))
     except (TypeError, ValueError):
@@ -452,7 +491,7 @@ def _docs_verification_report_failure(
             "docs-verification-report-invalid",
             f"{report} must set evidence_items_checked to at least 4",
         )
-    if evidence_items_checked < 4:
+    if evidence_items_checked < 4 and not no_impact:
         return (
             "docs-verification-report-invalid",
             f"{report} must check README, CHANGELOG, impact report, and project evidence",

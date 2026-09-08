@@ -2742,6 +2742,8 @@ class TestOuterLoopConvergence:
                 {
                     "name": "prosaic",
                     "version": "0.1.0",
+                    "packageManager": "pnpm@10.2.1",
+                    "engines": {"node": ">=22", "pnpm": ">=10"},
                     "main": "dist/index.js",
                     "types": "dist/index.d.ts",
                     "bin": {
@@ -2786,6 +2788,10 @@ class TestOuterLoopConvergence:
         assert "  - dev_dependencies: jest, typescript" in context
         assert "  - script build: `tsc -p tsconfig.json`" in context
         assert "  - script test: `jest`" in context
+        for role in ("tech-writer", "docs-verifier"):
+            agent_context = (context_file.parent / f"default-{role}-context.md").read_text()
+            assert "pnpm@10.2.1" in agent_context
+            assert "engine node: `>=22`" in agent_context
 
     def test_build_slice_context_includes_target_pyproject_manifest(
         self, tmp_path: Path
@@ -3140,6 +3146,46 @@ class TestOuterLoopConvergence:
         result = controller._apply_documentation_gate(verify, str(worktree))
 
         assert result.passed
+
+    @pytest.mark.parametrize("field, claim", [
+        ("unsupported_claims", "README setup continues migrations after failed install; guard the setup block."),
+        ("uncovered_change_ids", "FR-001"),
+    ])
+    def test_runnability_docs_refresh_preserves_independent_rejection(
+        self, tmp_path: Path, field: str, claim: str,
+    ) -> None:
+        from tests.unit.test_documentation_gate import (
+            COMPLETE_USER_COMMANDS, DOCS_VERIFICATION_PASS,
+            _passing_runnability_report, _write_runnability_docs_project,
+        )
+        from harness.docs_verifier import write_docs_verification_report
+
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        spec = _write_runnability_docs_project(worktree, COMPLETE_USER_COMMANDS)
+        (spec / "documentation-impact-report.md").write_text(
+            "---\ndocs_required: false\nnot_applicable_reason: No new docs change.\n---\n"
+        )
+        report = _passing_runnability_report(worktree)
+        state = state_store.read()
+        state["spec_dir"] = str(spec)
+        state["user_runnability"] = {"status": "runnable", "report": str(report.path)}
+        state_store.write(state)
+        (spec / "docs-verification-report.md").write_text(
+            DOCS_VERIFICATION_PASS.replace("verdict: PASS",
+                "verdict: FAIL\n" + field + ": " + json.dumps([claim]))
+        )
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+
+        result = controller._apply_documentation_gate(verify, str(worktree), changed_files=[])
+
+        assert not result.passed
+        assert claim in (spec / "docs-verification-report.md").read_text()
+        # The normal verifier command is the explicit regeneration boundary
+        # after repair; refreshing the harness receipt alone is not.
+        write_docs_verification_report(worktree, spec, runnability_report=report)
+        assert controller._apply_documentation_gate(verify, str(worktree), changed_files=[]).passed
 
     def test_documentation_gate_writes_not_applicable_report_for_noop_slice(
         self, tmp_path: Path

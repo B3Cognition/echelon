@@ -234,6 +234,126 @@ def _write_runnability_docs_project(
     return spec_dir
 
 
+@pytest.mark.parametrize("changed_path", [
+    "package.json", "pnpm-lock.yaml", "patches/library.patch",
+    "docker-compose.yml", "services/api/compose.yaml", "scripts/local-prepare.sh",
+    ".env.example", "pyproject.toml", "Cargo.lock", ".echelon/runnability.yml",
+    "scripts/prepare.sh -> tooling/prepare.sh",
+    "requirements/dev.txt",
+])
+def test_setup_changes_recheck_first_run_despite_no_docs_impact(
+    tmp_path: Path, changed_path: str,
+) -> None:
+    spec = _write_runnability_docs_project(tmp_path, {})
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Internal change only.\n---\n"
+    )
+    readme = tmp_path / "README.md"
+    original = readme.read_text()
+    readme.write_text(original.replace("## Prerequisites", "## Tools"))
+
+    result = evaluate_documentation_gate(tmp_path, spec, changed_files=[changed_path])
+
+    assert not result.passed
+    assert "Prerequisites" in result.failure.error
+    # Reviewing an unchanged, correct manual must not demand artificial edits.
+    readme.write_text(original)
+    assert evaluate_documentation_gate(tmp_path, spec, changed_files=[changed_path]).passed
+
+
+@pytest.mark.parametrize("report_change", [
+    ("verdict: PASS", "verdict: FAIL"),
+    ("blocking_findings: 0", "blocking_findings: 1"),
+    ("verdict: PASS", "verdict: PASS\nunsupported_claims: [Unguarded install sequence]"),
+])
+def test_no_impact_report_cannot_override_independent_docs_rejection(
+    tmp_path: Path, report_change: tuple[str, str],
+) -> None:
+    spec = _write_runnability_docs_project(tmp_path, {})
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Internal change only.\n---\n"
+    )
+    (spec / "docs-verification-report.md").write_text(
+        DOCS_VERIFICATION_PASS.replace(*report_change)
+        + "\nInstall failure is followed by migrations in the same unguarded paste block.\n"
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec, changed_files=["src/internal.py"])
+
+    assert not result.passed
+    assert result.failure.id in {"docs-verification-report-failed", "documentation-claim-unsupported"}
+
+
+def test_passing_runnability_receipt_does_not_excuse_stale_toolchain_docs(tmp_path: Path) -> None:
+    spec = _write_runnability_docs_project(tmp_path, COMPLETE_USER_COMMANDS)
+    package = tmp_path / "package.json"
+    package.write_text(package.read_text().replace('"name":"demo"',
+        '"name":"demo","packageManager":"pnpm@10.2.1"'))
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Internal change only.\n---\n"
+    )
+
+    result = evaluate_documentation_gate(
+        tmp_path, spec, changed_files=[],
+        runnability_report=_passing_runnability_report(tmp_path),
+    )
+
+    assert not result.passed
+    assert "pnpm@10.2.1" in result.failure.error
+
+
+@pytest.mark.parametrize("changed_path", [
+    "src/internal.py", "tests/fixtures/package.json", "specs/001/requirements.md",
+])
+def test_unrelated_internal_change_keeps_legacy_no_impact_path(
+    tmp_path: Path, changed_path: str,
+) -> None:
+    spec = _write_runnability_docs_project(tmp_path, {})
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Internal change only.\n---\n"
+    )
+    (tmp_path / "README.md").write_text("# Unchanged older manual\n")
+
+    assert evaluate_documentation_gate(
+        tmp_path, spec, changed_files=[changed_path],
+    ).passed
+
+
+@pytest.mark.parametrize("with_runnability", [False, True])
+def test_setup_rereview_does_not_require_unrelated_changelog_rewrite(
+    tmp_path: Path, with_runnability: bool,
+) -> None:
+    spec = _write_runnability_docs_project(tmp_path, COMPLETE_USER_COMMANDS)
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Tooling only, manual still correct.\n---\n"
+    )
+    (tmp_path / "CHANGELOG.md").write_text("# Historical release notes\n")
+    _git_repo(tmp_path)
+    _commit_all(tmp_path)
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+
+    runnability = _passing_runnability_report(tmp_path) if with_runnability else None
+    report = write_docs_verification_report(tmp_path, spec, runnability_report=runnability)
+
+    assert report.verdict == "PASS"
+    assert evaluate_documentation_gate(
+        tmp_path, spec, changed_files=["pnpm-lock.yaml"], runnability_report=runnability,
+    ).passed
+
+
+def test_generated_no_impact_report_keeps_legacy_evidence_exemption(tmp_path: Path) -> None:
+    spec = tmp_path / "specs" / "001-internal"
+    spec.mkdir(parents=True)
+    (spec / "documentation-impact-report.md").write_text(
+        "---\ndocs_required: false\nnot_applicable_reason: Internal test change.\n---\n"
+    )
+    report = write_docs_verification_report(tmp_path, spec)
+    assert report.verdict == "PASS"
+    assert report.evidence_items_checked == 3
+
+    assert evaluate_documentation_gate(tmp_path, spec, changed_files=[]).passed
+
+
 @pytest.mark.parametrize(
     "omitted",
     ["pnpm 9", "pnpm local:session", "pnpm db:probe-local", "unverified"],

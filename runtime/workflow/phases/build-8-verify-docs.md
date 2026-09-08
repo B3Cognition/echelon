@@ -36,7 +36,7 @@ Use the Agent tool:
 DOCS VERIFIER must:
 
 1. Write `{spec_dir}/docs-verification-report.md`.
-2. Run `python -m harness verify-docs <worktree-path> <spec-dir>` from the target repository root and use its `docs-verification-report.md` as the authoritative finding list.
+2. Run `python -m harness verify-docs <worktree-path> <spec-dir>` from the target repository root as the deterministic baseline, then retain its findings and add the independent source-backed findings required by the DOCS VERIFIER protocol to the same report before returning a verdict.
 3. Check README.md for first-run manual completeness using project understanding and safe harness smoke evidence when present.
 4. Check CHANGELOG.md for Keep a Changelog-style completed-change entries, not roadmap or planned-work bullets.
 5. Check `{spec_dir}/documentation-impact-report.md` against the actual README/CHANGELOG state.

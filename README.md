@@ -1601,6 +1601,18 @@ time and updates repo-root `README.md` plus Keep a Changelog-style
 install/run instructions, configuration, operations, or significant performance
 characteristics. Ralph enforces this report before publish.
 
+DOCS VERIFIER independently reviews the complete first-run path after setup
+inputs change, including tool selection/version checks, dependency order,
+fail-fast command blocks, services, and authentication. Known manifest,
+lockfile, patch, script, Compose, and runnability changes trigger deterministic
+first-run rechecks even when the impact report says no docs update is needed;
+an already-correct README need not be edited. Exact Node ecosystem
+`packageManager` pins are checked against README prerequisites. Other toolchain
+constraints and command semantics remain source-backed agent review, not a
+general shell parser. Independent blocking findings cannot be bypassed by a
+no-impact decision. Documentation review never substitutes for sandbox evidence
+or the separately opted-in local-runner attestation.
+
 ## Validation
 
 Validate the canonical Prosaic prose and runtime bundles without running agents:
