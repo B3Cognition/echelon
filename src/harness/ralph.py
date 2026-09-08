@@ -3113,6 +3113,7 @@ class RalphController:
                 Path(worktree_path),
                 spec_dir,
                 runnability_report=runnability_ref,
+                preserve_independent_findings=True,
             )
 
         gate = evaluate_documentation_gate(
@@ -4917,6 +4918,17 @@ class RalphController:
                     lines.append(
                         f"  - package_manager: `{manager_name}` (lockfile: `{lockfile}`)"
                     )
+
+                pinned_manager = manifest.get("packageManager")
+                if isinstance(pinned_manager, str) and pinned_manager.strip():
+                    lines.append(f"  - packageManager (declared): `{_single_line(pinned_manager)}`")
+                engines = manifest.get("engines")
+                if isinstance(engines, dict):
+                    for tool, constraint in sorted(engines.items())[:script_limit]:
+                        if isinstance(constraint, str):
+                            lines.append(
+                                f"  - engine {_single_line(tool)}: `{_single_line(constraint)}`"
+                            )
 
                 for field in ("main", "module", "types"):
                     value = _single_line(str(manifest.get(field) or ""))
@@ -8877,6 +8889,7 @@ def _build_context_agent_sections(sections: list[str]) -> dict[str, list[str]]:
             "Current Requirement Excerpts",
             "Referenced Requirement Excerpts",
             "Spec-Adjacent Artifact Excerpts",
+            "Target Manifest Excerpts",
             "Target Layout Excerpts",
             "Quality Commands",
             "Last Verify Failures",

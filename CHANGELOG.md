@@ -18,6 +18,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Source-backed first-run documentation review** — Documentation agents now
+  receive declared package-manager/runtime constraints and review tool version
+  selection, command ordering, fail-fast setup, and evidence boundaries across
+  the full user journey. Setup-file changes trigger README rechecks even on
+  no-impact deliveries; explicit verifier failures and unsupported claims are
+  no longer bypassed by that disposition. Correct existing docs need no
+  cosmetic edits, and local execution remains opt-in.
+
 - **EGR-167 / EGR-169 layered L3 semantic closure** — Opt-in RE v2
   protocol `2.5`/schema `4` now audits selected L2 authority in one immutable
   epoch, resolves only its frozen findings through L3 overlays, rechecks

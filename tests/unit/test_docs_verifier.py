@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -105,6 +106,52 @@ Run commands from the project root when the dry run creates nothing.
 npm run test
 ```
 """
+
+
+@pytest.mark.parametrize("manager", ["npm", "pnpm", "yarn", "bun"])
+def test_first_run_manual_must_document_manifest_package_manager_pin(
+    tmp_path: Path, manager: str,
+) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({
+        "packageManager": f"{manager}@10.2.1",
+    }))
+    readme = tmp_path / "README.md"
+    readme.write_text(FIRST_RUN_README + f"\nRequires {manager} 9.0.0.\n")
+
+    failure = readme_first_run_manual_failure(readme, tmp_path)
+
+    assert f"{manager}@10.2.1" in failure
+    readme.write_text(FIRST_RUN_README + f"\nRequires `{manager}` **10.2.1**.\n")
+    assert readme_first_run_manual_failure(readme, tmp_path) == ""
+
+
+def test_package_manager_integrity_suffix_is_not_a_user_tool_version(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({
+        "packageManager": "pnpm@10.2.1+sha512.abcdef",
+    }))
+    readme = tmp_path / "README.md"
+    readme.write_text(FIRST_RUN_README + "\nRequires pnpm@10.2.1.\n")
+
+    assert readme_first_run_manual_failure(readme, tmp_path) == ""
+
+
+def test_pin_requires_complete_version_not_substring(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"packageManager":"pnpm@10.2.1"}')
+    readme = tmp_path / "README.md"
+    readme.write_text(FIRST_RUN_README + "\nRequires pnpm@10.2.10.\n")
+
+    assert "pnpm@10.2.1" in readme_first_run_manual_failure(readme, tmp_path)
+
+
+@pytest.mark.parametrize("prerequisite", [
+    "| pnpm | 10.2.1 |", "pnpm version 10.2.1", "pnpm v10.2.1",
+])
+def test_pin_accepts_common_prerequisite_formatting(tmp_path: Path, prerequisite: str) -> None:
+    (tmp_path / "package.json").write_text('{"packageManager":"pnpm@10.2.1"}')
+    readme = tmp_path / "README.md"
+    readme.write_text(FIRST_RUN_README + "\n" + prerequisite + "\n")
+
+    assert readme_first_run_manual_failure(readme, tmp_path) == ""
 
 
 def test_database_web_app_readme_is_a_valid_first_run_manual(
