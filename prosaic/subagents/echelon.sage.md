@@ -356,6 +356,15 @@ Must follow the structure in `agents/exploration/templates/sage-issues-template.
 For every issue, include `Action Required` and a `Resolution Guidance` subsection.
 This is a controller contract, not optional explanatory prose:
 
+- Keep `Affected artifact`, `Responsible agent`, and `Action Required`
+  ownership-consistent. `spec.md` and `requirements-overview.md` belong to WHAT;
+  discovery models and assumptions belong to DISCOVER; `plan.md`, `research.md`,
+  `data-model.md`, `contracts/`, and `adr/` belong to HOW; `test-strategy.md`,
+  `test-architecture.md`, and `coverage-map.md` belong to SENTINEL; `tasks.md`,
+  `critical-path.md`, `risk-matrix.md`, and `dependencies.md` belong to PLAN.
+  When an issue is isolated to one of those artifacts, name that artifact's owner;
+  do not route it to an upstream producer merely because its contract supplied the
+  comparison evidence.
 - State the one next action or decision that can advance this issue. Never write
   "retry" as an action.
 - State one suggested option only if it is grounded in cited project evidence.

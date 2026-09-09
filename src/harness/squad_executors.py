@@ -3130,6 +3130,39 @@ class StagedParallelExecutor(PhaseExecutor):
             "PLAN": "phase3-plan",
             "ORCHESTRATOR": "phase3-plan",
         }
+        from harness.phase3_repair_routing import OWNER_FILES
+
+        artifact_phases: set[str] = set()
+        phase1_files = {
+            "phase1-discover": frozenset({
+                "mental-model.md", "codebase-map.md", "assumptions.md", "unknowns.md",
+            }),
+            "phase1-what": frozenset({"spec.md", "requirements-overview.md"}),
+        }
+        affected_artifacts = re.findall(
+            r"^- \*\*Affected artifacts?:\*\*[ \t]*(.+?)[ \t]*$",
+            issues_text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        for field in affected_artifacts:
+            candidates = re.findall(r"`([^`]+)`", field) or re.split(r"[,;]", field)
+            for candidate in candidates:
+                path = candidate.strip().split("#", 1)[0].replace("\\", "/")
+                basename = path.rsplit("/", 1)[-1]
+                for phase, files in phase1_files.items():
+                    if basename in files:
+                        artifact_phases.add(phase)
+                for phase, files in OWNER_FILES.items():
+                    if basename in files or (
+                        phase == "phase3-how"
+                        and path.lstrip("./").startswith(("contracts/", "adr/"))
+                    ):
+                        artifact_phases.add(phase)
+        if artifact_phases:
+            for phase in phase_order:
+                if phase in artifact_phases:
+                    return phase
+
         responsible_agents = re.findall(
             r"^- \*\*Responsible agent:\*\*[ \t]*(.*?)[ \t]*$",
             issues_text,

@@ -147,6 +147,34 @@ def test_why3_discovery_owner_routes_to_discovery_phase():
 
 
 @pytest.mark.unit
+def test_why3_affected_task_routes_to_plan_when_role_label_conflicts():
+    issues = """### ISS-004: Task contradicts the normative contract
+- **Affected artifact:** tasks.md
+- **Responsible agent:** HOW
+- **Action Required:** The existing planning owner must amend T-005.
+"""
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase3-plan"
+    )
+
+
+@pytest.mark.unit
+def test_why3_affected_contract_routes_to_how_when_role_label_conflicts():
+    issues = """### ISS-005: Contract is incomplete
+- **Affected artifact:** contracts/internal-interfaces.md
+- **Responsible agent:** ORCHESTRATOR
+- **Action Required:** Repair the contract before planning.
+"""
+
+    assert (
+        StagedParallelExecutor._why3_repair_phase_from_issues(issues)
+        == "phase3-how"
+    )
+
+
+@pytest.mark.unit
 def test_why2_failure_prepares_controller_owned_discovery_route(tmp_path):
     config_path = tmp_path / ".echelon" / "config.yml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
