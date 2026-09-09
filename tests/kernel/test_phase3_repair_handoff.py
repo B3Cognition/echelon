@@ -16,7 +16,8 @@ from harness.squad_state import SquadStateStore
 @pytest.mark.parametrize("legacy_identity", [False, True])
 @pytest.mark.parametrize("missing_review", [False, True])
 @pytest.mark.parametrize("mutate_plan2", [False, True])
-def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_path, mutate_input, legacy_identity, missing_review, mutate_plan2):
+@pytest.mark.parametrize("sage_verdict", ["FAIL", "BLOCKED"])
+def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_path, mutate_input, legacy_identity, missing_review, mutate_plan2, sage_verdict):
     run = tmp_path / "runs" / "r"
     spec = run / "specs" / "001-demo"
     spec.mkdir(parents=True)
@@ -58,7 +59,7 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
                 return result("PASS")
             if mutate_input:
                 (spec / "data-model.md").write_text("enum no longer includes ignored")
-            return result("FAIL", phase3_issue_review={"schema_version": 1, "identity": envelope["identity"],
+            return result(sage_verdict, phase3_issue_review={"schema_version": 1, "identity": envelope["identity"],
                 "outcome": "resolved", "reviewed_artifacts": envelope["input_manifest"],
                 "rationale": "The enum declares ignored."})
         assert "Operate in **PLAN2**" in prompt
@@ -79,8 +80,12 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
     ])
     observed = executor.execute(node, store)
     assert saw_review
+    reports = [json.loads(path.read_text()) for path in (run / "context-budget").glob("*sage.json")]
+    assert reports
+    assert all(any(section["name"] == "Required Phase 3 review context"
+                   for section in report["bounded"]["top_sections"]) for report in reports)
     persisted = SquadStateStore(run).load()
-    assert persisted["why3_verdict"] == ("PASS" if missing_review else "FAIL")
+    assert persisted["why3_verdict"] == ("PASS" if missing_review else sage_verdict)
     if missing_review:
         assert persisted["selected_issue_resolution"] == "ISS-A"
         assert observed.reason == "repair_review_missing"
@@ -91,7 +96,8 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
         assert observed.verdict == "BLOCKED"
         assert persisted["selected_issue_resolution"] is None
         assert persisted["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
-        assert len(saw_review) == (2 if mutate_plan2 else 1)
-        if mutate_plan2:
+        revalidated = mutate_plan2 and sage_verdict != "BLOCKED"
+        assert len(saw_review) == (2 if revalidated else 1)
+        if revalidated:
             assert len(persisted["phase3_issue_reviews"]) == 2
             assert not persisted["issue_resolution_ledger"]["ISS-A"].get("review_revalidation_required")

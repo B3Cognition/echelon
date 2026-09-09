@@ -2840,6 +2840,16 @@ class StagedParallelExecutor(PhaseExecutor):
     """
 
     @staticmethod
+    def _issue_review_context(envelope: dict, inputs: str) -> str:
+        return ("\n## Phase 3 selected-issue review envelope\n```json\n"
+            + json.dumps(envelope, sort_keys=True) + "\n```\n"
+            "Review this selected issue independently of the overall gate against these current inputs. "
+            "Return exactly one top-level phase3_issue_review object in echelon_result: schema_version: 1, "
+            "identity copied from this envelope, outcome: resolved|unresolved|unverifiable, reviewed_artifacts "
+            "copied from input_manifest, and a concrete rationale. Missing issues alone do not prove closure. "
+            "Keep all other findings and the overall WHY3 verdict honest. Do not edit these inputs.\n" + inputs)
+
+    @staticmethod
     def _why3_repair_phase_from_issues(issues_text: str) -> str:
         """Choose the earliest phase capable of repairing WHY3-owned issues."""
         phase_order = (
@@ -2979,6 +2989,7 @@ class StagedParallelExecutor(PhaseExecutor):
         allowed_verdicts: object = None,
         phase_id: str = "phase3-consensus",
         controller_context: str = "",
+        required_context: str = "",
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -3092,6 +3103,12 @@ class StagedParallelExecutor(PhaseExecutor):
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
+        if required_context:
+            dynamic_parts.append(required_context)
+            section = RenderedSection("Required Phase 3 review context", required_context,
+                len(required_context.encode()), {"truncated": "false"})
+            legacy_sections.append(section)
+            bounded_sections.append(section)
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{squad_dir}", squad_dir_str)
@@ -3197,6 +3214,10 @@ class StagedParallelExecutor(PhaseExecutor):
                     or agent_entry.get("agent", "")
                 )
                 result_contract = self._result_contract(node, agent_entry)
+                required_review = (
+                    self._issue_review_context(review_envelope, review_inputs)
+                    if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3" else ""
+                )
                 prompt = self._build_agent_prompt(
                     agent_entry,
                     state,
@@ -3207,17 +3228,9 @@ class StagedParallelExecutor(PhaseExecutor):
                     allowed_verdicts=result_contract.allowed_verdicts,
                     phase_id=node.id,
                     controller_context=getattr(node, "controller_context", ""),
+                    required_context=required_review,
                 )
                 prompt_metadata: dict[str, object] = {}
-                if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3":
-                    prompt += ("\n## Phase 3 selected-issue review envelope\n```json\n"
-                        + json.dumps(review_envelope, sort_keys=True) + "\n```\n"
-                        + "Review this selected issue independently of the overall gate. Return exactly one "
-                        "top-level phase3_issue_review object in echelon_result: schema_version: 1, identity "
-                        "copied from this envelope, outcome: resolved|unresolved|unverifiable, reviewed_artifacts "
-                        "copied from input_manifest, and a concrete rationale. Missing issues alone do not prove "
-                        "closure. Keep all other findings and the overall WHY3 verdict honest. Do not edit these inputs.\n"
-                        + review_inputs)
                 if agent_id == "echelon.sage":
                     rel = self._graph.agent_file(agent_id)
                     if rel:
@@ -3254,7 +3267,10 @@ class StagedParallelExecutor(PhaseExecutor):
                     result_contract=result_contract,
                     direct_state_write=True,
                 )
-                if result.blocked:
+                if result.blocked and not (
+                    review_envelope and agent_id == "echelon.sage" and label == "WHY3"
+                    and not isinstance(result, ExecutorBlockedResult)
+                ):
                     return result
                 if "phase3_issue_review" in (result.echelon_result or {}):
                     if not review_envelope or agent_id != "echelon.sage" or label != "WHY3":
@@ -3301,6 +3317,11 @@ class StagedParallelExecutor(PhaseExecutor):
             except (RepairContractError, OSError, UnicodeError) as exc:
                 return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
                     exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}}, raw_output=str(exc), duration_ms=0, timed_out=False))
+
+        # A valid issue assessment survives even a reviewer-owned gate BLOCKED.
+        # It is not permission to dispatch dependent stages or advance the gate.
+        if review_envelope and stage1_results.get("WHY3") and stage1_results["WHY3"].blocked:
+            return stage1_results["WHY3"]
 
         # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None
@@ -3398,20 +3419,15 @@ class StagedParallelExecutor(PhaseExecutor):
                             raise RepairContractError("final-candidate review already attempted for these inputs")
                         sage_entry, sage_contract, sage_metadata = reviewer_dispatch
                         fresh_state = state_store.load()
+                        fresh_envelope = {**review_envelope, "input_manifest": review_manifest}
                         fresh_prompt = self._build_agent_prompt(sage_entry, fresh_state,
                             allowed_state_updates=sage_contract.allowed_state_update_keys,
                             required_state_updates=sage_contract.required_state_update_keys,
                             state_update_types=sage_contract.state_update_types,
                             state_update_enums=sage_contract.state_update_enums,
                             allowed_verdicts=sage_contract.allowed_verdicts, phase_id=node.id,
-                            controller_context=getattr(node, "controller_context", ""))
-                        fresh_envelope = {**review_envelope, "input_manifest": review_manifest}
-                        fresh_prompt += ("\n## Phase 3 selected-issue review envelope\n```json\n"
-                            + json.dumps(fresh_envelope, sort_keys=True) + "\n```\n"
-                            "Revalidate the final candidate after PLAN2. Do not edit artifacts. Return an explicit "
-                            "phase3_issue_review with schema_version: 1, the envelope identity, outcome "
-                            "resolved|unresolved|unverifiable, reviewed_artifacts equal to input_manifest, and rationale. "
-                            "Keep the overall WHY3 verdict independent and honest.\n" + review_inputs)
+                            controller_context=getattr(node, "controller_context", ""),
+                            required_context=self._issue_review_context(fresh_envelope, review_inputs))
                         fresh_result = self._validate_result_state_updates(node,
                             self._exec_agent_with_contract(fresh_prompt, sage_contract, sage_metadata),
                             result_contract=sage_contract, direct_state_write=True)
