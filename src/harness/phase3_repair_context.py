@@ -2,9 +2,29 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from harness.phase3_repair import RepairContractError
+
+
+def planner_handoff_context(state: Mapping, manifest: Mapping[str, str]) -> str:
+    """Carry current planner diagnostics into SAGE without granting authority."""
+    handoff = state.get("phase3_last_blocker")
+    if (not isinstance(handoff, Mapping) or handoff.get("producer") != "PLAN"
+            or handoff.get("input_manifest") != dict(manifest)):
+        return ""
+    summary = {key: handoff[key] for key in ("issue_id", "owner_phase", "detail", "next_action")
+               if isinstance(handoff.get(key), str) and 0 < len(handoff[key]) <= 2000}
+    if not summary:
+        return ""
+    return ("\n## Planner dependency handoff (advisory)\n"
+            "The planner stopped before consensus because of the diagnostic below. "
+            "Independently review the selected submission and investigate remaining findings against current inputs. "
+            "A planner-suggested owner or action is not an approved decision, evidence of closure, or a gate waiver. "
+            "Keep genuine human decisions and external prerequisites explicit in the issue register.\n"
+            + json.dumps(summary, sort_keys=True) + "\n")
 
 
 def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[str, str], str]:

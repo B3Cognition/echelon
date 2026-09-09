@@ -6955,7 +6955,8 @@ class SquadController:
                 prepared.control_updates,
             )
             if blocked_result:
-                if blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0]:
+                if (self._phase3_planner_block_routing(node, prepared, snapshot)[0]
+                        or (blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0])):
                     routing = self._construct_routing_decision_or_block(node, prepared, snapshot)
                     if routing is None or self._advance_prepared_result_or_block(node, routing.decision) is None:
                         return SquadResult.from_state(self._state_store.load())
@@ -12614,6 +12615,36 @@ class SquadController:
         )
         return updates
 
+    def _phase3_planner_block_routing(
+        self, node: PhaseNode, prepared: PreparedPhaseResult, snapshot: RoutingStateSnapshot,
+    ) -> tuple[str | None, dict]:
+        """Return blocked PLAN to independent review of its active submission."""
+        state = snapshot.state
+        if (node.id != "phase3-plan" or state.get("autonomy_mode") != "banzai"
+                or not state.get("selected_issue_resolution")):
+            return None, {}
+        result = prepared.as_squad_agent_result()
+        if (result.verdict != "BLOCKED" or result.exit_code != 0 or result.timed_out
+                or result.provider_limit_message):
+            return None, {}
+        from harness.phase3_repair import RepairContractError
+        from harness.phase3_repair_context import capture_review_inputs
+        from harness.phase3_repair_routing import OWNER_FILES, planner_review_route
+        entry = (state.get("issue_resolution_ledger") or {}).get(state.get("selected_issue_resolution"))
+        if (not isinstance(entry, Mapping) or entry.get("status") != "repaired"
+                or entry.get("repair_phase") not in OWNER_FILES):
+            return None, {}
+        try:
+            spec = Path(str(state.get("spec_dir") or ""))
+            if not spec.is_absolute():
+                spec = self._project_root / spec
+            manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
+            return planner_review_route(state, manifest,
+                detail=self._blocked_executor_reason(result, prepared.control_updates) or "agent_blocked",
+                blocker=(result.echelon_result or {}).get("phase3_blocker"))
+        except (OSError, UnicodeError, RepairContractError):
+            return PHASE_TERMINAL_BLOCKED, {"status": "blocked", "blocked_reason": "repair_context_incomplete"}
+
     def _phase3_work_routing(self, state: Mapping[str, object]) -> tuple[str | None, dict]:
         from harness.phase3_repair_context import capture_review_inputs, read_repair_issues
         from harness.phase3_repair_routing import phase3_work_route, has_phase3_repairs
@@ -13631,6 +13662,7 @@ class SquadController:
         transition_index: int | None = None
         routed_human_input: PreparedHumanInput | None = None
         work_route, work_updates = self._phase3_work_routing(snapshot.state)
+        planner_route, planner_updates = self._phase3_planner_block_routing(node, prepared, snapshot)
         if proportional_what_human_input is not None:
             next_phase = "phase1-why2"
             source = "proportional_quality_no_progress"
@@ -13645,6 +13677,10 @@ class SquadController:
                 snapshot,
             )
             source = "controller_override"
+        elif planner_route:
+            merge_effects(planner_updates)
+            next_phase = planner_route
+            source = "phase3_planner_review"
         elif work_route:
             merge_effects(work_updates)
             next_phase = work_route
@@ -13807,13 +13843,16 @@ class SquadController:
         publication_marker = transaction_updates.get(
             PENDING_EXTERNAL_PUBLICATION_KEY
         )
+        # Review handoff records the blocked attempt, not successful PLAN
+        # completion. The eventual normal planning/consensus path owns that.
+        record_completion = source != "phase3_planner_review"
         completion = self._prepare_controller_completion(
             from_phase=node.id,
             to_phase=next_phase,
             snapshot=snapshot,
             manual_phase_run=manual_phase_run,
             conditional_skip=conditional_skip,
-            record_completion=True,
+            record_completion=record_completion,
             publication_marker=(
                 publication_marker
                 if isinstance(publication_marker, Mapping)
@@ -13840,6 +13879,7 @@ class SquadController:
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=conditional_skip,
+                record_completion=record_completion,
                 checkpoint_policy=str(
                     completion.intent.route.get("checkpoint_policy") or "none"
                 ),

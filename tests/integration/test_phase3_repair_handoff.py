@@ -62,7 +62,8 @@ def test_plan2_block_routes_certified_technical_work_without_human_decision(tmp_
 
 
 @pytest.mark.parametrize("restart", [False, True])
-def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart):
+@pytest.mark.parametrize("entry_phase", ["phase3-consensus", "phase3-plan"])
+def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, entry_phase):
     controller, store = _controller(tmp_path)
     run = tmp_path / "squad/run-test"
     spec = tmp_path / "specs/008-test"
@@ -76,7 +77,7 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart):
     (spec / "targets.yml").write_text("schema_version: 1\ntargets:\n  - id: app\n    path: sources/app\n    role: primary\n    branch: main\n")
     for name in ("critical-path.md", "risk-matrix.md", "dependencies.md"):
         (spec / name).write_text("T-001 precedes T-002; no external dependency.")
-    store.initialize("r", "greenfield", "task", 0, "phase3-consensus", autonomy_mode="banzai")
+    store.initialize("r", "greenfield", "task", 0, entry_phase, autonomy_mode="banzai")
     state = store.load()
     state.update(spec_dir=str(spec), why3_verdict="FAIL", selected_issue_resolution="ISS-A",
         issue_resolution_ledger={"ISS-A": {"title": "Missing enum", "status": "repaired",
@@ -87,7 +88,11 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart):
 
     def dispatch(cwd, prompt, **kwargs):
         payload = {"verdict": "FAIL", "state_updates": {}, "journal_entries": []}
-        if "Selected Technical Work (Controller-Owned" in prompt:
+        if store.load()["phase"] == "phase3-plan":
+            payload.update(verdict="BLOCKED", state_updates={"blocked_reason": "B requires an architecture-owned observation contract"},
+                phase3_blocker={"issue_id": "ISS-002", "owner_phase": "phase3-how",
+                    "detail": "Observation missing", "next_action": "Design B observation protocol"})
+        elif "Selected Technical Work (Controller-Owned" in prompt:
             assert "Design B observation protocol" in prompt
             assert "Missing enum" not in prompt
             owners.append("phase3-how")
@@ -110,6 +115,9 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart):
             marker = "## Phase 3 selected-issue review envelope\n```json\n"
             envelope = json.loads(prompt.split(marker)[1].split("\n```", 1)[0])
             reviews.append(envelope["selected_issue"])
+            if entry_phase == "phase3-plan" and len(reviews) == 1:
+                assert "Planner dependency handoff (advisory)" in prompt
+                assert "Observation missing" in prompt
             fixed = "reproducible" in (spec / "contracts/api.md").read_text()
             if envelope["selected_issue"] == "ISS-002":
                 assert fixed
@@ -143,6 +151,10 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart):
         assert controller._advance_prepared_result_or_block(node, routed.decision) is not None
         return routed.decision.to_phase
 
+    if entry_phase == "phase3-plan":
+        planner = AgentExecutor(provider, graph, tmp_path / "ext", tmp_path, run)
+        assert advance(planner.execute(controller._graph.get("phase3-plan"), store)) == "phase3-consensus"
+        assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
     result = executor.execute(consensus, store)
     assert result.verdict == "BLOCKED"
     assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"

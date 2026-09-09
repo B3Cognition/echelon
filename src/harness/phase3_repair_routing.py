@@ -23,6 +23,46 @@ def owned_artifacts(owner: str, manifest: Mapping[str, str]) -> frozenset[str]:
         (owner == "phase3-how" and path.startswith(("contracts/", "adr/"))))
 
 
+def planner_review_route(state: Mapping, manifest: Mapping[str, str], *,
+                         detail: str, blocker: object = None) -> tuple[str | None, dict]:
+    """A blocked consumer may return a submitted repair to review, not approve it.
+
+    Only the existing selected, identity-bound submission grants this route.
+    Planner prose is diagnostic, never authority to choose an owner or answer.
+    The receipt bounds identical handoffs across restarts; normal review and
+    dispatch budgets still apply, including when review exhausts repair budget.
+    """
+    if state.get("phase") != "phase3-plan" or state.get("autonomy_mode") != "banzai":
+        return None, {}
+    entry = (state.get("issue_resolution_ledger") or {}).get(state.get("selected_issue_resolution"))
+    if not isinstance(entry, Mapping) or entry.get("status") != "repaired" or entry.get("repair_phase") not in OWNER_FILES:
+        return None, {}
+    try:
+        identity = RepairIdentity(**entry["repair_identity"])
+        if identity.run_id != state.get("run_id"):
+            raise RepairContractError("submitted repair belongs to another run")
+    except (RepairContractError, TypeError, KeyError):
+        return "terminal-blocked", {"status": "blocked", "blocked_reason": "repair_review_stale"}
+    receipt = {"identity": asdict(identity), "input_manifest": dict(manifest),
+               "submission_count": entry.get("submission_count", 0)}
+    key = hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()
+    handoffs = dict(state.get("phase3_planner_review_handoffs") or {})
+    if key in handoffs:
+        return "terminal-blocked", {"status": "blocked", "blocked_reason": "repair_no_progress"}
+    summary = {"detail": detail[:2000]}
+    fields = {"issue_id", "owner_phase", "detail", "next_action"}
+    if (isinstance(blocker, Mapping) and set(blocker) == fields
+            and all(isinstance(value, str) and 0 < len(value.strip()) <= 2000 for value in blocker.values())):
+        summary = dict(blocker)
+    handoffs[key] = receipt
+    return "phase3-consensus", {
+        "phase3_planner_review_handoffs": handoffs,
+        "phase3_last_blocker": {"producer": "PLAN", **summary, **receipt},
+        "status": "running",
+        "blocked_reason": None,
+    }
+
+
 def has_phase3_repairs(state: Mapping) -> bool:
     def relevant(entry):
         return isinstance(entry, Mapping) and (entry.get("repair_phase") in OWNER_FILES or

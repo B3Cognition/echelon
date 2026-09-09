@@ -2959,6 +2959,8 @@ class StagedParallelExecutor(PhaseExecutor):
                 "Missing technical mechanisms may require owner investigation/design, not a human answer. "
                 "Banzai eligible:no still prohibits adopting an unevidenced answer. Preserve scope, behavior and "
                 "acceptance strength; no policy waiver, invented external fact or irreversible commitment.\n" + context)
+            from harness.phase3_repair_context import planner_handoff_context
+            required += planner_handoff_context(state_store.load(), manifest)
             prompt = self._build_agent_prompt(sage, state_store.load(), phase_id=node.id,
                 allowed_state_updates=contract.allowed_state_update_keys, allowed_verdicts=contract.allowed_verdicts,
                 required_context=required)
@@ -3347,6 +3349,7 @@ class StagedParallelExecutor(PhaseExecutor):
         review_envelope = None
         reviewer_dispatch = None
         review_inputs = ""
+        planner_context = ""
         if (isinstance(entry, dict) and entry.get("status") == "repaired"
                 and entry.get("repair_phase") in {"phase3-how", "phase3-sentinel", "phase3-plan"}):
             snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
@@ -3379,6 +3382,8 @@ class StagedParallelExecutor(PhaseExecutor):
             review_envelope = {"identity": asdict(review_identity), "input_manifest": review_manifest,
                                "selected_issue": selected, "title": entry.get("title"), "decision": entry.get("decision"),
                                "repair_action": entry.get("repair_action")}
+            from harness.phase3_repair_context import planner_handoff_context
+            planner_context = planner_handoff_context(state, review_manifest)
 
         # Stage 1: run in parallel
         with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
@@ -3397,6 +3402,8 @@ class StagedParallelExecutor(PhaseExecutor):
                     self._issue_review_context(review_envelope, review_inputs)
                     if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3" else ""
                 )
+                if agent_id == "echelon.sage" and mode_label == "WHY3":
+                    required_review += planner_context
                 prompt = self._build_agent_prompt(
                     agent_entry,
                     state,

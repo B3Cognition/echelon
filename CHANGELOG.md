@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Standalone planner repair handoff** — In Banzai, a blocked PLAN phase with
+  an identity-bound submitted repair returns to consensus for independent
+  review before another dependency can become a human clarification. Explicit
+  blocker reasons are retained as content-bound advisory context, not owner or
+  answer authority. The blocked phase is not marked complete; repeated identical
+  handoffs stop across restarts, and existing review, budget and mode safeguards
+  remain unchanged.
+
 - **Phase 3 repair handoffs** — Retain independent per-issue SAGE closure even
   when PLAN2 blocks on another issue. Banzai can assign bounded technical work
   to existing owners without accepting an unsupported answer. Durable review
