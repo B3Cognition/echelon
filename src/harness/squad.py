@@ -312,6 +312,16 @@ _PHASE3_ISSUE_REPAIR_CORRIDOR = frozenset(
         "phase3-consensus-tasks-lexicon",
     }
 )
+
+
+def _issue_repair_corridor(repair_phase: str) -> frozenset[str]:
+    if repair_phase == "phase1-discover":
+        return _PHASE1_DISCOVERY_REPAIR_CORRIDOR
+    if repair_phase == "phase1-what":
+        return _PHASE1_ISSUE_REPAIR_CORRIDOR
+    return _PHASE3_ISSUE_REPAIR_CORRIDOR
+
+
 _BOUNDED_TEXT_CHUNK_CHARS = 1_024
 _CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
 _CONTEXT_FILE_MIN_EXCERPT_BYTES = 256
@@ -2821,20 +2831,23 @@ class SquadController:
         self,
         state: Mapping[str, object],
         option: HumanInputOption,
+        *,
+        candidates: list[dict[str, str]] | None = None,
     ) -> dict[str, str]:
         payload = self._dispatch_cap_option_payload(option)
         if "schema_version" not in payload:
             return self._dispatch_cap_candidate_from_option(option)
         self._validate_dispatch_cap_option(option)
         issue_id = str(payload["issue_id"])
-        try:
-            candidates = self._banzai_issue_resolution_candidates(
-                dict(state)
-            )
-        except _DispatchCapEvidenceError as exc:
-            raise HumanInputPolicyError(
-                "dispatch-cap evidence changed after decision sealing"
-            ) from exc
+        if candidates is None:
+            try:
+                candidates = self._banzai_issue_resolution_candidates(
+                    dict(state)
+                )
+            except _DispatchCapEvidenceError as exc:
+                raise HumanInputPolicyError(
+                    "dispatch-cap evidence changed after decision sealing"
+                ) from exc
         matches = [
             candidate
             for candidate in candidates
@@ -2884,6 +2897,43 @@ class SquadController:
                 "dispatch-cap evidence changed after decision sealing"
             )
         return resolved_candidate
+
+    def _dispatch_cap_candidates_for_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+    ) -> list[dict[str, str]]:
+        """Revalidate every sealed issue option against one evidence snapshot."""
+        options = self._human_input_options_from_decision(decision)
+        legacy_fields = {
+            "issue_id",
+            "title",
+            "decision_required",
+            "suggested_option",
+            "evidence_basis",
+        }
+        if all(
+            set(self._dispatch_cap_option_payload(option)) == legacy_fields
+            for option in options
+        ):
+            return [
+                self._dispatch_cap_candidate_from_option(option)
+                for option in options
+            ]
+        try:
+            candidates = self._banzai_issue_resolution_candidates(dict(state))
+        except _DispatchCapEvidenceError as exc:
+            raise HumanInputPolicyError(
+                "dispatch-cap evidence changed after decision sealing"
+            ) from exc
+        return [
+            self._dispatch_cap_candidate_for_resolution(
+                state,
+                option,
+                candidates=candidates,
+            )
+            for option in options
+        ]
 
     @staticmethod
     def _canonical_dispatch_cap_candidate(
@@ -4546,9 +4596,12 @@ class SquadController:
             raise HumanInputPolicyError(
                 "dispatch-cap resolution must select one sealed issue option"
             )
-        candidate = self._dispatch_cap_candidate_for_resolution(
+        sealed_candidates = self._dispatch_cap_candidates_for_resolution(
             state,
-            selected,
+            decision,
+        )
+        candidate = next(
+            item for item in sealed_candidates if item["issue_id"] == selected.id
         )
         raw_selection = {
             "issue_id": candidate["issue_id"],
@@ -4597,13 +4650,7 @@ class SquadController:
             )
         counts = state.get("phase_dispatch_counts")
         next_counts = dict(counts) if isinstance(counts, dict) else {}
-        if repair_phase == "phase1-discover":
-            repair_corridor = _PHASE1_DISCOVERY_REPAIR_CORRIDOR
-        elif repair_phase == "phase1-what":
-            repair_corridor = _PHASE1_ISSUE_REPAIR_CORRIDOR
-        else:
-            repair_corridor = _PHASE3_ISSUE_REPAIR_CORRIDOR
-        reset_phases = repair_corridor | {capped_phase}
+        reset_phases = _issue_repair_corridor(repair_phase) | {capped_phase}
         next_counts = {
             phase: count
             for phase, count in next_counts.items()
@@ -4617,6 +4664,7 @@ class SquadController:
             dict(state),
             selection,
             source_phase=capped_phase,
+            pending_candidates=sealed_candidates,
         )
         updates.update(
             {
@@ -4648,9 +4696,12 @@ class SquadController:
             raise HumanInputPolicyError(
                 "Banzai issue resolution must select one sealed issue option"
             )
-        candidate = self._dispatch_cap_candidate_for_resolution(
+        sealed_candidates = self._dispatch_cap_candidates_for_resolution(
             state,
-            selected,
+            decision,
+        )
+        candidate = next(
+            item for item in sealed_candidates if item["issue_id"] == selected.id
         )
         selection = self._validate_banzai_issue_resolution_selection(
             {
@@ -4678,6 +4729,7 @@ class SquadController:
             dict(state),
             selection,
             source_phase=str(decision["source_phase"]),
+            pending_candidates=sealed_candidates,
         )
         updates.update(
             {
@@ -13160,10 +13212,15 @@ class SquadController:
         validated_entry = dict(entry)
         validated_entry["status"] = "validated"
         validated_ledger[selected] = validated_entry
+        queue_route, queue_updates = self._advance_validated_issue_queue(
+            state,
+            selected_issue=selected,
+            validated_ledger=validated_ledger,
+        )
+        if queue_route is not None:
+            return queue_route, queue_updates, None
         return "phase1-what", {
-            "issue_resolution_ledger": validated_ledger,
-            "selected_issue_resolution": None,
-            "issue_resolution_repair_baseline": None,
+            **queue_updates,
             "why_fail_count": 0,
             "why2_metric_stagnation_count": 0,
             "why_failure_baseline": None,
@@ -13182,6 +13239,76 @@ class SquadController:
             },
         }, None
 
+    def _advance_validated_issue_queue(
+        self,
+        state: Mapping[str, object],
+        *,
+        selected_issue: str,
+        validated_ledger: dict[str, object],
+    ) -> tuple[str | None, dict[str, object]]:
+        """Advance one validated issue without dropping sealed siblings."""
+        from datetime import datetime, timezone
+
+        updates: dict[str, object] = {
+            "issue_resolution_ledger": validated_ledger,
+            "selected_issue_resolution": None,
+            "issue_resolution_repair_baseline": None,
+        }
+        pending = [
+            (issue_id, entry)
+            for issue_id, entry in validated_ledger.items()
+            if isinstance(entry, dict) and entry.get("status") == "pending"
+        ]
+        if not pending:
+            return None, updates
+        if state.get("autonomy_mode") != "banzai":
+            next_issue_id = pending[0][0]
+            updates.update(
+                {
+                    "status": "blocked",
+                    "blocked_reason": "issue_resolution_next",
+                    "escalation_question": (
+                        f"{selected_issue} was validated. Resolve the next "
+                        f"pending SAGE issue, {next_issue_id}."
+                    ),
+                }
+            )
+            return PHASE_TERMINAL_BLOCKED, updates
+
+        next_issue_id, raw_next_entry = pending[0]
+        next_entry = dict(raw_next_entry)
+        repair_phase = str(next_entry.get("repair_phase") or "").strip()
+        if repair_phase not in _DISPATCH_CAP_REPAIR_PHASES:
+            raise HumanInputPolicyError("pending issue repair phase is invalid")
+        next_entry["status"] = "selected"
+        validated_ledger[next_issue_id] = next_entry
+        counts = state.get("phase_dispatch_counts")
+        next_counts = dict(counts) if isinstance(counts, dict) else {}
+        reset_phases = _issue_repair_corridor(repair_phase)
+        updates.update(
+            {
+                "issue_resolution_ledger": validated_ledger,
+                "selected_issue_resolution": next_issue_id,
+                "issue_resolution_repair_baseline": {
+                    "issue_id": next_issue_id,
+                    "repair_phase": repair_phase,
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                },
+                "issue_resolution_recovery": {
+                    "issue_id": next_issue_id,
+                    "from_phase": "phase1-why2",
+                    "to_phase": repair_phase,
+                    "reason": "issue_resolution_queue",
+                },
+                "phase_dispatch_counts": {
+                    phase: count
+                    for phase, count in next_counts.items()
+                    if phase not in reset_phases
+                },
+            }
+        )
+        return repair_phase, updates
+
     def _coordinate_why_transition_state_legacy(
         self,
         node: PhaseNode,
@@ -13193,6 +13320,8 @@ class SquadController:
         PreparedHumanInput | None,
     ]:
         """Return WHY routing, state effects, and any routed safeguard."""
+        from datetime import datetime, timezone
+
         if node.id not in WHY_PHASES:
             return None, {}, None
 
@@ -13233,13 +13362,14 @@ class SquadController:
                 validated_entry = dict(ledger[selected])
                 validated_entry["status"] = "validated"
                 validated_ledger[selected] = validated_entry
-                updates.update(
-                    {
-                        "issue_resolution_ledger": validated_ledger,
-                        "selected_issue_resolution": None,
-                        "issue_resolution_repair_baseline": None,
-                    }
+                queue_route, queue_updates = self._advance_validated_issue_queue(
+                    state,
+                    selected_issue=selected,
+                    validated_ledger=validated_ledger,
                 )
+                updates.update(queue_updates)
+                if queue_route is not None:
+                    return queue_route, updates, None
             return None, updates, None
 
         # A selected issue is validated independently from the overall WHY2
@@ -13375,8 +13505,6 @@ class SquadController:
                 "escalation_question": escalation_question,
             }
             return PHASE_TERMINAL_BLOCKED, updates, None
-
-        from datetime import datetime, timezone
 
         baseline = state.get("why_failure_baseline")
         baseline_ts = (
@@ -14264,8 +14392,9 @@ class SquadController:
         selection: dict[str, str],
         *,
         source_phase: str,
+        pending_candidates: list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
-        """Apply the existing selected-issue repair lifecycle in memory."""
+        """Persist the sealed issue queue and select one repair in memory."""
         from datetime import datetime, timezone
 
         issue_id = selection["issue_id"]
@@ -14277,6 +14406,32 @@ class SquadController:
                 "dispatch-cap repair phase is invalid"
             )
         ledger = state.get("issue_resolution_ledger")
+        selected_ledger = ledger
+        for candidate in pending_candidates or []:
+            pending_id = candidate["issue_id"]
+            pending_entry = {
+                "issue_id": pending_id,
+                "title": candidate["title"],
+                "severity": "ISSUE",
+                "guidance": candidate["decision_required"],
+                "status": "pending",
+                "decision": candidate["suggested_option"],
+                "repair_phase": str(
+                    candidate.get("repair_phase") or "phase1-what"
+                ),
+                "rationale": candidate["evidence_basis"],
+                "confidence": "high",
+                "evidence_backed": "true",
+            }
+            if candidate.get("issue_fingerprint"):
+                pending_entry["issue_fingerprint"] = candidate[
+                    "issue_fingerprint"
+                ]
+            selected_ledger = record_issue_resolution(
+                selected_ledger,
+                pending_id,
+                pending_entry,
+            )
         entry = {
             "issue_id": issue_id,
             "title": selection["title"],
@@ -14291,7 +14446,11 @@ class SquadController:
         }
         if selection.get("issue_fingerprint"):
             entry["issue_fingerprint"] = selection["issue_fingerprint"]
-        selected_ledger = record_issue_resolution(ledger, issue_id, entry)
+        selected_ledger = record_issue_resolution(
+            selected_ledger,
+            issue_id,
+            entry,
+        )
         return {
             "issue_resolution_ledger": selected_ledger,
             "selected_issue_resolution": issue_id,

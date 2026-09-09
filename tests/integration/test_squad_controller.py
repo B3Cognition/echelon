@@ -6592,11 +6592,129 @@ class TestSquadControllerBasics:
             snapshot,
         )
 
-        assert override is None
+        assert override == "terminal-blocked"
         assert request is None
         assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
         assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
         assert updates["selected_issue_resolution"] is None
+        assert updates["blocked_reason"] == "issue_resolution_next"
+
+    def test_passing_why2_routes_next_pending_issue_automatically_in_banzai(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                        "repair_phase": "phase1-what",
+                    },
+                    "ISS-002": {
+                        "issue_id": "ISS-002",
+                        "status": "pending",
+                        "repair_phase": "phase1-discover",
+                    },
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            snapshot,
+        )
+
+        override, updates, request = ctrl._coordinate_why_transition_state(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert override == "phase1-discover"
+        assert request is None
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "selected"
+        assert updates["selected_issue_resolution"] == "ISS-002"
+        assert updates["issue_resolution_repair_baseline"]["issue_id"] == "ISS-002"
+        assert updates["issue_resolution_recovery"]["to_phase"] == "phase1-discover"
+
+    def test_completed_proportional_repair_routes_next_pending_issue_in_banzai(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="proportional",
+        )
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                        "repair_phase": "phase1-what",
+                    },
+                    "ISS-002": {
+                        "issue_id": "ISS-002",
+                        "status": "pending",
+                        "repair_phase": "phase1-discover",
+                    },
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        assessment = squad_module.AuthoritativeQualityAssessment(
+            numeric_pass=False,
+            provider_verdict="FAIL",
+            sage_verdict="FAIL",
+            authoritative_issues=(),
+            exact_routes=(),
+            ordinary_pass=False,
+            proportional_failure=True,
+            hard_blockers=(
+                "sage_fail_without_issues",
+                "sage_finding_route_mismatch",
+            ),
+        )
+
+        completed = ctrl._coordinate_completed_proportional_issue_repair(
+            assessment,
+            snapshot,
+        )
+
+        assert completed is not None
+        override, updates, request = completed
+        assert override == "phase1-discover"
+        assert request is None
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "selected"
+        assert updates["selected_issue_resolution"] == "ISS-002"
+        assert updates["issue_resolution_recovery"]["to_phase"] == "phase1-discover"
 
     def test_failing_why2_validates_repaired_issue_absent_from_remaining_findings(self, tmp_path):
         ctrl, store = _controller(tmp_path)

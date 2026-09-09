@@ -5680,19 +5680,20 @@ def _current_issues_recap(
 def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict) -> list[dict[str, str]]:
     """Extract user-decidable issue guidance from the canonical SAGE report."""
     recap = _current_issues_recap(project_root, squad_dir, state)
-    if recap is None:
-        return []
-    _summary, issues_path_text = recap
-    try:
-        issues_md = Path(issues_path_text).read_text(errors="replace")
-    except OSError:
-        return []
     requests: list[dict[str, str]] = []
-    for title, body in re.findall(
+    issues_md = ""
+    if recap is not None:
+        _summary, issues_path_text = recap
+        try:
+            issues_md = Path(issues_path_text).read_text(errors="replace")
+        except OSError:
+            pass
+    issue_blocks = re.findall(
         r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
         issues_md,
         re.MULTILINE | re.DOTALL,
-    ):
+    )
+    for title, body in issue_blocks:
         issue_id_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
         if not issue_id_match:
             continue
@@ -5739,6 +5740,38 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
             if value:
                 request[key] = value.lower() if key == "banzai_eligible" else value
         requests.append(request)
+    represented_fingerprints = {
+        request["issue_fingerprint"] for request in requests
+    }
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, dict):
+        for issue_id, entry in ledger.items():
+            if not isinstance(entry, dict) or entry.get("status") != "pending":
+                continue
+            fingerprint = str(entry.get("issue_fingerprint") or "").strip()
+            if not fingerprint or fingerprint in represented_fingerprints:
+                continue
+            request = {
+                "issue_id": str(entry.get("issue_id") or issue_id),
+                "issue_fingerprint": fingerprint,
+                "title": str(entry.get("title") or issue_id),
+                "severity": str(entry.get("severity") or "ISSUE"),
+                "guidance": str(
+                    entry.get("guidance")
+                    or "Apply the preserved issue resolution."
+                ),
+                "repair_phase": str(
+                    entry.get("repair_phase") or "phase1-what"
+                ),
+            }
+            decision = str(entry.get("decision") or "").strip()
+            if decision:
+                request["suggested_option"] = decision
+            evidence = str(entry.get("rationale") or "").strip()
+            if evidence:
+                request["evidence_basis"] = evidence
+            requests.append(request)
+            represented_fingerprints.add(fingerprint)
     return requests
 
 
@@ -5883,11 +5916,18 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
             file=sys.stderr,
         )
         raise SystemExit(1)
+    repair_phase = str(matching.get("repair_phase") or "phase1-what").strip()
+    if repair_phase not in {"phase1-discover", "phase1-what"}:
+        print(
+            f"✗ {issue_id} has unsupported Phase 1 repair owner {repair_phase!r}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     ledger = record_issue_resolution(ledger, issue_id, {
         **matching,
         "status": "selected",
         "decision": decision,
-        "repair_phase": "phase1-what",
+        "repair_phase": repair_phase,
     })
     state["issue_resolution_ledger"] = ledger
     state["selected_issue_resolution"] = issue_id
@@ -5896,7 +5936,7 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     state.pop("issue_resolution_revalidation_attempted", None)
     state["issue_resolution_repair_baseline"] = {
         "issue_id": issue_id,
-        "repair_phase": "phase1-what",
+        "repair_phase": repair_phase,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     # This is a controller-owned recovery edge, not an agent instruction and
@@ -5905,17 +5945,34 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     state["issue_resolution_recovery"] = {
         "issue_id": issue_id,
         "from_phase": "phase1-why2",
-        "to_phase": "phase1-what",
+        "to_phase": repair_phase,
         "reason": "issue_resolution",
     }
     dispatch_counts = state.get("phase_dispatch_counts")
     if isinstance(dispatch_counts, dict):
+        reset_phases = {
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        if repair_phase == "phase1-discover":
+            reset_phases.update({
+                "phase1-discover",
+                "phase1-synthesizer",
+                "phase1-modeler",
+                "phase1-tracker",
+                "phase1-why1",
+                "phase1-constitution",
+            })
         state["phase_dispatch_counts"] = {
             phase: count
             for phase, count in dispatch_counts.items()
-            if phase not in {"phase1-what", "phase1-understanding", "phase1-why2"}
+            if phase not in reset_phases
         }
-    state["phase"] = "phase1-what"
+    state["phase"] = repair_phase
     state["status"] = "running"
     for key in (
         "blocked_reason",
@@ -5927,7 +5984,7 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     ):
         state.pop(key, None)
     state["phase_dispatch_limit_recovery"] = {
-        "phase": "phase1-what",
+        "phase": repair_phase,
         "resolver": "issue_resolution",
     }
     store.save(state)

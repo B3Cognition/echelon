@@ -4734,6 +4734,17 @@ def test_dispatch_cap_routes_discovery_issue_to_its_owner_and_resets_phase1_corr
 - **Suggested option:** Apply the resolved input decision to every discovery artifact.
 - **Evidence basis:** The sealed decision and current specification agree.
 - **Banzai eligible:** yes
+
+### ISS-002: Requirement mapping is stale
+
+- **Responsible agent:** WHAT
+- **Action Required:** Align the acceptance criterion with its formal requirement.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Add an atomic formal requirement for the acceptance outcome.
+- **Evidence basis:** The acceptance criterion already defines the required outcome.
+- **Banzai eligible:** yes
 """,
         encoding="utf-8",
     )
@@ -4779,6 +4790,10 @@ def test_dispatch_cap_routes_discovery_issue_to_its_owner_and_resets_phase1_corr
     assert resolved["phase_dispatch_counts"] == {"phase3-how": 2}
     assert resolved["issue_resolution_ledger"]["ISS-001"]["repair_phase"] == (
         "phase1-discover"
+    )
+    assert resolved["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
+    assert resolved["issue_resolution_ledger"]["ISS-002"]["repair_phase"] == (
+        "phase1-what"
     )
     assert resolved["issue_resolution_recovery"]["to_phase"] == (
         "phase1-discover"

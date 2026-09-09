@@ -769,6 +769,68 @@ No action required.
     ]
 
 
+def test_pending_issue_survives_targeted_report_and_routes_its_recorded_owner(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _cmd_spec_resolve, _issue_resolution_requests
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        "# Issues\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "terminal-blocked",
+            "blocked_reason": "issue_resolution_next",
+            "spec_dir": str(spec_dir),
+            "phase_dispatch_counts": {
+                "phase1-discover": 5,
+                "phase1-tracker": 6,
+                "phase1-what": 4,
+                "phase3-how": 2,
+            },
+            "issue_resolution_ledger": {
+                "ISS-001": {"issue_id": "ISS-001", "status": "validated"},
+                "ISS-002": {
+                    "issue_id": "ISS-002",
+                    "issue_fingerprint": "a" * 64,
+                    "title": "Discovery model is stale",
+                    "severity": "HIGH",
+                    "guidance": "No user decision — agent repair",
+                    "status": "pending",
+                    "decision": "Reconcile the discovery model.",
+                    "repair_phase": "phase1-discover",
+                    "rationale": "The sealed decision is authoritative.",
+                },
+            },
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    requests = _issue_resolution_requests(tmp_path, run_dir, state)
+    assert [request["issue_id"] for request in requests] == ["ISS-002"]
+    assert requests[0]["repair_phase"] == "phase1-discover"
+
+    _cmd_spec_resolve(
+        ["ISS-002", "Reconcile the discovery model."],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    resolved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resolved["phase"] == "phase1-discover"
+    assert resolved["status"] == "running"
+    assert resolved["selected_issue_resolution"] == "ISS-002"
+    assert resolved["issue_resolution_ledger"]["ISS-002"]["status"] == "selected"
+    assert resolved["issue_resolution_recovery"]["to_phase"] == "phase1-discover"
+    assert resolved["phase_dispatch_counts"] == {"phase3-how": 2}
+
+
 def test_issue_screen_guidance_shows_action_command_and_clickable_source(tmp_path: Path) -> None:
     from echelon.cli import _issue_resolution_screen_guidance
 
