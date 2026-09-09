@@ -3675,7 +3675,18 @@ class StagedParallelExecutor(PhaseExecutor):
                 ):
                     return result
                 if "phase3_issue_review" in (result.echelon_result or {}):
-                    if not review_envelope or agent_id != "echelon.sage" or label != "WHY3":
+                    if (
+                        not review_envelope
+                        and agent_id == "echelon.sage"
+                        and label == "WHY3"
+                    ):
+                        # The field is optional and has no authority without a
+                        # harness-bound envelope.  A provider may retain stale
+                        # response shape from an earlier selected-issue turn;
+                        # discard only that inert metadata while preserving the
+                        # independently produced aggregate gate result.
+                        result.echelon_result.pop("phase3_issue_review", None)
+                    elif agent_id != "echelon.sage" or label != "WHY3":
                         return ExecutorBlockedResult(reason="invalid_phase_outputs", result=SquadAgentResult(
                             exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "invalid_phase_outputs"}}, raw_output="unsolicited or non-SAGE issue review", duration_ms=0, timed_out=False))
                 stage1_results[label] = result

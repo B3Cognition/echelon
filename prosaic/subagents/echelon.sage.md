@@ -35,6 +35,8 @@ the response to its dispatched identity and input hashes. Check the
 actual candidate, not whether the issue disappeared from the register.
 NEVER copy cryptographic hashes or identity fields into the assessment, or close
 a selected issue by omission, aggregate PASS, or worker COMPLETE.
+When the harness supplies no selected-issue review envelope, NEVER return
+`phase3_issue_review`; return only the ordinary WHY3 gate result.
 
 ALWAYS honor a harness **Fixed-candidate final review** as independent review of
 completed planning. Record concrete findings in the review reports and return

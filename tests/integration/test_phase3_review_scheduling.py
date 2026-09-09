@@ -132,6 +132,85 @@ def test_semi_mode_keeps_existing_staged_planning(tmp_path):
     assert ("plan", None) in calls
 
 
+def test_sage_review_metadata_is_ignored_when_no_issue_is_selected(tmp_path):
+    _, store, executor, node, _, _ = scheduling_fixture(tmp_path)
+    state = store.load()
+    state["selected_issue_resolution"] = None
+    state["issue_resolution_ledger"] = {}
+    store.save(state)
+
+    def dispatch(cwd, prompt, **kwargs):
+        payload = {
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+        }
+        if "Operate in **WHY3**" in prompt:
+            payload["phase3_issue_review"] = {
+                "schema_version": 2,
+                "selected_issue": "ISS-OLD",
+                "outcome": "resolved",
+                "rationale": "Stale optional metadata from an earlier review.",
+                "evidence_refs": ["spec.md"],
+            }
+        else:
+            assert "Operate in **PLAN2**" in prompt
+            payload["verdict"] = "DONE"
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result=payload,
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    executor._provider.exec_agent.side_effect = dispatch
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "PASS"
+    assert store.load().get("phase3_issue_reviews") in (None, {})
+
+
+def test_non_sage_cannot_submit_issue_review_metadata(tmp_path):
+    _, store, executor, node, _, _ = scheduling_fixture(tmp_path)
+    state = store.load()
+    state["selected_issue_resolution"] = None
+    state["issue_resolution_ledger"] = {}
+    store.save(state)
+    node.agents = [
+        {
+            "id": "echelon.gatekeeper",
+            "mode": "ASSESS2",
+            "stage": 1,
+            "context_pack": [],
+        }
+    ]
+    executor._provider.exec_agent.side_effect = None
+    executor._provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+            "phase3_issue_review": {
+                "schema_version": 2,
+                "selected_issue": "ISS-OLD",
+                "outcome": "resolved",
+                "rationale": "Unauthorized review.",
+                "evidence_refs": ["spec.md"],
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.reason == "invalid_phase_outputs"
+
+
 def test_workspace_references_survive_legacy_inline_revalidation(tmp_path):
     failure = SquadAgentResult(0, {"verdict": "BLOCKED", "state_updates": {}}, "Another planner issue", 0, False)
     _, store, executor, node, spec, _ = scheduling_fixture(
