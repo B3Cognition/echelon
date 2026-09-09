@@ -27,7 +27,14 @@ or other consumed inputs invalidate it; changes during review fail closed.
 Missing or legacy receipts never establish final-review success. Pending issue
 revalidations must finish, but a fresh unresolved assessment is repair work, not
 another review-only loop. No gate or mode-specific approval is waived. Ordinary
-semi/guided staged planning and the initial ASSESS2 rejection path are unchanged.
+semi/guided approvals remain unchanged. A completed ASSESS2 rejection defers
+PLAN2 in all modes unless the existing accepted-risk disposition applies: retain
+both independent verdicts and use the existing tasks recertification and
+architecture-repair route. The rejected producer contract
+must not require a successful dependent planner before its owner can repair it.
+Incomplete, timed-out or malformed reviewer results remain blocking failures.
+Existing accepted-risk dispositions still require their normal planning and
+approval path; no new disposition is created by this deferral.
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
 # Agent: parallel — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness

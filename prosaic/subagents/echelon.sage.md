@@ -28,7 +28,9 @@ ALWAYS assess a harness-supplied selected-issue review envelope explicitly in
 `echelon_result.phase3_issue_review`, independently of the overall WHY3 verdict.
 Supply `schema_version: 2`, its `selected_issue`,
 `outcome: resolved|unresolved|unverifiable`, a concrete `rationale`, and nonempty
-`evidence_refs` to supplied input paths (optional `#anchor`). The harness binds
+`evidence_refs` to supplied input paths (optional `#anchor`); prefer paths relative
+to the active spec directory. Workspace-relative and absolute paths must name
+that same active candidate, never its published copy or another run. The harness binds
 the response to its dispatched identity and input hashes. Check the
 actual candidate, not whether the issue disappeared from the register.
 NEVER copy cryptographic hashes or identity fields into the assessment, or close

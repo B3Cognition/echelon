@@ -2643,7 +2643,7 @@ class TestConsensusCannotBeSkipped:
         assert persisted["assess2_verdict"] == "REJECTED"
         assert persisted["gate_decision"] == "REJECTED"
         assert persisted["phase_recommendation"] == "phase3-how"
-        assert any(
+        assert not any(
             "Operate in **PLAN2** mode" in call.args[1]
             for call in provider.exec_agent.call_args_list
         )

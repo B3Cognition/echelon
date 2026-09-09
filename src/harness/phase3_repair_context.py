@@ -75,18 +75,29 @@ def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[s
     return manifest, "\n".join(sections)
 
 
-def capture_repair_context(spec_dir: Path, *, project_root: Path) -> str:
+def capture_repair_context(spec_dir: Path, *, project_root: Path, require_implementability: bool = False) -> str:
     """Current owner handoff cannot depend on optional historical journal rows."""
     _, inputs = capture_review_inputs(spec_dir, project_root=project_root)
     issues = read_repair_issues(spec_dir, project_root=project_root).encode("utf-8")
-    if len(issues) + len(inputs.encode()) > 262144:
+    feasibility = ""
+    if require_implementability:
+        path = spec_dir / "implementability-report.md"
+        if not path.is_file() or path.is_symlink():
+            raise RepairContractError("required implementability report is missing or unsafe")
+        with path.open("rb") as stream:
+            data = stream.read(262145)
+        feasibility = ("\n### Current implementability-report.md (ASSESS2 rejection)\n"
+            "This independent gate remains rejected even when WHY3 closes another issue. "
+            "Repair its concrete findings without weakening requirements; fresh ASSESS2 must reassess them.\n"
+            + data.decode("utf-8"))
+    if len(issues) + len(inputs.encode()) + len(feasibility.encode()) > 262144:
         raise RepairContractError("required repair context exceeds 262144 bytes")
     return ("\n## Current Phase 3 repair handoff\n"
             "Address the current finding owned by this phase using the checklist below. "
             "Preserve validated requirements and quality gates. Distinguish facts from proposed technical mechanisms; "
             "do not accept an unsupported answer or a protected product decision. "
             "An old repaired selection awaiting review is not an instruction to repeat that repair.\n"
-            "### Current issues.md\n" + issues.decode("utf-8") + inputs)
+            "### Current issues.md\n" + issues.decode("utf-8") + feasibility + inputs)
 
 
 def read_repair_issues(spec_dir: Path, *, project_root: Path) -> str:

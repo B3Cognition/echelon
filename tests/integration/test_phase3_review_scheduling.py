@@ -14,10 +14,10 @@ from harness.squad_state import SquadStateStore
 from tests.integration.test_squad_controller import _controller
 
 
-def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=False, plan_result=None, during_plan=None):
+def scheduling_fixture(tmp_path, *, mode="banzai", verdict="PASS", mutate_plan=False, plan_result=None, during_plan=None, spec_ref="specs/008-test"):
     controller, store = _controller(tmp_path)
     run = tmp_path / "squad/run-test"
-    spec = tmp_path / "specs/008-test"
+    spec = tmp_path / spec_ref
     spec.mkdir(parents=True)
     (spec / "spec.md").write_text("FR-001: Preserve requirements")
     (spec / "tasks.md").write_text("Original task plan")
@@ -130,6 +130,34 @@ def test_semi_mode_keeps_existing_staged_planning(tmp_path):
     _, store, executor, node, _, calls = scheduling_fixture(tmp_path, mode="semi", verdict="FAIL")
     assert executor.execute(node, store).verdict == "FAIL"
     assert ("plan", None) in calls
+
+
+def test_workspace_references_survive_legacy_inline_revalidation(tmp_path):
+    failure = SquadAgentResult(0, {"verdict": "BLOCKED", "state_updates": {}}, "Another planner issue", 0, False)
+    _, store, executor, node, spec, _ = scheduling_fixture(
+        tmp_path, mode="semi", mutate_plan=True, plan_result=failure)
+    original = executor._provider.exec_agent.side_effect
+    reviews = []
+
+    def dispatch(cwd, prompt, **kwargs):
+        result = original(cwd, prompt, **kwargs)
+        payload = result.echelon_result
+        if "phase3_issue_review" in payload:
+            reviews.append(True)
+            payload["phase3_issue_review"] = dict(schema_version=2, selected_issue="ISS-A",
+                outcome="resolved", rationale="Current plan inspected",
+                evidence_refs=[str((spec / "tasks.md").relative_to(tmp_path)) + "#tasks"])
+        return result
+
+    executor._provider.exec_agent.side_effect = dispatch
+    result = executor.execute(node, store)
+    assert result.blocked  # Preserve PLAN2's separate failure, not a path rejection.
+    assert len(reviews) == 2
+    entry = store.load()["issue_resolution_ledger"]["ISS-A"]
+    assert entry["status"] == "validated"
+    receipt = store.load()["phase3_issue_reviews"][entry["last_review_dispatch_id"]]
+    manifest, _ = capture_review_inputs(spec, project_root=tmp_path)
+    assert receipt["reviewed_artifacts"] == manifest
 
 
 @pytest.mark.parametrize("changed_input", ["spec.md", "implementability-report.md", "issues.md", "role.md"])

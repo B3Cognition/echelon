@@ -1,4 +1,10 @@
 # Phase: phase3-how
+
+When returning from an ASSESS2 rejection, the harness supplies the current
+`implementability-report.md` as required repair context, even if WHY3 passed.
+Address its concrete feasibility findings without weakening product requirements.
+An independent selected-issue closure does not resolve another gate's rejection;
+fresh consensus must reassess the repaired candidate.
 # Source: echelon.run.md §8 — HOW Phase (Architecture)
 # Agent: echelon.architect (ARCHITECT)
 # Read by: echelon.commander (COMMANDER) before dispatching echelon.architect (ARCHITECT)

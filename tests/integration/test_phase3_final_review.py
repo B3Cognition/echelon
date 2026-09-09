@@ -1,6 +1,7 @@
 """Fixed-candidate review uses real executor, state, and sealed routing."""
 import json
 import hashlib
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -11,9 +12,20 @@ from harness.squad_state import SquadStateStore
 from tests.integration.test_phase3_review_scheduling import scheduling_fixture, advance
 
 
-def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", repairs=False, keep_plan=False, final_outcome="resolved"):
-    ctrl, store, executor, _, spec, _ = scheduling_fixture(tmp_path, mode=mode)
+def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", repairs=False, keep_plan=False, final_outcome="resolved", reference_style="spec"):
+    captured = None
+    spec_ref = "specs/008-test"
+    if reference_style == "captured":
+        # Exact parsed SAGE response from result-35325-106140.txt. Replay the
+        # transport contract; this does not claim to verify its product claims.
+        captured = json.loads((Path(__file__).resolve().parents[1] / "fixtures/phase3/sage-workspace-reference-result.json").read_text())
+        spec_ref = "runs/spec-20260908-174947-206143/specs/008-model-player-character-with"
+    ctrl, store, executor, _, spec, _ = scheduling_fixture(tmp_path, mode=mode, spec_ref=spec_ref)
     state = store.load()
+    if captured:
+        state["issue_resolution_ledger"] = {"ISS-003": state["issue_resolution_ledger"]["ISS-A"]}
+        state["selected_issue_resolution"] = "ISS-003"
+        (spec / "data-model.md").write_text("Collection Attempt: requested, ignored")
     if not repairs:
         state.update(selected_issue_resolution=None, issue_resolution_ledger={})
     store.save(state)
@@ -29,8 +41,13 @@ def final_fixture(tmp_path, mode, *, after_review=None, final_verdict="PASS", re
             marker = "## Phase 3 selected-issue review envelope\n```json\n"
             if marker in prompt:
                 envelope = json.loads(prompt.split(marker)[1].split("\n```", 1)[0])
-                payload["phase3_issue_review"] = dict(schema_version=2, selected_issue=envelope["selected_issue"],
-                    outcome=final_outcome if final else "resolved", rationale="Checked current requirements", evidence_refs=["spec.md"])
+                if captured:
+                    payload = deepcopy(captured)
+                else:
+                    reference = {"spec": "spec.md", "workspace": str((spec / "spec.md").relative_to(tmp_path)),
+                                 "absolute": str(spec / "spec.md")}[reference_style]
+                    payload["phase3_issue_review"] = dict(schema_version=2, selected_issue=envelope["selected_issue"],
+                        outcome=final_outcome if final else "resolved", rationale="Checked current requirements", evidence_refs=[reference])
             (spec / "issues.md").write_text("No issues" if payload["verdict"] == "PASS" else "New concrete failure")
             (spec / "quality-gates.md").write_text(f"Review revision {len(calls)}")
             if final and after_review:
@@ -73,20 +90,9 @@ def test_final_review_completes_without_report_revision_replanning(tmp_path, mod
     assert (spec / "tasks.md").read_text() == "Final task plan"
 
 
-@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
-@pytest.mark.parametrize("quality_pass", [False, True])
-def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(tmp_path, monkeypatch, mode, quality_pass):
-    from tests.integration.test_squad_controller import _mark_constitution_complete, _install_passing_understanding
-    from tests.integration.test_human_input_routing import _decision_result
+def prepare_normal_plan(tmp_path, ctrl, store, spec):
+    from tests.integration.test_squad_controller import _mark_constitution_complete
     from harness.spec_lexicon_gate import run_spec_lexicon_gate
-
-    ctrl, store, executor, node, spec, calls = final_fixture(tmp_path, mode, keep_plan=True)
-    if quality_pass:
-        # Use the existing metric-engine fixture for the successful branch;
-        # real evidence persistence, freshness guards and all routing still run.
-        # The other branch runs the actual engine on this intentionally small
-        # spec and proves final-review PASS cannot waive its quality failure.
-        _install_passing_understanding(monkeypatch)
     fixtures = Path(__file__).resolve().parents[1] / "fixtures/lexicon"
     source = "# Feature\n\n- **REQ-001**: Parse the document.\n- **REQ-002**: Check coverage.\n- **AC-001**: Return the tree.\n- **AC-002**: All requirements covered.\n"
     (spec / "spec.md").write_text(source)
@@ -105,6 +111,21 @@ def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(t
     state.update(gate.state_updates())
     state.update(phase="phase3-plan", max_iterations=5)
     store.save(state)
+
+
+@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
+@pytest.mark.parametrize("quality_pass", [False, True])
+@pytest.mark.parametrize("reference_style", ["spec", "workspace", "absolute", "captured"])
+def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(tmp_path, monkeypatch, mode, quality_pass, reference_style):
+    from tests.integration.test_squad_controller import _install_passing_understanding
+    from tests.integration.test_human_input_routing import _decision_result
+
+    ctrl, store, executor, node, spec, calls = final_fixture(tmp_path, mode, keep_plan=True, repairs=True, reference_style=reference_style)
+    if quality_pass:
+        # Mock the external metric calculation, not evidence or routing. The
+        # other branch exercises real metrics and must retain their rejection.
+        _install_passing_understanding(monkeypatch)
+    prepare_normal_plan(tmp_path, ctrl, store, spec)
     consensus_dispatch = executor._provider.exec_agent.side_effect
 
     def dispatch(cwd, prompt, **kwargs):
@@ -148,6 +169,135 @@ def test_normal_controller_loop_reaches_existing_checkpoint_after_final_review(t
         # This deliberately incomplete product fixture reaches finalization;
         # the existing readiness gate must still reject its missing artifacts.
         assert final["blocked_reason"] == "phase_a_readiness_failed"
+
+
+@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
+@pytest.mark.parametrize("gate_verdict", ["REJECTED", "BLOCKED"])
+@pytest.mark.parametrize("reference_style", ["workspace", "captured"])
+def test_normal_controller_routes_rejected_feasibility_with_its_evidence(tmp_path, monkeypatch, mode, gate_verdict, reference_style):
+    """Replay the live disagreement: selected closure PASS, feasibility rejects,
+    and PLAN2 cannot repair the producer contract. No human answer is needed.
+    """
+    from tests.integration.test_squad_controller import _install_passing_understanding
+    ctrl, store, executor, _, spec, calls = final_fixture(
+        tmp_path, mode, keep_plan=True, repairs=True, reference_style=reference_style)
+    _install_passing_understanding(monkeypatch)
+    prepare_normal_plan(tmp_path, ctrl, store, spec)
+    normal_review = executor._provider.exec_agent.side_effect
+    # Captured journal 399 (spec-20260908-174947-206143). The structured
+    # GATEKEEPER envelope is reconstructed from persisted state, not raw output.
+    evidence = "Fresh installed-Three.js reproduction finds the required initial torso sample occluded in 1000/1000 sampled Float phases. T-005 and T-008 cannot satisfy the unchanged frozen positive fixture."
+    owners = []
+
+    def dispatch(cwd, prompt, **kwargs):
+        phase = store.load()["phase"]
+        payload = dict(verdict="COMPLETE", state_updates={}, journal_entries=[])
+        if phase == "phase3-plan":
+            calls.append(("PLAN", False))
+        elif phase == "phase3-how":
+            owners.append(prompt)
+            return SquadAgentResult(1, None, "Owner observation boundary", 0, True)
+        elif "Operate in **ASSESS2**" in prompt:
+            calls.append(("ASSESS2", False))
+            (spec / "implementability-report.md").write_text(evidence)
+            payload.update(verdict=gate_verdict, state_updates=dict(gate_decision="REJECTED",
+                phase_recommendation="phase3-how", implementability_metrics={}))
+        elif "Operate in **WHY3**" in prompt:
+            return normal_review(cwd, prompt, **kwargs)
+        elif "Operate in **PLAN2**" in prompt:
+            calls.append(("PLAN2", False))
+            payload.update(verdict="BLOCKED", phase3_blocker=dict(issue_id="ISS-NEW", owner_phase="phase3-how",
+                detail="Positive fixture cannot pass", next_action="Repair the contract without changing requirements"))
+        else:
+            raise AssertionError(f"Unexpected phase {phase}")
+        return SquadAgentResult(0, payload, "", 0, False)
+
+    ctrl._provider.exec_agent.side_effect = dispatch
+    executor._provider.exec_agent.side_effect = dispatch
+    ctrl._executors["staged_parallel"] = executor
+    ctrl.run("task", "greenfield")
+    final = store.load()
+    assert owners, final.get("blocked_reason")
+    assert evidence in owners[0]  # Required repair input, not optional journal history.
+    assert ("PLAN2", False) not in calls
+    assert final["why3_verdict"] == "PASS"
+    assert final["assess2_verdict"] == "REJECTED"
+    assert "checkpoint-plan" not in final["completed_phases"]
+    assert not final.get("blocked_decision")
+    assert final["iteration"] == 2  # One actual owner repair, no review-loop spend.
+    assert all(row["status"] == "validated" for row in final["issue_resolution_ledger"].values())
+
+
+@pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])
+@pytest.mark.parametrize("failure", ["exit", "timeout", "incomplete", "missing-report"])
+def test_incomplete_feasibility_does_not_become_an_actionable_rejection(tmp_path, mode, failure):
+    _, store, executor, node, spec, calls = final_fixture(tmp_path, mode)
+    normal_review = executor._provider.exec_agent.side_effect
+
+    def dispatch(cwd, prompt, **kwargs):
+        if "Operate in **ASSESS2**" not in prompt:
+            return normal_review(cwd, prompt, **kwargs)
+        if failure == "missing-report":
+            (spec / "implementability-report.md").unlink()
+        updates = dict(gate_decision="REJECTED", phase_recommendation="phase3-how", implementability_metrics={})
+        if failure == "incomplete":
+            updates = {}
+        return SquadAgentResult(1 if failure == "exit" else 0,
+            dict(verdict="BLOCKED", state_updates=updates), "Unable to finish assessment", 0, failure == "timeout")
+
+    executor._provider.exec_agent.side_effect = dispatch
+    result = executor.execute(node, store)
+    assert isinstance(result, ExecutorBlockedResult) or result.blocked
+    assert ("PLAN2", False) not in calls
+    assert not store.load().get("phase3_final_review")
+    if failure == "missing-report":
+        assert isinstance(result, ExecutorBlockedResult)
+        assert result.reason == "missing_consensus_prerequisite"
+
+
+@pytest.mark.parametrize("disposition", [
+    {"gate_decision": "accept_with_risk", "phase_recommendation": "proceed-to-build"},
+    {"gate_decision": "REJECTED", "phase_recommendation": "advance_past_consensus_to_delivery"},
+])
+def test_existing_accepted_risk_path_still_performs_planning(tmp_path, disposition):
+    _, store, executor, node, spec, calls = final_fixture(tmp_path, "semi")
+    previous = executor._provider.exec_agent.side_effect
+
+    def dispatch(cwd, prompt, **kwargs):
+        result = previous(cwd, prompt, **kwargs)
+        if "Operate in **ASSESS2**" in prompt:
+            result.echelon_result["verdict"] = "REJECTED"
+            result.echelon_result["state_updates"].update(disposition)
+        return result
+
+    executor._provider.exec_agent.side_effect = dispatch
+    result = executor.execute(node, store)
+    assert not result.blocked
+    assert calls.count(("PLAN2", False)) == 1
+    assert (spec / "tasks.md").read_text() == "Final task plan"
+
+
+def test_consensus_rejection_policy_does_not_change_other_staged_nodes(tmp_path):
+    from dataclasses import replace
+    _, store, executor, node, spec, calls = final_fixture(tmp_path, "semi")
+    node = replace(node, id="custom-staged-review")
+    state = store.load()
+    state["phase"] = node.id
+    store.save(state)
+    previous = executor._provider.exec_agent.side_effect
+
+    def dispatch(cwd, prompt, **kwargs):
+        result = previous(cwd, prompt, **kwargs)
+        if "Operate in **ASSESS2**" in prompt:
+            result.echelon_result["verdict"] = "REJECTED"
+            result.echelon_result["state_updates"].update(gate_decision="REJECTED", phase_recommendation="phase3-how")
+        return result
+
+    executor._provider.exec_agent.side_effect = dispatch
+    result = executor.execute(node, store)
+    assert result.verdict == "FAIL"
+    assert calls.count(("PLAN2", False)) == 1
+    assert (spec / "tasks.md").read_text() == "Final task plan"
 
 
 @pytest.mark.parametrize("mode", ["banzai", "semi", "guided"])

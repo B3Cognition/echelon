@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
@@ -50,3 +51,25 @@ def test_malformed_legacy_hash_is_not_repaired_or_accepted():
         bind(dict(schema_version=1, identity=asdict(RepairIdentity("run", "a" * 64, 7)),
                   outcome="resolved", rationale="Legacy", reviewed_artifacts={
                       "contracts/progress-authority.md": "023a45f5f7052c5cbd1686a954bb9a5ef7de5f7052c5cbd1686a954bb9a5ef7de5"}))
+
+
+@pytest.mark.parametrize("prefix", ["", "runs/run/specs/008-test/", "/workspace/runs/run/specs/008-test/"])
+def test_review_references_identify_the_same_dispatched_file(prefix):
+    review = bind({**assessment(), "evidence_refs": [prefix + "contracts/progress-authority.md#arm"]},
+                  expected_spec_dir=Path("/workspace/runs/run/specs/008-test"), project_root=Path("/workspace"))
+    assert dict(review.reviewed_artifacts) == {"contracts/progress-authority.md": "b" * 64}
+    assert review.outcome == "resolved"
+
+
+@pytest.mark.parametrize("reference", [
+    "runs/other/specs/008-test/contracts/progress-authority.md",
+    "/elsewhere/runs/run/specs/008-test/contracts/progress-authority.md",
+    "specs/008-test/contracts/progress-authority.md",  # published copy is not the candidate
+    "runs/run/specs/008-test/../008-test/contracts/progress-authority.md",
+    "runs/run/specs/008-test/contracts/missing.md", "file:///workspace/runs/run/specs/008-test/contracts/progress-authority.md",
+    "runs/run/specs/008-test/contracts\\progress-authority.md",
+])
+def test_path_aliases_do_not_admit_sibling_stale_or_escaping_evidence(reference):
+    with pytest.raises(RepairContractError, match="outside dispatched inputs"):
+        bind({**assessment(), "evidence_refs": [reference]},
+             expected_spec_dir=Path("/workspace/runs/run/specs/008-test"), project_root=Path("/workspace"))

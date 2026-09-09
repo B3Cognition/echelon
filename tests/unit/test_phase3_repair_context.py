@@ -55,3 +55,16 @@ def test_workflow_how_receives_consensus_journal():
     workflow = yaml.safe_load((root / "runtime/workflow/definition.yaml").read_text())
     how = next(p for p in workflow["phases"] if p["id"] == "phase3-how")
     assert any("phase=phase3-consensus" in source for source in how["context_pack"])
+
+
+@pytest.mark.parametrize("case", ["missing", "symlink", "overflow"])
+def test_rejected_feasibility_requires_safe_complete_report(tmp_path, case):
+    (tmp_path / "spec.md").write_text("Required behavior")
+    (tmp_path / "issues.md").write_text("No WHY3 issues")
+    report = tmp_path / "implementability-report.md"
+    if case == "symlink":
+        report.symlink_to(tmp_path / "spec.md")
+    elif case == "overflow":
+        report.write_text("x" * 262145)
+    with pytest.raises(RepairContractError):
+        capture_repair_context(tmp_path, project_root=tmp_path, require_implementability=True)

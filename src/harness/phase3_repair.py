@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 
 
@@ -136,6 +136,7 @@ def review_from_result(
     result: Mapping[str, object], *, agent_id: str, mode: str,
     expected: RepairIdentity, expected_manifest: Mapping[str, str],
     expected_selection: str | None = None,
+    expected_spec_dir: Path | None = None, project_root: Path | None = None,
 ) -> IssueReview | None:
     """Only a WHY3 SAGE dispatch can supply selected-issue closure evidence."""
     if "phase3_issue_review" not in result:
@@ -152,8 +153,21 @@ def review_from_result(
         refs = payload["evidence_refs"]
         if not isinstance(refs, list) or not refs or len(refs) > 256:
             raise RepairContractError("issue assessment requires bounded evidence references")
+        allowed_paths = set(manifest)
+        if expected_spec_dir is not None and project_root is not None:
+            # Enumerate aliases of harness-owned inputs, never resolve a
+            # provider-supplied path or match it by suffix/basename. The caller
+            # captures safe inputs before dispatch and rechecks them at commit.
+            root = project_root.resolve()
+            spec = expected_spec_dir if expected_spec_dir.is_absolute() else root / expected_spec_dir
+            spec = spec.resolve()
+            if not spec.is_relative_to(root):
+                raise RepairContractError("review spec root is outside the project")
+            prefix = spec.relative_to(root)
+            allowed_paths.update((prefix / name).as_posix() for name in manifest)
+            allowed_paths.update((spec / name).as_posix() for name in manifest)
         for ref in refs:
-            if _text(ref, "evidence reference").split("#", 1)[0] not in manifest:
+            if _text(ref, "evidence reference").split("#", 1)[0] not in allowed_paths:
                 raise RepairContractError("issue evidence is outside dispatched inputs")
         # Only the actual dispatch supplies identity and content hashes. Stored
         # receipts retain the strict v1 contract, including freshness checks.

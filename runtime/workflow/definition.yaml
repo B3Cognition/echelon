@@ -1196,6 +1196,10 @@ phases:
       Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
       (PLAN2 depends on implementability-report.md from ASSESS2). echelon.commander (COMMANDER) must NOT dispatch PLAN2
       in the same parallel batch as WHY3 and ASSESS2.
+      A completed ASSESS2 rejection without an existing accepted-risk disposition
+      defers PLAN2 and retains the existing tasks recertification and
+      architecture-repair route, even when WHY3 passes.
+      ARCHITECT receives the current rejection report as required repair context.
       In Banzai mode, pending repair reviews and unresolved WHY3 findings defer PLAN2;
       classify remaining work before planning. In all modes successful PLAN2 after passing
       reviews enters a durable fixed-candidate final review by WHY3 and ASSESS2 through

@@ -2123,14 +2123,16 @@ class PhaseExecutor(ABC):
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
-        if (node.id in {"phase3-how", "phase3-sentinel", "phase3-plan"}
+        feasibility_repair = node.id == "phase3-how" and state.get("assess2_verdict") == "REJECTED"
+        if (feasibility_repair or (node.id in {"phase3-how", "phase3-sentinel", "phase3-plan"}
                 and state.get("why3_verdict") == "FAIL"
-                and state.get("why3_repair_phase") == node.id):
+                and state.get("why3_repair_phase") == node.id)):
             from harness.phase3_repair_context import capture_repair_context
             current_spec = Path(spec_dir_ref)
             if not current_spec.is_absolute():
                 current_spec = self._project_root / current_spec
-            repair_text = capture_repair_context(current_spec, project_root=self._project_root)
+            repair_text = capture_repair_context(current_spec, project_root=self._project_root,
+                                                require_implementability=feasibility_repair)
             prompt += repair_text
             repair_section = RenderedSection("Current Phase 3 repair handoff", repair_text,
                 len(repair_text.encode()), {"truncated": "false"})
@@ -3611,7 +3613,8 @@ class StagedParallelExecutor(PhaseExecutor):
             try:
                 review = review_from_result(stage1_results["WHY3"].echelon_result or {},
                     agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest,
-                    expected_selection=review_envelope["selected_issue"])
+                    expected_selection=review_envelope["selected_issue"],
+                    expected_spec_dir=spec_path, project_root=self._project_root)
                 if review is None:
                     return ExecutorBlockedResult(reason="repair_review_missing", result=SquadAgentResult(
                         exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_missing"}},
@@ -3717,6 +3720,19 @@ class StagedParallelExecutor(PhaseExecutor):
             )
 
         state = state_store.load()
+        accepted_risk = (state.get("gate_decision") == "accept_with_risk"
+                         or state.get("phase_recommendation") == "advance_past_consensus_to_delivery")
+        if (node.id == "phase3-consensus" and stage1_results.get("ASSESS2")
+                and stage1_results["ASSESS2"].verdict == "REJECTED"
+                and not accepted_risk):
+            # A completed producer rejection is actionable review evidence.
+            # Do not require its dependent planner to succeed before the normal
+            # tasks-recertification/architecture-repair route can consume it.
+            # Keep both verdicts: selected closure never waives feasibility.
+            return SquadAgentResult(exit_code=0, echelon_result={
+                "verdict": "FAIL", "state_updates": {}, "product_input_updates": product_input_updates,
+            }, raw_output="ASSESS2 rejected the candidate; PLAN2 deferred to the existing repair route",
+                duration_ms=0, timed_out=False)
         for agent_entry in stage2_agents:
             agent_id = str(
                 agent_entry.get("id") or agent_entry.get("agent", "")
@@ -3870,7 +3886,8 @@ class StagedParallelExecutor(PhaseExecutor):
                         self._write_journal_entries(fresh_result, node.id)
                         fresh_review = review_from_result(fresh_result.echelon_result or {},
                             agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest,
-                            expected_selection=fresh_envelope["selected_issue"])
+                            expected_selection=fresh_envelope["selected_issue"],
+                            expected_spec_dir=spec_path, project_root=self._project_root)
                         if fresh_review is None:
                             raise RepairContractError("final-candidate review omitted the selected issue")
                         current_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
