@@ -3668,3 +3668,31 @@ def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert not (spec_dir / "test-strategy.md").exists()
+
+
+@pytest.mark.parametrize("render_mode", ["legacy", "bounded"])
+def test_how_repair_prompt_has_current_issue_checklist_not_retired_selection(tmp_path, monkeypatch, render_mode):
+    monkeypatch.setenv("ECHELON_CONTEXT_RENDER_MODE", render_mode)
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+    (spec / "issues.md").write_text("CURRENT-GEOMETRY-REPAIR: define samples from scene fixtures")
+    (spec / "tasks.md").write_text("G-VIS-CHECKLIST: initial and restored camera fixtures")
+    state = {"phase": "phase3-how", "why3_verdict": "FAIL", "spec_dir": str(spec),
+        "why3_repair_phase": "phase3-how", "selected_issue_resolution": "ISS-A",
+        "issue_resolution_ledger": {"ISS-A": {"status": "repaired", "repair_phase": "phase3-how",
+            "title": "OLD-ENUM-REPAIR", "decision": "Add ignored"}}}
+    prompt = _executor(tmp_path)._assemble_prompt(PhaseNode(id="phase3-how", type="agent"), state)
+    assert "CURRENT-GEOMETRY-REPAIR" in prompt
+    assert "G-VIS-CHECKLIST" in prompt
+    assert "Issue: ISS-A — OLD-ENUM-REPAIR" not in prompt
+
+
+def test_how_repair_missing_current_issues_is_not_silently_dispatched(tmp_path):
+    from harness.phase3_repair import RepairContractError
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "spec.md").write_text("Visible anatomy")
+    with pytest.raises(RepairContractError, match="issues.md"):
+        _executor(tmp_path)._assemble_prompt(PhaseNode(id="phase3-how", type="agent"), {
+            "phase": "phase3-how", "why3_verdict": "FAIL", "why3_repair_phase": "phase3-how", "spec_dir": str(spec)})

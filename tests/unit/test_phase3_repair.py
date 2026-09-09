@@ -76,3 +76,11 @@ def test_only_sage_why3_can_supply_review_and_legacy_missing_is_unvalidated():
             review_from_result(result, agent_id=agent, mode=mode, **kwargs)
     with pytest.raises(RepairContractError):
         review_from_result({"phase3_issue_review": [payload, payload]}, agent_id="echelon.sage", mode="WHY3", **kwargs)
+
+
+@pytest.mark.parametrize("reason", ["repair_review_stale", "repair_review_missing", "repair_context_incomplete"])
+def test_review_failure_can_be_preserved_as_operational_recovery(reason):
+    from harness.recovery_instruction import retry_phase_recovery
+    recovery = retry_phase_recovery("phase3-consensus", reason)
+    assert recovery.reason_code == reason
+    assert recovery.requires_human_input is False

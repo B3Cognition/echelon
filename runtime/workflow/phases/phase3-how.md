@@ -22,6 +22,15 @@ Read and include in the subagent prompt:
 
 ### Dispatch
 
+On a Phase 3 repair, the harness supplies a mandatory current repair handoff:
+`issues.md`, the current architecture/contracts, test strategy and tasks, plus
+consensus challenge history. Address the current finding assigned to ARCHITECT;
+do not repeat a previously submitted repair merely because its old decision is
+still in the journal. A submitted repair awaits independent SAGE review. Preserve
+validated requirements, distinguish observed facts from proposed mechanisms, and
+request an owner handoff for changes outside ARCHITECT's artifacts. Missing
+required repair context is a context failure, not permission to invent an answer.
+
 The active runtime dispatches this role with the following request:
 
 - **prompt:**

@@ -879,6 +879,10 @@ def _render_issue_resolution_context(state: dict) -> str:
     if not isinstance(entry, dict) or entry.get("status") not in {"selected", "repaired"}:
         return ""
     status = str(entry.get("status") or "")
+    if (status == "repaired" and entry.get("repair_phase") in {
+            "phase3-how", "phase3-sentinel", "phase3-plan"}
+            and str(state.get("phase", "")).startswith("phase3-")):
+        return ""
     validation_rules = ""
     if status == "repaired":
         validation_rules = (
@@ -2103,6 +2107,20 @@ class PhaseExecutor(ABC):
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
+        if (node.id in {"phase3-how", "phase3-sentinel", "phase3-plan"}
+                and state.get("why3_verdict") == "FAIL"
+                and state.get("why3_repair_phase") == node.id):
+            from harness.phase3_repair_context import capture_repair_context
+            current_spec = Path(spec_dir_ref)
+            if not current_spec.is_absolute():
+                current_spec = self._project_root / current_spec
+            repair_text = capture_repair_context(current_spec, project_root=self._project_root)
+            prompt += repair_text
+            repair_section = RenderedSection("Current Phase 3 repair handoff", repair_text,
+                len(repair_text.encode()), {"truncated": "false"})
+            legacy_sections.append(repair_section)
+            bounded_sections.append(repair_section)
+
         report = build_context_budget_report(
             phase_id=node.id,
             agent_id=str(node.agent or ""),
@@ -2345,7 +2363,14 @@ class AgentExecutor(PhaseExecutor):
         if pre_dispatch_result is not None and pre_dispatch_result.blocked:
             return pre_dispatch_result
         state = state_store.load()  # re-load after pre_dispatch
-        prompt = self._assemble_prompt(node, state)
+        from harness.phase3_repair import RepairContractError
+        try:
+            prompt = self._assemble_prompt(node, state)
+        except (RepairContractError, UnicodeError) as exc:
+            from harness.squad_provider import SquadAgentResult
+            return ExecutorBlockedResult(reason="repair_context_incomplete", result=SquadAgentResult(
+                exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_context_incomplete"}},
+                raw_output=str(exc), duration_ms=0, timed_out=False))
         result_contract = self._result_contract(node)
         prompt_metadata: dict[str, object] = {}
         if node.agent:
