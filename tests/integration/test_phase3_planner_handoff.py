@@ -136,8 +136,10 @@ def test_selected_stale_finding_routes_by_current_sage_owner_not_planner(tmp_pat
     state["why3_repair_phase"] = "phase3-how"
     store.save(state)
     node = controller._graph.get("phase3-plan")
+    result = blocked_plan()
+    result.echelon_result["phase3_blocker"]["owner_phase"] = "phase3-sentinel"
     snapshot = store.capture_routing_snapshot()
-    prepared = controller._prepare_phase_result(node, blocked_plan(), snapshot)
+    prepared = controller._prepare_phase_result(node, result, snapshot)
 
     route, updates = controller._phase3_planner_block_routing(
         node,
@@ -153,6 +155,35 @@ def test_selected_stale_finding_routes_by_current_sage_owner_not_planner(tmp_pat
         "status": "superseded",
     }
     assert updates["why3_repair_phase"] == "phase3-how"
+
+
+def test_selected_stale_finding_routes_when_real_planner_omits_advisory_summary(tmp_path):
+    controller, store = planner_fixture(tmp_path)
+    state = store.load()
+    state["issue_resolution_ledger"]["ISS-A"]["status"] = "selected"
+    state["issue_resolution_ledger"]["ISS-A"]["issue_fingerprint"] = "a" * 64
+    store.save(state)
+    result = blocked_plan()
+    result.echelon_result.pop("phase3_blocker")
+    result.echelon_result["state_updates"]["blocked_reason"] = (
+        "ISS-B remains outside PLAN ownership"
+    )
+    node = controller._graph.get("phase3-plan")
+    snapshot = store.capture_routing_snapshot()
+    prepared = controller._prepare_phase_result(node, result, snapshot)
+
+    route, updates = controller._phase3_planner_block_routing(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert route == "phase3-how"
+    assert updates["selected_issue_resolution"] is None
+    assert updates["phase3_last_blocker"] == {
+        "producer": "PLAN",
+        "detail": "ISS-B remains outside PLAN ownership",
+    }
 
 
 def test_explicit_planner_blocked_status_is_cleared_only_by_review_handoff(tmp_path):

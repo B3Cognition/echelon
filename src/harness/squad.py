@@ -12786,6 +12786,17 @@ class SquadController:
                         for value in summary.values()
                     )
                 )
+                diagnostic = (
+                    dict(summary)
+                    if valid_summary
+                    else {
+                        "detail": self._blocked_executor_reason(
+                            result,
+                            prepared.control_updates,
+                        )
+                        or "agent_blocked"
+                    }
+                )
                 stale_selection = (
                     bool(entry.get("issue_fingerprint"))
                     and entry.get("issue_fingerprint") not in current_findings
@@ -12797,9 +12808,7 @@ class SquadController:
                 )
                 if (
                     stale_selection
-                    and valid_summary
                     and owner in OWNER_FILES
-                    and summary.get("owner_phase") == owner
                     and within_budget
                 ):
                     return owner, {
@@ -12812,7 +12821,7 @@ class SquadController:
                         "why3_repair_phase": owner,
                         "phase3_last_blocker": {
                             "producer": "PLAN",
-                            **dict(summary),
+                            **diagnostic,
                         },
                         "status": "running",
                         "blocked_reason": None,
