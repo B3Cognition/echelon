@@ -10,6 +10,39 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-09-phase3-repair-handoff-design.md`
 
+## Inline execution checkpoint — 2026-09-09
+
+Implementation is **not ready for live continuation**. Completed code slices:
+
+- Identity-bound immutable SAGE review validation and role checks (`780b71e8`).
+- Repeated-key journal selector correction (`97022e3d`).
+- Durable Stage 1 per-issue review receipts, aggregate-PASS closure removal,
+  and one persisted final-candidate revalidation per identity/input manifest
+  when PLAN2 changes reviewed content (`74d89ad3`).
+- Mandatory current owner context and current consensus journal selection
+  (`7641be2a`).
+- Pure bounded technical-action assessment contract only (`8a0cd532`);
+  this validator does **not** yet schedule work or grant decision authority.
+- Retain explicit SAGE assessments when its gate verdict is BLOCKED; include
+  mandatory review sections in context-budget reports (`32dbf948`).
+
+Verification: 731 controller/human-input regression tests passed before the
+last blocked-SAGE/context-report refinement. After that refinement, all 224
+focused context, review, state, staged-executor and action-contract tests passed.
+The full suite and fake-provider complete A→B repair lifecycle have not run yet.
+
+Still required: Task 4 action provenance, bounded legacy assessment and
+controller-owned work routing; Task 5 durable submission/no-progress accounting
+and actionable recovery; cross-dispatch stale-receipt validation (not only
+in-invocation PLAN2 mutation), malformed legacy-state cases, and Task 6 full
+regression/review/live validation. Keep existing caps and permission paths;
+do not wire technical work through answer-adoption authority.
+
+No installer, workspace migration, demo artifact edits, or live resume were
+performed during this implementation. The CLI uses an editable checkout, so
+absence of an installer run does not isolate these Python edits from the CLI.
+Earlier unrelated dirty work remains preserved and outside these scoped commits.
+
 ## Global Constraints
 
 - No new agents, no SOAR, no demo edits, no quality waivers, no budget increases, no super-banzai, no changes to delivery verification.
