@@ -119,5 +119,13 @@ classification alone cannot replace the existing eligible-option certificate.
 The cross-layer fake-provider regression exercises ARCHITECT work, WHY3 and
 ASSESS2 before PLAN2, real deterministic gates and sealed controller transitions.
 It verifies A closure, B assignment, restart, final dependency revalidation and
-advancement only after independent acceptance. Installation/live results will be
-recorded after execution; the demo has not been manually repaired.
+advancement only after independent acceptance.
+
+Installed validation on preserved spec008 independently closed the old enum
+repair, revalidated it after PLAN2 changed inputs, and classified the current
+geometry work as owner-assigned `investigate_or_design`. It then stopped with
+`repair_budget_exhausted` at the unchanged 10/10 iteration limit before dispatching
+that new work. The demo specification is not complete; further authoring needs
+an explicitly authorized budget extension. No manual demo repair or quality
+waiver was used. Detailed regression counts and deployment evidence are in the
+implementation plan's current completion checkpoint.

@@ -17,12 +17,31 @@
 - [x] Task 5: submission/review accounting, unchanged global limits, explicit prerequisite/authority/no-progress reporting.
 - [x] Cross-layer regression: fake-provider ARCHITECT, WHY3, ASSESS2 and PLAN2, real state transactions and deterministic gates, including restart and revalidation of A after B changes dependencies.
 - [x] Independent review findings addressed: complete owned-artifact manifest, reused-label history, legacy receiptless closure, all-receipt final freshness, current-finding replay protection, and non-work blockers.
-- [ ] Broad/full regression completion and scoped commit.
-- [ ] Install, refresh bundles, and observe preserved spec008 through normal CLI continuation.
+- [x] Broad/full regression completion and scoped commit (70b51de0; paired-rule correction af87d3bd).
+- [x] Install, refresh bundles, and observe preserved spec008 through normal CLI continuation.
 
 The corrected broad regression passes: 1,411 tests, including 102 focused repair
-cases. Full-suite completion and live validation are still pending. No demo artifacts or budgets have been edited. Required demo
-repair context is 155,781 bytes, within the existing bound.
+cases. The full suite completed with 11,717 passed, 14 skipped and four failures:
+two references to the same unpaired SAGE rule and two outdated SENTINEL diagnostic
+assertions. The rule and assertions were corrected; all 151 follow-up checks
+passed. The SENTINEL assertion updates remain with the earlier uncommitted
+SENTINEL work rather than mixed into the Phase3 commits. The entire full suite
+was not repeated after that prose/assertion correction.
+
+Installed with `bash scripts/install.sh`, refreshed the demo with
+`echelon workspace migrate-to-prosaic`, and verified installed Python source plus
+byte-identical deployed SAGE/consensus files. Normal `echelon spec continue`
+resumed the same run on 2026-09-09 at 07:22 CEST and stopped at 07:29 CEST.
+
+Live outcome: ISS-003 independently validated, selected issue cleared, two review
+receipts retained (the second after PLAN2 regenerated dependencies), and one
+completed classification of ISS-001 as `investigate_or_design`, owned by
+`phase3-how`. The next work was correctly not dispatched: the preserved budget
+was already exhausted at iteration 10/max_iterations 10. Final reason is
+`repair_budget_exhausted`. This verifies the handoff and safeguards, not completed
+authoring of spec008. The monitor was paused at the terminal outcome. No manual
+demo repair, budget reset/increase, or SOAR execution occurred. Required demo
+repair context was 155,781 bytes, within the existing bound.
 
 The detailed task checklists below retain the original execution instructions;
 this checkpoint records actual completion. Earlier checkpoint is retained as history.

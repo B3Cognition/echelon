@@ -4979,10 +4979,16 @@ def _classify_run_recovery(
         issue = selected or pending.get("issue_id") or "current Phase 3 finding"
         action = (entry.get("repair_action") or pending.get("assessment") or {}).get("action") or entry.get("decision") or "classify or revalidate the current repair"
         detail = receipt.get("rationale") or (run_state.get("phase3_last_blocker") or {}).get("detail") or "Inspect current issues and assessment evidence."
+        action_label = "proposed" if pending else "submitted"
+        prerequisite = "Resolve the stated evidence/authority prerequisite before continuing; existing repair limits are retained."
+        if reason == "repair_budget_exhausted":
+            prerequisite = (
+                f"Iteration budget exhausted ({run_state.get('iteration', '?')}/{run_state.get('max_iterations', '?')}); "
+                "the next repair was not dispatched. Additional repair budget requires explicit authorization; no limit was reset."
+            )
         return _RunRecoveryAction("manual_recovery", reason=reason, phase=owner,
             command="echelon spec status",
-            note=f"{issue}; owner {owner}; attempted: {str(action)[:400]}. {str(detail)[:800]} "
-                 "Resolve the stated evidence/authority prerequisite before continuing; existing repair limits are retained.")
+            note=f"{issue}; owner {owner}; {action_label}: {str(action)[:400]}. {str(detail)[:800]} {prerequisite}")
 
     try:
         decision_recovery = _versioned_decision_recovery_action(

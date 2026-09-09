@@ -33,3 +33,14 @@ def test_technical_work_prompt_is_not_presented_as_user_approval():
     assert "Do not weaken FR-001" in prompt
     assert "User decision" not in prompt
     assert "Amend spec.md" not in prompt
+
+
+def test_exhausted_budget_does_not_claim_pending_work_was_attempted():
+    from tests.unit.test_phase3_repair_routing import work_state
+    state, _ = work_state()
+    state.update(status="blocked", blocked_reason="repair_budget_exhausted", iteration=10, max_iterations=10)
+    action = _classify_run_recovery(state)
+    assert "10/10" in action.note
+    assert "not dispatched" in action.note
+    assert "attempted:" not in action.note
+    assert "budget" in action.note
