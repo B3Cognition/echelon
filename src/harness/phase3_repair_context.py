@@ -27,8 +27,8 @@ def planner_handoff_context(state: Mapping, manifest: Mapping[str, str]) -> str:
             + json.dumps(summary, sort_keys=True) + "\n")
 
 
-def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[str, str], str]:
-    """Bound architecture/test/task dependencies; never truncate required inputs."""
+def review_input_paths(spec_dir: Path, *, project_root: Path) -> list[Path]:
+    """Enumerate safe candidate dependencies independently of rendering limits."""
     root = spec_dir.resolve(strict=True)
     if not root.is_relative_to(project_root.resolve()) or spec_dir.is_symlink():
         raise RepairContractError("review spec root is outside the project")
@@ -49,6 +49,16 @@ def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[s
                 paths.append(path)
     if not (root / "spec.md").is_file():
         raise RepairContractError("required review input spec.md is missing")
+    for path in paths:
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(root):
+            raise RepairContractError("review artifact escapes spec root")
+    return paths
+
+
+def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[str, str], str]:
+    """Bound architecture/test/task dependencies; never truncate required inputs."""
+    paths = review_input_paths(spec_dir, project_root=project_root)
+    root = spec_dir.resolve(strict=True)
     manifest, sections = {}, []
     size = 0
     for path in paths:

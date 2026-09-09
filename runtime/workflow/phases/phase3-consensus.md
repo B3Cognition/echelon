@@ -13,12 +13,21 @@ independent quality gates and semi-mode approvals remain authoritative.
 In Banzai mode, resolve pending independent reviews and classify remaining work
 before PLAN2. Unresolved WHY3 findings defer PLAN2 to the existing repair routes;
 review-only consensus transitions do not consume an owner repair iteration.
-Token, dispatch and duplicate-attempt limits still apply. PLAN2's successful
-output may be reused during its final review handoff only when the same-run
-completion receipt matches both the current content manifest and rendered
-planner prompt. Missing receipts, changed inputs or a new failed attempt require
-fresh planning. This is not evidence of issue closure or permission to waive a
-gate. Semi-mode staged dispatch and the existing ASSESS2 rejection path are unchanged.
+Token, dispatch and duplicate-attempt limits still apply.
+
+In **all modes**, successful PLAN2 after passing initial reviews creates a
+durable, same-run fixed-candidate final-review round. Through the normal
+controller loop, WHY3 and ASSESS2 independently review the completed candidate
+before task recertification and the existing mode-specific checkpoint. They may
+update `issues.md`, `quality-gates.md` and `implementability-report.md`; all other
+candidate inputs, including estimates, remain read-only. Report revisions inside
+this round do not trigger PLAN2. Concrete failed findings retire the round and
+use existing repair/approval routes. Changed requirements, contracts, instructions
+or other consumed inputs invalidate it; changes during review fail closed.
+Missing or legacy receipts never establish final-review success. Pending issue
+revalidations must finish, but a fresh unresolved assessment is repair work, not
+another review-only loop. No gate or mode-specific approval is waived. Ordinary
+semi/guided staged planning and the initial ASSESS2 rejection path are unchanged.
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
 # Agent: parallel — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness

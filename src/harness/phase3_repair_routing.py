@@ -123,6 +123,10 @@ def phase3_work_route(state: Mapping, manifest: Mapping[str, str], *, current_fi
     """Assign technical work only; all decision kinds keep existing authority."""
     if state.get("phase") != "phase3-consensus":
         return None, {}
+    if state.get("phase3_final_review"):
+        # A completed planner is not a reviewed final candidate. All modes
+        # return through the ordinary controller loop, including fresh specs.
+        return "phase3-consensus", {}
     reconciled = reconcile_review_state(state, manifest)
     if reconciled != state:
         return "phase3-consensus", {key: value for key, value in reconciled.items() if state.get(key) != value}

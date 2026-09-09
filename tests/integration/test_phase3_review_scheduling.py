@@ -99,9 +99,14 @@ def test_final_planning_change_is_reviewed_without_another_rewrite(tmp_path, res
     assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
     if restart:
         store = SquadStateStore(tmp_path / "squad/run-test")
+    if real_workflow:
+        # The full workflow reviews both gates in a separate fixed round;
+        # one selected-issue closure is recorded per review dispatch.
+        assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus"
     assert advance(controller, store, executor.execute(node, store)) == "phase3-consensus-tasks-lexicon"
     assert calls == [("review", "ISS-A"), ("review", "ISS-B"), ("plan", None),
-                     ("review", "ISS-B"), ("review", "ISS-A")]
+                     *(([("review", "ISS-A"), ("review", "ISS-B")]) if real_workflow else
+                       [("review", "ISS-B"), ("review", "ISS-A")])]
     final = store.load()
     manifest, _ = capture_review_inputs(spec, project_root=tmp_path)
     for entry in final["issue_resolution_ledger"].values():

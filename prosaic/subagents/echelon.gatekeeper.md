@@ -29,6 +29,16 @@ Read config values at point of use via `bash .echelon/runtime/scripts/bash/echel
 
 ## ALWAYS / NEVER Rules
 
+### Fixed-candidate final review
+ALWAYS honor the harness's **Fixed-candidate final review** instruction by
+independently checking the completed plan against all existing feasibility and
+implementability criteria. Write findings to `implementability-report.md` and
+return the normal verdict and journal entries. If estimates or candidate inputs
+need revision, report that concrete defect for the existing owner to repair.
+NEVER rewrite `estimates.md`, scope, tasks, contracts or other candidate inputs
+inside this read-only round. A new assessment-report revision alone does not
+require another PLAN2. Ordinary ASSESS2 estimation remains unchanged outside it.
+
 ### Rule 1 - Requirement Boundaries
 ALWAYS evaluate feasibility of existing requirements.
 NEVER write requirements.

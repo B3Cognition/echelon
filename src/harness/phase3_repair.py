@@ -135,10 +135,28 @@ def validate_issue_review(
 def review_from_result(
     result: Mapping[str, object], *, agent_id: str, mode: str,
     expected: RepairIdentity, expected_manifest: Mapping[str, str],
+    expected_selection: str | None = None,
 ) -> IssueReview | None:
     """Only a WHY3 SAGE dispatch can supply selected-issue closure evidence."""
     if "phase3_issue_review" not in result:
         return None
     if agent_id != "echelon.sage" or mode != "WHY3":
         raise RepairContractError("selected-issue review is owned by SAGE WHY3")
-    return validate_issue_review(result["phase3_issue_review"], expected=expected, expected_manifest=expected_manifest)
+    payload = result["phase3_issue_review"]
+    if isinstance(payload, Mapping) and type(payload.get("schema_version")) is int and payload["schema_version"] == 2:
+        if set(payload) != {"schema_version", "selected_issue", "outcome", "rationale", "evidence_refs"}:
+            raise RepairContractError("issue assessment must not supply controller provenance")
+        if not expected_selection or payload["selected_issue"] != expected_selection:
+            raise RepairContractError("issue assessment does not match dispatched selection")
+        manifest = _manifest(expected_manifest)
+        refs = payload["evidence_refs"]
+        if not isinstance(refs, list) or not refs or len(refs) > 256:
+            raise RepairContractError("issue assessment requires bounded evidence references")
+        for ref in refs:
+            if _text(ref, "evidence reference").split("#", 1)[0] not in manifest:
+                raise RepairContractError("issue evidence is outside dispatched inputs")
+        # Only the actual dispatch supplies identity and content hashes. Stored
+        # receipts retain the strict v1 contract, including freshness checks.
+        payload = dict(schema_version=1, identity=asdict(expected), reviewed_artifacts=manifest,
+                       outcome=payload["outcome"], rationale=payload["rationale"])
+    return validate_issue_review(payload, expected=expected, expected_manifest=expected_manifest)

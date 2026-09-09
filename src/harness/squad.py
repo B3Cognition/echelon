@@ -12650,9 +12650,13 @@ class SquadController:
         from harness.phase3_repair_routing import phase3_work_route, has_phase3_repairs
         from harness.issue_identity import issue_fingerprint
         from harness.phase3_repair import RepairContractError
+        if state.get("phase") == "phase3-consensus" and state.get("phase3_final_review"):
+            # This schedules verification, never advancement. The executor
+            # validates the full fingerprint without selected-review size caps.
+            return "phase3-consensus", {}
         if (state.get("phase") != "phase3-consensus"
                 or not (state.get("phase3_pending_action") or state.get("selected_issue_resolution")
-                        or has_phase3_repairs(state))):
+                        or state.get("phase3_final_review") or has_phase3_repairs(state))):
             return None, {}
         try:
             spec = Path(str(state.get("spec_dir") or ""))

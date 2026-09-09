@@ -2,6 +2,36 @@
 
 Status: approved approach; written design for implementation review.
 
+## Approved final-review amendment (2026-09-09)
+
+The preserved run exposed two additional defects: SAGE corrupted a copied
+SHA-256 while returning a resolved assessment, and fresh review-report revisions
+repeatedly caused PLAN2 to rewrite an otherwise complete plan. The owner approved
+these corrections, including ordinary controller-flow coverage for banzai, semi
+and guided:
+
+- Provider review schema 2 carries selection acknowledgement, outcome, rationale
+  and input evidence references. The harness binds its actual dispatch identity
+  and manifest; the durable schema-1 receipt validator remains strict. Legacy
+  provider responses remain supported only when their full provenance validates.
+- After successful PLAN2 and passing initial gates, store a same-run fixed
+  candidate round. Through the normal controller loop, run both existing WHY3
+  and ASSESS2 before task recertification and mode-specific checkpoints. No
+  selected repair history is required to enter this path.
+- Reviewers may update only their three report artifacts (`issues.md`,
+  `quality-gates.md`, `implementability-report.md`). Normative inputs, estimates,
+  declared context, effective contracts and authority context remain bound.
+  Report revisions inside the round are outputs, not replanning requests.
+- A real input change invalidates the round. Changes during review fail closed.
+  Fresh negative selected assessments retire it and follow existing repair/
+  approval/budget routes; only unperformed issue revalidations keep it pending.
+  Missing required reports and failed state commits cannot establish success.
+- Candidate hashing does not inherit the selected-review context rendering cap.
+  Selected-issue prompts retain their bounded, non-truncating safety rule.
+
+No counter is reset and no limit or approval is relaxed. Implementation plan:
+`docs/superpowers/plans/2026-09-09-stable-final-consensus-review.md`.
+
 ## Goal and scope
 
 Make existing Phase 3 spec-authoring repairs consume current findings, retire independently validated selections, and route technical investigation to the existing owner without granting new product-decision authority. Prove this on preserved spec008 after deterministic regression tests.

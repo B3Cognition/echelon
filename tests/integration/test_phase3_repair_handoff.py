@@ -113,6 +113,10 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
                 "constraints": ["Preserve FR-001; proposals are not facts."]}
         elif "Operate in **WHY3**" in prompt:
             marker = "## Phase 3 selected-issue review envelope\n```json\n"
+            if marker not in prompt:
+                assert "## Fixed-candidate final review" in prompt
+                return SquadAgentResult(exit_code=0, echelon_result={"verdict": "PASS", "state_updates": {},
+                    "journal_entries": []}, raw_output="Final candidate checked", duration_ms=0, timed_out=False)
             envelope = json.loads(prompt.split(marker)[1].split("\n```", 1)[0])
             reviews.append(envelope["selected_issue"])
             if entry_phase == "phase3-plan" and len(reviews) == 1:
@@ -180,6 +184,7 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
     assert advance(understanding.execute(controller._graph.get("phase3-understanding"), store)) == "phase3-consensus"
     # B changed reviewed dependencies, so A also needs fresh review before exit.
     assert advance(executor.execute(consensus, store)) == "phase3-consensus"
+    assert advance(executor.execute(consensus, store)) == "phase3-consensus"
     assert advance(executor.execute(consensus, store)) == "phase3-consensus-tasks-lexicon"
     final = store.load()
     assert final["selected_issue_resolution"] is None
@@ -190,6 +195,6 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
     assert classifications == ["ISS-002"]
     assert reviews == ["ISS-A", "ISS-002", "ISS-A"]
     assert owners == ["phase3-how"]
-    assert len(feasibility) == 3
+    assert len(feasibility) == 4
     assert planning == ["PLAN2"]
     assert final["iteration"] == 1  # Only assigning B consumed a repair iteration.

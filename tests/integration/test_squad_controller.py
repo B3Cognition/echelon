@@ -2589,6 +2589,7 @@ class TestConsensusCannotBeSkipped:
         )
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\nPreserve the requested behavior.\n")
         state = store.load()
         state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
         store.save(state)
@@ -5908,6 +5909,9 @@ class TestSquadControllerBasics:
 
         provider.exec_agent.side_effect = consensus_result
         ctrl, store = _controller(tmp_path, provider, mode="semi")
+        # Match the controller's configured budget to the persisted budget;
+        # final review adds a legitimate seventh dispatch to this fixture.
+        ctrl._max_iterations = 10
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=10)
         state = store.load()
         state["iteration"] = 4

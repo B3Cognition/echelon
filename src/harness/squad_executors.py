@@ -2860,14 +2860,94 @@ class StagedParallelExecutor(PhaseExecutor):
     that bypasses Stage 1.
     """
 
+    _FINAL_REPORTS = ("issues.md", "quality-gates.md", "implementability-report.md")
+
+    def _final_review_inputs(self, node, state, spec_dir):
+        """Fingerprint full inputs, not bounded model renderings or report revisions.
+
+        The journal is an append-only execution history, not candidate content.
+        Reports are checked separately at round entry and may only be rewritten
+        by the reviewers inside that round. Every other declared context input
+        (including estimates and role/template files) remains authoritative.
+        """
+        from harness.phase3_repair_context import review_input_paths
+        from harness.phase3_repair import RepairContractError
+        paths = set(review_input_paths(spec_dir, project_root=self._project_root))
+        paths.update(spec_dir / name for name in ("estimates.md", "mvp-scope.md"))
+        paths.update(self._project_root / ".echelon" / name for name in ("constitution.md", "config.yml"))
+        replacements = {"{spec_dir}": str(spec_dir), "{squad_dir}": str(state.get("squad_dir") or self._squad_dir),
+            "{context_dir}": str(state.get("context_dir") or self._squad_dir / "context"),
+            "{staging_dir}": str(state.get("staging_dir") or self._squad_dir / "staging")}
+        bases = _spec_search_bases(str(spec_dir), self._project_root, replacements["{staging_dir}"])
+        for agent in node.agents:
+            role = self._graph.agent_file(str(agent.get("id") or agent.get("agent", "")).split(" ")[0])
+            if role:
+                paths.add(self._ext_dir / role)
+            for item in agent.get("context_pack", []):
+                ref = parse_context_pack_item(item).path_ref
+                if not ref or ref.startswith("#"):
+                    continue
+                for key, value in replacements.items():
+                    ref = ref.replace(key, value)
+                candidates = [Path(ref)] if Path(ref).is_absolute() else [base / ref for base in bases]
+                paths.add(next((path for path in candidates if path.exists()), candidates[0]))
+        excluded = {(spec_dir / name).resolve() for name in self._FINAL_REPORTS}
+        excluded.add((self._squad_dir / "reasoning-journal.jsonl").resolve())
+        content = {}
+        for path in sorted(paths):
+            if path.is_symlink():
+                raise RepairContractError(f"unsafe final-review input: {path}")
+            descendants = sorted(path.rglob("*")) if path.is_dir() else [path]
+            for candidate in descendants:
+                if candidate.resolve() in excluded:
+                    continue
+                if candidate.is_symlink():
+                    raise RepairContractError(f"unsafe final-review input: {candidate}")
+                if not candidate.is_dir():
+                    content[str(candidate.resolve())] = (hashlib.sha256(candidate.read_bytes()).hexdigest()
+                                                         if candidate.exists() else None)
+        context = (_render_product_input_context(state) + _render_implementation_target_context(state)
+                   + self._stack_context(str(spec_dir)) + render_quality_gate_context(self._quality_gate_thresholds())
+                   + _workspace_source_roots_context(self._project_root)
+                   + _render_active_spec_roots_context(str(spec_dir), state, self._project_root)
+                   + _render_certified_understanding_context(state, "WHY3")
+                   + _shared_agent_contract() + _canonical_echelon_result_contract(self._ext_dir)
+                   + getattr(node, "controller_context", ""))
+        for agent in node.agents:
+            contract = self._result_contract(node, agent)
+            context += _allowed_state_updates_contract(contract.allowed_state_update_keys,
+                required_state_updates=contract.required_state_update_keys,
+                state_update_types=contract.state_update_types, state_update_enums=contract.state_update_enums,
+                allowed_verdicts=contract.allowed_verdicts)
+        return {"schema_version": 1, "run_id": state.get("run_id"), "inputs": content,
+                "agents": node.agents, "context_sha256": hashlib.sha256(context.encode()).hexdigest()}
+
+    def _final_review_reports(self, spec_dir):
+        return {name: hashlib.sha256((spec_dir / name).read_bytes()).hexdigest()
+                if (spec_dir / name).is_file() else None for name in self._FINAL_REPORTS}
+
+    def _record_final_review(self, node, state_store, receipt):
+        from harness.phase3_repair import RepairContractError
+        snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+        recorded = dict(snapshot.state)
+        recorded.pop("phase3_plan2_completion", None)
+        if receipt is None:
+            recorded.pop("phase3_final_review", None)
+        else:
+            recorded["phase3_final_review"] = receipt
+        if not state_store.commit_routing_snapshot_state(snapshot, recorded):
+            raise RepairContractError("state changed while recording final review")
+
     @staticmethod
     def _issue_review_context(envelope: dict, inputs: str) -> str:
         return ("\n## Phase 3 selected-issue review envelope\n```json\n"
             + json.dumps(envelope, sort_keys=True) + "\n```\n"
             "Review this selected issue independently of the overall gate against these current inputs. "
-            "Return exactly one top-level phase3_issue_review object in echelon_result: schema_version: 1, "
-            "identity copied from this envelope, outcome: resolved|unresolved|unverifiable, reviewed_artifacts "
-            "copied from input_manifest, and a concrete rationale. Missing issues alone do not prove closure. "
+            "Return exactly one top-level phase3_issue_review object in echelon_result: schema_version: 2, "
+            "selected_issue matching this envelope, outcome: resolved|unresolved|unverifiable, "
+            "evidence_refs as a nonempty list of input paths (optional #anchor), and a concrete rationale. "
+            "The harness binds identity and hashes: never copy identity, input_manifest or reviewed_artifacts "
+            "into the response. Missing issues alone do not prove closure. "
             "Keep all other findings and the overall WHY3 verdict honest. Do not edit these inputs.\n" + inputs)
 
     @staticmethod
@@ -3337,6 +3417,25 @@ class StagedParallelExecutor(PhaseExecutor):
         from harness.phase3_repair import RepairIdentity, RepairContractError, review_from_result
         from harness.phase3_repair_context import capture_review_inputs
         from harness.phase3_repair_routing import has_phase3_repairs
+        roles = {(str(a.get("id") or a.get("agent", "")).split(" ")[0], a.get("mode")) for a in stage1_agents}
+        final_enabled = (node.id == "phase3-consensus"
+                         and roles == {("echelon.sage", "WHY3"), ("echelon.gatekeeper", "ASSESS2")}
+                         and len(stage2_agents) == 1 and stage2_agents[0].get("mode") == "PLAN2")
+        final_round = None
+        if final_enabled:
+            spec_dir = Path(_normalize_spec_dir_ref(str(state.get("spec_dir") or ""), self._project_root))
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            try:
+                final_inputs = self._final_review_inputs(node, state, spec_dir)
+                candidate_round = state.get("phase3_final_review")
+                if candidate_round:
+                    if candidate_round == {"candidate": final_inputs, "reports": self._final_review_reports(spec_dir)}:
+                        final_round = candidate_round
+                    else:
+                        self._record_final_review(node, state_store, None)
+            except (RepairContractError, OSError, UnicodeError) as exc:
+                return self._repair_block("repair_context_incomplete", str(exc))
         if has_phase3_repairs(state):
             try:
                 prior_spec = Path(_normalize_spec_dir_ref(str(state.get("spec_dir") or ""), self._project_root))
@@ -3411,6 +3510,14 @@ class StagedParallelExecutor(PhaseExecutor):
                 )
                 if agent_id == "echelon.sage" and mode_label == "WHY3":
                     required_review += planner_context
+                if final_round:
+                    required_review += ("\n## Fixed-candidate final review\n"
+                        "PLAN2 has completed. Independently review this final candidate; all existing gates apply. "
+                        "ALWAYS write findings only to issues.md, quality-gates.md or implementability-report.md "
+                        "and return the usual verdict and journal entries. NEVER rewrite candidate inputs, "
+                        "including estimates.md, scope, requirements, contracts or planning artifacts. "
+                        "If any input needs repair, return a failing gate and concrete owner-directed findings. "
+                        "A report revision alone is not a request for PLAN2.\n")
                 prompt = self._build_agent_prompt(
                     agent_entry,
                     state,
@@ -3489,10 +3596,22 @@ class StagedParallelExecutor(PhaseExecutor):
 
         self._persist_why3_repair_phase(state_store)
 
+        if final_round:
+            try:
+                if not (spec_dir / "implementability-report.md").is_file():
+                    self._record_final_review(node, state_store, None)
+                    return self._repair_block("missing_consensus_prerequisite", "final ASSESS2 report is missing")
+                if self._final_review_inputs(node, state_store.load(), spec_dir) != final_round["candidate"]:
+                    self._record_final_review(node, state_store, None)
+                    raise RepairContractError("final candidate inputs changed during review")
+            except (RepairContractError, OSError, UnicodeError) as exc:
+                return self._repair_block("repair_review_stale", str(exc))
+
         if review_envelope and "WHY3" in stage1_results:
             try:
                 review = review_from_result(stage1_results["WHY3"].echelon_result or {},
-                    agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest)
+                    agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest,
+                    expected_selection=review_envelope["selected_issue"])
                 if review is None:
                     return ExecutorBlockedResult(reason="repair_review_missing", result=SquadAgentResult(
                         exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_missing"}},
@@ -3515,6 +3634,34 @@ class StagedParallelExecutor(PhaseExecutor):
         # It is not permission to dispatch dependent stages or advance the gate.
         if review_envelope and stage1_results.get("WHY3") and stage1_results["WHY3"].blocked:
             return stage1_results["WHY3"]
+
+        if final_round:
+            all_pass = all(r.verdict in ("PASS", "DONE") for r in stage1_results.values())
+            reconciliation_error = self._reconcile_final_reviews(node, state_store)
+            if reconciliation_error is not None:
+                return reconciliation_error
+            current = state_store.load()
+            pending = bool(current.get("selected_issue_resolution"))
+            selected_entry = (current.get("issue_resolution_ledger") or {}).get(current.get("selected_issue_resolution"), {})
+            unperformed_review = pending and selected_entry.get("review_revalidation_required")
+            if pending and not unperformed_review:
+                # An explicit negative selected-issue assessment cannot be
+                # hidden by an aggregate PASS or sent around as another review.
+                all_pass = False
+                current["why3_verdict"] = "FAIL"
+                state_store.save(current)
+            try:
+                self._record_final_review(node, state_store,
+                    {**final_round, "reports": self._final_review_reports(spec_dir)} if all_pass and unperformed_review else None)
+            except RepairContractError as exc:
+                return self._repair_block("repair_review_stale", str(exc))
+            assessment_error = self._assess_phase3_work(node, state_store)
+            if assessment_error is not None:
+                return assessment_error
+            return SquadAgentResult(exit_code=0, echelon_result={
+                "verdict": "PASS" if all_pass and not pending else "FAIL", "state_updates": {},
+                "product_input_updates": product_input_updates}, raw_output="Final candidate reviewed",
+                duration_ms=0, timed_out=False)
 
         if ordered_repair_review:
             # Drain independent reviews on the same candidate before allowing
@@ -3592,7 +3739,7 @@ class StagedParallelExecutor(PhaseExecutor):
             # reports, constitution, role instructions and context changes all
             # invalidate reuse. Legacy/missing receipts simply rerun planning.
             plan2_receipt = None
-            cache_plan2 = (ordered_repair_review and has_phase3_repairs(state)
+            cache_plan2 = (not final_enabled and ordered_repair_review and has_phase3_repairs(state)
                           and len(stage2_agents) == 1 and agent_entry.get("mode") == "PLAN2")
             if cache_plan2:
                 try:
@@ -3641,6 +3788,15 @@ class StagedParallelExecutor(PhaseExecutor):
                 agent_id=agent_id,
                 outputs=agent_entry.get("outputs", getattr(node, "outputs", [])),
             )
+            if final_enabled:
+                # Retire previous success before an attempt, and capture its
+                # consumed inputs so PLAN2 cannot silently change prerequisites.
+                try:
+                    self._record_final_review(node, state_store, None)
+                    plan_inputs = self._final_review_inputs(node, state_store.load(), spec_dir)
+                    plan_reports = self._final_review_reports(spec_dir)
+                except (RepairContractError, OSError, UnicodeError) as exc:
+                    return self._repair_block("repair_context_incomplete", str(exc))
             stage2_result = self._exec_agent_with_contract(
                 prompt, result_contract, prompt_metadata
             )
@@ -3676,7 +3832,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     return self._repair_block("repair_context_incomplete", str(exc))
             else:
                 plan2_receipt = None
-            if review_envelope:
+            if review_envelope and (not final_enabled or stage2_result.blocked):
                 try:
                     final_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
                 except (RepairContractError, OSError, UnicodeError):
@@ -3713,7 +3869,8 @@ class StagedParallelExecutor(PhaseExecutor):
                         state_store.increment_cost(fresh_result.cost_usd)
                         self._write_journal_entries(fresh_result, node.id)
                         fresh_review = review_from_result(fresh_result.echelon_result or {},
-                            agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest)
+                            agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest,
+                            expected_selection=fresh_envelope["selected_issue"])
                         if fresh_review is None:
                             raise RepairContractError("final-candidate review omitted the selected issue")
                         current_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
@@ -3764,6 +3921,26 @@ class StagedParallelExecutor(PhaseExecutor):
                 recorded["phase3_plan2_completion"] = plan2_receipt
                 if not state_store.commit_routing_snapshot_state(snapshot, recorded):
                     return self._repair_block("repair_review_stale", "state changed while recording completed PLAN2")
+
+            if (final_enabled and stage2_result.verdict in ("PASS", "DONE", "COMPLETE")
+                    and all(r.verdict in ("PASS", "DONE") for r in stage1_results.values())):
+                from harness.phase3_repair_routing import OWNER_FILES
+                try:
+                    output_inputs = self._final_review_inputs(node, state_store.load(), spec_dir)
+                    outputs = {str((spec_dir / name).resolve()) for name in OWNER_FILES["phase3-plan"]}
+                    def prerequisites(receipt):
+                        return {**receipt, "inputs": {name: value for name, value in receipt["inputs"].items()
+                                                       if name not in outputs}}
+                    if (prerequisites(output_inputs) != prerequisites(plan_inputs)
+                            or self._final_review_reports(spec_dir) != plan_reports):
+                        return self._repair_block("repair_review_stale", "PLAN2 changed inputs outside its owned outputs")
+                    self._record_final_review(node, state_store,
+                        {"candidate": output_inputs, "reports": self._final_review_reports(spec_dir)})
+                except (RepairContractError, OSError, UnicodeError) as exc:
+                    return self._repair_block("repair_review_stale", str(exc))
+                return SquadAgentResult(exit_code=0, echelon_result={"verdict": "FAIL", "state_updates": {},
+                    "product_input_updates": product_input_updates}, raw_output="PLAN2 complete; final review pending",
+                    duration_ms=0, timed_out=False)
 
         all_pass = all(
             r.verdict in ("PASS", "DONE") for r in stage1_results.values()
