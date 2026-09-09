@@ -3151,6 +3151,8 @@ class StagedParallelExecutor(PhaseExecutor):
         phase_id: str = "phase3-consensus",
         controller_context: str = "",
         required_context: str = "",
+        omit_context_paths: frozenset[Path] = frozenset(),
+        record_context_budget: bool = True,
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -3207,6 +3209,9 @@ class StagedParallelExecutor(PhaseExecutor):
                 candidates = [Path(resolved_ref)]
             else:
                 candidates = [base / resolved_ref for base in search_bases]
+            resolved_candidate = next((candidate for candidate in candidates if candidate.exists()), None)
+            if resolved_candidate is not None and resolved_candidate.resolve() in omit_context_paths:
+                continue
             legacy_section = None
             for candidate in candidates:
                 if candidate.exists():
@@ -3287,14 +3292,14 @@ class StagedParallelExecutor(PhaseExecutor):
             strict=False,
         )
         try:
-            report_path = write_context_budget_report(self._squad_dir, report)
+            report_path = write_context_budget_report(self._squad_dir, report) if record_context_budget else None
         except OSError as exc:
             print(
                 f"[squad] context budget report unavailable for {phase_id}/{agent_id}: {exc}",
                 flush=True,
             )
         else:
-            if report["bounded"]["bytes"] < report["legacy"]["bytes"]:
+            if report_path is not None and report["bounded"]["bytes"] < report["legacy"]["bytes"]:
                 print(
                     f"[squad] context bounded for {phase_id}/{agent_id}; report={report_path}",
                     flush=True,
@@ -3346,6 +3351,8 @@ class StagedParallelExecutor(PhaseExecutor):
                 return self._repair_block("repair_context_incomplete", str(exc))
         selected = state.get("selected_issue_resolution")
         entry = (state.get("issue_resolution_ledger") or {}).get(selected)
+        review_only_dispatch = isinstance(entry, dict) and bool(entry.get("review_revalidation_required"))
+        ordered_repair_review = node.id == "phase3-consensus" and state.get("autonomy_mode") == "banzai"
         review_envelope = None
         reviewer_dispatch = None
         review_inputs = ""
@@ -3509,6 +3516,24 @@ class StagedParallelExecutor(PhaseExecutor):
         if review_envelope and stage1_results.get("WHY3") and stage1_results["WHY3"].blocked:
             return stage1_results["WHY3"]
 
+        if ordered_repair_review:
+            # Drain independent reviews on the same candidate before allowing
+            # PLAN2 to regenerate their dependencies. Classify remaining work
+            # before dispatching that dependent consumer, not after it blocks.
+            reconciliation_error = self._reconcile_final_reviews(node, state_store)
+            if reconciliation_error is not None:
+                return reconciliation_error
+            assessment_error = self._assess_phase3_work(node, state_store)
+            if assessment_error is not None:
+                return assessment_error
+            current = state_store.load()
+            if (current.get("why3_verdict") == "FAIL"
+                    or current.get("selected_issue_resolution") or current.get("phase3_pending_action")):
+                return SquadAgentResult(exit_code=0, echelon_result={
+                    "verdict": "FAIL", "state_updates": {}, "product_input_updates": product_input_updates,
+                }, raw_output="PLAN2 deferred until prerequisite reviews and repairs complete",
+                    duration_ms=0, timed_out=False)
+
         # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
@@ -3562,6 +3587,46 @@ class StagedParallelExecutor(PhaseExecutor):
                 phase_id=node.id,
                 controller_context=getattr(node, "controller_context", ""),
             )
+            # Only reuse a successful PLAN2 during its final review handoff.
+            # Bind both full review inputs and the rendered planner contract:
+            # reports, constitution, role instructions and context changes all
+            # invalidate reuse. Legacy/missing receipts simply rerun planning.
+            plan2_receipt = None
+            cache_plan2 = (ordered_repair_review and has_phase3_repairs(state)
+                          and len(stage2_agents) == 1 and agent_entry.get("mode") == "PLAN2")
+            if cache_plan2:
+                try:
+                    plan_manifest, _ = capture_review_inputs(spec_dir, project_root=self._project_root)
+                except (RepairContractError, OSError, UnicodeError) as exc:
+                    return self._repair_block("repair_context_incomplete", str(exc))
+                plan2_receipt = {"schema_version": 1, "run_id": state.get("run_id"),
+                    "input_manifest": plan_manifest, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                    "agent_contract": agent_entry}
+                if (review_only_dispatch and all(r.verdict in ("PASS", "DONE") for r in stage1_results.values())
+                        and state.get("phase3_plan2_completion") == plan2_receipt):
+                    continue
+                # Starting another attempt retires previous success even if
+                # this provider call later fails or the process is interrupted.
+                snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                recorded = dict(snapshot.state)
+                recorded.pop("phase3_plan2_completion", None)
+                if not state_store.commit_routing_snapshot_state(snapshot, recorded):
+                    return self._repair_block("repair_review_stale", "state changed before PLAN2 attempt")
+                from harness.phase3_repair_routing import OWNER_FILES
+                planner_outputs = OWNER_FILES["phase3-plan"]
+                stable_prompt_kwargs = dict(
+                    extra_files=[impl_report_path],
+                    allowed_state_updates=result_contract.allowed_state_update_keys,
+                    required_state_updates=result_contract.required_state_update_keys,
+                    state_update_types=result_contract.state_update_types,
+                    state_update_enums=result_contract.state_update_enums,
+                    allowed_verdicts=result_contract.allowed_verdicts, phase_id=node.id,
+                    controller_context=getattr(node, "controller_context", ""),
+                    omit_context_paths=frozenset((spec_dir / name).resolve() for name in planner_outputs),
+                    record_context_budget=False,
+                )
+                stable_prompt = self._build_agent_prompt(agent_entry, state, **stable_prompt_kwargs)
+                stable_manifest = {name: digest for name, digest in plan_manifest.items() if name not in planner_outputs}
             prompt_metadata: dict[str, object] = {}
             if agent_id == "echelon.sage":
                 rel = self._graph.agent_file(agent_id)
@@ -3585,6 +3650,32 @@ class StagedParallelExecutor(PhaseExecutor):
                 result_contract=result_contract,
                 direct_state_write=True,
             )
+            if cache_plan2 and not stage2_result.blocked and stage2_result.verdict in ("PASS", "DONE", "COMPLETE"):
+                # Capture the output candidate before final reviews can modify
+                # their reports. A later changed report must invalidate reuse.
+                try:
+                    plan_manifest, _ = capture_review_inputs(spec_dir, project_root=self._project_root)
+                    output_prompt = self._build_agent_prompt(agent_entry, state_store.load(),
+                        extra_files=[impl_report_path],
+                        allowed_state_updates=result_contract.allowed_state_update_keys,
+                        required_state_updates=result_contract.required_state_update_keys,
+                        state_update_types=result_contract.state_update_types,
+                        state_update_enums=result_contract.state_update_enums,
+                        allowed_verdicts=result_contract.allowed_verdicts, phase_id=node.id,
+                        controller_context=getattr(node, "controller_context", ""), record_context_budget=False)
+                    # Only owned outputs may be rebound to the output candidate.
+                    # Never certify newly changed instructions or prerequisites
+                    # that were not consumed by the successful dispatch.
+                    if (stable_manifest != {name: digest for name, digest in plan_manifest.items() if name not in planner_outputs}
+                            or stable_prompt != self._build_agent_prompt(agent_entry, state_store.load(), **stable_prompt_kwargs)):
+                        plan2_receipt = None
+                    else:
+                        plan2_receipt = {**plan2_receipt, "input_manifest": plan_manifest,
+                            "prompt_sha256": hashlib.sha256(output_prompt.encode()).hexdigest()}
+                except (RepairContractError, OSError, UnicodeError) as exc:
+                    return self._repair_block("repair_context_incomplete", str(exc))
+            else:
+                plan2_receipt = None
             if review_envelope:
                 try:
                     final_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
@@ -3667,6 +3758,12 @@ class StagedParallelExecutor(PhaseExecutor):
             for k, v in stage2_result.state_updates.items():
                 state[k] = v
             state_store.save(state)
+            if plan2_receipt is not None:
+                snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                recorded = dict(snapshot.state)
+                recorded["phase3_plan2_completion"] = plan2_receipt
+                if not state_store.commit_routing_snapshot_state(snapshot, recorded):
+                    return self._repair_block("repair_review_stale", "state changed while recording completed PLAN2")
 
         all_pass = all(
             r.verdict in ("PASS", "DONE") for r in stage1_results.values()

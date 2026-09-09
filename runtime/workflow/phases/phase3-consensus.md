@@ -9,6 +9,16 @@ of the old worker instruction. A bounded read-only SAGE work-assessment dispatch
 may follow contradictory legacy guidance in Banzai mode; its typed action is not
 an answer-adoption permission. Existing phase owners, iteration/dispatch limits,
 independent quality gates and semi-mode approvals remain authoritative.
+
+In Banzai mode, resolve pending independent reviews and classify remaining work
+before PLAN2. Unresolved WHY3 findings defer PLAN2 to the existing repair routes;
+review-only consensus transitions do not consume an owner repair iteration.
+Token, dispatch and duplicate-attempt limits still apply. PLAN2's successful
+output may be reused during its final review handoff only when the same-run
+completion receipt matches both the current content manifest and rendered
+planner prompt. Missing receipts, changed inputs or a new failed attempt require
+fresh planning. This is not evidence of issue closure or permission to waive a
+gate. Semi-mode staged dispatch and the existing ASSESS2 rejection path are unchanged.
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
 # Agent: parallel — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness
@@ -126,7 +136,8 @@ returns `BLOCKED` with `missing_consensus_prerequisite`; PLAN2 is not dispatched
 
 ### Deterministic Tasks Recertification
 
-After PLAN2 completes, `phase3-consensus` always transitions to
+After PLAN2 completes and all required final-candidate reviews are current,
+`phase3-consensus` transitions to
 `phase3-consensus-tasks-lexicon`. This provider-free deterministic node
 recertifies the on-disk planning artifacts because PLAN2 may have revised
 `tasks.md`.

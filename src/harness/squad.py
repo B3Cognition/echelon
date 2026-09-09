@@ -13813,7 +13813,9 @@ class SquadController:
         increment_iteration = self._transition_increments_iteration(
             node,
             next_phase,
-        ) or (source == "phase3_technical_work" and next_phase in _PHASE3_ISSUE_REPAIR_CORRIDOR) or (
+        ) or (source == "phase3_technical_work" and next_phase in {
+            "phase3-how", "phase3-sentinel", "phase3-plan",
+        }) or (
             node.id == "phase1-why2"
             and next_phase == "phase1-what"
             and source == "why_policy"

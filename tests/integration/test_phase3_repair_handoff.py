@@ -84,7 +84,7 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
             "repair_phase": "phase3-how", "repair_identity": asdict(RepairIdentity("r", "a" * 64, 1))}},
         issue_resolution_repair_baseline={"issue_id": "ISS-A", "repair_phase": "phase3-how"})
     store.save(state)
-    reviews, classifications, owners, feasibility = [], [], [], []
+    reviews, classifications, owners, feasibility, planning = [], [], [], [], []
 
     def dispatch(cwd, prompt, **kwargs):
         payload = {"verdict": "FAIL", "state_updates": {}, "journal_entries": []}
@@ -128,6 +128,7 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
                 "rationale": "Checked the actual contract against the retained requirement."}
         else:
             assert "Operate in **PLAN2**" in prompt
+            planning.append("PLAN2")
             payload["verdict"] = "DONE" if "reproducible" in (spec / "contracts/api.md").read_text() else "BLOCKED"
         return SquadAgentResult(exit_code=0, echelon_result=payload, raw_output="", duration_ms=0, timed_out=False)
 
@@ -156,7 +157,8 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
         assert advance(planner.execute(controller._graph.get("phase3-plan"), store)) == "phase3-consensus"
         assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
     result = executor.execute(consensus, store)
-    assert result.verdict == "BLOCKED"
+    assert result.verdict == "FAIL"
+    assert planning == []  # Classify the unresolved owner before dependent planning.
     assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
     if restart:
         controller, store = _controller(tmp_path, squad_dir=run)
@@ -189,3 +191,5 @@ def test_repaired_a_hands_off_b_without_waiving_final_review(tmp_path, restart, 
     assert reviews == ["ISS-A", "ISS-002", "ISS-A"]
     assert owners == ["phase3-how"]
     assert len(feasibility) == 3
+    assert planning == ["PLAN2"]
+    assert final["iteration"] == 1  # Only assigning B consumed a repair iteration.

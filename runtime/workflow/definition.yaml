@@ -1196,6 +1196,9 @@ phases:
       Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
       (PLAN2 depends on implementability-report.md from ASSESS2). echelon.commander (COMMANDER) must NOT dispatch PLAN2
       in the same parallel batch as WHY3 and ASSESS2.
+      In Banzai mode, pending repair reviews and unresolved WHY3 findings defer PLAN2;
+      classify remaining work before planning. Reuse successful PLAN2 only during
+      its final review handoff with a matching same-run content/prompt receipt.
     agents:
       - id: echelon.sage
         mode: WHY3
