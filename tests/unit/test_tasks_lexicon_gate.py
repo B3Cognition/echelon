@@ -150,6 +150,27 @@ def test_terms_declared_by_controlled_spec_are_valid_in_tasks(tmp_path: Path) ->
     assert result.passed is True
 
 
+def test_markdown_heading_glossary_terms_are_valid_in_tasks(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_valid_plan(spec_dir)
+    (spec_dir / "glossary.md").write_text(
+        "# Glossary\n\n### TypeScript\n\n- **Definition:** Typed source code.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        _valid_tasks().replace(
+            "Implement the output path.",
+            "Implement the TypeScript output path.",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(tmp_path, spec_dir)
+
+    assert result.action == "proceed"
+    assert result.passed is True
+
+
 def test_file_paths_are_not_checked_as_controlled_terms(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs" / "001-demo"
     _write_valid_plan(spec_dir)

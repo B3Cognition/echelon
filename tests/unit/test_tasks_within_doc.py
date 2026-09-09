@@ -32,6 +32,40 @@ def test_compound_acceptance_not_atomic():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "acceptance",
+    (
+        (
+            "KeyQ and KeyE route exclusively to left and right turn state"
+        ),
+        (
+            "browser evidence reports zero collection, transmission, and "
+            "persistence events"
+        ),
+    ),
+)
+def test_conjoined_parts_of_one_obligation_are_still_atomic(acceptance):
+    findings = within_doc_findings(_doc(acc_items=(acceptance,)), set())
+
+    assert not any(finding.code == "task-not-atomic" for finding in findings)
+
+
+@pytest.mark.unit
+def test_separate_atomic_acceptance_items_do_not_form_one_compound_obligation():
+    findings = within_doc_findings(
+        _doc(
+            acc_items=(
+                "KeyQ and KeyE route exclusively to turn state",
+                "WASD and arrow-key translation remains available",
+            )
+        ),
+        set(),
+    )
+
+    assert not any(finding.code == "task-not-atomic" for finding in findings)
+
+
+@pytest.mark.unit
 def test_acceptance_stops_before_test_tasks_and_checkpoint_checkboxes():
     doc = _doc(
         acc_items=("the list renders and the cost panel updates",),

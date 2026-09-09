@@ -21,7 +21,15 @@ class TaskRecord:
     line: int
 
 
-_COMPOUND_RE = re.compile(r"\band\b", re.IGNORECASE)
+_INDEPENDENT_CLAUSE_AFTER_AND_RE = re.compile(
+    r"\band\s+"
+    r"(?:(?:the|a|an|each|every|this|that|another)\s+|(?:it|they|we|you)\s+)"
+    r"(?=[^,.;\n]{0,80}\b(?:"
+    r"is|are|was|were|has|have|does|will|must|should|can|"
+    r"[a-z][a-z0-9_-]*(?:s|ed)"
+    r")\b)",
+    re.IGNORECASE,
+)
 
 _ROW_START = re.compile(rf"^- \[[ xX]\]\s+(?P<id>{TASK_ID_PATTERN})\b")
 _TEST_RE = re.compile(r"^\s*\*\*Test:\*\*\s*(?P<v>.+?)\s*$")
@@ -90,7 +98,14 @@ def within_doc_findings(text: str, glossary: set[str]) -> list[Finding]:
     )  # T: prose terms bind to glossary
     findings.extend(placeholder_findings(text))      # C: no <placeholder>/TBD/TODO
     for t in extract_tasks(text):                    # atomicity: one deliverable
-        if len(_COMPOUND_RE.findall(t.acceptance)) >= 2:
+        # A conjunction can join inputs, outputs, or conditions belonging to
+        # one observable.  It only indicates bundled work when multiple
+        # conjunctions introduce their own subject/predicate clauses inside a
+        # single acceptance item.
+        if any(
+            len(_INDEPENDENT_CLAUSE_AFTER_AND_RE.findall(item)) >= 2
+            for item in t.acceptance.splitlines()
+        ):
             findings.append(Finding(
                 code="task-not-atomic",
                 message=f"TASK {t.id} ACCEPTANCE bundles multiple obligations; split into atomic tasks",
