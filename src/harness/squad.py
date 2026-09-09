@@ -12622,30 +12622,8 @@ class SquadController:
                 "issue_resolution_ledger": repaired_ledger,
                 "issue_resolution_recovery": consumed_recovery,
             }
-        if (
-            entry.get("status") == "repaired"
-            and repair_phase in _PHASE3_ISSUE_REPAIR_CORRIDOR
-            and node.id == "phase3-consensus"
-            and successful
-            and snapshot.state.get("why3_verdict") == "PASS"
-        ):
-            validated_ledger = dict(ledger)
-            validated_entry = dict(entry)
-            validated_entry["status"] = "validated"
-            validated_ledger[selected] = validated_entry
-            recovery = state.get("issue_resolution_recovery")
-            validated_recovery = (
-                dict(recovery) if isinstance(recovery, dict) else {}
-            )
-            validated_recovery.update(
-                {"issue_id": selected, "status": "validated"}
-            )
-            return {
-                "issue_resolution_ledger": validated_ledger,
-                "selected_issue_resolution": None,
-                "issue_resolution_repair_baseline": None,
-                "issue_resolution_recovery": validated_recovery,
-            }
+        # Phase 3 closure is committed from the explicit, content-bound SAGE
+        # review at the stage-1 boundary. An aggregate PASS is not an issue receipt.
         return {}
 
     def _coordinate_why_transition_state(

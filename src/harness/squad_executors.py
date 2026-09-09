@@ -58,6 +58,9 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
     {
         "invalid_evidence_inventory",
         "missing_consensus_prerequisite",
+        "repair_review_stale",
+        "repair_review_missing",
+        "repair_context_incomplete",
         "missing_phase_outputs",
     }
 )
@@ -3119,6 +3122,43 @@ class StagedParallelExecutor(PhaseExecutor):
         product_input_updates: list[dict] = []
         state = state_store.load()
 
+        # A review submission is not closure. Give SAGE the exact selected
+        # instance and content manifest, then persist its independent verdict
+        # before PLAN2 can return BLOCKED.
+        from dataclasses import asdict
+        from harness.phase3_repair import RepairIdentity, RepairContractError, review_from_result
+        from harness.phase3_repair_context import capture_review_inputs
+        selected = state.get("selected_issue_resolution")
+        entry = (state.get("issue_resolution_ledger") or {}).get(selected)
+        review_envelope = None
+        reviewer_dispatch = None
+        review_inputs = ""
+        if (isinstance(entry, dict) and entry.get("status") == "repaired"
+                and entry.get("repair_phase") in {"phase3-how", "phase3-sentinel", "phase3-plan"}):
+            snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+            if not entry.get("repair_identity"):
+                from harness.issue_identity import issue_fingerprint
+                entry["repair_identity"] = asdict(RepairIdentity(
+                    str(state.get("run_id")),
+                    entry.get("issue_fingerprint") or issue_fingerprint(str(entry.get("title", "")), str(entry.get("decision", ""))),
+                    snapshot.state_revision,
+                ))
+                if not state_store.commit_routing_snapshot_state(snapshot, state):
+                    return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
+                        exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}}, raw_output="selection changed before review", duration_ms=0, timed_out=False))
+                state = state_store.load()
+            review_identity = RepairIdentity(**entry["repair_identity"])
+            spec_path = Path(_normalize_spec_dir_ref(str(state.get("spec_dir", "")), self._project_root))
+            if not spec_path.is_absolute():
+                spec_path = self._project_root / spec_path
+            try:
+                review_manifest, review_inputs = capture_review_inputs(spec_path, project_root=self._project_root)
+            except (RepairContractError, OSError, UnicodeError) as exc:
+                return ExecutorBlockedResult(reason="repair_context_incomplete", result=SquadAgentResult(
+                    exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_context_incomplete"}}, raw_output=str(exc), duration_ms=0, timed_out=False))
+            review_envelope = {"identity": asdict(review_identity), "input_manifest": review_manifest,
+                               "selected_issue": selected, "title": entry.get("title"), "decision": entry.get("decision")}
+
         # Stage 1: run in parallel
         with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
             futures: dict = {}
@@ -3144,6 +3184,15 @@ class StagedParallelExecutor(PhaseExecutor):
                     controller_context=getattr(node, "controller_context", ""),
                 )
                 prompt_metadata: dict[str, object] = {}
+                if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3":
+                    prompt += ("\n## Phase 3 selected-issue review envelope\n```json\n"
+                        + json.dumps(review_envelope, sort_keys=True) + "\n```\n"
+                        + "Review this selected issue independently of the overall gate. Return exactly one "
+                        "top-level phase3_issue_review object in echelon_result: schema_version: 1, identity "
+                        "copied from this envelope, outcome: resolved|unresolved|unverifiable, reviewed_artifacts "
+                        "copied from input_manifest, and a concrete rationale. Missing issues alone do not prove "
+                        "closure. Keep all other findings and the overall WHY3 verdict honest. Do not edit these inputs.\n"
+                        + review_inputs)
                 if agent_id == "echelon.sage":
                     rel = self._graph.agent_file(agent_id)
                     if rel:
@@ -3159,15 +3208,17 @@ class StagedParallelExecutor(PhaseExecutor):
                         "outputs", getattr(node, "outputs", [])
                     ),
                 )
+                if review_envelope and agent_id == "echelon.sage" and mode_label == "WHY3":
+                    reviewer_dispatch = (agent_entry, result_contract, prompt_metadata)
                 futures[pool.submit(
                     self._exec_agent_with_contract,
                     prompt,
                     result_contract,
                     prompt_metadata,
-                )] = (mode_label, result_contract)
+                )] = (mode_label, result_contract, agent_id)
 
             for future in as_completed(futures):
-                label, result_contract = futures[future]
+                label, result_contract, agent_id = futures[future]
                 raw_result = self._normalize_completed_assess2_rejection(
                     label,
                     future.result(),
@@ -3180,6 +3231,10 @@ class StagedParallelExecutor(PhaseExecutor):
                 )
                 if result.blocked:
                     return result
+                if "phase3_issue_review" in (result.echelon_result or {}):
+                    if not review_envelope or agent_id != "echelon.sage" or label != "WHY3":
+                        return ExecutorBlockedResult(reason="invalid_phase_outputs", result=SquadAgentResult(
+                            exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "invalid_phase_outputs"}}, raw_output="unsolicited or non-SAGE issue review", duration_ms=0, timed_out=False))
                 stage1_results[label] = result
                 payload = result.echelon_result or {}
                 product_input_updates.extend(payload.get("product_input_updates") or [])
@@ -3199,6 +3254,28 @@ class StagedParallelExecutor(PhaseExecutor):
             state_store.save(state)
 
         self._persist_why3_repair_phase(state_store)
+
+        if review_envelope and "WHY3" in stage1_results:
+            try:
+                review = review_from_result(stage1_results["WHY3"].echelon_result or {},
+                    agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest)
+                if review is None:
+                    return ExecutorBlockedResult(reason="repair_review_missing", result=SquadAgentResult(
+                        exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_missing"}},
+                        raw_output="SAGE did not assess the selected issue; fresh explicit review is required", duration_ms=0, timed_out=False))
+                current_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
+                if current_manifest != review_manifest:
+                    raise RepairContractError("reviewed inputs changed during review")
+                if review is not None:
+                    snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                    review_id = hashlib.sha256(json.dumps({"envelope": review_envelope,
+                        "dispatch": state.get("last_dispatch"), "revision": snapshot.state_revision}, sort_keys=True).encode()).hexdigest()
+                    if not state_store.commit_phase3_issue_review(snapshot=snapshot,
+                            review_dispatch_id=review_id, review=review, input_manifest=current_manifest):
+                        raise RepairContractError("selected issue changed during review")
+            except (RepairContractError, OSError, UnicodeError) as exc:
+                return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
+                    exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}}, raw_output=str(exc), duration_ms=0, timed_out=False))
 
         # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None
@@ -3276,6 +3353,68 @@ class StagedParallelExecutor(PhaseExecutor):
                 result_contract=result_contract,
                 direct_state_write=True,
             )
+            if review_envelope:
+                try:
+                    final_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
+                except (RepairContractError, OSError, UnicodeError):
+                    final_manifest = {}
+                if final_manifest != review_manifest:
+                    invalidated = state_store.invalidate_phase3_issue_review(
+                        snapshot=state_store.capture_routing_snapshot(expected_phase=node.id),
+                        review_dispatch_id=review_id,
+                    )
+                    try:
+                        if not invalidated or reviewer_dispatch is None:
+                            raise RepairContractError("selection changed before final-candidate review")
+                        review_manifest, review_inputs = capture_review_inputs(spec_path, project_root=self._project_root)
+                        if not state_store.claim_phase3_revalidation(
+                                snapshot=state_store.capture_routing_snapshot(expected_phase=node.id),
+                                identity=review_identity, input_manifest=review_manifest):
+                            raise RepairContractError("final-candidate review already attempted for these inputs")
+                        sage_entry, sage_contract, sage_metadata = reviewer_dispatch
+                        fresh_state = state_store.load()
+                        fresh_prompt = self._build_agent_prompt(sage_entry, fresh_state,
+                            allowed_state_updates=sage_contract.allowed_state_update_keys,
+                            required_state_updates=sage_contract.required_state_update_keys,
+                            state_update_types=sage_contract.state_update_types,
+                            state_update_enums=sage_contract.state_update_enums,
+                            allowed_verdicts=sage_contract.allowed_verdicts, phase_id=node.id,
+                            controller_context=getattr(node, "controller_context", ""))
+                        fresh_envelope = {**review_envelope, "input_manifest": review_manifest}
+                        fresh_prompt += ("\n## Phase 3 selected-issue review envelope\n```json\n"
+                            + json.dumps(fresh_envelope, sort_keys=True) + "\n```\n"
+                            "Revalidate the final candidate after PLAN2. Do not edit artifacts. Return an explicit "
+                            "phase3_issue_review with schema_version: 1, the envelope identity, outcome "
+                            "resolved|unresolved|unverifiable, reviewed_artifacts equal to input_manifest, and rationale. "
+                            "Keep the overall WHY3 verdict independent and honest.\n" + review_inputs)
+                        fresh_result = self._validate_result_state_updates(node,
+                            self._exec_agent_with_contract(fresh_prompt, sage_contract, sage_metadata),
+                            result_contract=sage_contract, direct_state_write=True)
+                        if isinstance(fresh_result, ExecutorBlockedResult):
+                            return fresh_result
+                        state_store.increment_cost(fresh_result.cost_usd)
+                        self._write_journal_entries(fresh_result, node.id)
+                        fresh_review = review_from_result(fresh_result.echelon_result or {},
+                            agent_id="echelon.sage", mode="WHY3", expected=review_identity, expected_manifest=review_manifest)
+                        if fresh_review is None:
+                            raise RepairContractError("final-candidate review omitted the selected issue")
+                        current_manifest, _ = capture_review_inputs(spec_path, project_root=self._project_root)
+                        if current_manifest != review_manifest:
+                            raise RepairContractError("final candidate changed again during revalidation")
+                        snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                        fresh_id = hashlib.sha256(json.dumps({"envelope": fresh_envelope,
+                            "revision": snapshot.state_revision}, sort_keys=True).encode()).hexdigest()
+                        if not state_store.commit_phase3_issue_review(snapshot=snapshot,
+                                review_dispatch_id=fresh_id, review=fresh_review, input_manifest=current_manifest):
+                            raise RepairContractError("selection changed during final-candidate review")
+                        stage1_results["WHY3"] = fresh_result
+                        state = state_store.load()
+                        state["why3_verdict"] = fresh_result.verdict
+                        state_store.save(state)
+                    except (RepairContractError, OSError, UnicodeError) as exc:
+                        return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
+                            exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}},
+                            raw_output=str(exc), duration_ms=0, timed_out=False))
             if stage2_result.blocked:
                 return stage2_result
             stage2_payload = stage2_result.echelon_result or {}

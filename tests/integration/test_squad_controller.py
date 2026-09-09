@@ -6412,7 +6412,7 @@ class TestSquadControllerBasics:
         )
         assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
 
-    def test_passing_why3_validates_repaired_phase3_issue(self, tmp_path):
+    def test_passing_why3_without_issue_review_does_not_validate_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
         state = store.load()
@@ -6455,12 +6455,10 @@ class TestSquadControllerBasics:
         )
 
         refreshed = store.load()
-        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == (
-            "validated"
-        )
-        assert refreshed["selected_issue_resolution"] is None
-        assert refreshed["issue_resolution_repair_baseline"] is None
-        assert refreshed["issue_resolution_recovery"]["status"] == "validated"
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == "repaired"
+        assert refreshed["selected_issue_resolution"] == "ISS-001"
+        assert refreshed["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
+        assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
 
     def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)

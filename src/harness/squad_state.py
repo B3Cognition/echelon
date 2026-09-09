@@ -4422,6 +4422,84 @@ class SquadStateStore:
             )
             return True
 
+    def commit_phase3_issue_review(
+        self, *, snapshot: RoutingStateSnapshot, review_dispatch_id: str,
+        review, input_manifest: Mapping[str, str],
+    ) -> bool:
+        """CAS-persist independent SAGE evidence without changing the whole gate."""
+        from dataclasses import asdict
+        from harness.phase3_repair import IssueReview, validate_issue_review
+
+        if type(review) is not IssueReview or not review_dispatch_id:
+            return False
+        state = deepcopy(snapshot.state)
+        if snapshot.phase != "phase3-consensus" or state.get("run_id") != review.identity.run_id:
+            return False
+        selected = state.get("selected_issue_resolution")
+        ledger = state.get("issue_resolution_ledger")
+        entry = ledger.get(selected) if isinstance(ledger, dict) else None
+        if (not isinstance(entry, dict) or entry.get("status") != "repaired"
+                or entry.get("repair_identity") != asdict(review.identity)
+                or dict(review.reviewed_artifacts) != dict(input_manifest)):
+            return False
+        receipts = state.setdefault("phase3_issue_reviews", {})
+        if review_dispatch_id in receipts:
+            return False
+        payload = {"schema_version": 1, "identity": asdict(review.identity),
+                   "outcome": review.outcome, "reviewed_artifacts": dict(review.reviewed_artifacts),
+                   "rationale": review.rationale}
+        validate_issue_review(payload, expected=review.identity, expected_manifest=input_manifest)
+        receipts[review_dispatch_id] = payload
+        entry["last_review_dispatch_id"] = review_dispatch_id
+        if review.outcome == "resolved":
+            entry["status"] = "validated"
+            entry.pop("review_revalidation_required", None)
+            state["selected_issue_resolution"] = None
+            state["issue_resolution_repair_baseline"] = None
+            recovery = dict(state.get("issue_resolution_recovery") or {})
+            recovery.update({"issue_id": selected, "status": "validated"})
+            state["issue_resolution_recovery"] = recovery
+        return self.commit_routing_snapshot_state(snapshot, state)
+
+    def invalidate_phase3_issue_review(
+        self, *, snapshot: RoutingStateSnapshot, review_dispatch_id: str,
+    ) -> bool:
+        """Keep historical evidence but require review of regenerated inputs."""
+        state = deepcopy(snapshot.state)
+        if snapshot.phase != "phase3-consensus" or state.get("selected_issue_resolution"):
+            return False
+        ledger = state.get("issue_resolution_ledger") or {}
+        for issue_id, entry in ledger.items():
+            if (entry.get("status") == "validated"
+                    and entry.get("last_review_dispatch_id") == review_dispatch_id):
+                entry["status"] = "repaired"
+                entry["review_revalidation_required"] = True
+                state["selected_issue_resolution"] = issue_id
+                state["issue_resolution_repair_baseline"] = {
+                    "issue_id": issue_id, "repair_phase": entry["repair_phase"],
+                }
+                state["issue_resolution_recovery"] = {"issue_id": issue_id, "status": "awaiting_review"}
+                return self.commit_routing_snapshot_state(snapshot, state)
+        return False
+
+    def claim_phase3_revalidation(self, *, snapshot: RoutingStateSnapshot,
+                                 identity, input_manifest: Mapping[str, str]) -> bool:
+        """At most one final-candidate review for the same immutable inputs."""
+        from dataclasses import asdict
+        state = deepcopy(snapshot.state)
+        entry = (state.get("issue_resolution_ledger") or {}).get(state.get("selected_issue_resolution"))
+        if (snapshot.phase != "phase3-consensus" or not isinstance(entry, dict)
+                or entry.get("status") != "repaired"
+                or entry.get("repair_identity") != asdict(identity)):
+            return False
+        key = hashlib.sha256(json.dumps({"identity": asdict(identity),
+            "manifest": dict(input_manifest)}, sort_keys=True).encode()).hexdigest()
+        claims = state.setdefault("phase3_review_revalidations", {})
+        if key in claims:
+            return False
+        claims[key] = {"identity": asdict(identity), "input_manifest": dict(input_manifest)}
+        return self.commit_routing_snapshot_state(snapshot, state)
+
     def prepare_routing_decision(
         self,
         prepared: PreparedPhaseResult,
