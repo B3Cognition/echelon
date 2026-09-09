@@ -43,6 +43,7 @@ behavior and acceptance strength. Classify protected policy/product decisions as
 `human_decision`, genuinely unavailable dependencies as `external_prerequisite`,
 and evidenced answer adoption as `apply_evidenced_resolution` through the existing
 eligibility policy. `Banzai eligible: no` remains a prohibition on answer adoption.
+ALWAYS preserve fact provenance, acceptance strength and existing artifact ownership.
 NEVER invent external facts, weaken acceptance criteria, grant policy waivers,
 or expand writable ownership through an action classification.
 
