@@ -1469,6 +1469,32 @@ def _render_context_candidate(
     )
 
 
+def _render_user_request_context(state: dict) -> RenderedSection:
+    """Render the controller-owned original request for declared consumers."""
+    user_request = state.get("user_message")
+    if not isinstance(user_request, str) or not user_request.strip():
+        raise ControllerStateContractViolation(
+            "declared user request is missing from controller state",
+            contract="user_request_context",
+            json_path="$.user_message",
+            validator="required",
+        )
+    text = (
+        "\n---\n# Original user request (immutable run input)\n"
+        "Explicit user requirements are authoritative. Preserve every distinct "
+        "requested outcome unless a controller-recorded user decision changes it.\n"
+        "<user_request>\n"
+        f"{user_request.strip()}\n"
+        "</user_request>"
+    )
+    return RenderedSection(
+        "Original user request (immutable run input)",
+        text,
+        len(text.encode("utf-8")),
+        {"source": "controller_state.user_message"},
+    )
+
+
 def _routing_contract(node: "PhaseNode") -> str:
     """Build a compact echelon_result contract from the phase's transition conditions.
 
@@ -1981,6 +2007,12 @@ class PhaseExecutor(ABC):
                 or item.startswith("{spec_dir}/evidence-inventory.json")
                 or item.startswith("{squad_dir}/reasoning-journal.jsonl")
             ):
+                continue
+            if str(item).strip() == "user_request":
+                request_section = _render_user_request_context(state)
+                legacy_sections.append(request_section)
+                bounded_sections.append(request_section)
+                selected_dynamic_parts.append(request_section.text)
                 continue
             selector = parse_context_pack_item(item)
             file_ref = selector.path_ref

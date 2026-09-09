@@ -1360,6 +1360,63 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     assert "STAGING_DIR" in prompt
 
 
+@pytest.mark.parametrize(
+    "phase_id",
+    ["phase1-discover", "phase1-tracker", "phase1-what"],
+)
+@pytest.mark.parametrize("render_mode", ["bounded", "legacy"])
+def test_assemble_prompt_injects_declared_immutable_user_request(
+    tmp_path,
+    monkeypatch,
+    phase_id,
+    render_mode,
+):
+    """Removing the user_request selector handling must hide the run's intent."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    monkeypatch.setenv("ECHELON_CONTEXT_RENDER_MODE", render_mode)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    request = (
+        "Model the player with limbs; animate hands and legs while moving, "
+        "bob the head, and animate left/right turns."
+    )
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id=phase_id, type="agent", context_pack=["user_request"]),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+            "user_message": request,
+        },
+    )
+
+    assert "# Original user request (immutable run input)" in prompt
+    assert request in prompt
+    assert "Explicit user requirements are authoritative" in prompt
+
+
+def test_assemble_prompt_rejects_missing_declared_user_request(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+
+    with pytest.raises(
+        ControllerStateContractViolation,
+        match="declared user request is missing",
+    ):
+        ex._assemble_prompt(
+            PhaseNode(
+                id="phase1-tracker",
+                type="agent",
+                context_pack=["user_request"],
+            ),
+            {
+                "squad_dir": str(squad_dir),
+                "staging_dir": str(squad_dir / "staging"),
+            },
+        )
+
+
 def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
     """SAGE receives project-resolved gates instead of copied prompt literals."""
     config = tmp_path / ".echelon" / "config.yml"
