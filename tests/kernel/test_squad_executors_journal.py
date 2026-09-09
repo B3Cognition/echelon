@@ -37,6 +37,21 @@ from harness.spec_lexicon_gate import SpecLexiconGateResult
 from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
+def test_artifact_repair_prompt_is_scoped_to_owner_and_not_inventory_protocol():
+    from harness.squad_executors import _render_controller_repair_context
+
+    state = {"phase": "phase3-sentinel", "phase_output_recovery": {
+        "phase": "phase3-sentinel", "invalid_outputs": [
+            {"path": "coverage-map.md", "reason": "line 4: ambiguous types"}
+        ],
+    }}
+    prompt = _render_controller_repair_context(state)
+    assert "coverage-map.md: line 4: ambiguous types" in prompt
+    assert "source frontier" not in prompt
+    state["phase"] = "phase3-plan"
+    assert "Phase Output Repair" not in _render_controller_repair_context(state)
+
+
 def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
     if squad_dir is None:
         squad_dir = tmp_path / "squad" / "run-test"
@@ -3528,8 +3543,9 @@ def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
 
 
 @pytest.mark.parametrize("valid_coverage", [True, False])
+@pytest.mark.parametrize("tasks_exist", [True, False])
 def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
-    tmp_path, valid_coverage
+    tmp_path, valid_coverage, tasks_exist
 ):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
@@ -3539,11 +3555,12 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
     (spec_dir / "spec.md").write_text(
         "# Spec\n- **FR-001**: Create an element.\n", encoding="utf-8"
     )
-    (spec_dir / "tasks.md").write_text(
-        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
-        "  **Named Test Ownership:** `UT-001`.\n",
-        encoding="utf-8",
-    )
+    if tasks_exist:
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            "  **Named Test Ownership:** `UT-001`.\n",
+            encoding="utf-8",
+        )
 
     shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
     shadow_spec_dir.mkdir(parents=True)
@@ -3603,6 +3620,7 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
         recovery_updates = result.state_updates
     else:
         assert isinstance(result, ExecutorBlockedResult)
+        assert result.reason == "invalid_phase_outputs"
         assert result.result.verdict == "BLOCKED"
         assert result.result.state_updates["invalid_outputs"][0]["path"] == "coverage-map.md"
         recovery_updates = result.result.state_updates["recovery_state_updates"]

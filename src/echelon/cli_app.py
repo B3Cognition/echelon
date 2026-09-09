@@ -1588,9 +1588,9 @@ def root_review(
 @app.command("codegen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_codegen(
     ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build with SOAR codegen."),
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Legacy spec id; SOAR execution is disabled."),
 ) -> None:
-    """Compatibility alias for the codegen skill command."""
+    """Retired compatibility command; SOAR execution is disabled."""
     _dispatch_compatibility_skill("codegen", ([spec_id] if spec_id else []) + _ctx_args(ctx))
 
 
@@ -4002,7 +4002,7 @@ def delivery_run(
     strategy: Optional[str] = typer.Option(
         None,
         "--strategy",
-        help="Build strategy, usually default or codegen.",
+        help="Build strategy (default recommended; SOAR/codegen is disabled).",
     ),
     max_outer: Optional[int] = typer.Option(
         None,

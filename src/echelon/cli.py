@@ -3608,6 +3608,16 @@ def _recovery_action_from_instruction(
             note="runtime contracts are compatible; the blocked phase will retry without rewind",
         )
     if kind in {RecoveryKind.RETRY_PHASE, RecoveryKind.WAIT_FOR_PROVIDER}:
+        output_recovery = run_state.get("phase_output_recovery")
+        output_detail = ""
+        if isinstance(output_recovery, dict) and output_recovery.get("phase") == phase:
+            invalid = output_recovery.get("invalid_outputs")
+            if isinstance(invalid, list):
+                output_detail = "; ".join(
+                    f"{item['path']}: {item['reason']}"
+                    for item in invalid
+                    if isinstance(item, dict) and item.get("path") and item.get("reason")
+                )
         is_banzai_consensus_repair = (
             kind == RecoveryKind.RETRY_PHASE
             and instruction.reason_code == "agent_blocked"
@@ -3629,7 +3639,7 @@ def _recovery_action_from_instruction(
                     if is_banzai_consensus_repair
                     else "will retry the blocked phase without rewind"
                 )
-            ),
+            ) + (f". Repair required: {output_detail}" if output_detail else ""),
         )
     if kind == RecoveryKind.RESOLVE_DECISION:
         return _RunRecoveryAction(
@@ -4583,7 +4593,7 @@ def _persisted_or_legacy_recovery_instruction(
     phase_output_recovery = run_state.get("phase_output_recovery")
     phase_output_instruction: RecoveryInstruction | None = None
     if (
-        reason in {"missing_phase_outputs", "invalid_evidence_inventory"}
+        reason in {"missing_phase_outputs", "invalid_phase_outputs", "invalid_evidence_inventory"}
         and isinstance(phase_output_recovery, dict)
     ):
         recovery_phase = str(
@@ -4807,6 +4817,7 @@ def _is_retryable_dispatch_block_reason(reason: str) -> bool:
     return (
         reason in {
             "missing_phase_outputs",
+            "invalid_phase_outputs",
             "missing_echelon_result",
             "agent_timeout",
             "agent_blocked",
@@ -10696,9 +10707,11 @@ def _cmd_continue_impl(
         state["phase"] = next_phase
         state["status"] = "running"
         if next_phase == "phase3-sentinel":
-            spec_dir = _build_target_continue_spec_dir(project_root, state)
+            spec_dir = _resolve_phase_target_spec_dir(project_root, state, squad_dir)
             coverage_error = (
-                coverage_contract_error(spec_dir)
+                coverage_contract_error(
+                    spec_dir, check_task_ownership=(spec_dir / "tasks.md").exists()
+                )
                 if spec_dir is not None
                 else None
             )
@@ -10711,6 +10724,15 @@ def _cmd_continue_impl(
                     }],
                     "prior_state_updates": {},
                 }
+            elif spec_dir is not None and (spec_dir / "coverage-map.md").is_file():
+                recovery = state.get("phase_output_recovery")
+                if isinstance(recovery, dict) and recovery.get("phase") == next_phase:
+                    # Revalidation supersedes obsolete errors (including the
+                    # legacy pre-planning tasks.md dependency), not missing files.
+                    recovery["invalid_outputs"] = [
+                        item for item in recovery.get("invalid_outputs", [])
+                        if item.get("path") != "coverage-map.md"
+                    ]
         if clear_recovery:
             state["blocked_reason"] = None
             state["escalation_question"] = None
@@ -13005,15 +13027,9 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
 
 
 def _require_codegen_installation() -> None:
-    """Require the installer-owned codegen launcher before SOAR dispatch."""
-    launcher = Path(sys.executable).with_name("codegen")
-    if launcher.is_file() and os.access(launcher, os.X_OK):
-        return
-    print(
-        "echelon codegen: the optional SOAR/codegen pipeline is not installed.\n"
-        "Install it with: bash scripts/install.sh --with-codegen",
-        file=sys.stderr,
-    )
+    """Retain the compatibility entry point but never dispatch retired SOAR."""
+    from codegen.retirement import MESSAGE
+    print(MESSAGE, file=sys.stderr)
     sys.exit(2)
 
 

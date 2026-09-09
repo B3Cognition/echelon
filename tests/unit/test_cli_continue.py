@@ -1159,6 +1159,48 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     assert _next_continue_phase(tmp_path) is None
 
 
+@pytest.mark.parametrize("tasks_exist", [False, True])
+def test_continue_sentinel_drops_obsolete_tasks_error_before_planning(tmp_path, monkeypatch, tasks_exist):
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(tmp_path, {
+        "status": "blocked", "phase": "terminal-blocked",
+        "spec_id": "001-demo", "blocked_reason": "invalid_phase_outputs",
+        "completed_phases": ["phase1-constitution"],
+        "last_dispatch": {"phase_id": "phase3-sentinel", "verdict": "BLOCKED"},
+        "phase_output_recovery": {"phase": "phase3-sentinel", "missing_outputs": [],
+            "invalid_outputs": [{"path": "coverage-map.md", "reason": "tasks.md missing"}],
+            "prior_state_updates": {}},
+    })
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = json.loads((run_dir / "state.json").read_text())
+    state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+    (run_dir / "state.json").write_text(json.dumps(state))
+    (spec_dir / "spec.md").write_text("- **FR-001**: Animate collection.\n")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+    )
+    calls = []
+    if tasks_exist:
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            "  **Named Test Ownership:** `UT-002`.\n"
+        )
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **kwargs: calls.append(args))
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+    state = json.loads((run_dir / "state.json").read_text())
+    assert calls
+    assert state["phase"] == "phase3-sentinel"
+    invalid = state.get("phase_output_recovery", {}).get("invalid_outputs")
+    if tasks_exist:
+        assert invalid and "UT-002" in invalid[0]["reason"]
+    else:
+        assert not invalid
+    assert (spec_dir / "tasks.md").exists() == tasks_exist
+
+
 def test_continue_routes_invalid_coverage_contract_to_sentinel_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1216,7 +1258,8 @@ def test_continue_routes_invalid_coverage_contract_to_sentinel_repair(
         "invalid_outputs": [{
             "path": "coverage-map.md",
             "reason": (
-                "coverage test type/case cardinality must be one or match case count"
+                "line 3 (FR-001): coverage test type/case cardinality must be one or match case count. "
+                "Use one test case and its test type per row, repeating the requirement ID as needed."
             ),
         }],
         "prior_state_updates": {},

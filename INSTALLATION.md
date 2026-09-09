@@ -33,15 +33,9 @@ The default installer:
 3. Adds `~/.echelon/venv/bin` to your PATH
 4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
 
-Install the optional SOAR-backed codegen pipeline with:
-
-```bash
-bash ~/echelon/scripts/install.sh --with-codegen
-```
-
-That mode also downloads SOAR 9.6.4 into `~/.echelon/soar/bin/`, adds it to
-PATH, and creates the standalone `codegen` launcher. MemPalace is installed and
-warmed in both modes because non-SOAR pipelines use it too.
+SOAR execution is disabled pending removal. `--with-codegen` is rejected before
+installation begins. Existing SOAR files are left untouched; Echelon will not
+execute them. Shared MemPalace functionality remains installed.
 
 Set `ECHELON_HOME` before installation to relocate the shared Node runtimes. A
 complete project-deployed runtime takes precedence when present; otherwise
@@ -87,12 +81,8 @@ echelon delivery --help
 understanding version
 prosaic --version
 
-# After installing with --with-codegen, check the optional pipeline
-codegen --help
-soar --version
-
-# Check memory stores
-codegen memory status
+# Check shared memory stores (no SOAR)
+python -m codegen.cli.codegen_cli memory status
 
 # Validate the workspace runtime contract
 echelon workspace doctor
@@ -102,7 +92,7 @@ echelon workspace doctor
 
 ## Per-project setup: wing provisioning
 
-`echelon workspace init` sets up a project for codegen use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `.echelon/config.yml`.
+`echelon workspace init` sets up a project for regular Echelon use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `.echelon/config.yml`.
 
 ```bash
 cd ~/my-project
@@ -129,17 +119,17 @@ Re-running `echelon workspace init` on an already-configured project is safe —
 
 ## Mine requirements into MemPalace
 
-After `echelon workspace init`, mine your spec files so the codegen RE phase can retrieve requirements semantically:
+After `echelon workspace init`, mine your spec files so shared memory utilities can retrieve requirements semantically:
 
 ```bash
 # Mine a single spec file
-codegen requirements mine specs/spec.md
+python -m codegen.cli.codegen_cli requirements mine specs/spec.md
 
 # Mine all specs matching a glob
-codegen requirements mine "specs/*.md"
+python -m codegen.cli.codegen_cli requirements mine "specs/*.md"
 
 # Search what was mined
-codegen requirements search "user authentication" --wing my-app
+python -m codegen.cli.codegen_cli requirements search "user authentication" --wing my-app
 ```
 
 Requirements are parsed by ID (`FR-xxx`, `NFR-xxx`, `AC-xxx`, `ADR-xxx`, `US-xxx`). Documents without explicit IDs are chunked by heading and stored in the `uncategorised` room.
@@ -148,10 +138,10 @@ To remove stale drawers (e.g. after re-specifying):
 
 ```bash
 # Preview
-codegen requirements clean --from-wing my-app --project-dir . --dry-run
+python -m codegen.cli.codegen_cli requirements clean --from-wing my-app --project-dir . --dry-run
 
 # Delete
-codegen requirements clean --from-wing my-app --project-dir .
+python -m codegen.cli.codegen_cli requirements clean --from-wing my-app --project-dir .
 ```
 
 ---
@@ -201,14 +191,10 @@ source ~/.zshrc   # or ~/.bashrc
 export PATH="$HOME/.echelon/venv/bin:$PATH"
 ```
 
-### `soar: command not found` after install
+### SOAR commands are disabled
 
-```bash
-source ~/.zshrc   # or ~/.bashrc
-
-# Or add it manually
-export PATH="$HOME/.echelon/soar/bin:$PATH"
-```
+This is intentional. Use the default Echelon delivery strategy. Installing a
+SOAR binary does not re-enable Echelon's retired execution paths.
 
 ### Embedding model download fails
 
@@ -232,4 +218,4 @@ rebuilt, and the MemPalace store is preserved.
 - **Python**: 3.11 or higher
 - **Node.js with npm**: optional; enables Context7, CodeGraph, and PerlGraph
 - **Docker or Podman**: needed for default delivery sandbox verification
-- **SOAR**: installed only with `--with-codegen`
+- **SOAR**: disabled pending removal; no installation option is supported

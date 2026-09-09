@@ -10002,7 +10002,7 @@ class TestSignalDuringBuild:
 
         result = controller.run_loop(
             max_outer=2,
-            build_command="echelon codegen",
+            build_command="echelon build",
             build_prompt="build a hello world",
         )
 
@@ -10129,7 +10129,7 @@ class TestVerifyLocallyUnknownProjectType:
         result = controller.run_loop(
             max_outer=1,
             max_inner=0,
-            build_command="echelon codegen",
+            build_command="echelon build",
             build_prompt="build a hello world",
         )
 
@@ -10301,7 +10301,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         err = capsys.readouterr().err
         assert "TEST RUNNER MISSING" in err
         assert "verify_command" in err
@@ -10326,7 +10326,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         state = state_store.read()
         assert state["status"] == "running"
         assert state["termination_reason"] == "verify_command_needed"
@@ -10350,7 +10350,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=5, max_inner=3,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         # Build must only have been called once (hard stop, no retries)
         assert build_runner.exec_build.call_count == 1
 
@@ -10375,7 +10375,7 @@ class TestVerifyCommandNeeded:
 
         # First run: blocks
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         assert state_store.read()["termination_reason"] == "verify_command_needed"
 
         # Now configure verify_command on the controller's config
@@ -10391,7 +10391,7 @@ class TestVerifyCommandNeeded:
         with patch("subprocess.run") as mock_sp:
             mock_sp.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
             result = controller.run_loop(max_outer=1, max_inner=0,
-                                         build_command="echelon codegen", build_prompt="x")
+                                         build_command="echelon build", build_prompt="x")
 
         # Loop re-entered: build was called again
         assert build_runner.exec_build.call_count == 1
@@ -10416,11 +10416,11 @@ class TestVerifyCommandNeeded:
 
         # First run blocks
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
 
         # Resume without adding verify_command → still blocked
         result = controller.run_loop(max_outer=1, max_inner=0,
-                                     build_command="echelon codegen", build_prompt="x")
+                                     build_command="echelon build", build_prompt="x")
         assert result.status == "blocked"
         assert result.termination_reason == "verify_command_needed"
 

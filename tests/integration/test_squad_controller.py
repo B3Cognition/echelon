@@ -950,6 +950,90 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
     return ctrl, store
 
 
+@pytest.mark.parametrize("mode, expected_attempts", [("banzai", 4), ("semi", 1)])
+def test_invalid_phase_outputs_retry_bounded_without_advancing(tmp_path, mode, expected_attempts):
+    from harness.squad_executors import ExecutorBlockedResult
+
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode=mode)
+    _mark_constitution_complete(tmp_path, store)
+    prompts = []
+
+    def invalid_output(node, state_store):
+        prompts.append(state_store.load().get("phase_output_recovery"))
+        return ExecutorBlockedResult(
+            reason="invalid_phase_outputs",
+            result=SquadAgentResult(
+                exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+                echelon_result={"verdict": "BLOCKED", "state_updates": {
+                    "blocked_reason": "invalid_phase_outputs",
+                    "invalid_outputs": [{"path": "coverage-map.md", "reason": "line 4: ambiguous test types"}],
+                    "missing_outputs": [], "recovery_state_updates": {},
+                }},
+            ),
+        )
+
+    ctrl._executors["agent"].execute = invalid_output
+    result = ctrl.run("msg", "greenfield")
+    assert result.status == "blocked"
+    state = store.load()
+    assert len(prompts) == expected_attempts
+    assert "phase1-what" not in state.get("completed_phases", [])
+    assert state["blocked_reason"] == "invalid_phase_outputs"
+    assert state["phase_output_recovery"]["invalid_outputs"][0]["path"] == "coverage-map.md"
+    if mode == "banzai":
+        assert prompts[1]["invalid_outputs"][0]["reason"] == "line 4: ambiguous test types"
+        assert state["phase_output_retry_counts"]["phase1-what"] == 3
+        # Restarting the controller cannot silently replenish the retry budget.
+        ctrl2, _ = _controller(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
+        assert not ctrl2._schedule_phase_output_retry("phase1-what", "invalid_phase_outputs")
+
+
+@pytest.mark.parametrize("reason, cancelled", [
+    ("agent_timeout", False), ("agent_blocked", False),
+    ("invalid_evidence_inventory", False), ("invalid_phase_outputs", True),
+])
+def test_output_retry_does_not_override_other_blockers_or_cancellation(tmp_path, reason, cancelled):
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode="banzai")
+    state = store.load()
+    state.update(status="blocked", phase="terminal-blocked", blocked_reason=reason,
+                 phase_output_recovery={"phase": "phase1-what", "missing_outputs": ["spec.md"]})
+    store.save(state)
+    before = store.load()
+    ctrl._cancelled = cancelled
+    assert not ctrl._schedule_phase_output_retry("phase1-what", reason)
+    assert store.load() == before
+
+
+def test_success_then_regeneration_gets_a_fresh_output_repair_cycle(tmp_path):
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode="banzai")
+    state = store.load()
+    state["phase_output_retry_counts"] = {"phase1-what": 3}
+    store.save(state)
+    prepared = prepare_phase_result(
+        PhaseNode(id="phase1-what", type="agent", allowed_state_updates=[]),
+        SquadAgentResult(exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+                         echelon_result={"verdict": "DONE", "state_updates": {}}),
+        controller_updates={},
+    )
+    decision = store.prepare_routing_decision(
+        prepared, snapshot=store.capture_routing_snapshot(expected_phase="phase1-what"),
+        from_phase="phase1-what", to_phase="phase1-understanding",
+    )
+    store.advance("phase1-what", "phase1-understanding", decision)
+    # A later regeneration fails. Returning to the phase does not itself reset
+    # anything: the successful completion above must have done that atomically.
+    state = store.load()
+    state.update(status="blocked", phase="terminal-blocked", blocked_reason="invalid_phase_outputs",
+                 phase_output_recovery={"phase": "phase1-what", "invalid_outputs": [
+                     {"path": "spec.md", "reason": "invalid regenerated artifact"}]})
+    store.save(state)
+    assert ctrl._schedule_phase_output_retry("phase1-what", "invalid_phase_outputs")
+    assert store.load()["phase_output_retry_counts"]["phase1-what"] == 1
+
+
 def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -421,6 +421,8 @@ class RalphController:
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Inner implementation of run_loop (signal handlers installed)."""
+        from codegen.retirement import reject_soar_command
+        reject_soar_command(build_command)
         state = self._state_store.read()
         if not state:
             raise RuntimeError("State not initialized. Call state_store.initialize() first.")

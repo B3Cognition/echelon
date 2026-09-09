@@ -64,6 +64,7 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
         "repair_action_unclassified",
         "repair_no_progress",
         "missing_phase_outputs",
+        "invalid_phase_outputs",
     }
 )
 _JOURNAL_CONTEXT_MAX_BYTES = 24 * 1024
@@ -835,7 +836,7 @@ def _render_controller_repair_context(state: dict) -> str:
         missing = output_recovery.get("missing_outputs")
         invalid = output_recovery.get("invalid_outputs")
         prior_updates = output_recovery.get("prior_state_updates")
-        if phase and (
+        if phase and state.get("phase", phase) == phase and (
             (isinstance(missing, list) and missing)
             or (isinstance(invalid, list) and invalid)
         ):
@@ -853,7 +854,7 @@ def _render_controller_repair_context(state: dict) -> str:
                 "Read the existing phase artifacts and repair only the named artifacts. Do not repeat external retrieval or discard established evidence unless the existing artifacts are contradictory or cannot support the required repair.",
                 "Before returning, verify every required phase output exists. Return the prior routing state updates again after the artifacts are complete.",
             ])
-            if rendered_invalid:
+            if rendered_invalid and phase == "phase1-investigate":
                 sections.extend([
                     "### Non-negotiable invalid-artifact repair",
                     "The invalid artifact is not evidence and must not be treated as a completed result.",
@@ -2361,7 +2362,11 @@ class AgentExecutor(PhaseExecutor):
             return []
         from harness.phase_a_readiness import coverage_contract_error
 
-        error = coverage_contract_error(spec_dir)
+        # Initial SENTINEL precedes task generation. Later repairs must still
+        # reconcile existing task ownership; final readiness always requires it.
+        error = coverage_contract_error(
+            spec_dir, check_task_ownership=(spec_dir / "tasks.md").exists()
+        )
         if error is None:
             return []
         return [{"path": "coverage-map.md", "reason": error}]
@@ -2447,6 +2452,7 @@ class AgentExecutor(PhaseExecutor):
                 else []
             )
             if missing_outputs or invalid_outputs:
+                output_reason = "missing_phase_outputs" if missing_outputs else "invalid_phase_outputs"
                 recovery_state_updates = dict(result.state_updates)
                 prior_recovery = state.get("phase_output_recovery")
                 prior_invalid_outputs = (
@@ -2455,7 +2461,7 @@ class AgentExecutor(PhaseExecutor):
                     else None
                 )
                 recovery_updates: dict[str, object] = {
-                    "blocked_reason": "missing_phase_outputs",
+                    "blocked_reason": output_reason,
                     "missing_outputs": missing_outputs,
                     "recovery_state_updates": recovery_state_updates,
                 }
@@ -2475,7 +2481,7 @@ class AgentExecutor(PhaseExecutor):
                     cost_usd=result.cost_usd,
                 )
                 return ExecutorBlockedResult(
-                    reason="missing_phase_outputs",
+                    reason=output_reason,
                     result=blocked_result,
                 )
             elif node.id == "phase1-investigate":

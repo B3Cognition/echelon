@@ -100,7 +100,9 @@ def test_controller_repair_context_names_invalid_coverage_finding():
 
     assert "Phase Output Repair" in prompt
     assert "coverage-map.md: coverage test type/case cardinality must match" in prompt
-    assert "replacement for every invalid artifact" in prompt
+    assert "repair only the named artifacts" in prompt
+    assert "Do not repeat external retrieval or discard established evidence" in prompt
+    assert "source frontier" not in prompt  # investigation-only recovery must not leak into SENTINEL
 
 
 @pytest.mark.unit
@@ -125,7 +127,8 @@ def test_sentinel_output_validation_rejects_invalid_coverage_contract(tmp_path):
 
     assert invalid == [{
         "path": "coverage-map.md",
-        "reason": "coverage test type/case cardinality must be one or match case count",
+        "reason": "line 3 (FR-001): coverage test type/case cardinality must be one or match case count. "
+                  "Use one test case and its test type per row, repeating the requirement ID as needed.",
     }]
 
 

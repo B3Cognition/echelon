@@ -54,6 +54,21 @@ def test_ready_state_passes_when_core_build_inputs_exist(tmp_path: Path) -> None
     assert result.ready_spec_dir == spec_dir
 
 
+def test_final_readiness_still_requires_tasks_after_valid_sentinel_coverage(tmp_path):
+    spec_dir = tmp_path / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "spec.md").write_text("- **FR-001**: Animate collection.\n")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+    )
+    (spec_dir / "tasks.md").unlink()
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    assert not result.ready
+    assert "tasks.md" in result.missing
+
+
 def test_ready_state_rejects_ambiguous_coverage_case_type_cardinality(
     tmp_path: Path,
 ) -> None:
@@ -70,7 +85,8 @@ def test_ready_state_rejects_ambiguous_coverage_case_type_cardinality(
 
     assert not result.ready
     assert result.blockers == [
-        "coverage-map.md invalid: coverage test type/case cardinality must be one or match case count"
+        "coverage-map.md invalid: line 3 (FR-001): coverage test type/case cardinality must be one or match case count. "
+        "Use one test case and its test type per row, repeating the requirement ID as needed."
     ]
 
 
@@ -85,7 +101,8 @@ def test_coverage_contract_error_returns_repairable_reason(tmp_path: Path) -> No
     )
 
     assert coverage_contract_error(spec_dir) == (
-        "coverage test type/case cardinality must be one or match case count"
+        "line 3 (FR-001): coverage test type/case cardinality must be one or match case count. "
+        "Use one test case and its test type per row, repeating the requirement ID as needed."
     )
 
 

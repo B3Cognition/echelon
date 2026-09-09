@@ -16,6 +16,7 @@ INV-002: prohibit preference is the SOLE enforcement mechanism.
 """
 
 import pytest
+pytest.skip("SOAR execution is disabled pending removal", allow_module_level=True)
 from pathlib import Path
 
 # Adjust sys.path so mock_soar_bridge is importable from the same directory

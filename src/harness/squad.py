@@ -6916,6 +6916,8 @@ class SquadController:
                         result.reason,
                     ),
                 )
+                if self._schedule_phase_output_retry(phase, result.reason):
+                    continue
                 return SquadResult.from_state(self._state_store.load())
 
             if result.timed_out:
@@ -10291,7 +10293,7 @@ class SquadController:
         state.pop("phase_output_recovery", None)
         if recovery_instruction is not None:
             state["recovery_instruction"] = recovery_instruction.to_dict()
-        if reason in {"missing_phase_outputs", "invalid_evidence_inventory"}:
+        if reason in {"missing_phase_outputs", "invalid_phase_outputs", "invalid_evidence_inventory"}:
             updates = result.state_updates or {}
             missing_outputs = updates.get("missing_outputs")
             invalid_outputs = updates.get("invalid_outputs")
@@ -10378,6 +10380,39 @@ class SquadController:
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+        for invalid in state.get("phase_output_recovery", {}).get("invalid_outputs", []):
+            print(f"[squad]   {invalid['path']}: {invalid['reason']}", flush=True)
+        return True
+
+    def _schedule_phase_output_retry(self, phase: str, reason: str) -> bool:
+        """Bounded artifact repair; never reinterpret a human or provider blocker."""
+        if self._cancelled or reason not in {"missing_phase_outputs", "invalid_phase_outputs"}:
+            return False
+        snapshot = self._state_store.capture_routing_snapshot()
+        state = snapshot.state
+        recovery = state.get("phase_output_recovery")
+        if (
+            state.get("autonomy_mode") != "banzai"
+            or state.get("status") != "blocked"
+            or state.get("blocked_reason") != reason
+            or not isinstance(recovery, dict)
+            or recovery.get("phase") != phase
+            or not (recovery.get("missing_outputs") or recovery.get("invalid_outputs"))
+        ):
+            return False
+        counts = dict(state.get("phase_output_retry_counts") or {})
+        used = counts.get(phase, 0)
+        if not isinstance(used, int) or used < 0 or used >= 3:
+            return False
+        counts[phase] = used + 1
+        state["phase_output_retry_counts"] = counts
+        state["phase"] = phase
+        state["status"] = "running"
+        state.pop("blocked_reason", None)
+        state.pop("recovery_instruction", None)
+        if not self._state_store.commit_routing_snapshot_state(snapshot, state):
+            return False
+        print(f"[squad] ↻ {phase}: automatic output repair {used + 1}/3", flush=True)
         return True
 
     def _restore_missing_phase_output_recovery(self, phase: str) -> bool:
@@ -10421,7 +10456,7 @@ class SquadController:
             }
             self._state_store.save(state)
             return True
-        if reason != "missing_phase_outputs":
+        if reason not in {"missing_phase_outputs", "invalid_phase_outputs"}:
             return False
         last_dispatch = state.get("last_dispatch")
         if not isinstance(last_dispatch, dict) or last_dispatch.get("phase_id") != phase:

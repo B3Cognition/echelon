@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> None:
     # run subcommand — full pipeline run
     run_cmd = sub.add_parser(
         "run",
-        help="Start or resume full pipeline run",
+        help="Disabled: SOAR pipeline execution is retired",
     )
     run_cmd.add_argument(
         "--intent",
@@ -297,6 +297,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+    if args.command in {"run", "gate", "anchor"} or args.anchor is not None:
+        from codegen.retirement import MESSAGE
+        parser.error(MESSAGE)
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -935,3 +938,7 @@ def _run_memory_repair(args: argparse.Namespace) -> None:
     ok, message = repair_store(db_path, store_name=args.store)
     print(message)
     sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

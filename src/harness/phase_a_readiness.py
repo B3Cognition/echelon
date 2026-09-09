@@ -238,8 +238,8 @@ def _constitution_blocker(path: Path) -> str | None:
     return None
 
 
-def coverage_contract_error(spec_dir: Path) -> str | None:
-    """Return the repairable semantic error for a candidate coverage map."""
+def coverage_contract_error(spec_dir: Path, *, check_task_ownership: bool = True) -> str | None:
+    """Validate coverage; only pre-planning callers may omit task consistency."""
     path = spec_dir / "coverage-map.md"
     if not path.is_file():
         return None
@@ -248,6 +248,10 @@ def coverage_contract_error(spec_dir: Path) -> str | None:
             requirement.id for requirement in extract_canonical_requirements(spec_dir)
         }
         obligations = parse_coverage_map_obligations(path, canonical_ids)
+        if not check_task_ownership:
+            if canonical_ids and not obligations:
+                return "coverage-map.md has no planned test cases for canonical requirements"
+            return None
         planned_case_ids = {
             obligation.test_case_id
             for row in obligations

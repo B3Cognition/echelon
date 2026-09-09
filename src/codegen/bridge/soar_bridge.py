@@ -199,6 +199,8 @@ class SOARBridge:
         verbose: bool = False,
         memory_config=None,  # Optional[MemoryConfig] — avoids circular import
     ):
+        from codegen.retirement import require_soar
+        require_soar()
         self.soar_config = soar_config
         self.smem_file = smem_file
         self.wm_state_file = wm_state_file

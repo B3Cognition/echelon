@@ -27,6 +27,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Phase-aware coverage validation** — Initial SENTINEL validation no longer
+  requires tasks from the later planning phase. Once tasks exist, ownership
+  consistency remains enforced, and final readiness still requires tasks.
+  Continuation revalidates the active run-local coverage map before clearing
+  obsolete errors; current coverage/task mismatches retain repair guidance.
+
+- **Bounded Banzai artifact repair** — Missing or invalid phase outputs now get
+  up to three automatic same-phase repairs per cycle. Only committed successful
+  phase completion replenishes the durable budget; restart, continuation, and
+  skipped phases do not. SENTINEL and the coverage template instruct one test
+  case and one type per row, including regeneration and pre-return checks.
+  Invalid outputs are distinguished from missing files, coverage errors include
+  row/requirement context, and continuation guidance includes the validation
+  error. Strict coverage validation and semi-mode behavior are preserved.
+
+- **SOAR disabled pending removal** — Retired codegen execution, delivery strategies,
+  resumes, installation opt-in, and cognitive overlay are disabled. Historical
+  source and installed files are retained. SOAR-specific suites are excluded;
+  shared MemPalace/graph utilities and normal spec/default delivery remain active.
+
 - **Source-backed first-run documentation review** — Documentation agents now
   receive declared package-manager/runtime constraints and review tool version
   selection, command ordering, fail-fast setup, and evidence boundaries across

@@ -27,19 +27,15 @@ source ~/.zshrc   # or restart terminal
 
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
-This is enough to author specs and run the default delivery strategy. The
-SOAR-backed codegen pipeline is opt-in:
-
-```bash
-bash ~/echelon/scripts/install.sh --with-codegen
-```
+This is enough to author specs and run the default delivery strategy.
+SOAR/codegen execution is disabled pending removal; `--with-codegen` is rejected.
 
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
 | `echelon spec` | Spec lifecycle subcommands — run, status, targets, verify, defer, plan, reopen |
-| `codegen` | Optional SOAR codegen pipeline, installed with `--with-codegen` |
+| `codegen` | Retired SOAR pipeline; execution disabled |
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
@@ -305,7 +301,7 @@ echelon spec plan 001 NFR-008
 
 # Phase B — build, verify in Docker, open PR
 echelon delivery run 001                    # echelon squad build (default)
-echelon delivery run 001 --strategy codegen # SOAR pipeline build (alternative)
+# SOAR/codegen is disabled; use the default strategy.
 
 # Polyrepo/workspace: declare implementation roots before Phase A dispatches
 echelon spec run "Build dashboards" --target sources/api --target sources/web
@@ -969,17 +965,15 @@ Phase 1:
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
 | `default` (omit) | `echelon.build` — multi-agent squad | General use |
-| `codegen` | `echelon.codegen` — SOAR CQ-ISC pipeline | Inviolable quality gates instead of agent review |
+| `codegen` | Disabled pending removal | Not available |
 
 ```bash
 echelon delivery run 001                    # default — echelon squad build
-echelon delivery run 001 --strategy codegen # SOAR pipeline build
+# SOAR/codegen is disabled; use the default strategy.
 ```
 
-Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
-
-Build strategy is independent from Phase A spec format. The default and codegen
-strategies both consume the published Phase A artifacts under `specs/<id>-*/`.
+The default strategy uses the build → verification → feedback → commit/PR loop.
+SOAR/codegen strategies, including resume, are disabled.
 See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
 spec-format/build-strategy combinations.
 
@@ -1219,7 +1213,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | Build phase (agent-driven) |
-| `echelon codegen <id>` | Build phase via SOAR pipeline (alternative to build) |
+| `echelon codegen <id>` | Disabled SOAR compatibility command |
 | `echelon review <id> [--pr-url <url>]` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon spec verify <id> [--reconcile] [--dry-run]` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
@@ -1316,7 +1310,7 @@ independently rather than allowing either one to hide the other.
 | `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> --strategy codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon delivery run <id> --strategy codegen` | Disabled; use the default delivery strategy |
 | `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
@@ -1340,22 +1334,10 @@ setting after local overrides, and implied stacks. Each mutation accepts
 
 ## Codegen Pipeline
 
-SOAR-backed codegen is an optional Phase B build strategy. Install it explicitly:
-
-```bash
-bash ~/echelon/scripts/install.sh --with-codegen
-```
-
-After Phase A artifacts are ready, select it with the standard delivery command:
-
-```bash
-echelon delivery run 001 --strategy codegen
-```
-
-`echelon workspace init` establishes the project’s MemPalace wing in the
-committed `.echelon/config.yml`; do not change that identity casually. The
-pipeline uses that memory automatically. For strategy compatibility and the
-full pipeline contract, see [Echelon Pipeline Matrix](docs/pipeline-matrix.md).
+SOAR-backed execution is disabled pending removal. Installation with
+`--with-codegen`, legacy codegen execution, and SOAR delivery strategies are rejected.
+Existing source and historical runs are retained; no re-enable flag is provided.
+Shared MemPalace and graph utilities remain supported by regular Echelon flows.
 
 ## PR Review Loop
 

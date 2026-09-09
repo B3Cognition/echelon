@@ -4895,6 +4895,15 @@ class SquadStateStore:
                 + decision.token_usage_delta
             )
             next_state.pop("controller_contract_error", None)
+            if decision.record_completion and not decision.conditional_skip:
+                # Successful validated completion opens the next repair cycle.
+                # Keep this atomic with advancement; resumes/skips/failures
+                # cannot replenish a phase's repair budget.
+                counts = next_state.get("phase_output_retry_counts")
+                if isinstance(counts, dict) and from_phase in counts:
+                    counts = dict(counts)
+                    counts.pop(from_phase)
+                    next_state["phase_output_retry_counts"] = counts
             if human_input is None:
                 next_state.pop("recovery_instruction", None)
             else:

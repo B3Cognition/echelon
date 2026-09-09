@@ -185,6 +185,19 @@ def _tasks_result(
     )
 
 
+@pytest.mark.parametrize("skipped", [False, True])
+def test_output_repair_budget_resets_only_on_committed_completion(tmp_path, skipped):
+    store = SquadStateStore(tmp_path / "run")
+    store.initialize("r", "greenfield", "msg", 0, "init")
+    state = store.load()
+    state["phase_output_retry_counts"] = {"init": 3, "phase3-sentinel": 2}
+    store.save(state)
+    _advance(store, "init", "phase1-discover", _result(), conditional_skip=skipped)
+    counts = store.load()["phase_output_retry_counts"]
+    assert counts.get("init", 0) == (3 if skipped else 0)
+    assert counts["phase3-sentinel"] == 2
+
+
 def _advance(
     store: SquadStateStore,
     from_phase: str,

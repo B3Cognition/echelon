@@ -10,6 +10,19 @@ from harness.coverage_contract import (
 )
 
 
+def test_invalid_coverage_map_identifies_row_and_requirement(tmp_path):
+    from harness.coverage_evidence import parse_coverage_map_obligations
+
+    path = tmp_path / "coverage-map.md"
+    path.write_text(
+        "# Coverage\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| AC-003 | UT-VIS-001, E2E-VIS-001, E2E-VIS-002 | unit/e2e | planned | planned | tests | implement |\n"
+    )
+    with pytest.raises(CoverageContractError, match=r"line 4.*AC-003.*cardinality"):
+        parse_coverage_map_obligations(path, {"AC-003"})
+
 @pytest.mark.parametrize("case_id", [
     "C-HTTP-001..N", "E-VIS-001..004", "UT-001–004", "UT-001...",
     "TBD", "test one", "ut-001", "UT_001", "UT--001", "`UT-001`",

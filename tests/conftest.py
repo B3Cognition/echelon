@@ -15,6 +15,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
+# Retired execution tests are not imported: collection-time fixtures must never
+# start SOAR. Shared memory/graph tests stay enabled.
+collect_ignore = [
+    "unit/test_soar_seed_rules.py",
+    "unit/test_pipeline_engine_wing.py",
+    "unit/test_codegen_cli_wing.py",
+]
+
+
+def pytest_pycollect_makeitem(collector, name, obj):
+    if collector.path.name == "test_runtime_python_run_paths.py" and name.startswith("test_soar_"):
+        return []
+    if (collector.path.name == "test_mempalace_e2e.py"
+            and name in {"TestPipelineEngineWingThreading", "test_codegen_run_hard_fails_without_wing_in_echelon_yml"}):
+        return []
+
 # Add src/ to path so codegen module is importable
 sys.path.insert(0, str(REPO_ROOT / "src"))
 

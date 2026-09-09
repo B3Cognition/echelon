@@ -8,7 +8,7 @@ _usage() {
 Usage: bash scripts/install.sh [--with-codegen]
 
 Options:
-  --with-codegen  Install the SOAR runtime and codegen pipeline launcher.
+  --with-codegen  Retired; exits without changes (SOAR is disabled).
   --help          Show this help without changing the system.
 EOF
 }
@@ -21,7 +21,10 @@ if [ "$#" -gt 1 ]; then
 fi
 case "$1" in
   "") ;;
-  --with-codegen) WITH_CODEGEN="1" ;;
+  --with-codegen)
+    echo "SOAR/codegen is disabled pending removal. Use regular Echelon delivery." >&2
+    exit 2
+    ;;
   --help)
     _usage
     exit 0
@@ -188,7 +191,7 @@ if [ "$WITH_CODEGEN" = "1" ]; then
   printf '#!%s\nfrom codegen.cli.codegen_cli import main\nmain()\n' "$VENV_DIR/bin/python" > "$CODEGEN_LAUNCHER"
   chmod +x "$CODEGEN_LAUNCHER"
 else
-  rm -f "$CODEGEN_LAUNCHER"
+  : # Preserve any existing launcher; Python execution guard disables SOAR.
 fi
 
 ECHELON_VER=$("$VENV_DIR/bin/echelon" --version 2>/dev/null || echo "unknown")
@@ -199,7 +202,7 @@ echo "    harness       → $VENV_DIR/bin/harness"
 if [ "$WITH_CODEGEN" = "1" ]; then
   echo "    codegen       → $CODEGEN_LAUNCHER"
 else
-  echo "    codegen       → not installed (bash scripts/install.sh --with-codegen)"
+  echo "    codegen       → disabled pending removal"
 fi
 
 # Add venv/bin to PATH if needed (idempotent)
@@ -361,8 +364,8 @@ if [ "$WITH_CODEGEN" = "1" ]; then
   echo "  SOAR          → $SOAR_DIR/bin/soar"
   echo "  codegen       → $CODEGEN_LAUNCHER"
 else
-  echo "  SOAR          → not installed (bash scripts/install.sh --with-codegen)"
-  echo "  codegen       → not installed (bash scripts/install.sh --with-codegen)"
+  echo "  SOAR          → disabled pending removal"
+  echo "  codegen       → disabled pending removal"
 fi
 if [ -d "$CODEGRAPH_NODE_DIR/node_modules" ]; then
   echo "  CodeGraph bridge → $CODEGRAPH_NODE_DIR/node_modules"

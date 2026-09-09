@@ -19,6 +19,7 @@ import sys
 import tempfile
 
 import pytest
+pytest.skip("SOAR execution is disabled pending removal", allow_module_level=True)
 
 # ---------------------------------------------------------------------------
 # Path setup — allow running from repo root or tests/ directory

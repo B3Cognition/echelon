@@ -25,7 +25,7 @@ def test_installer_parses_codegen_opt_in_before_environment_checks() -> None:
     assert parser < uv_check
     assert "--with-codegen" in script[parser:uv_check]
     assert "--help" in script[parser:uv_check]
-    assert 'WITH_CODEGEN="1"' in script[parser:uv_check]
+    assert 'WITH_CODEGEN="1"' not in script[parser:uv_check]
     assert "exit 2" in script[parser:uv_check]
 
 
@@ -105,8 +105,8 @@ def test_installer_manages_codegen_launcher_by_mode() -> None:
 
     assert 'CODEGEN_LAUNCHER="$VENV_DIR/bin/codegen"' in script
     assert "from codegen.cli.codegen_cli import main" in script
-    assert 'rm -f "$CODEGEN_LAUNCHER"' in script
-    assert "bash scripts/install.sh --with-codegen" in script
+    assert 'rm -f "$CODEGEN_LAUNCHER"' not in script
+    assert "disabled pending removal" in script
 
 
 def test_installer_recommends_poppler_without_installing_it() -> None:
@@ -146,7 +146,7 @@ def test_codegen_guard_exits_with_install_instruction_when_launcher_is_absent(
         cli._require_codegen_installation()
 
     assert exc_info.value.code == 2
-    assert "bash scripts/install.sh --with-codegen" in capsys.readouterr().err
+    assert "disabled" in capsys.readouterr().err
 
 
 def test_codegen_guard_accepts_executable_sibling_launcher(
@@ -164,7 +164,9 @@ def test_codegen_guard_accepts_executable_sibling_launcher(
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setattr(cli.sys, "executable", str(python))
 
-    cli._require_codegen_installation()
+    with pytest.raises(SystemExit) as exc_info:
+        cli._require_codegen_installation()
+    assert exc_info.value.code == 2
 
 
 def test_installation_docs_describe_codegen_as_opt_in() -> None:
@@ -175,7 +177,7 @@ def test_installation_docs_describe_codegen_as_opt_in() -> None:
         for name in ("AGENTS.md", "CLAUDE.md")
     )
 
-    assert "bash ~/echelon/scripts/install.sh --with-codegen" in readme
+    assert "SOAR" in readme and "disabled" in readme
     assert "installs four CLI tools" not in readme
     assert "SOAR binary are bundled" not in readme
     assert "all four CLIs" not in installation

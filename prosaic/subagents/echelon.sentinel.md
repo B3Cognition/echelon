@@ -255,6 +255,27 @@ Use `.echelon/runtime/templates/test-architecture-template.md`.
 
 Use `.echelon/runtime/templates/coverage-map-template.md`.
 
+ALWAYS write exactly one explicit Test Case ID and one Test Type in each coverage
+row. Repeat the Requirement ID across rows when several cases cover it.
+NEVER summarize multiple cases with a slash-separated list of distinct test
+types. Three cases with `unit/e2e` do not define which type belongs to each case.
+
+For example:
+
+| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |
+|---|---|---|---|---|---|---|
+| AC-003 | UT-VIS-001 | unit | deferred-automation | deferred-automation | Planned visibility math assertion | Implement |
+| AC-003 | E2E-VIS-001 | e2e | deferred-automation | deferred-automation | Planned initial-position browser assertion | Implement |
+| AC-003 | E2E-VIS-002 | e2e | deferred-automation | deferred-automation | Planned restored-position browser assertion | Implement |
+
+ALWAYS check every coverage row before returning, including on regeneration:
+seven columns, one concrete case ID, one type, and a canonical requirement ID.
+When splitting an existing row, preserve every case and its evidence; do not
+drop obligations or guess types from list order. Resolve each type from the
+test strategy and architecture. The harness still validates the saved artifact.
+NEVER declare COMPLETE with a known row-format error or mark planned cases as
+executed just to pass this check.
+
 ## Key Rules
 
 1. If an acceptance criterion has no corresponding test approach, it blocks. Route back to WHAT.

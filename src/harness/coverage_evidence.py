@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from harness.coverage_contract import CoverageObligation, parse_coverage_obligations
+from harness.coverage_contract import CoverageContractError, CoverageObligation, parse_coverage_obligations
 from harness.coverage_observation import (
     CoverageObservationResult,
     CoverageRequirementObservation,
@@ -240,7 +240,7 @@ def parse_coverage_map_obligations(
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     rows: list[tuple[CoverageObligation, ...]] = []
     active = False
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         cells = _table_cells(line)
         if cells == list(_REQUIRED_HEADERS):
             active = True
@@ -255,16 +255,16 @@ def parse_coverage_map_obligations(
         if len(cells) != len(_REQUIRED_HEADERS):
             active = False
             continue
-        obligations = parse_coverage_obligations(
-            cells[0],
-            cells[1],
-            cells[2],
-            cells[3],
-            cells[4],
-            cells[5],
-            cells[6],
-            canonical_set,
-        )
+        try:
+            obligations = parse_coverage_obligations(
+                cells[0], cells[1], cells[2], cells[3], cells[4], cells[5], cells[6],
+                canonical_set,
+            )
+        except CoverageContractError as exc:
+            raise CoverageContractError(
+                f"line {line_number} ({cells[0]}): {exc}. "
+                "Use one test case and its test type per row, repeating the requirement ID as needed."
+            ) from exc
         if not obligations:
             continue
         rows.append(obligations)

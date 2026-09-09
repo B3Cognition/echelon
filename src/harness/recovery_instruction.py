@@ -72,6 +72,7 @@ _TRUSTED_EXECUTOR_BLOCK_REASONS = frozenset(
         "invalid_evidence_inventory",
         "missing_consensus_prerequisite",
         "missing_phase_outputs",
+        "invalid_phase_outputs",
     }
 )
 
