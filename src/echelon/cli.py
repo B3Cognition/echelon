@@ -5164,6 +5164,20 @@ def _classify_run_recovery(
             ),
         )
 
+    if reason == "phase_dispatch_limit_option_contract_failed":
+        phase = str(run_state.get("phase") or "").strip()
+        if phase and phase != "terminal-blocked":
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="phase_dispatch_limit_option_contract_retry",
+                phase=phase,
+                command="echelon spec continue",
+                note=(
+                    "Retry the sealed dispatch-cap option preparation against "
+                    "the installed controller contract without resetting the cap."
+                ),
+            )
+
     if (
         reason == "phase_dispatch_limit_evidence_missing"
         and _active_dispatch_cap_evidence_exists(run_state, project_root)
@@ -10860,6 +10874,13 @@ def _cmd_continue_impl(
             "CHECKPOINT",
             fields,
             subtitle="Run paused. Deterministic recovery required.",
+        )
+        return
+    if action.reason == "phase_dispatch_limit_option_contract_retry":
+        start_phase(
+            action.phase,
+            verb="Retrying dispatch-cap option preparation",
+            clear_recovery=True,
         )
         return
     if action.reason in {

@@ -2451,6 +2451,60 @@ def test_dispatch_cap_missing_spec_evidence_retries_early_phase_staging(
     assert action.phase == "phase1-why1"
 
 
+def test_dispatch_cap_option_contract_failure_retries_the_cap_without_resetting_it(
+    tmp_path: Path,
+) -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-tracker",
+            "blocked_reason": "phase_dispatch_limit_option_contract_failed",
+            "phase_dispatch_counts": {"phase1-tracker": 6},
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_option_contract_retry"
+    assert action.phase == "phase1-tracker"
+    assert action.command == "echelon spec continue"
+
+
+def test_continue_retries_dispatch_cap_option_contract_with_count_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-tracker",
+            "blocked_reason": "phase_dispatch_limit_option_contract_failed",
+            "phase_dispatch_counts": {"phase1-tracker": 6},
+            "user_message": "build feature",
+            "autonomy_mode": "banzai",
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-tracker"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert state["phase_dispatch_counts"] == {"phase1-tracker": 6}
+    assert calls == [["build feature", "--mode", "banzai"]]
+
+
 def test_dispatch_cap_malformed_pass_issues_retries_current_certification_epoch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
