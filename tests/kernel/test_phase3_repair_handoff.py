@@ -12,12 +12,28 @@ from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
 
+def test_bad_legacy_selection_blocks_without_dispatch_or_false_closure(tmp_path):
+    store = SquadStateStore(tmp_path / "run")
+    store.initialize("r", "greenfield", "task", 0, "phase3-consensus")
+    state = store.load()
+    (tmp_path / "spec.md").write_text("Retained requirement")
+    state["spec_dir"] = str(tmp_path)
+    state.update(selected_issue_resolution="ISS-A", issue_resolution_ledger={"ISS-A": {
+        "status": "repaired", "repair_phase": "phase3-how", "repair_identity": "broken"}})
+    store.save(state)
+    executor = StagedParallelExecutor(MagicMock(), MagicMock(), tmp_path / "ext", tmp_path, tmp_path / "run")
+    result = executor.execute(PhaseNode(id="phase3-consensus", type="staged_parallel"), store)
+    assert result.reason == "repair_review_stale"
+    assert store.load()["selected_issue_resolution"] == "ISS-A"
+
+
 @pytest.mark.parametrize("mutate_input", [False, True])
 @pytest.mark.parametrize("legacy_identity", [False, True])
 @pytest.mark.parametrize("missing_review", [False, True])
 @pytest.mark.parametrize("mutate_plan2", [False, True])
 @pytest.mark.parametrize("sage_verdict", ["FAIL", "BLOCKED"])
-def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_path, mutate_input, legacy_identity, missing_review, mutate_plan2, sage_verdict):
+@pytest.mark.parametrize("outcome", ["resolved", "unresolved"])
+def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_path, mutate_input, legacy_identity, missing_review, mutate_plan2, sage_verdict, outcome):
     run = tmp_path / "runs" / "r"
     spec = run / "specs" / "001-demo"
     spec.mkdir(parents=True)
@@ -60,13 +76,14 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
             if mutate_input:
                 (spec / "data-model.md").write_text("enum no longer includes ignored")
             return result(sage_verdict, phase3_issue_review={"schema_version": 1, "identity": envelope["identity"],
-                "outcome": "resolved", "reviewed_artifacts": envelope["input_manifest"],
+                "outcome": outcome, "reviewed_artifacts": envelope["input_manifest"],
                 "rationale": "The enum declares ignored."})
         assert "Operate in **PLAN2**" in prompt
-        assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
+        assert store.load()["issue_resolution_ledger"]["ISS-A"]["status"] == ("validated" if outcome == "resolved" else "repaired")
         if mutate_plan2:
             (spec / "data-model.md").write_text("PLAN2 changed the reviewed candidate")
-        return result("BLOCKED")
+        return result("BLOCKED", phase3_blocker={"issue_id": "ISS-B", "owner_phase": "phase3-how",
+            "detail": "Observation contract is missing", "next_action": "ARCHITECT must define the fixture"})
 
     provider = MagicMock()
     provider.exec_agent.side_effect = dispatch
@@ -94,10 +111,13 @@ def test_sage_closure_survives_plan2_block_unless_reviewed_input_changed(tmp_pat
         assert observed.reason == "repair_review_stale"
     else:
         assert observed.verdict == "BLOCKED"
-        assert persisted["selected_issue_resolution"] is None
-        assert persisted["issue_resolution_ledger"]["ISS-A"]["status"] == "validated"
+        assert persisted["selected_issue_resolution"] == (None if outcome == "resolved" else "ISS-A")
+        assert persisted["issue_resolution_ledger"]["ISS-A"]["status"] == ("validated" if outcome == "resolved" else "repaired")
         revalidated = mutate_plan2 and sage_verdict != "BLOCKED"
         assert len(saw_review) == (2 if revalidated else 1)
         if revalidated:
             assert len(persisted["phase3_issue_reviews"]) == 2
             assert not persisted["issue_resolution_ledger"]["ISS-A"].get("review_revalidation_required")
+        if sage_verdict != "BLOCKED":
+            assert persisted["phase3_last_blocker"]["producer"] == "PLAN2"
+            assert persisted["phase3_last_blocker"]["detail"] == "Observation contract is missing"

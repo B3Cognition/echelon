@@ -1,4 +1,14 @@
 # Phase: phase3-consensus
+
+## Independent repair handoff
+
+The harness may provide an identity-bound selected-issue review to SAGE. Its
+explicit assessment is persisted after Stage 1 even if another issue fails the
+gate or PLAN2 blocks. Regenerated reviewed inputs require fresh review, not reuse
+of the old worker instruction. A bounded read-only SAGE work-assessment dispatch
+may follow contradictory legacy guidance in Banzai mode; its typed action is not
+an answer-adoption permission. Existing phase owners, iteration/dispatch limits,
+independent quality gates and semi-mode approvals remain authoritative.
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
 # Agent: parallel — echelon.sage (SAGE) (WHY3), echelon.gatekeeper (GATEKEEPER) (ASSESS2), echelon.orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness

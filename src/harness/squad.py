@@ -6953,6 +6953,11 @@ class SquadController:
                 prepared.control_updates,
             )
             if blocked_result:
+                if blocked_result == "agent_blocked" and self._phase3_work_routing(snapshot.state)[0]:
+                    routing = self._construct_routing_decision_or_block(node, prepared, snapshot)
+                    if routing is None or self._advance_prepared_result_or_block(node, routing.decision) is None:
+                        return SquadResult.from_state(self._state_store.load())
+                    continue
                 # A bare BLOCKED result has no material ambiguity.  It is a
                 # retryable dispatch failure (and is a common provider shape
                 # after an interrupted turn), not a reason to manufacture a
@@ -12574,6 +12579,30 @@ class SquadController:
         )
         return updates
 
+    def _phase3_work_routing(self, state: Mapping[str, object]) -> tuple[str | None, dict]:
+        from harness.phase3_repair_context import capture_review_inputs, read_repair_issues
+        from harness.phase3_repair_routing import phase3_work_route, has_phase3_repairs
+        from harness.issue_identity import issue_fingerprint
+        from harness.phase3_repair import RepairContractError
+        if (state.get("phase") != "phase3-consensus"
+                or not (state.get("phase3_pending_action") or state.get("selected_issue_resolution")
+                        or has_phase3_repairs(state))):
+            return None, {}
+        try:
+            spec = Path(str(state.get("spec_dir") or ""))
+            if not spec.is_absolute():
+                spec = self._project_root / spec
+            manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
+            current_findings = None
+            if state.get("phase3_pending_action") and state.get("why3_verdict") == "FAIL":
+                issues = read_repair_issues(spec, project_root=self._project_root)
+                current_findings = frozenset(issue_fingerprint(title, body) for _, title, body in
+                    re.findall(r"^### (ISS-[A-Za-z0-9-]+):\s*([^\n]+)\n(.*?)(?=^### ISS-|\Z)", issues, re.M | re.S)
+                    if re.search(r"\*\*Banzai eligible:\*\*\s*no\b", body, re.I))
+            return phase3_work_route(state, manifest, current_findings=current_findings)
+        except (OSError, UnicodeError, RepairContractError):
+            return PHASE_TERMINAL_BLOCKED, {"status": "blocked", "blocked_reason": "repair_context_incomplete"}
+
     def _coordinate_selected_issue_repair_updates(
         self,
         node: PhaseNode,
@@ -12610,6 +12639,8 @@ class SquadController:
             repaired_ledger = dict(ledger)
             repaired_entry = dict(entry)
             repaired_entry["status"] = "repaired"
+            if repair_phase in _PHASE3_ISSUE_REPAIR_CORRIDOR:
+                repaired_entry["submission_count"] = int(entry.get("submission_count", 0)) + 1
             repaired_ledger[selected] = repaired_entry
             recovery = state.get("issue_resolution_recovery")
             consumed_recovery = (
@@ -13564,6 +13595,7 @@ class SquadController:
         source = "transition"
         transition_index: int | None = None
         routed_human_input: PreparedHumanInput | None = None
+        work_route, work_updates = self._phase3_work_routing(snapshot.state)
         if proportional_what_human_input is not None:
             next_phase = "phase1-why2"
             source = "proportional_quality_no_progress"
@@ -13578,6 +13610,10 @@ class SquadController:
                 snapshot,
             )
             source = "controller_override"
+        elif work_route:
+            merge_effects(work_updates)
+            next_phase = work_route
+            source = "phase3_technical_work"
         else:
             why_override, why_updates, routed_human_input = (
                 self._coordinate_why_transition_state(
@@ -13706,7 +13742,7 @@ class SquadController:
         increment_iteration = self._transition_increments_iteration(
             node,
             next_phase,
-        ) or (
+        ) or (source == "phase3_technical_work" and next_phase in _PHASE3_ISSUE_REPAIR_CORRIDOR) or (
             node.id == "phase1-why2"
             and next_phase == "phase1-what"
             and source == "why_policy"

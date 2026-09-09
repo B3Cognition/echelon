@@ -10,7 +10,24 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-09-phase3-repair-handoff-design.md`
 
-## Inline execution checkpoint — 2026-09-09
+## Current completion checkpoint — 2026-09-09
+
+- [x] Tasks 1–3: identity-bound independent reviews, durable closure, and mandatory current context.
+- [x] Task 4: bounded durable SAGE classification and sealed existing-owner work routing; no new answer-adoption authority.
+- [x] Task 5: submission/review accounting, unchanged global limits, explicit prerequisite/authority/no-progress reporting.
+- [x] Cross-layer regression: fake-provider ARCHITECT, WHY3, ASSESS2 and PLAN2, real state transactions and deterministic gates, including restart and revalidation of A after B changes dependencies.
+- [x] Independent review findings addressed: complete owned-artifact manifest, reused-label history, legacy receiptless closure, all-receipt final freshness, current-finding replay protection, and non-work blockers.
+- [ ] Broad/full regression completion and scoped commit.
+- [ ] Install, refresh bundles, and observe preserved spec008 through normal CLI continuation.
+
+The corrected broad regression passes: 1,411 tests, including 102 focused repair
+cases. Full-suite completion and live validation are still pending. No demo artifacts or budgets have been edited. Required demo
+repair context is 155,781 bytes, within the existing bound.
+
+The detailed task checklists below retain the original execution instructions;
+this checkpoint records actual completion. Earlier checkpoint is retained as history.
+
+## Earlier inline execution checkpoint — 2026-09-09
 
 Implementation is **not ready for live continuation**. Completed code slices:
 

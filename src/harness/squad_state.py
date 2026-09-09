@@ -4451,9 +4451,14 @@ class SquadStateStore:
         validate_issue_review(payload, expected=review.identity, expected_manifest=input_manifest)
         receipts[review_dispatch_id] = payload
         entry["last_review_dispatch_id"] = review_dispatch_id
+        submission = max(1, int(entry.get("submission_count", 0)))
+        entry["submission_count"] = submission
+        if review.outcome != "resolved" and entry.get("last_reviewed_submission") != submission:
+            entry["reviewed_unresolved_count"] = int(entry.get("reviewed_unresolved_count", 0)) + 1
+        entry["last_reviewed_submission"] = submission
+        entry.pop("review_revalidation_required", None)
         if review.outcome == "resolved":
             entry["status"] = "validated"
-            entry.pop("review_revalidation_required", None)
             state["selected_issue_resolution"] = None
             state["issue_resolution_repair_baseline"] = None
             recovery = dict(state.get("issue_resolution_recovery") or {})
@@ -4466,11 +4471,12 @@ class SquadStateStore:
     ) -> bool:
         """Keep historical evidence but require review of regenerated inputs."""
         state = deepcopy(snapshot.state)
-        if snapshot.phase != "phase3-consensus" or state.get("selected_issue_resolution"):
+        if snapshot.phase != "phase3-consensus":
             return False
         ledger = state.get("issue_resolution_ledger") or {}
         for issue_id, entry in ledger.items():
-            if (entry.get("status") == "validated"
+            if (entry.get("status") in {"validated", "repaired"}
+                    and state.get("selected_issue_resolution") in {None, issue_id}
                     and entry.get("last_review_dispatch_id") == review_dispatch_id):
                 entry["status"] = "repaired"
                 entry["review_revalidation_required"] = True
@@ -4481,6 +4487,17 @@ class SquadStateStore:
                 state["issue_resolution_recovery"] = {"issue_id": issue_id, "status": "awaiting_review"}
                 return self.commit_routing_snapshot_state(snapshot, state)
         return False
+
+    def reconcile_phase3_review_inputs(self, *, snapshot: RoutingStateSnapshot,
+                                      input_manifest: Mapping[str, str]) -> bool:
+        """Queue stale historical closures for review without resurrecting work."""
+        if snapshot.phase != "phase3-consensus":
+            return False
+        from harness.phase3_repair_routing import reconcile_review_state
+        state = reconcile_review_state(snapshot.state, input_manifest)
+        if state == snapshot.state:
+            return True
+        return self.commit_routing_snapshot_state(snapshot, state)
 
     def claim_phase3_revalidation(self, *, snapshot: RoutingStateSnapshot,
                                  identity, input_manifest: Mapping[str, str]) -> bool:

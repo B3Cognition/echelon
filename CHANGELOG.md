@@ -4,6 +4,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phase 3 repair handoffs** — Retain independent per-issue SAGE closure even
+  when PLAN2 blocks on another issue. Banzai can assign bounded technical work
+  to existing owners without accepting an unsupported answer. Durable review
+  receipts, current-finding checks and dependency revalidation survive restarts
+  and reused issue labels. Two unresolved reviewed submissions stop with
+  actionable evidence; existing quality gates, permissions and limits remain.
+
 ### Added
 
 - **Strict browser coverage observation** — Browser 3D and browser WASM stacks

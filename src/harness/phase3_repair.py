@@ -17,6 +17,13 @@ class RepairIdentity:
     issue_fingerprint: str
     selection_revision: int
 
+    def __post_init__(self):
+        if (not isinstance(self.run_id, str) or not self.run_id.strip()
+                or not isinstance(self.issue_fingerprint, str)
+                or re.fullmatch(r"[a-f0-9]{64}", self.issue_fingerprint) is None
+                or type(self.selection_revision) is not int or self.selection_revision < 0):
+            raise RepairContractError("repair identity is malformed")
+
 
 @dataclass(frozen=True)
 class IssueReview:

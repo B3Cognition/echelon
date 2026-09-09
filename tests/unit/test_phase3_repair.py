@@ -4,6 +4,13 @@ from dataclasses import asdict
 import pytest
 
 
+@pytest.mark.parametrize("run,fingerprint,revision", [("", "f" * 64, 1), ("r", "bad", 1), ("r", "f" * 64, True), ("r", "f" * 64, -1)])
+def test_malformed_legacy_repair_identity_is_rejected(run, fingerprint, revision):
+    from harness.phase3_repair import RepairIdentity, RepairContractError
+    with pytest.raises(RepairContractError):
+        RepairIdentity(run, fingerprint, revision)
+
+
 def review_fixture():
     from harness.phase3_repair import RepairIdentity
     identity = RepairIdentity("run-1", "f" * 64, 7)

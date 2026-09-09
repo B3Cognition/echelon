@@ -295,6 +295,11 @@ def trusted_executor_block_recovery(
     phase: str,
     reason_code: str,
 ) -> RecoveryInstruction:
+    if reason_code in {"repair_no_progress", "repair_action_unclassified", "repair_review_stale",
+                       "repair_review_missing", "repair_context_incomplete", "repair_budget_exhausted",
+                       "repair_external_prerequisite", "repair_human_decision"}:
+        return validate_recovery_instruction({"schema_version": 1, "kind": RecoveryKind.MANUAL_DIAGNOSIS.value,
+            "reason_code": reason_code, "phase": phase, "requires_human_input": False})
     if reason_code not in _TRUSTED_EXECUTOR_BLOCK_REASONS:
         raise RecoveryInstructionError(
             "unsupported trusted executor block reason"

@@ -66,6 +66,7 @@ def test_non_closure_review_retains_selection_and_fail(tmp_path, outcome):
     state = store.load()
     assert state["selected_issue_resolution"] == "ISS-A"
     assert state["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+    assert state["issue_resolution_ledger"]["ISS-A"]["submission_count"] == 1
     assert state["why3_verdict"] == "FAIL"
 
 
@@ -92,3 +93,80 @@ def test_final_candidate_revalidation_claim_is_durable_and_identity_bound(tmp_pa
         identity=review.identity, input_manifest=manifest)
     assert restarted.claim_phase3_revalidation(snapshot=restarted.capture_routing_snapshot(),
         identity=review.identity, input_manifest={"data-model.md": "b" * 64})
+
+
+def test_two_independently_reviewed_submissions_stop_without_reset_on_restart(tmp_path):
+    from harness.phase3_repair_routing import phase3_work_route
+    store, review, manifest = setup_review(tmp_path, "unresolved")
+    for submission in (1, 2):
+        state = store.load()
+        state["autonomy_mode"] = "banzai"
+        state["issue_resolution_ledger"]["ISS-A"]["submission_count"] = submission
+        store.save(state)
+        assert store.commit_phase3_issue_review(snapshot=store.capture_routing_snapshot(),
+            review_dispatch_id=f"review-{submission}", review=review, input_manifest=manifest)
+        # A second review of the same submission must not count as a new repair.
+        assert store.commit_phase3_issue_review(snapshot=store.capture_routing_snapshot(),
+            review_dispatch_id=f"revalidation-{submission}", review=review, input_manifest=manifest)
+        store = SquadStateStore(tmp_path / "run")
+        assert store.load()["issue_resolution_ledger"]["ISS-A"]["reviewed_unresolved_count"] == submission
+        route, updates = phase3_work_route(store.load(), manifest)
+        if submission == 1:
+            assert route == "phase3-how"
+        else:
+            assert route == "terminal-blocked"
+            assert updates["blocked_reason"] == "repair_no_progress"
+            assert store.load()["why3_verdict"] == "FAIL"
+            assert store.load()["selected_issue_resolution"] == "ISS-A"
+
+
+def test_later_artifact_change_requires_review_not_repeating_old_work(tmp_path):
+    store, review, manifest = setup_review(tmp_path)
+    assert store.commit_phase3_issue_review(snapshot=store.capture_routing_snapshot(),
+        review_dispatch_id="review", review=review, input_manifest=manifest)
+    changed = {"data-model.md": "c" * 64}
+    assert store.reconcile_phase3_review_inputs(snapshot=store.capture_routing_snapshot(), input_manifest=changed)
+    current = store.load()
+    assert current["selected_issue_resolution"] == "ISS-A"
+    assert current["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+    assert current["issue_resolution_ledger"]["ISS-A"]["review_revalidation_required"] is True
+    assert current["phase3_issue_reviews"]["review"]["reviewed_artifacts"] == manifest
+
+
+def test_reused_display_label_cannot_hide_stale_historical_closure(tmp_path):
+    from harness.issue_identity import record_issue_resolution, matching_issue_resolution
+    store, review, manifest = setup_review(tmp_path)
+    state = store.load()
+    state["issue_resolution_ledger"]["ISS-A"]["issue_fingerprint"] = "f" * 64
+    store.save(state)
+    assert store.commit_phase3_issue_review(snapshot=store.capture_routing_snapshot(),
+        review_dispatch_id="old", review=review, input_manifest=manifest)
+    state = store.load()
+    changed = {"data-model.md": "c" * 64}
+    state["phase3_issue_reviews"]["new"] = {"reviewed_artifacts": changed}
+    state["issue_resolution_ledger"] = record_issue_resolution(state["issue_resolution_ledger"], "ISS-A",
+        {"issue_fingerprint": "b" * 64, "status": "validated", "repair_phase": "phase3-how",
+         "repair_identity": asdict(RepairIdentity("r", "b" * 64, 8)), "last_review_dispatch_id": "new"})
+    store.save(state)
+    assert store.reconcile_phase3_review_inputs(snapshot=store.capture_routing_snapshot(), input_manifest=changed)
+    current = store.load()
+    assert matching_issue_resolution(current["issue_resolution_ledger"], "f" * 64).get("status") != "validated"
+    selected = current["issue_resolution_ledger"][current["selected_issue_resolution"]]
+    assert selected["repair_identity"] == asdict(review.identity)
+    assert selected["status"] == "repaired"
+    assert matching_issue_resolution(current["issue_resolution_ledger"], "b" * 64)["status"] == "validated"
+
+
+def test_pre_upgrade_aggregate_closure_requires_fresh_independent_review(tmp_path):
+    store, _, manifest = setup_review(tmp_path)
+    state = store.load()
+    state["selected_issue_resolution"] = None
+    entry = state["issue_resolution_ledger"]["ISS-A"]
+    entry.update(status="validated", title="Legacy repair", issue_fingerprint="a" * 64)
+    entry.pop("repair_identity")
+    store.save(state)
+    assert store.reconcile_phase3_review_inputs(snapshot=store.capture_routing_snapshot(), input_manifest=manifest)
+    current = store.load()
+    assert current["selected_issue_resolution"] == "ISS-A"
+    assert current["issue_resolution_ledger"]["ISS-A"]["status"] == "repaired"
+    assert current["issue_resolution_ledger"]["ISS-A"]["repair_identity"]["issue_fingerprint"] == "a" * 64

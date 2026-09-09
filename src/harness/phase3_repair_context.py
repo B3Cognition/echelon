@@ -14,13 +14,15 @@ def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[s
         raise RepairContractError("review spec root is outside the project")
     paths = [root / name for name in (
         "spec.md", "plan.md", "architecture.md", "research.md", "data-model.md",
-        "tasks.md", "test-strategy.md", "coverage-map.md",
+        "tasks.md", "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        "critical-path.md", "risk-matrix.md", "dependencies.md",
     ) if (root / name).exists()]
-    contracts = root / "contracts"
-    if contracts.exists():
-        if contracts.is_symlink():
-            raise RepairContractError("review contracts directory is a symlink")
-        for path in sorted(contracts.rglob("*")):
+    for directory in (root / "contracts", root / "adr"):
+        if directory.is_symlink():
+            raise RepairContractError("review dependency directory is a symlink")
+        if not directory.exists():
+            continue
+        for path in sorted(directory.rglob("*")):
             if path.is_symlink():
                 raise RepairContractError("review contract tree contains a symlink")
             if path.is_file() and path.suffix == ".md":
@@ -46,11 +48,7 @@ def capture_review_inputs(spec_dir: Path, *, project_root: Path) -> tuple[dict[s
 def capture_repair_context(spec_dir: Path, *, project_root: Path) -> str:
     """Current owner handoff cannot depend on optional historical journal rows."""
     _, inputs = capture_review_inputs(spec_dir, project_root=project_root)
-    path = spec_dir / "issues.md"
-    if not path.is_file() or path.is_symlink():
-        raise RepairContractError("required repair input issues.md is missing or unsafe")
-    with path.open("rb") as stream:
-        issues = stream.read(262145)
+    issues = read_repair_issues(spec_dir, project_root=project_root).encode("utf-8")
     if len(issues) + len(inputs.encode()) > 262144:
         raise RepairContractError("required repair context exceeds 262144 bytes")
     return ("\n## Current Phase 3 repair handoff\n"
@@ -59,3 +57,17 @@ def capture_repair_context(spec_dir: Path, *, project_root: Path) -> str:
             "do not accept an unsupported answer or a protected product decision. "
             "An old repaired selection awaiting review is not an instruction to repeat that repair.\n"
             "### Current issues.md\n" + issues.decode("utf-8") + inputs)
+
+
+def read_repair_issues(spec_dir: Path, *, project_root: Path) -> str:
+    root = spec_dir.resolve(strict=True)
+    if spec_dir.is_symlink() or not root.is_relative_to(project_root.resolve()):
+        raise RepairContractError("repair spec root is outside the project")
+    path = root / "issues.md"
+    if not path.is_file() or path.is_symlink():
+        raise RepairContractError("required repair input issues.md is missing or unsafe")
+    with path.open("rb") as stream:
+        issues = stream.read(262145)
+    if len(issues) > 262144:
+        raise RepairContractError("required repair context exceeds 262144 bytes")
+    return issues.decode("utf-8")

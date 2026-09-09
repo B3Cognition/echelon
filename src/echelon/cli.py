@@ -4968,6 +4968,22 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    if reason in {"repair_no_progress", "repair_action_unclassified", "repair_review_stale",
+                  "repair_review_missing", "repair_context_incomplete", "repair_budget_exhausted",
+                  "repair_external_prerequisite", "repair_human_decision"}:
+        selected = run_state.get("selected_issue_resolution")
+        entry = (run_state.get("issue_resolution_ledger") or {}).get(selected) or {}
+        pending = run_state.get("phase3_pending_action") or {}
+        receipt = (run_state.get("phase3_issue_reviews") or {}).get(entry.get("last_review_dispatch_id")) or {}
+        owner = entry.get("repair_phase") or (pending.get("assessment") or {}).get("owner_phase") or "phase3-consensus"
+        issue = selected or pending.get("issue_id") or "current Phase 3 finding"
+        action = (entry.get("repair_action") or pending.get("assessment") or {}).get("action") or entry.get("decision") or "classify or revalidate the current repair"
+        detail = receipt.get("rationale") or (run_state.get("phase3_last_blocker") or {}).get("detail") or "Inspect current issues and assessment evidence."
+        return _RunRecoveryAction("manual_recovery", reason=reason, phase=owner,
+            command="echelon spec status",
+            note=f"{issue}; owner {owner}; attempted: {str(action)[:400]}. {str(detail)[:800]} "
+                 "Resolve the stated evidence/authority prerequisite before continuing; existing repair limits are retained.")
+
     try:
         decision_recovery = _versioned_decision_recovery_action(
             run_state,

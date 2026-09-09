@@ -102,3 +102,22 @@ No live resume until the required fixes are installed together. Preserve uncommi
 - Existing WHY2/proportional, semi, coverage, final readiness, prepared-result integrity and delivery verification tests pass without changing their criteria.
 
 Live success is a complete, independently accepted spec, or an accurate actionable external/owner blocker. Merely starting another repair, generating documents, or passing structural validation is not success. The observed geometry gaps should be assigned as work and reviewed, not answered manually by this assistant.
+
+## Implementation review notes — 2026-09-09
+
+Review receipts cover all existing HOW/SENTINEL/PLAN artifacts, including nested
+ADRs. Input freshness is reconciled both on restart and after PLAN2, including
+historical issue instances hidden by reused display labels. Receiptless legacy
+Phase3 closures require a fresh independent review. Stable internal ledger slots
+retain those instances without overwriting the newer finding.
+
+Pending technical work is consumed only while WHY3 fails and the exact finding
+remains current. A typed human decision or external prerequisite is an actionable
+blocker, not automatic adoption or blind continuation. Evidenced-resolution
+classification alone cannot replace the existing eligible-option certificate.
+
+The cross-layer fake-provider regression exercises ARCHITECT work, WHY3 and
+ASSESS2 before PLAN2, real deterministic gates and sealed controller transitions.
+It verifies A closure, B assignment, restart, final dependency revalidation and
+advancement only after independent acceptance. Installation/live results will be
+recorded after execution; the demo has not been manually repaired.

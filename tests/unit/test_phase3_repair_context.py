@@ -17,6 +17,19 @@ def test_review_includes_architecture_and_nested_contracts(tmp_path):
     assert "contracts/api.md" in manifest
 
 
+@pytest.mark.parametrize("name", ["test-architecture.md", "critical-path.md", "risk-matrix.md", "dependencies.md", "adr/nested/001.md"])
+def test_every_owned_artifact_is_content_bound(tmp_path, name):
+    (tmp_path / "spec.md").write_text("Required behavior")
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("first")
+    before, _ = capture_review_inputs(tmp_path, project_root=tmp_path)
+    assert name in before
+    path.write_text("changed")
+    after, _ = capture_review_inputs(tmp_path, project_root=tmp_path)
+    assert before[name] != after[name]
+
+
 @pytest.mark.parametrize("case", ["missing", "overflow", "symlink", "parent_symlink"])
 def test_required_repair_context_fails_closed(tmp_path, case):
     spec = tmp_path / "spec"

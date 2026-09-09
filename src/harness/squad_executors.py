@@ -61,6 +61,8 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
         "repair_review_stale",
         "repair_review_missing",
         "repair_context_incomplete",
+        "repair_action_unclassified",
+        "repair_no_progress",
         "missing_phase_outputs",
     }
 )
@@ -883,6 +885,19 @@ def _render_issue_resolution_context(state: dict) -> str:
             "phase3-how", "phase3-sentinel", "phase3-plan"}
             and str(state.get("phase", "")).startswith("phase3-")):
         return ""
+    action = entry.get("repair_action")
+    if isinstance(action, dict):
+        if state.get("phase") != entry.get("repair_phase"):
+            return ""
+        return ("## Selected Technical Work (Controller-Owned; not a user decision)\n"
+            f"Issue: {selected} — {entry.get('title', '')}\n"
+            f"Action: {action.get('action', '')}\n"
+            f"Owned artifacts: {', '.join(action.get('affected_artifacts', []))}\n"
+            f"Read evidence: {', '.join(action.get('evidence_refs', []))}\n"
+            f"Constraints: {'; '.join(action.get('constraints', []))}\n"
+            "Preserve requirements and acceptance strength. Derive evidence or propose technical mechanisms; "
+            "never present an unevidenced answer as fact. Do not edit spec.md or protected policy. "
+            "Handoff cross-owner changes. Submission requires independent SAGE review.\n")
     validation_rules = ""
     if status == "repaired":
         validation_rules = (
@@ -2850,6 +2865,144 @@ class StagedParallelExecutor(PhaseExecutor):
             "Keep all other findings and the overall WHY3 verdict honest. Do not edit these inputs.\n" + inputs)
 
     @staticmethod
+    def _repair_block(reason: str, detail: str):
+        from harness.squad_provider import SquadAgentResult
+        return ExecutorBlockedResult(reason=reason, result=SquadAgentResult(exit_code=0,
+            echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": reason}},
+            raw_output=detail, duration_ms=0, timed_out=False))
+
+    def _assess_phase3_work(self, node, state_store):
+        """One content-bound SAGE classification, never an answer-adoption grant."""
+        from dataclasses import asdict
+        from harness.issue_identity import issue_fingerprint, matching_issue_resolution
+        from harness.phase3_repair import RepairIdentity, RepairContractError, validate_repair_action
+        from harness.phase3_repair_context import capture_review_inputs, capture_repair_context, read_repair_issues
+        from harness.phase3_repair_routing import OWNER_FILES, owned_artifacts
+        state = state_store.load()
+        if (node.id == "phase3-consensus" and state.get("phase3_pending_action")
+                and state.get("why3_verdict") != "FAIL"):
+            snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+            retired = dict(snapshot.state)
+            retired["phase3_pending_action"] = None
+            if not state_store.commit_routing_snapshot_state(snapshot, retired):
+                return self._repair_block("repair_action_unclassified", "state changed while retiring superseded work")
+            state = state_store.load()
+        if (node.id != "phase3-consensus" or state.get("autonomy_mode") != "banzai"
+                or state.get("why3_verdict") != "FAIL" or state.get("selected_issue_resolution")):
+            return None
+        if any(isinstance(item, dict) and item.get("review_revalidation_required")
+               for item in (state.get("issue_resolution_ledger") or {}).values()):
+            return None
+        spec = Path(_normalize_spec_dir_ref(str(state.get("spec_dir") or ""), self._project_root))
+        if not spec.is_absolute():
+            spec = self._project_root / spec
+        try:
+            # Keep existing eligible-option handling intact. Only contradictory
+            # legacy work guidance needs this bounded classification call.
+            issues = read_repair_issues(spec, project_root=self._project_root)
+            candidate = None
+            blocks = re.findall(r"^### (ISS-[A-Za-z0-9-]+):\s*([^\n]+)\n(.*?)(?=^### ISS-|\Z)", issues, re.M | re.S)
+            for issue_id, title, body in blocks:
+                if not re.search(r"\*\*Banzai eligible:\*\*\s*no\b", body, re.I):
+                    continue
+                owner = self._why3_repair_phase_from_issues(body)
+                fingerprint = issue_fingerprint(title, body)
+                previous = matching_issue_resolution(state.get("issue_resolution_ledger"), fingerprint)
+                if owner in OWNER_FILES and previous.get("status") != "validated":
+                    candidate = (issue_id, title, fingerprint, owner)
+                    break
+            if candidate is None:
+                if state.get("phase3_pending_action"):
+                    snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                    retired = dict(snapshot.state)
+                    retired["phase3_pending_action"] = None
+                    if not state_store.commit_routing_snapshot_state(snapshot, retired):
+                        raise RepairContractError("state changed while retiring superseded finding")
+                return None
+            manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
+            context = capture_repair_context(spec, project_root=self._project_root)
+            issue_id, title, fingerprint, owner = candidate
+            key = hashlib.sha256(json.dumps({"run": state.get("run_id"), "issue": fingerprint,
+                "inputs": manifest}, sort_keys=True).encode()).hexdigest()
+            snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+            state = dict(snapshot.state)
+            attempts = dict(state.get("phase3_action_assessments") or {})
+            existing = attempts.get(key)
+            if existing:
+                if existing.get("status") != "complete":
+                    raise RepairContractError("SAGE work classification already attempted for these inputs; inspect its evidence before retrying")
+                state["phase3_pending_action"] = {**existing["receipt"], "issue_id": issue_id}
+                if not state_store.commit_routing_snapshot_state(snapshot, state):
+                    raise RepairContractError("work classification state changed")
+                return None
+            identity = RepairIdentity(str(state.get("run_id")), fingerprint, snapshot.state_revision)
+            envelope = {"identity": asdict(identity), "issue_id": issue_id, "title": title,
+                "owner_phase": owner, "allowed_artifacts": sorted(owned_artifacts(owner, manifest)), "input_manifest": manifest}
+            attempts[key] = {"status": "attempted", "identity": asdict(identity)}
+            state["phase3_action_assessments"] = attempts
+            if not state_store.commit_routing_snapshot_state(snapshot, state):
+                raise RepairContractError("work classification state changed before dispatch")
+            sage = next(a for a in node.agents if a.get("id") == "echelon.sage" and a.get("mode") == "WHY3")
+            contract = self._result_contract(node, sage)
+            required = ("## Phase 3 work assessment envelope\n```json\n" + json.dumps(envelope, sort_keys=True)
+                + "\n```\nClassify only; do not edit any artifact or change the gate verdict. Return a top-level "
+                "phase3_repair_action object: schema_version: 1, identity from the envelope, kind: "
+                "investigate_or_design|apply_evidenced_resolution|human_decision|external_prerequisite, "
+                "owner_phase from the envelope, affected_artifacts within allowed_artifacts, evidence_refs "
+                "as manifest paths with optional anchors, action as concrete work, and constraints as a nonempty list. "
+                "Missing technical mechanisms may require owner investigation/design, not a human answer. "
+                "Banzai eligible:no still prohibits adopting an unevidenced answer. Preserve scope, behavior and "
+                "acceptance strength; no policy waiver, invented external fact or irreversible commitment.\n" + context)
+            prompt = self._build_agent_prompt(sage, state_store.load(), phase_id=node.id,
+                allowed_state_updates=contract.allowed_state_update_keys, allowed_verdicts=contract.allowed_verdicts,
+                required_context=required)
+            metadata = self._phase_prompt_metadata(node, state_store.load(), {}, agent_id="echelon.sage", outputs=[])
+            result = self._validate_result_state_updates(node,
+                self._exec_agent_with_contract(prompt, contract, metadata), result_contract=contract, direct_state_write=True)
+            if isinstance(result, ExecutorBlockedResult):
+                return result
+            state_store.increment_cost(result.cost_usd)
+            self._write_journal_entries(result, node.id)
+            action_payload = (result.echelon_result or {}).get("phase3_repair_action")
+            validate_repair_action(action_payload, expected=identity, allowed_owner_phases=frozenset({owner}),
+                allowed_artifacts=owned_artifacts(owner, manifest))
+            current, _ = capture_review_inputs(spec, project_root=self._project_root)
+            if current != manifest or read_repair_issues(spec, project_root=self._project_root) != issues:
+                raise RepairContractError("work classification inputs changed during assessment")
+            receipt = {"identity": asdict(identity), "issue_id": issue_id, "title": title,
+                "input_manifest": manifest, "assessment": action_payload}
+            snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+            state = dict(snapshot.state)
+            attempts = dict(state.get("phase3_action_assessments") or {})
+            attempts[key] = {"status": "complete", "receipt": receipt}
+            state.update(phase3_action_assessments=attempts, phase3_pending_action=receipt)
+            if not state_store.commit_routing_snapshot_state(snapshot, state):
+                raise RepairContractError("work classification state changed after assessment")
+            return None
+        except (OSError, UnicodeError, RepairContractError, StopIteration, TypeError, KeyError) as exc:
+            return self._repair_block("repair_action_unclassified", str(exc))
+
+    def _reconcile_final_reviews(self, node, state_store):
+        """PLAN2 may regenerate dependencies even without an active selection."""
+        from harness.phase3_repair import RepairContractError
+        from harness.phase3_repair_context import capture_review_inputs
+        state = state_store.load()
+        from harness.phase3_repair_routing import has_phase3_repairs
+        if node.id != "phase3-consensus" or not has_phase3_repairs(state):
+            return None
+        try:
+            spec = Path(_normalize_spec_dir_ref(str(state.get("spec_dir") or ""), self._project_root))
+            if not spec.is_absolute():
+                spec = self._project_root / spec
+            manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
+            if not state_store.reconcile_phase3_review_inputs(
+                    snapshot=state_store.capture_routing_snapshot(expected_phase=node.id), input_manifest=manifest):
+                raise RepairContractError("state changed during final input reconciliation")
+        except (OSError, UnicodeError, RepairContractError) as exc:
+            return self._repair_block("repair_review_stale", str(exc))
+        return None
+
+    @staticmethod
     def _why3_repair_phase_from_issues(issues_text: str) -> str:
         """Choose the earliest phase capable of repairing WHY3-owned issues."""
         phase_order = (
@@ -3170,6 +3323,19 @@ class StagedParallelExecutor(PhaseExecutor):
         from dataclasses import asdict
         from harness.phase3_repair import RepairIdentity, RepairContractError, review_from_result
         from harness.phase3_repair_context import capture_review_inputs
+        from harness.phase3_repair_routing import has_phase3_repairs
+        if has_phase3_repairs(state):
+            try:
+                prior_spec = Path(_normalize_spec_dir_ref(str(state.get("spec_dir") or ""), self._project_root))
+                if not prior_spec.is_absolute():
+                    prior_spec = self._project_root / prior_spec
+                manifest, _ = capture_review_inputs(prior_spec, project_root=self._project_root)
+                if not state_store.reconcile_phase3_review_inputs(
+                        snapshot=state_store.capture_routing_snapshot(expected_phase=node.id), input_manifest=manifest):
+                    raise RepairContractError("state changed before stale review reconciliation")
+                state = state_store.load()
+            except (RepairContractError, OSError, UnicodeError) as exc:
+                return self._repair_block("repair_context_incomplete", str(exc))
         selected = state.get("selected_issue_resolution")
         entry = (state.get("issue_resolution_ledger") or {}).get(selected)
         review_envelope = None
@@ -3180,16 +3346,22 @@ class StagedParallelExecutor(PhaseExecutor):
             snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
             if not entry.get("repair_identity"):
                 from harness.issue_identity import issue_fingerprint
-                entry["repair_identity"] = asdict(RepairIdentity(
-                    str(state.get("run_id")),
-                    entry.get("issue_fingerprint") or issue_fingerprint(str(entry.get("title", "")), str(entry.get("decision", ""))),
-                    snapshot.state_revision,
-                ))
+                try:
+                    entry["repair_identity"] = asdict(RepairIdentity(
+                        str(state.get("run_id")),
+                        entry.get("issue_fingerprint") or issue_fingerprint(str(entry.get("title", "")), str(entry.get("decision", ""))),
+                        snapshot.state_revision,
+                    ))
+                except (RepairContractError, TypeError) as exc:
+                    return self._repair_block("repair_review_stale", str(exc))
                 if not state_store.commit_routing_snapshot_state(snapshot, state):
                     return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
                         exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}}, raw_output="selection changed before review", duration_ms=0, timed_out=False))
                 state = state_store.load()
-            review_identity = RepairIdentity(**entry["repair_identity"])
+            try:
+                review_identity = RepairIdentity(**entry["repair_identity"])
+            except (RepairContractError, TypeError) as exc:
+                return self._repair_block("repair_review_stale", str(exc))
             spec_path = Path(_normalize_spec_dir_ref(str(state.get("spec_dir", "")), self._project_root))
             if not spec_path.is_absolute():
                 spec_path = self._project_root / spec_path
@@ -3199,7 +3371,8 @@ class StagedParallelExecutor(PhaseExecutor):
                 return ExecutorBlockedResult(reason="repair_context_incomplete", result=SquadAgentResult(
                     exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_context_incomplete"}}, raw_output=str(exc), duration_ms=0, timed_out=False))
             review_envelope = {"identity": asdict(review_identity), "input_manifest": review_manifest,
-                               "selected_issue": selected, "title": entry.get("title"), "decision": entry.get("decision")}
+                               "selected_issue": selected, "title": entry.get("title"), "decision": entry.get("decision"),
+                               "repair_action": entry.get("repair_action")}
 
         # Stage 1: run in parallel
         with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
@@ -3456,7 +3629,22 @@ class StagedParallelExecutor(PhaseExecutor):
                         return ExecutorBlockedResult(reason="repair_review_stale", result=SquadAgentResult(
                             exit_code=0, echelon_result={"verdict": "BLOCKED", "state_updates": {"blocked_reason": "repair_review_stale"}},
                             raw_output=str(exc), duration_ms=0, timed_out=False))
+            reconciliation_error = self._reconcile_final_reviews(node, state_store)
+            if reconciliation_error is not None:
+                return reconciliation_error
             if stage2_result.blocked:
+                if not isinstance(stage2_result, ExecutorBlockedResult):
+                    summary = (stage2_result.echelon_result or {}).get("phase3_blocker")
+                    if (isinstance(summary, dict) and set(summary) == {"issue_id", "owner_phase", "detail", "next_action"}
+                            and all(isinstance(value, str) and 0 < len(value.strip()) <= 2000 for value in summary.values())):
+                        snapshot = state_store.capture_routing_snapshot(expected_phase=node.id)
+                        recorded = dict(snapshot.state)
+                        recorded["phase3_last_blocker"] = {"producer": "PLAN2", **summary}
+                        if not state_store.commit_routing_snapshot_state(snapshot, recorded):
+                            return self._repair_block("repair_review_stale", "state changed while preserving PLAN2 handoff")
+                assessment_error = self._assess_phase3_work(node, state_store)
+                if assessment_error is not None:
+                    return assessment_error
                 return stage2_result
             stage2_payload = stage2_result.echelon_result or {}
             product_input_updates.extend(stage2_payload.get("product_input_updates") or [])
@@ -3470,6 +3658,9 @@ class StagedParallelExecutor(PhaseExecutor):
         all_pass = all(
             r.verdict in ("PASS", "DONE") for r in stage1_results.values()
         )
+        assessment_error = self._assess_phase3_work(node, state_store)
+        if assessment_error is not None:
+            return assessment_error
         return SquadAgentResult(
             exit_code=0,
             echelon_result={
