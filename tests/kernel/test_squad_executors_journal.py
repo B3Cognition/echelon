@@ -2958,6 +2958,8 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
     assert "- `tasks_lexicon_pass` (boolean)" not in prompt
     assert "- `tasks_lexicon_attempts` (integer)" in prompt
     assert "Allowed verdicts: `COMPLETE`, `BLOCKED`" in prompt
+    assert "Operate in **PLAN2** mode." in prompt
+    assert "Operate in **first-pass** planning mode." not in prompt
     assert "quality_scores" not in prompt
 
 
@@ -3714,3 +3716,49 @@ def test_how_repair_missing_current_issues_is_not_silently_dispatched(tmp_path):
     with pytest.raises(RepairContractError, match="issues.md"):
         _executor(tmp_path)._assemble_prompt(PhaseNode(id="phase3-how", type="agent"), {
             "phase": "phase3-how", "why3_verdict": "FAIL", "why3_repair_phase": "phase3-how", "spec_dir": str(spec)})
+
+
+@pytest.mark.parametrize("autonomy_mode", ["banzai", "semi", "guided"])
+def test_phase3_plan_after_assess2_repair_reconciles_before_fresh_consensus(
+    tmp_path, autonomy_mode
+):
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+    (spec / "issues.md").write_text("G-VIS: repair the occluded torso sample.")
+    (spec / "plan.md").write_text("Use the repaired upper-torso sample.")
+    (spec / "tasks.md").write_text("T-001 consumes G-VIS.")
+    (spec / "implementability-report.md").write_text(
+        "ASSESS2 rejected the superseded torso-centre sample."
+    )
+    state = {
+        "phase": "phase3-plan",
+        "autonomy_mode": autonomy_mode,
+        "why3_verdict": "PASS",
+        "assess2_verdict": "REJECTED",
+        "phase_recommendation": "phase3-how",
+        "spec_dir": str(spec),
+    }
+
+    prompt = _executor(tmp_path)._assemble_prompt(
+        PhaseNode(id="phase3-plan", type="agent"), state
+    )
+
+    assert "Operate in **first-pass** planning mode." in prompt
+    assert "ASSESS2 rejected the superseded torso-centre sample" in prompt
+    assert "superseded gate evidence is repair input, not a current dispatch blocker" in prompt
+    assert "return `COMPLETE` so fresh consensus can reassess the complete candidate" in prompt
+
+
+def test_ordinary_phase3_plan_declares_first_pass_mode_without_repair_handoff(tmp_path):
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+
+    prompt = _executor(tmp_path)._assemble_prompt(
+        PhaseNode(id="phase3-plan", type="agent"),
+        {"phase": "phase3-plan", "spec_dir": str(spec)},
+    )
+
+    assert "Operate in **first-pass** planning mode." in prompt
+    assert "superseded gate evidence is repair input" not in prompt

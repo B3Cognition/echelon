@@ -88,7 +88,10 @@ def capture_repair_context(spec_dir: Path, *, project_root: Path, require_implem
             data = stream.read(262145)
         feasibility = ("\n### Current implementability-report.md (ASSESS2 rejection)\n"
             "This independent gate remains rejected even when WHY3 closes another issue. "
-            "Repair its concrete findings without weakening requirements; fresh ASSESS2 must reassess them.\n"
+            "Repair its concrete findings without weakening requirements; fresh ASSESS2 must reassess them. "
+            "During the controller-owned repair sequence, this superseded gate evidence is repair input, not a current dispatch blocker. "
+            "Reconcile the artifacts owned by this phase against the current upstream artifacts and return `COMPLETE` so fresh consensus can reassess the complete candidate. "
+            "Return `BLOCKED` only when a current required input is missing or unreadable, or when a current unresolved dependency belongs to another producer; do not block merely to request reassessment of the pre-repair candidate.\n"
             + data.decode("utf-8"))
     if len(issues) + len(inputs.encode()) + len(feasibility.encode()) > 262144:
         raise RepairContractError("required repair context exceeds 262144 bytes")

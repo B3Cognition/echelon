@@ -658,6 +658,19 @@ def _render_banzai_evidence_reassessment_context(
     )
 
 
+def _render_phase3_planning_mode_context(phase_id: str) -> str:
+    """Disambiguate PLAN from staged PLAN2 without inspecting old artifacts."""
+    if phase_id != "phase3-plan":
+        return ""
+    return (
+        "## Controller Planning Invocation\n\n"
+        "Operate in **first-pass** planning mode. This controller phase owns PLAN "
+        "authoring or repair reconciliation; it is not staged PLAN2. An existing "
+        "`implementability-report.md` can be evidence from an earlier consensus "
+        "attempt and must not change the invocation mode.\n\n"
+    )
+
+
 def _render_controller_repair_context(state: dict) -> str:
     """Render controller-owned artifact findings for the next repair dispatch."""
     gates = (
@@ -2069,6 +2082,7 @@ class PhaseExecutor(ABC):
             f"{self._stack_context(spec_dir_ref)}"
             f"{_render_controller_owned_prompt_context(state)}"
             f"{_render_banzai_evidence_reassessment_context(state, node.id)}"
+            f"{_render_phase3_planning_mode_context(node.id)}"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_spec_authoring_mode_context(state, node.id)}"
@@ -2123,7 +2137,10 @@ class PhaseExecutor(ABC):
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
-        feasibility_repair = node.id == "phase3-how" and state.get("assess2_verdict") == "REJECTED"
+        feasibility_repair = (
+            node.id in {"phase3-how", "phase3-sentinel", "phase3-plan"}
+            and state.get("assess2_verdict") == "REJECTED"
+        )
         if (feasibility_repair or (node.id in {"phase3-how", "phase3-sentinel", "phase3-plan"}
                 and state.get("why3_verdict") == "FAIL"
                 and state.get("why3_repair_phase") == node.id)):

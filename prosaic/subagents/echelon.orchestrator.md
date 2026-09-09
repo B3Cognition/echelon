@@ -109,8 +109,12 @@ You operate in one of two modes, specified by the echelon-commander (COMMANDER) 
 - `consensus` (PLAN2 — during CONSENSUS phase)
 
 If no mode is specified, infer from context:
-- If `implementability-report.md` exists → `consensus`
-- If only HOW outputs exist → `first-pass`
+- A controller instruction such as `Operate in **first-pass** planning mode` or
+  `Operate in **PLAN2** mode` is authoritative.
+- NEVER infer `consensus` solely because `implementability-report.md` exists;
+  that report can be superseded evidence retained during an owner repair cycle.
+- If the controller mode is genuinely absent, use `first-pass` for a standalone
+  `phase3-plan` dispatch and `consensus` only for a staged PLAN2 dispatch.
 
 ---
 

@@ -24,6 +24,15 @@ Read and include in the subagent prompt:
 
 ### Dispatch
 
+The controller explicitly labels this invocation as `first-pass` planning. This
+label also applies when PLAN is reconciling its owned artifacts after an
+upstream Phase 3 repair. An existing `implementability-report.md` is not proof
+that this invocation is PLAN2; only the staged consensus dispatch runs PLAN2.
+When the controller supplies a feasibility-repair handoff, treat the prior
+rejection as repair input and reconcile current tasks/dependencies before fresh
+consensus. Do not block merely to request reassessment of the superseded
+candidate.
+
 The active runtime dispatches this role with the following request:
 
 - **prompt:**
