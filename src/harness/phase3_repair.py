@@ -26,6 +26,59 @@ class IssueReview:
     rationale: str
 
 
+@dataclass(frozen=True)
+class RepairAction:
+    identity: RepairIdentity
+    kind: str
+    owner_phase: str
+    affected_artifacts: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    action: str
+    constraints: tuple[str, ...]
+
+
+def validate_repair_action(payload: Mapping[str, object], *, expected: RepairIdentity,
+                           allowed_owner_phases: frozenset[str],
+                           allowed_artifacts: frozenset[str]) -> RepairAction:
+    """Validate work syntax, not authority to adopt an answer or weaken a gate."""
+    fields = {"schema_version", "identity", "kind", "owner_phase", "affected_artifacts",
+              "evidence_refs", "action", "constraints"}
+    if not isinstance(payload, Mapping) or set(payload) != fields:
+        raise RepairContractError("repair action must be one complete assessment")
+    if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
+        raise RepairContractError("unsupported repair action version")
+    identity = payload["identity"]
+    if (not isinstance(identity, Mapping) or dict(identity) != asdict(expected)
+            or type(identity.get("selection_revision")) is not int
+            or identity["selection_revision"] < 0):
+        raise RepairContractError("repair action identity does not match issue")
+    kind = _text(payload["kind"], "action kind")
+    if kind not in {"apply_evidenced_resolution", "investigate_or_design", "human_decision", "external_prerequisite"}:
+        raise RepairContractError("unknown repair action kind")
+    owner = _text(payload["owner_phase"], "owner phase")
+    if owner not in allowed_owner_phases:
+        raise RepairContractError("repair owner is outside the allowed phases")
+
+    def strings(field: str) -> tuple[str, ...]:
+        values = payload[field]
+        if not isinstance(values, (list, tuple)) or not values or len(values) > 256:
+            raise RepairContractError(f"{field} requires a bounded nonempty list")
+        result = tuple(_text(value, field) for value in values)
+        if len(set(result)) != len(result):
+            raise RepairContractError(f"{field} contains duplicates")
+        return result
+
+    artifacts, references, constraints = (strings(field) for field in
+        ("affected_artifacts", "evidence_refs", "constraints"))
+    # Reuse the same canonical path rules as review manifests.
+    _manifest({path: "0" * 64 for path in artifacts})
+    _manifest({ref.split("#", 1)[0]: "0" * 64 for ref in references})
+    if not set(artifacts).issubset(allowed_artifacts):
+        raise RepairContractError("repair artifacts are outside owner scope")
+    return RepairAction(expected, kind, owner, artifacts, references,
+                        _text(payload["action"], "action"), constraints)
+
+
 def _text(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 16000:
         raise RepairContractError(f"{label} must be nonempty bounded text")
