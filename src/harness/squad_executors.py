@@ -2469,11 +2469,6 @@ class AgentExecutor(PhaseExecutor):
                 if agent_path.exists():
                     prompt_metadata = _read_prompt_metadata(agent_path)
         prompt_metadata = self._phase_prompt_metadata(node, state, prompt_metadata)
-        result = self._exec_agent_with_contract(
-            prompt,
-            result_contract,
-            prompt_metadata,
-        )
         if node.id == "phase1-why2":
             reassessment = state.get("banzai_evidence_reassessment")
             armed = (
@@ -2498,6 +2493,11 @@ class AgentExecutor(PhaseExecutor):
                     expected_state_revision=int(state["state_revision"]),
                     expected_evidence_sha256=str(armed[0]["evidence_sha256"]),
                 )
+        result = self._exec_agent_with_contract(
+            prompt,
+            result_contract,
+            prompt_metadata,
+        )
         result = self._validate_result_state_updates(
             node, result, result_contract=result_contract
         )

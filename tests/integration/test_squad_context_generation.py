@@ -336,6 +336,54 @@ def test_why2_executor_consumes_only_the_armed_evidence_after_dispatch(
     assert "Use the existing radial boundary." in dispatched_prompt
 
 
+def test_why2_executor_consumes_armed_evidence_before_provider_usage_write(
+    tmp_path: Path,
+) -> None:
+    provider = _mock_provider()
+    controller, store = _controller(tmp_path, provider=provider)
+    store.initialize("run-test", "brownfield", "animate", 0, "phase1-why2")
+    snapshot = store.squad_dir / "context" / "decision-evidence" / "bound.md"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("Use the existing radial boundary.\n")
+    state = store.load()
+    state["banzai_evidence_reassessment"] = {
+        "schema_version": 2,
+        "attempts": [{
+            "decision_id": "dec-" + "a" * 32,
+            "question_sha256": "b" * 64,
+            "evidence_sha256": artifact_hash(snapshot).removeprefix("sha256:"),
+            "evidence_path": "context/decision-evidence/bound.md",
+            "drawer_ids": ["CTX-plan-001"],
+            "reassessed_at": "2026-09-08T00:00:00+00:00",
+            "status": "armed",
+            "dispatched_at": None,
+        }],
+    }
+    store._path.write_text(json.dumps(state), encoding="utf-8")
+    result = provider.exec_agent.return_value
+
+    def record_usage_during_dispatch(*args: object, **kwargs: object) -> object:
+        store.increment_token_usage(7)
+        return result
+
+    provider.exec_agent.side_effect = record_usage_during_dispatch
+    executor = AgentExecutor(
+        provider=provider,
+        phase_graph=controller._graph,
+        ext_dir=EXT_ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+
+    executor.execute(controller._graph.get("phase1-why2"), store)
+
+    final_state = store.load()
+    attempt = final_state["banzai_evidence_reassessment"]["attempts"][0]
+    assert final_state["token_usage"] == 7
+    assert attempt["status"] == "consumed"
+    assert attempt["dispatched_at"] is not None
+
+
 def test_assemble_prompt_resolves_context_dir_context_pack_entries(tmp_path: Path) -> None:
     squad_dir = tmp_path / "runs" / "run-test"
     context_dir = squad_dir / "context"
