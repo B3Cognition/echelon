@@ -5431,6 +5431,7 @@ class TestCartographerResumeGuard:
                 "cartographer_resume_existing_spec": True,
                 "spec_dir": "specs/072-pr-pipeline-fix",
                 "feature_branch": "072-pr-pipeline-fix",
+                "user_message": "Repair the existing specification.",
             },
         )
 

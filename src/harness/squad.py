@@ -273,7 +273,13 @@ WHY2_METRIC_MIN_DELTA = 0.01
 COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
 DISPATCH_CAP_ISSUES_MAX_BYTES = 65_536
 _DISPATCH_CAP_REPAIR_PHASES = frozenset(
-    {"phase1-what", "phase3-how", "phase3-sentinel", "phase3-plan"}
+    {
+        "phase1-discover",
+        "phase1-what",
+        "phase3-how",
+        "phase3-sentinel",
+        "phase3-plan",
+    }
 )
 _PHASE1_ISSUE_REPAIR_CORRIDOR = frozenset(
     {
@@ -285,6 +291,16 @@ _PHASE1_ISSUE_REPAIR_CORRIDOR = frozenset(
         "checkpoint-assess",
     }
 )
+_PHASE1_DISCOVERY_REPAIR_CORRIDOR = frozenset(
+    {
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
+        "phase1-why1",
+        "phase1-constitution",
+    }
+) | _PHASE1_ISSUE_REPAIR_CORRIDOR
 _PHASE3_ISSUE_REPAIR_CORRIDOR = frozenset(
     {
         "phase3-how",
@@ -4581,11 +4597,13 @@ class SquadController:
             )
         counts = state.get("phase_dispatch_counts")
         next_counts = dict(counts) if isinstance(counts, dict) else {}
-        reset_phases = (
-            _PHASE1_ISSUE_REPAIR_CORRIDOR
-            if repair_phase == "phase1-what"
-            else _PHASE3_ISSUE_REPAIR_CORRIDOR
-        ) | {capped_phase}
+        if repair_phase == "phase1-discover":
+            repair_corridor = _PHASE1_DISCOVERY_REPAIR_CORRIDOR
+        elif repair_phase == "phase1-what":
+            repair_corridor = _PHASE1_ISSUE_REPAIR_CORRIDOR
+        else:
+            repair_corridor = _PHASE3_ISSUE_REPAIR_CORRIDOR
+        reset_phases = repair_corridor | {capped_phase}
         next_counts = {
             phase: count
             for phase, count in next_counts.items()

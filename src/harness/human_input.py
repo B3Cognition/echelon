@@ -2193,6 +2193,7 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
                 "phase3-consensus",
             }),
             allowed_target_phases=frozenset({
+                "phase1-discover",
                 "phase1-what",
                 "phase3-how",
                 "phase3-sentinel",
@@ -2213,6 +2214,7 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
             semi_policy="require_human", resolution_handler="phase_dispatch_limit",
             allow_free_text=False, allowed_phase_ids=phase_a_sources,
             allowed_target_phases=frozenset({
+                "phase1-discover",
                 "phase1-what",
                 "phase3-how",
                 "phase3-sentinel",

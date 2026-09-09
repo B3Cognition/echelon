@@ -384,6 +384,7 @@ class TestPhaseGraph:
                 "material", "require_human", "banzai_issue_resolution", False,
                 frozenset({"phase1-why2", "phase3-consensus"}),
                 frozenset({
+                    "phase1-discover",
                     "phase1-what",
                     "phase3-how",
                     "phase3-sentinel",
@@ -401,6 +402,7 @@ class TestPhaseGraph:
                 "material", "require_human", "phase_dispatch_limit", False,
                 dispatch_phases,
                 frozenset({
+                    "phase1-discover",
                     "phase1-what",
                     "phase3-how",
                     "phase3-sentinel",

@@ -4709,6 +4709,85 @@ def test_dispatch_cap_routes_phase3_issue_to_its_capable_owner_and_resets_corrid
     )
 
 
+def test_dispatch_cap_routes_discovery_issue_to_its_owner_and_resets_phase1_corridor(
+    tmp_path: Path,
+) -> None:
+    policy = _safeguard_policy(
+        "phase_dispatch_limit",
+        phase_id="phase1-tracker",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Discovery model is stale
+
+- **Responsible agent:** SCOUT
+- **Action Required:** Reconcile the discovery model with the resolved input decision.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Apply the resolved input decision to every discovery artifact.
+- **Evidence basis:** The sealed decision and current specification agree.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase"] = "phase1-tracker"
+    state["phase_dispatch_counts"] = {
+        "phase1-discover": 4,
+        "phase1-synthesizer": 4,
+        "phase1-modeler": 4,
+        "phase1-tracker": 6,
+        "phase1-why1": 3,
+        "phase1-what": 5,
+        "phase1-understanding": 5,
+        "phase1-why2": 5,
+        "phase3-how": 2,
+    }
+    store.save(state)
+
+    candidates = controller._banzai_issue_resolution_candidates(store.load())
+    assert candidates[0]["repair_phase"] == "phase1-discover"
+    options = controller._dispatch_cap_options(candidates)
+    assert options[0].next_phase == "phase1-discover"
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        tuple(candidates),
+        phase_id="phase1-tracker",
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    resolved = store.load()
+    assert resolved["phase"] == "phase1-discover"
+    assert resolved["phase_dispatch_counts"] == {"phase3-how": 2}
+    assert resolved["issue_resolution_ledger"]["ISS-001"]["repair_phase"] == (
+        "phase1-discover"
+    )
+    assert resolved["issue_resolution_recovery"]["to_phase"] == (
+        "phase1-discover"
+    )
+    assert resolved["phase_dispatch_limit_recovery"]["phase"] == (
+        "phase1-tracker"
+    )
+
+
 def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     tmp_path: Path,
 ) -> None:
