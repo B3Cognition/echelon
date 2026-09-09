@@ -149,7 +149,10 @@ from echelon.spec_retarget_history import (
     advance_retarget_revision,
     load_retarget_history,
 )
-from harness.spec_lexicon_gate import has_current_spec_lexicon_evidence
+from harness.spec_lexicon_gate import (
+    has_current_spec_lexicon_evidence,
+    run_spec_lexicon_gate,
+)
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -7354,6 +7357,28 @@ class SquadController:
             config=self._lexicon_gate_config(),
         ):
             return phase
+        if persist and phase != "checkpoint-assess":
+            # A downstream owner may legitimately extend glossary.md without
+            # changing spec.md or requirements.lexicon.md. Re-run the same
+            # provider-free certification against the current files first.
+            # Only a fresh PASS preserves the downstream phase; missing,
+            # invalid, or source-stale derived evidence follows the ordinary
+            # derivation route below.
+            refreshed = run_spec_lexicon_gate(
+                project_root=self._project_root,
+                spec_dir_ref=str(state.get("spec_dir") or ""),
+                config=self._lexicon_gate_config(),
+                previous_attempts=state.get("lexicon_attempts", 0),
+            )
+            if refreshed.passed is True:
+                state.update(refreshed.state_updates())
+                self._state_store.save(state)
+                print(
+                    f"[squad] {phase}: refreshed current spec Lexicon "
+                    f"evidence ({refreshed.detail}); continuing",
+                    flush=True,
+                )
+                return phase
         invalidated = downstream | {
             "phase1-lexicon-derive",
             "phase1-lexicon",

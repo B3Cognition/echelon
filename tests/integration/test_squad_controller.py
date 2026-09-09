@@ -15808,6 +15808,89 @@ THEN: The dashboard is visible
         assert persisted["convergence_detected"] is False
         assert persisted["convergence_guard_fire_count"] == 0
 
+    def test_later_phase_refreshes_stale_glossary_evidence_without_replaying_pipeline(
+        self,
+        tmp_path,
+    ):
+        from harness.spec_lexicon_gate import run_spec_lexicon_gate
+
+        ctrl, store = _controller(tmp_path)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature
+
+- **FR-001**: Render the dashboard.
+- **AC-001**: Given data, when rendering, then the dashboard is visible.
+"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            "# SOURCE: spec.md\n"
+            f"# SOURCE_SHA256: {digest}\n"
+            "ARTIFACT: SPEC\n"
+            "TITLE: Dashboard\n\n"
+            "REQ: FR-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The system SHALL render the dashboard\n"
+            "OUTPUT: The dashboard is visible\n"
+            "DEPENDS: none\n"
+            "EXAMPLE: AC-001\n\n"
+            "AC: AC-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The dashboard is visible\n",
+            encoding="utf-8",
+        )
+        glossary = spec_dir / "glossary.md"
+        glossary.write_text("", encoding="utf-8")
+        initial = run_spec_lexicon_gate(
+            project_root=tmp_path,
+            spec_dir_ref=str(spec_dir),
+            config=ctrl._lexicon_gate_config(),
+            previous_attempts=0,
+        )
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase3-tasks-lexicon",
+                "spec_dir": str(spec_dir.relative_to(tmp_path)),
+                "completed_phases": [
+                    "phase1-lexicon",
+                    "phase2-decide",
+                    "phase3-plan",
+                ],
+                "phase_dispatch_counts": {
+                    "phase1-lexicon": 1,
+                    "phase2-decide": 1,
+                    "phase3-plan": 2,
+                },
+                **initial.state_updates(),
+            }
+        )
+        store.save(state)
+        glossary.write_text("### TypeScript\n\nProject language.\n", encoding="utf-8")
+
+        guarded = ctrl._guard_spec_lexicon_evidence("phase3-tasks-lexicon")
+
+        assert guarded == "phase3-tasks-lexicon"
+        persisted = store.load()
+        assert persisted["phase"] == "phase3-tasks-lexicon"
+        assert persisted["completed_phases"] == [
+            "phase1-lexicon",
+            "phase2-decide",
+            "phase3-plan",
+        ]
+        assert persisted["phase_dispatch_counts"] == {
+            "phase1-lexicon": 1,
+            "phase2-decide": 1,
+            "phase3-plan": 2,
+        }
+        report = json.loads(Path(persisted["lexicon_report"]).read_text())
+        assert report["glossary_sha256"] == hashlib.sha256(
+            glossary.read_bytes()
+        ).hexdigest()
+
     def test_current_spec_lexicon_evidence_allows_phase1_checkpoint(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
