@@ -96,7 +96,7 @@ def test_planner_handoff_survives_restart_and_cannot_repeat_unchanged(tmp_path):
     assert store.load()["blocked_reason"] == "repair_no_progress"
 
 
-@pytest.mark.parametrize("change", ["semi", "guided", "no_selection", "not_submitted", "not_submitted_missing_inputs", "already_validated", "exit_failure", "timeout", "provider_limit", "success"])
+@pytest.mark.parametrize("change", ["semi", "guided", "no_selection", "not_submitted_missing_inputs", "already_validated", "exit_failure", "timeout", "provider_limit", "success"])
 def test_planner_handoff_does_not_override_unrelated_paths(tmp_path, change):
     controller, store = planner_fixture(tmp_path)
     state = store.load()
@@ -105,10 +105,9 @@ def test_planner_handoff_does_not_override_unrelated_paths(tmp_path, change):
         state["autonomy_mode"] = change
     elif change == "no_selection":
         state["selected_issue_resolution"] = None
-    elif change in {"not_submitted", "not_submitted_missing_inputs"}:
+    elif change == "not_submitted_missing_inputs":
         state["issue_resolution_ledger"]["ISS-A"]["status"] = "selected"
-        if change == "not_submitted_missing_inputs":
-            state["spec_dir"] = str(tmp_path / "not-yet-written")
+        state["spec_dir"] = str(tmp_path / "not-yet-written")
     elif change == "already_validated":
         state["issue_resolution_ledger"]["ISS-A"]["status"] = "validated"
     elif change == "exit_failure":
@@ -127,6 +126,33 @@ def test_planner_handoff_does_not_override_unrelated_paths(tmp_path, change):
     prepared = controller._prepare_phase_result(node, result, snapshot)
     assert controller._phase3_planner_block_routing(node, prepared, snapshot) == (None, {})
     assert store.load() == before
+
+
+def test_selected_stale_finding_routes_by_current_sage_owner_not_planner(tmp_path):
+    controller, store = planner_fixture(tmp_path)
+    state = store.load()
+    state["issue_resolution_ledger"]["ISS-A"]["status"] = "selected"
+    state["issue_resolution_ledger"]["ISS-A"]["issue_fingerprint"] = "a" * 64
+    state["why3_repair_phase"] = "phase3-how"
+    store.save(state)
+    node = controller._graph.get("phase3-plan")
+    snapshot = store.capture_routing_snapshot()
+    prepared = controller._prepare_phase_result(node, blocked_plan(), snapshot)
+
+    route, updates = controller._phase3_planner_block_routing(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert route == "phase3-how"
+    assert updates["selected_issue_resolution"] is None
+    assert updates["issue_resolution_repair_baseline"] is None
+    assert updates["issue_resolution_recovery"] == {
+        "issue_id": "ISS-A",
+        "status": "superseded",
+    }
+    assert updates["why3_repair_phase"] == "phase3-how"
 
 
 def test_explicit_planner_blocked_status_is_cleared_only_by_review_handoff(tmp_path):

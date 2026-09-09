@@ -12742,21 +12742,93 @@ class SquadController:
                 or result.provider_limit_message):
             return None, {}
         from harness.phase3_repair import RepairContractError
-        from harness.phase3_repair_context import capture_review_inputs
+        from harness.phase3_repair_context import (
+            capture_review_inputs,
+            read_repair_issues,
+        )
         from harness.phase3_repair_routing import OWNER_FILES, planner_review_route
         entry = (state.get("issue_resolution_ledger") or {}).get(state.get("selected_issue_resolution"))
-        if (not isinstance(entry, Mapping) or entry.get("status") != "repaired"
-                or entry.get("repair_phase") not in OWNER_FILES):
+        if not isinstance(entry, Mapping):
             return None, {}
         try:
             spec = Path(str(state.get("spec_dir") or ""))
             if not spec.is_absolute():
                 spec = self._project_root / spec
             manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
+            if entry.get("status") == "selected":
+                from harness.issue_identity import issue_fingerprint
+
+                issues = read_repair_issues(
+                    spec,
+                    project_root=self._project_root,
+                )
+                current_findings = frozenset(
+                    issue_fingerprint(title, body)
+                    for _, title, body in re.findall(
+                        r"^### (ISS-[A-Za-z0-9-]+):\s*([^\n]+)\n"
+                        r"(.*?)(?=^### ISS-|\Z)",
+                        issues,
+                        re.MULTILINE | re.DOTALL,
+                    )
+                )
+                summary = (result.echelon_result or {}).get("phase3_blocker")
+                owner = StagedParallelExecutor._why3_repair_phase_from_issues(
+                    issues
+                )
+                valid_summary = (
+                    isinstance(summary, Mapping)
+                    and set(summary) == {
+                        "issue_id", "owner_phase", "detail", "next_action"
+                    }
+                    and all(
+                        isinstance(value, str)
+                        and 0 < len(value.strip()) <= 2000
+                        for value in summary.values()
+                    )
+                )
+                stale_selection = (
+                    bool(entry.get("issue_fingerprint"))
+                    and entry.get("issue_fingerprint") not in current_findings
+                )
+                within_budget = (
+                    int(state.get("max_iterations") or 0) <= 0
+                    or int(state.get("iteration") or 0)
+                    < int(state.get("max_iterations") or 0)
+                )
+                if (
+                    stale_selection
+                    and valid_summary
+                    and owner in OWNER_FILES
+                    and summary.get("owner_phase") == owner
+                    and within_budget
+                ):
+                    return owner, {
+                        "selected_issue_resolution": None,
+                        "issue_resolution_repair_baseline": None,
+                        "issue_resolution_recovery": {
+                            "issue_id": state.get("selected_issue_resolution"),
+                            "status": "superseded",
+                        },
+                        "why3_repair_phase": owner,
+                        "phase3_last_blocker": {
+                            "producer": "PLAN",
+                            **dict(summary),
+                        },
+                        "status": "running",
+                        "blocked_reason": None,
+                    }
+                return None, {}
+            if (
+                entry.get("status") != "repaired"
+                or entry.get("repair_phase") not in OWNER_FILES
+            ):
+                return None, {}
             return planner_review_route(state, manifest,
                 detail=self._blocked_executor_reason(result, prepared.control_updates) or "agent_blocked",
                 blocker=(result.echelon_result or {}).get("phase3_blocker"))
         except (OSError, UnicodeError, RepairContractError):
+            if entry.get("status") == "selected":
+                return None, {}
             return PHASE_TERMINAL_BLOCKED, {"status": "blocked", "blocked_reason": "repair_context_incomplete"}
 
     def _phase3_work_routing(self, state: Mapping[str, object]) -> tuple[str | None, dict]:
