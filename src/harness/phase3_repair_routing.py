@@ -127,6 +127,39 @@ def phase3_work_route(state: Mapping, manifest: Mapping[str, str], *, current_fi
         # A completed planner is not a reviewed final candidate. All modes
         # return through the ordinary controller loop, including fresh specs.
         return "phase3-consensus", {}
+    selected = state.get("selected_issue_resolution")
+    ledger = state.get("issue_resolution_ledger") or {}
+    entry = ledger.get(selected)
+    at_cap = (int(state.get("max_iterations") or 0) > 0
+              and int(state.get("iteration") or 0) >= int(state["max_iterations"]))
+    if (
+        selected
+        and isinstance(entry, Mapping)
+        and current_findings is not None
+        and entry.get("issue_fingerprint")
+        and entry.get("issue_fingerprint") not in current_findings
+    ):
+        # WHY3 display IDs are local to each report revision. A new finding
+        # may reuse ISS-001 while describing different work. Never let that
+        # label reuse carry an old selected owner into the new review.
+        repair_phase = str(state.get("why3_repair_phase") or "").strip()
+        allowed = frozenset(OWNER_FILES) | frozenset({"phase1-discover", "phase1-what"})
+        if at_cap:
+            return "terminal-blocked", {
+                "status": "blocked",
+                "blocked_reason": "repair_budget_exhausted",
+            }
+        if repair_phase not in allowed:
+            repair_phase = "phase3-consensus"
+        return repair_phase, {
+            "selected_issue_resolution": None,
+            "issue_resolution_repair_baseline": None,
+            "issue_resolution_recovery": {
+                "issue_id": selected,
+                "status": "superseded",
+            },
+            "why3_repair_phase": repair_phase,
+        }
     reconciled = reconcile_review_state(state, manifest)
     if reconciled != state:
         return "phase3-consensus", {key: value for key, value in reconciled.items() if state.get(key) != value}
@@ -137,8 +170,6 @@ def phase3_work_route(state: Mapping, manifest: Mapping[str, str], *, current_fi
         return "phase3-consensus", {}
     if state.get("autonomy_mode") != "banzai":
         return None, {}
-    at_cap = (int(state.get("max_iterations") or 0) > 0
-              and int(state.get("iteration") or 0) >= int(state["max_iterations"]))
     if isinstance(entry, Mapping) and entry.get("status") == "repaired" and entry.get("repair_phase") in OWNER_FILES:
         receipt = (state.get("phase3_issue_reviews") or {}).get(entry.get("last_review_dispatch_id"))
         if not isinstance(receipt, Mapping) or receipt.get("reviewed_artifacts") != dict(manifest):

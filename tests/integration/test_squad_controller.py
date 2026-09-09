@@ -5938,6 +5938,22 @@ class TestSquadControllerBasics:
         assert result.status == "done"
         assert store.load().get("blocked_reason") != "phase_dispatch_limit"
 
+    @pytest.mark.parametrize(
+        "phase",
+        [
+            "phase3-tasks-lexicon",
+            "phase3-understanding",
+            "phase3-consensus-tasks-lexicon",
+        ],
+    )
+    def test_phase3_review_cycle_uses_configured_iteration_budget(
+        self,
+        phase,
+    ):
+        from harness.squad import _phase_dispatch_limit
+
+        assert _phase_dispatch_limit(phase, max_iterations=10) == 11
+
     def test_why_fail_increments_on_fail(self, tmp_path):
         """why_fail_count increments when a WHY phase returns quality_gates.fail."""
         from harness.squad_provider import SquadAgentResult

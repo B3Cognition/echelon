@@ -249,7 +249,13 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
+        # These deterministic gates are part of the same bounded Phase 3
+        # repair cycle. Applying the lower one-shot cap here can interrupt a
+        # valid owner repair before the configured iteration budget is spent.
+        "phase3-tasks-lexicon",
+        "phase3-understanding",
         "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
     }
 )
 
@@ -261,6 +267,20 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Iterative authoring and verification phases use the configured repair-cycle
 # budget; their no-progress safeguards remain the authority for stopping loops.
 MAX_PHASE_DISPATCHES = 5
+
+
+def _phase_dispatch_limit(phase: str, *, max_iterations: int) -> int:
+    """Return the dispatch budget for one phase in the current run.
+
+    Iterative phases include their initial dispatch, hence ``+ 1``. Keeping
+    this calculation in one place prevents deterministic review gates inside
+    an iterative corridor from silently falling back to the one-shot cap.
+    """
+    return (
+        max_iterations + 1
+        if phase in ITERATIVE_PHASES
+        else MAX_PHASE_DISPATCHES
+    )
 # An authoring or planning agent gets the original pass plus two
 # controller-directed repairs to resolve its own product-input mapping errors.
 # This is intentionally bounded: the controller may demand evidence, but must
@@ -6856,10 +6876,9 @@ class SquadController:
             # Iterative authoring and verification phases use max_iterations;
             # one-shot phases use the lower general cap.
             dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
-            phase_limit = (
-                self._max_iterations + 1
-                if phase in ITERATIVE_PHASES
-                else MAX_PHASE_DISPATCHES
+            phase_limit = _phase_dispatch_limit(
+                phase,
+                max_iterations=self._max_iterations,
             )
             if dispatch_count > phase_limit:
                 cap_state = self._state_store.load()
@@ -12734,11 +12753,16 @@ class SquadController:
                 spec = self._project_root / spec
             manifest, _ = capture_review_inputs(spec, project_root=self._project_root)
             current_findings = None
-            if state.get("phase3_pending_action") and state.get("why3_verdict") == "FAIL":
+            if (
+                state.get("why3_verdict") == "FAIL"
+                and (
+                    state.get("phase3_pending_action")
+                    or state.get("selected_issue_resolution")
+                )
+            ):
                 issues = read_repair_issues(spec, project_root=self._project_root)
                 current_findings = frozenset(issue_fingerprint(title, body) for _, title, body in
-                    re.findall(r"^### (ISS-[A-Za-z0-9-]+):\s*([^\n]+)\n(.*?)(?=^### ISS-|\Z)", issues, re.M | re.S)
-                    if re.search(r"\*\*Banzai eligible:\*\*\s*no\b", body, re.I))
+                    re.findall(r"^### (ISS-[A-Za-z0-9-]+):\s*([^\n]+)\n(.*?)(?=^### ISS-|\Z)", issues, re.M | re.S))
             return phase3_work_route(state, manifest, current_findings=current_findings)
         except (OSError, UnicodeError, RepairContractError):
             return PHASE_TERMINAL_BLOCKED, {"status": "blocked", "blocked_reason": "repair_context_incomplete"}

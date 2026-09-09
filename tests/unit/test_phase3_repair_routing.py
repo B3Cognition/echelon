@@ -101,3 +101,34 @@ def test_changed_finding_cannot_replay_pending_work_despite_aggregate_fail():
     route, updates = phase3_work_route(state, manifest, current_findings=frozenset({"c" * 64}))
     assert route is None
     assert updates == {"phase3_pending_action": None}
+
+
+def test_changed_finding_retires_stale_selected_work_before_owner_routing():
+    from harness.phase3_repair_routing import phase3_work_route
+
+    state, manifest = work_state()
+    state.update(
+        phase3_pending_action=None,
+        why3_repair_phase="phase3-how",
+        selected_issue_resolution="ISS-001",
+        issue_resolution_ledger={
+            "ISS-001": {
+                "status": "repaired",
+                "repair_phase": "phase3-plan",
+                "issue_fingerprint": "f" * 64,
+                "repair_identity": asdict(RepairIdentity("r", "f" * 64, 7)),
+            }
+        },
+    )
+
+    route, updates = phase3_work_route(
+        state,
+        manifest,
+        current_findings=frozenset({"c" * 64}),
+    )
+
+    assert route == "phase3-how"
+    assert updates["selected_issue_resolution"] is None
+    assert updates["issue_resolution_repair_baseline"] is None
+    assert updates["issue_resolution_recovery"]["status"] == "superseded"
+    assert updates["why3_repair_phase"] == "phase3-how"
