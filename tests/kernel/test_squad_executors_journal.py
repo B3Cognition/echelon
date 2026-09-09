@@ -1360,6 +1360,28 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     assert "STAGING_DIR" in prompt
 
 
+def test_assemble_prompt_injects_generic_decision_escalation_boundary(tmp_path):
+    """Question-capable agents get one domain-neutral Banzai default policy."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-tracker", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+        },
+    )
+
+    assert "### Decision Escalation Boundary" in prompt
+    assert "reversible, internal product choice" in prompt
+    assert "Preserving existing behavior" in prompt
+    assert "user-owned fact or authorization" in prompt
+    assert "The controller, not the provider, decides whether to apply" in prompt
+
+
 @pytest.mark.parametrize(
     "phase_id",
     ["phase1-discover", "phase1-tracker", "phase1-what"],
