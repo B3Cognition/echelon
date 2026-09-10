@@ -1572,7 +1572,14 @@ class TestOuterLoopConvergence:
             )
             (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
             encoding="utf-8",
@@ -1632,7 +1639,14 @@ class TestOuterLoopConvergence:
             )
             (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
             "\n"
@@ -5724,7 +5738,14 @@ class TestOuterLoopConvergence:
             )
             (spec_dir / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (spec_dir / name).write_text(content, encoding="utf-8")
         (spec_dir / "constitution.md").write_text(
             "# Real Constitution\n\nProject-specific governance.\n",
             encoding="utf-8",

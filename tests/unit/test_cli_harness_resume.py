@@ -96,7 +96,14 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+            if name == "coverage-map.md" and canonical_tasks
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     tasks = (
         "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
         if canonical_tasks

@@ -1151,7 +1151,13 @@ def _write_phase_a_build_inputs(
             '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
             '}\n'
             if name == "plan-conformance.json"
-            else f"# {prefix}{name}\n{body}"
+            else (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md" and include_fr
+                else f"# {prefix}{name}\n{body}"
+            )
         )
         (spec_dir / name).write_text(content, encoding="utf-8")
 
@@ -18923,7 +18929,13 @@ class TestControllerCompletionOrchestration:
                     '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
                     '}\n'
                     if name == "plan-conformance.json"
-                    else f"# Durable {name}\n\nFR-001\n"
+                    else (
+                        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                        "|---|---|---|---|---|---|---|\n"
+                        "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                        if name == "coverage-map.md"
+                        else f"# Durable {name}\n\nFR-001\n"
+                    )
                 )
             )
             (active / name).write_text(content, encoding="utf-8")

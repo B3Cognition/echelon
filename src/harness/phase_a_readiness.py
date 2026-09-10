@@ -1,21 +1,22 @@
 """Deterministic Phase A readiness validation."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from harness.canonical_requirements import extract_canonical_requirements
 from harness.coverage_contract import CoverageContractError
 from harness.coverage_evidence import (
+    active_unmapped_coverage_requirement_ids,
     parse_coverage_map_obligations,
     task_owned_coverage_case_ids,
 )
+from harness.deferred_scope import DeferredScopeError, active_entries
 from harness.spec_frontmatter import read_canonical_target_entries
 from harness.task_targets import analyze_task_targets
-
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
     "00-overview.md",
@@ -248,9 +249,25 @@ def coverage_contract_error(spec_dir: Path, *, check_task_ownership: bool = True
             requirement.id for requirement in extract_canonical_requirements(spec_dir)
         }
         obligations = parse_coverage_map_obligations(path, canonical_ids)
+        deferred_ids = {
+            requirement_id
+            for entry in active_entries(spec_dir)
+            for requirement_id in entry.selected_ids
+            if not requirement_id.startswith("T-")
+        }
+        unmapped = active_unmapped_coverage_requirement_ids(
+            canonical_ids=canonical_ids,
+            obligations=(
+                obligation for row in obligations for obligation in row
+            ),
+            deferred_ids=deferred_ids,
+        )
+        if unmapped:
+            return (
+                "canonical requirements have no planned test obligation: "
+                + ", ".join(unmapped[:20])
+            )
         if not check_task_ownership:
-            if canonical_ids and not obligations:
-                return "coverage-map.md has no planned test cases for canonical requirements"
             return None
         planned_case_ids = {
             obligation.test_case_id
@@ -271,7 +288,7 @@ def coverage_contract_error(spec_dir: Path, *, check_task_ownership: bool = True
                 "task-owned test cases are absent from coverage-map.md: "
                 + ", ".join(missing_owned[:20])
             )
-    except (CoverageContractError, OSError) as exc:
+    except (CoverageContractError, DeferredScopeError, OSError) as exc:
         return str(exc)
     return None
 

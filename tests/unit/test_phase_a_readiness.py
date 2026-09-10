@@ -106,6 +106,54 @@ def test_coverage_contract_error_returns_repairable_reason(tmp_path: Path) -> No
     )
 
 
+def test_ready_state_rejects_coverage_map_that_omits_a_canonical_requirement(
+    tmp_path: Path,
+) -> None:
+    """Phase A must reject the same incomplete map that delivery rejects."""
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Animate collection.\n- **AC-001**: Animation is visible.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| AC-001 | UT-001 | unit | planned | planned | tests | implement |\n",
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert result.ready is False
+    assert result.blockers == [
+        "coverage-map.md invalid: canonical requirements have no planned test obligation: FR-001"
+    ]
+
+
+def test_ready_state_reports_invalid_deferred_scope_ledger(tmp_path: Path) -> None:
+    """Malformed owner deferrals must block readiness without crashing it."""
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Animate collection.\n", encoding="utf-8"
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "deferred-scope.json").write_text("{", encoding="utf-8")
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert result.ready is False
+    assert result.blockers[0].startswith(
+        "coverage-map.md invalid: invalid deferred-scope ledger:"
+    )
+
+
 def test_readiness_rejects_symbolic_case_without_rewriting_spec(tmp_path: Path) -> None:
     spec_dir = tmp_path / "001-demo"
     _write_required(spec_dir)
@@ -349,6 +397,12 @@ def test_controller_staging_can_validate_finalizing_retarget(tmp_path: Path) -> 
         "target=apps/web\n",
         encoding="utf-8",
     )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| REQ-1 | UT-001 | unit | planned | planned | tests | implement |\n",
+        encoding="utf-8",
+    )
 
     result = validate_phase_a_readiness(
         {
@@ -442,6 +496,12 @@ def test_recovered_retarget_readiness_uses_restored_old_target_contract(
     (spec_dir / "tasks.md").write_text(
         "- [ ] T-001 complexity=standard phase=build req=REQ-1 depends=none "
         "target=services/api\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| REQ-1 | UT-001 | unit | planned | planned | tests | implement |\n",
         encoding="utf-8",
     )
 
