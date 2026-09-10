@@ -14,7 +14,10 @@ import subprocess
 from typing import Callable, Mapping
 
 from harness.config import HarnessConfig
-from harness.browser_runtime import is_transient_browser_runtime_failure
+from harness.browser_runtime import (
+    is_ambiguous_browser_runtime_failure,
+    is_transient_browser_runtime_failure,
+)
 from harness.canonical_requirements import extract_canonical_requirements
 from harness.coverage_evidence import (
     active_unmapped_coverage_requirement_ids,
@@ -211,12 +214,22 @@ class CandidateEvidenceRunner:
                         token_usage=_estimate_tokens(result.stdout, result.stderr),
                     )
 
-            if result.exit_code != 0 and is_transient_browser_runtime_failure(
+            ambiguous_browser_failure = is_ambiguous_browser_runtime_failure(
                 result.stdout, result.stderr
+            )
+            transient_browser_failure = is_transient_browser_runtime_failure(
+                result.stdout, result.stderr
+            )
+            if result.exit_code != 0 and (
+                transient_browser_failure or ambiguous_browser_failure
             ):
-                transient_failure = FailureEntry(
+                retryable_failure = FailureEntry(
                     category=FailureCategory.OTHER,
-                    id="transient-browser-runtime",
+                    id=(
+                        "ambiguous-browser-verification-failure"
+                        if ambiguous_browser_failure
+                        else "transient-browser-runtime"
+                    ),
                     error=(result.stdout + result.stderr)[-2000:],
                 )
                 recorded = self._attach_receipt(
@@ -224,12 +237,16 @@ class CandidateEvidenceRunner:
                     candidate_commit=candidate_commit,
                     fingerprint_before=fingerprint_before,
                     stages=(*stages, _stage("verify", command, result, started_at)),
-                    failures=[transient_failure],
+                    failures=[retryable_failure],
                     duration_s=result.duration_ms / 1000.0,
                     detection_evidence=(
                         "sandbox provider",
                         *detection_evidence,
-                        "transient browser runtime failure",
+                        (
+                            "ambiguous browser verification failure"
+                            if ambiguous_browser_failure
+                            else "transient browser runtime failure"
+                        ),
                     ),
                     execution_context=execution_context,
                 )
@@ -283,7 +300,7 @@ class CandidateEvidenceRunner:
                                 ],
                                 duration_s=bootstrap_result.duration_ms / 1000.0,
                                 detection_evidence=(
-                                    "fresh sandbox after transient browser runtime failure",
+                                    "fresh sandbox after browser verification failure",
                                 ),
                                 execution_context=execution_context,
                             )
@@ -294,13 +311,20 @@ class CandidateEvidenceRunner:
                 stages = retry_stages
                 detection_evidence = (
                     *detection_evidence,
-                    "one automatic fresh-sandbox browser runtime retry",
+                    "one automatic fresh-sandbox browser verification retry",
                 )
 
             failures = []
             if result.exit_code != 0:
+                ambiguous_after_retry = (
+                    "one automatic fresh-sandbox browser verification retry"
+                    in detection_evidence
+                    and is_ambiguous_browser_runtime_failure(
+                        result.stdout, result.stderr
+                    )
+                )
                 transient_after_retry = (
-                    "one automatic fresh-sandbox browser runtime retry"
+                    "one automatic fresh-sandbox browser verification retry"
                     in detection_evidence
                     and is_transient_browser_runtime_failure(
                         result.stdout, result.stderr
@@ -314,7 +338,9 @@ class CandidateEvidenceRunner:
                             else FailureCategory.TEST
                         ),
                         id=(
-                            "sandbox-browser-runtime-unavailable"
+                            "browser-verification-diagnosis-required"
+                            if ambiguous_after_retry
+                            else "sandbox-browser-runtime-unavailable"
                             if transient_after_retry
                             else "verify-command"
                         ),
