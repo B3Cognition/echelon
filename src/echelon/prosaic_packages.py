@@ -87,6 +87,10 @@ def install_prosaic_bundle(
                     ["prosaic", "package", "deploy", "echelon-runtime"],
                     project_root,
                 )
+                _carry_forward_lifecycle_state(
+                    legacy_destinations,
+                    runtime_destination,
+                )
                 _discard_legacy_destinations(legacy_destinations)
             except (OSError, subprocess.CalledProcessError):
                 _restore_legacy_destinations(legacy_destinations)
@@ -193,6 +197,48 @@ def _discard_legacy_destinations(
     for backup in destinations.values():
         if backup is not None:
             _remove_path(backup)
+
+
+# Lifecycle leases and switch intent live under ``.echelon/runtime`` but are
+# workspace state, not deployed bundle content. Quarantining the legacy tree
+# would strand a lease an in-flight operation still owns -- a delivery run that
+# refreshes the bundle would silently drop its own spec mutation lock -- so this
+# state moves onto the freshly deployed tree before the backup is discarded.
+_LIFECYCLE_STATE_ENTRIES = (
+    "spec-lifecycle.lock",
+    "spec-mutations",
+    "phase-a-execution.lock",
+    "spec-switch-intent.json",
+    "amend-worktrees",
+)
+
+
+def _carry_forward_lifecycle_state(
+    quarantined: dict[Path, Path | None],
+    destination: Path,
+    *,
+    entries: Sequence[str] = _LIFECYCLE_STATE_ENTRIES,
+) -> None:
+    backup = quarantined.get(destination)
+    if backup is None or not backup.is_dir():
+        return
+    for entry in entries:
+        _move_preserved_entry(backup / entry, destination / entry)
+
+
+def _move_preserved_entry(source: Path, target: Path) -> None:
+    """Move retained state onto the deployed tree without clobbering it."""
+    if not (source.exists() or source.is_symlink()):
+        return
+    if not (target.exists() or target.is_symlink()):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(target)
+        return
+    # A deployed entry of the same name wins; recurse so sibling state below a
+    # shared directory still survives.
+    if source.is_dir() and not source.is_symlink() and target.is_dir():
+        for child in source.iterdir():
+            _move_preserved_entry(child, target / child.name)
 
 
 def _remove_path(path: Path) -> None:

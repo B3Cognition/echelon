@@ -269,6 +269,39 @@ with banzai_default_protocol_bundle_lock(Path(sys.argv[1]), exclusive=False):
     assert time.monotonic() - started >= 0.25
 
 
+def test_install_prosaic_bundle_retains_live_lifecycle_state_across_refresh(
+    tmp_path: Path,
+) -> None:
+    """A bundle refresh must not strand a lease an in-flight operation owns."""
+    from echelon.prosaic_packages import install_prosaic_bundle
+    from echelon.spec_lifecycle import SpecMutationLock
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+    (workspace / ".echelon/runtime").mkdir(parents=True)
+    switch_intent = workspace / ".echelon/runtime/spec-switch-intent.json"
+    switch_intent.write_text('{"spec_id": "003-test"}\n', encoding="utf-8")
+
+    def run(command: list[str], *, cwd: Path, check: bool) -> None:
+        subprocess.run(command, cwd=cwd, check=check)
+
+    with SpecMutationLock.acquire(workspace, "003-test", "delivery-held"):
+        install_prosaic_bundle(workspace, echelon_root=echelon_root, run=run)
+
+        lock_dir = workspace / ".echelon/runtime/spec-mutations/003-test.lock"
+        assert lock_dir.is_dir(), "live spec mutation lease was dropped by the refresh"
+        with pytest.raises(Exception):
+            SpecMutationLock.acquire(workspace, "003-test", "second-owner")
+
+    assert switch_intent.read_text(encoding="utf-8") == '{"spec_id": "003-test"}\n'
+    # Deployed bundle content still lands alongside the retained state.
+    assert (workspace / ".echelon/runtime/workflow/definition.yaml").read_text(
+        encoding="utf-8"
+    ) == "phases: []\n"
+
+
 def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
     echelon_root = Path(__file__).resolve().parents[2]
     wheel_dir = tmp_path / "wheel"
