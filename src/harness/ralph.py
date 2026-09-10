@@ -97,6 +97,10 @@ from harness.verification_evidence import (
     redact_verification_text,
     write_verification_receipt,
 )
+from harness.verification_diagnostic import (
+    diagnosis_required as verification_diagnosis_required,
+    run_verification_diagnostic,
+)
 from harness.verification_plan import build_verification_plan, materialize_services
 from harness.stacks.resolver import (
     resolved_coverage_observer_plan_sha256,
@@ -973,6 +977,9 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
+                    verify_result = self._apply_verification_diagnosis(
+                        verify_result, worktree_path
+                    )
                     verify_result = self._apply_post_verify_gates(
                         verify_result,
                         worktree_path,
@@ -1783,6 +1790,9 @@ class RalphController:
 
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
+            current_verify = self._apply_verification_diagnosis(
+                current_verify, worktree_path
+            )
             inner_changed_files = self._changed_files_since_head(worktree_path)
             current_verify = self._apply_post_verify_gates(
                 current_verify,
@@ -2216,6 +2226,74 @@ class RalphController:
         )
         return self._apply_task_progress_gate(
             verify_result, worktree_path, require_completion=True
+        )
+
+    def _apply_verification_diagnosis(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Attach one DEBUGGER receipt to the timeout/cleanup-error signature.
+
+        A diagnostic is not authority to block or pass a candidate.  The
+        deterministic signature already proves that verification failed; after
+        its one fresh-sandbox retry, the safe delivery action is to give the
+        ordinary repair loop a test failure plus the retained explanation.
+        """
+        if not verification_diagnosis_required(verify_result):
+            return verify_result
+
+        if self._llm_provider is None:
+            diagnosis_note = "DEBUGGER diagnosis unavailable: no coding provider configured."
+            report_path = ""
+        else:
+            diagnosis = run_verification_diagnostic(
+                worktree=Path(worktree_path),
+                evidence_root=self._state_store.state_dir.parent / "evidence",
+                result=verify_result,
+                executor=self._llm_provider,
+            )
+            report_path = str(diagnosis.report_path or "")
+            diagnosis_note = (
+                f"DEBUGGER diagnosis ({diagnosis.status}; owner={diagnosis.owner}; "
+                f"disposition={diagnosis.disposition}): {diagnosis.reason or 'no conclusion'}"
+            )
+            if diagnosis.recommended_action:
+                diagnosis_note += f" Recommended action: {diagnosis.recommended_action}"
+
+        routed_failures: list[FailureEntry] = []
+        for failure in verify_result.failures:
+            if failure.id != "browser-verification-diagnosis-required":
+                routed_failures.append(failure)
+                continue
+            details = dict(failure.details)
+            details.update({
+                "original_failure_id": failure.id,
+                "diagnostic_report": report_path,
+                "diagnostic": diagnosis_note,
+            })
+            routed_failures.append(
+                FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="playwright-test-timeout",
+                    error=(
+                        f"{failure.error}\n\n{diagnosis_note}"
+                        + (f"\nDiagnostic receipt: {report_path}" if report_path else "")
+                    ),
+                    details=details,
+                )
+            )
+        evidence = dict(verify_result.verification_evidence)
+        evidence["verification_diagnostic"] = {
+            "required": True,
+            "report_path": report_path,
+        }
+        return VerifyResult(
+            passed=False,
+            failures=routed_failures,
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=evidence,
         )
 
     def _apply_coverage_observation_gate(

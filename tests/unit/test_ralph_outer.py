@@ -492,6 +492,56 @@ def test_repeated_browser_runtime_crash_is_not_reported_as_product_test_failure(
     assert ralph._is_sandbox_browser_runtime_unavailable(result) is True
 
 
+def test_ambiguous_browser_timeout_is_diagnosed_then_routed_to_normal_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harness.verification_diagnostic import VerificationDiagnosis
+
+    config = _make_config()
+    config.verify_command = "pnpm verify"
+    timeout = {
+        "passed": False,
+        "failures": [{"error": (
+            "Test timeout of 60000ms exceeded.\n"
+            "Object with guid response@abc was not bound in the connection"
+        )}],
+    }
+    controller, provider, *_ = _make_controller(
+        tmp_path,
+        config=config,
+        verify_results=[timeout, timeout],
+        llm_provider=MagicMock(),
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _init_git_repo(worktree)
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(worktree)
+    observed: list[VerifyResult] = []
+
+    def diagnose(**kwargs: object) -> VerificationDiagnosis:
+        observed.append(kwargs["result"])
+        return VerificationDiagnosis(
+            status="diagnosed",
+            owner="product_verification",
+            disposition="repair_delivery",
+            reason="The second page navigation exceeded the test budget.",
+            recommended_action="Repair the browser test configuration.",
+            report_path=tmp_path / "diagnosis.json",
+        )
+
+    monkeypatch.setattr(ralph, "run_verification_diagnostic", diagnose)
+    initial = controller._exec_verify(None, worktree_path=str(worktree))
+    routed = controller._apply_verification_diagnosis(initial, str(worktree))
+
+    assert provider.create_count == 2
+    assert observed == [initial]
+    assert routed.failures[0].category == FailureCategory.TEST
+    assert routed.failures[0].id == "playwright-test-timeout"
+    assert "diagnosis.json" in routed.failures[0].error
+    assert ralph._is_sandbox_browser_runtime_unavailable(routed) is False
+
+
 def _required_browser_runnability() -> ResolvedRunnability:
     return ResolvedRunnability(
         classification="user_facing",
