@@ -317,6 +317,8 @@ def test_same_head_retarget_preview_is_byte_for_byte_nonmutating(
     assert not result.applied
     assert before == after
     assert result.from_commit == checkpoint == result.to_commit
+    assert "Recovery-owned spec changes to discard on confirm" in result.message
+    assert "specs/001-demo/retarget-history.json" in result.message
 
 
 def test_same_head_retarget_retry_rejects_unowned_spec_dirt(

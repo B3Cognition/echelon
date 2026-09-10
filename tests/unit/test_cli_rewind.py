@@ -13,6 +13,7 @@ from echelon.cli import (
     _ROADMAP_PHASES,
     _cmd_repair_traceability,
     _cmd_rewind,
+    _failed_gate_rewind_authority,
     _reset_rewind_state,
 )
 from echelon.rewind import RewindError, RewindResult, prepare_rewind
@@ -281,6 +282,55 @@ def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(
     assert not (run_shadow / "test-strategy.md").exists()
     assert not (run_shadow / "test-architecture.md").exists()
     assert not (run_shadow / "coverage-map.md").exists()
+
+
+def test_coverage_map_delivery_block_authorizes_exact_sentinel_rewind(
+    tmp_path: Path,
+) -> None:
+    """A resolved checkpoint decision may not strand a stale test-plan repair."""
+    spec_id = "006-element-creator"
+    state_path = (
+        tmp_path
+        / "runs"
+        / "targets"
+        / "web"
+        / "runs"
+        / "build-20260618-073106-635192"
+        / "state"
+        / "default.json"
+    )
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "build_id": "build-20260618-073106-635192",
+                "spec_id": spec_id,
+                "termination_reason": "build_blocked",
+                "last_verify_result": {
+                    "failures": [
+                        {
+                            "error": (
+                                "coverage-observer-map-incomplete: coverage-map.md "
+                                "has no formal requirement obligations"
+                            )
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    authority = _failed_gate_rewind_authority(
+        {
+            "spec_id": spec_id,
+            "blocked_decision": {"schema_version": 2, "status": "resolved"},
+        },
+        SimpleNamespace(phase="phase3-sentinel"),
+        project_root=tmp_path,
+    )
+
+    assert authority is None
 
 
 def test_rewind_refuses_a_target_missing_from_the_active_ledger(

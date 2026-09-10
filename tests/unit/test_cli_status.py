@@ -884,6 +884,7 @@ def test_next_steps_route_coverage_map_planning_defect_to_sentinel_repair(
 
     captured = capsys.readouterr()
     assert "echelon spec rewind phase3-sentinel" in captured.out
+    assert "echelon spec rewind phase3-sentinel --confirm" in captured.out
     assert "echelon spec continue" in captured.out
     assert "echelon spec reopen 001-demo" not in captured.out
 

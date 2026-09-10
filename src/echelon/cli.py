@@ -6397,6 +6397,7 @@ def _reset_rewind_state(
     checkpoint_phases_before_target: set[str] | None = None,
     boundary_completion_id: str = "",
     preserve_resolved_gate_rejection: bool = False,
+    preserve_resolved_coverage_map_repair: bool = False,
     preserve_failed_human_gate_for_cas: bool = False,
 ) -> dict:
     rewound = dict(state)
@@ -6420,6 +6421,11 @@ def _reset_rewind_state(
             and state.get("status") == "blocked"
             and state.get("blocked_reason") == "gate_rejected"
         )
+        resolved_coverage_map_repair = (
+            preserve_resolved_coverage_map_repair
+            and decision["status"] == "resolved"
+            and decision["source_kind"] == "human_gate"
+        )
         failed_human_gate = (
             preserve_failed_human_gate_for_cas
             and decision["status"] == "failed"
@@ -6427,7 +6433,11 @@ def _reset_rewind_state(
             and state.get("status") == "blocked"
             and state.get("phase") == decision.get("source_phase")
         )
-        if not (resolved_gate_rejection or failed_human_gate):
+        if not (
+            resolved_gate_rejection
+            or resolved_coverage_map_repair
+            or failed_human_gate
+        ):
             from echelon.rewind import RewindError
 
             raise RewindError(
@@ -8054,17 +8064,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
-        verification_failures = harness_state.get("last_verify_result", {})
-        raw_failure_rows = (
-            verification_failures.get("failures", [])
-            if isinstance(verification_failures, dict)
-            else []
-        )
-        failure_rows = raw_failure_rows if isinstance(raw_failure_rows, list) else []
-        coverage_map_planning_defect = any(
-            isinstance(failure, dict)
-            and "coverage-observer-map-incomplete" in str(failure.get("error") or "")
-            for failure in failure_rows
+        coverage_map_planning_defect = _coverage_map_planning_defect_for_spec(
+            project_root,
+            spec_id,
         )
         if build_status == "provider_session_limit":
             fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
@@ -8075,6 +8077,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                     (
                         "next",
                         "echelon spec rewind phase3-sentinel\n"
+                        "  then echelon spec rewind phase3-sentinel --confirm\n"
                         "  then echelon spec continue",
                     )
                 )
@@ -8476,6 +8479,27 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             subtitle = "RUN BLOCKED — resolve the block before building"
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
+
+
+def _coverage_map_planning_defect_for_spec(project_root: Path, spec_id: str) -> bool:
+    """Whether the latest exact-spec delivery blocked on a stale coverage map."""
+    harness_state = _find_latest_harness_build_state(project_root)
+    if (
+        harness_state is None
+        or str(harness_state.get("spec_id") or "") != spec_id
+        or str(harness_state.get("termination_reason") or "") != "build_blocked"
+    ):
+        return False
+    verification = harness_state.get("last_verify_result")
+    raw_failures = verification.get("failures", []) if isinstance(verification, dict) else []
+    if not isinstance(raw_failures, list):
+        return False
+    return any(
+        isinstance(failure, dict)
+        and "coverage-observer-map-incomplete"
+        in f"{failure.get('id') or ''} {failure.get('error') or ''}".lower()
+        for failure in raw_failures
+    )
 
 
 def _run_artifact_dir(project_root: Path, run_dir: Path) -> Path:
@@ -11103,6 +11127,18 @@ def _failed_gate_rewind_authority(
     """Authorize a failed gate rewind before any Git or ledger mutation."""
     from echelon.rewind import RewindError
 
+    if (
+        str(getattr(checkpoint, "phase", "") or "") == "phase3-sentinel"
+        and _coverage_map_planning_defect_for_spec(
+            project_root,
+            str(state.get("spec_id") or ""),
+        )
+    ):
+        # Delivery has authoritatively established that Phase A's test plan is
+        # stale. Replaying SENTINEL preserves resolved product decisions and
+        # regenerates only its dependent planning artifacts.
+        return None
+
     raw_decision = state.get("blocked_decision")
     if (
         not isinstance(raw_decision, Mapping)
@@ -11384,7 +11420,25 @@ def _cmd_rewind(
                     )
                     replacement_state = deepcopy(state)
 
-                    recovery_dirty_paths = frozenset()
+                    coverage_map_recovery = (
+                        str(getattr(checkpoint, "phase", "") or "")
+                        == "phase3-sentinel"
+                        and _coverage_map_planning_defect_for_spec(
+                            project_root,
+                            str(state.get("spec_id") or ""),
+                        )
+                    )
+                    recovery_dirty_paths = (
+                        frozenset(
+                            {
+                                "spec.md",
+                                "tasks.md",
+                                "harness-run-history.json",
+                            }
+                        )
+                        if coverage_map_recovery
+                        else frozenset()
+                    )
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
                             RetargetRecoveryError,
@@ -11435,10 +11489,26 @@ def _cmd_rewind(
                             )
                         except RetargetRecoveryError as exc:
                             raise RewindError(str(exc)) from exc
+                    if coverage_map_recovery:
+                        # Validate the only state transition unique to this
+                        # recovery before prepare_rewind mutates Git or removes
+                        # recovery-owned files. The post-rewind call below
+                        # still writes the exact rewind state after cleanup.
+                        _reset_rewind_state(
+                            state,
+                            checkpoint.phase,
+                            spec_dir_ref,
+                            preserve_resolved_coverage_map_repair=True,
+                        )
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,
                         spec_dir=spec_dir,
+                        dirty_spec_dir=(
+                            project_root / "specs" / spec_dir.name
+                            if (project_root / "specs" / spec_dir.name).is_dir()
+                            else spec_dir
+                        ),
                         target=target,
                         confirm=confirm,
                         checkpoint_commit=checkpoint_commit,
@@ -11493,6 +11563,9 @@ def _cmd_rewind(
                                 failed_gate_authority is None
                                 and isinstance(state.get("blocked_decision"), Mapping)
                                 and state["blocked_decision"].get("status") == "resolved"
+                            ),
+                            preserve_resolved_coverage_map_repair=(
+                                coverage_map_recovery
                             ),
                             preserve_failed_human_gate_for_cas=(
                                 failed_gate_authority is not None
