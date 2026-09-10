@@ -852,6 +852,42 @@ def test_next_steps_report_build_blocker_without_recommending_a_retry(
     assert "echelon delivery continue 001-demo" not in captured.out
 
 
+def test_next_steps_route_coverage_map_planning_defect_to_sentinel_repair(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A coverage-map contract defect needs Phase A regeneration, not reopen gaps."""
+    _write_build_state(
+        tmp_path,
+        "build-20260606-221522-964255",
+        status="blocked",
+        spec_id="001-demo",
+        termination_reason="build_blocked",
+        extra={
+            "last_verify_result": {
+                "passed": False,
+                "failures": [
+                    {
+                        "id": "build-blocked",
+                        "error": (
+                            "SPEC GUARD failed: coverage-observer-map-incomplete is a "
+                            "read-only planning-artifact defect. The external coverage-map.md "
+                            "Coverage Table has no FR requirement rows."
+                        ),
+                    }
+                ],
+            },
+        },
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "echelon spec rewind phase3-sentinel" in captured.out
+    assert "echelon spec continue" in captured.out
+    assert "echelon spec reopen 001-demo" not in captured.out
+
+
 def test_next_steps_labels_running_harness_build_as_in_progress(
     tmp_path: Path,
     capsys,

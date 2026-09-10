@@ -8054,11 +8054,32 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
+        verification_failures = harness_state.get("last_verify_result", {})
+        raw_failure_rows = (
+            verification_failures.get("failures", [])
+            if isinstance(verification_failures, dict)
+            else []
+        )
+        failure_rows = raw_failure_rows if isinstance(raw_failure_rows, list) else []
+        coverage_map_planning_defect = any(
+            isinstance(failure, dict)
+            and "coverage-observer-map-incomplete" in str(failure.get("error") or "")
+            for failure in failure_rows
+        )
         if build_status == "provider_session_limit":
             fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
         elif termination_reason == "build_blocked":
-            fields.append(("next", f"resolve the reported blocker, then echelon spec reopen {spec_id}"))
+            if coverage_map_planning_defect:
+                fields.append(
+                    (
+                        "next",
+                        "echelon spec rewind phase3-sentinel\n"
+                        "  then echelon spec continue",
+                    )
+                )
+            else:
+                fields.append(("next", f"resolve the reported blocker, then echelon spec reopen {spec_id}"))
             subtitle = "HARNESS BUILD BLOCKED"
         elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
