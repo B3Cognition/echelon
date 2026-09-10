@@ -2803,7 +2803,8 @@ def _cmd_harness_resume(
             f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
-            "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+                "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+                "verification-infrastructure retries,\n"
             "downstream visual/review/finalization failures, and recovery from\n"
             "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
@@ -3033,9 +3034,14 @@ def _cmd_harness_resume(
         "checkpoint_outer_cap",
         "docker_unavailable",
         "no_progress",
-        "provider_session_limit",
-        "target_merge_failed",
-    }
+            "provider_session_limit",
+            "target_merge_failed",
+            # This may be a repaired harness classifier or a repaired sandbox
+            # prerequisite. Retrying preserves the checkpoint and lets the
+            # current verifier acquire fresh evidence; it does not accept the
+            # old infrastructure failure as success.
+            "verification_infrastructure",
+        }
     downstream_continuation_reasons = {
         "visual": {
             "app_runtime_failed",
