@@ -8,9 +8,15 @@ import pytest
 from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
-from harness.stacks.resolver import resolved_stack_contract_sha256, resolve_stacks
+from harness.stacks.resolver import (
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+    resolve_stacks,
+)
 from harness.stacks.schema import (
+    StackCoverageObserver,
     StackDefinition,
+    StackLocalRunner,
     StackProvisioner,
     StackProvisionerSatisfier,
     StackRunnability,
@@ -30,6 +36,7 @@ def _stack(
     tools: dict[str, StackTool] | None = None,
     provisioners: list[StackProvisioner] | None = None,
     runnability: StackRunnability | None = None,
+    coverage_observers: list[StackCoverageObserver] | None = None,
 ) -> StackDefinition:
     return StackDefinition(
         id=stack_id,
@@ -48,6 +55,7 @@ def _stack(
         context_files=context_files or ["context.md"],
         provisioners=provisioners or [],
         runnability=runnability or StackRunnability(),
+        coverage_observers=coverage_observers or [],
     )
 
 
@@ -104,7 +112,98 @@ def test_resolve_no_selected_stacks_is_empty() -> None:
     assert resolved.required_registries == []
     assert resolved.context_files == []
     assert resolved.provisioners == []
+    assert resolved.coverage_observers == []
     assert resolved.runnability.policy == "not_applicable"
+
+
+def _coverage_observer(
+    observer_id: str,
+    test_types: tuple[str, ...],
+    *,
+    required: bool = True,
+) -> StackCoverageObserver:
+    return StackCoverageObserver(
+        id=observer_id,
+        test_types=test_types,
+        command="pnpm exec test-reporter --json",
+        report_path=f"artifacts/{observer_id}.json",
+        adapter="playwright-json",
+        mode="isolated",
+        required=required,
+    )
+
+
+@pytest.mark.unit
+def test_resolve_rejects_two_required_coverage_observers_for_one_test_type() -> None:
+    definitions = {
+        "browser": _stack(
+            "browser",
+            provides={"web_app.framework": "vite"},
+            coverage_observers=[_coverage_observer("playwright", ("e2e",))],
+        ),
+        "policy": _stack(
+            "policy",
+            provides={"delivery.policy": "strict"},
+            coverage_observers=[_coverage_observer("second-e2e", ("e2e",))],
+        ),
+    }
+
+    with pytest.raises(StackConflictError, match="coverage observer.*e2e"):
+        resolve_stacks(["browser", "policy"], definitions)
+
+
+@pytest.mark.unit
+def test_coverage_observer_plan_hash_is_selection_order_stable() -> None:
+    definitions = {
+        "browser": _stack(
+            "browser",
+            provides={"web_app.framework": "vite"},
+            coverage_observers=[_coverage_observer("playwright", ("e2e",))],
+        ),
+        "unit": _stack(
+            "unit",
+            provides={"test.framework": "vitest"},
+            coverage_observers=[_coverage_observer("vitest", ("unit",))],
+        ),
+    }
+
+    first = resolve_stacks(["browser", "unit"], definitions)
+    second = resolve_stacks(["unit", "browser"], definitions)
+
+    assert resolved_coverage_observer_plan_sha256(first) == (
+        resolved_coverage_observer_plan_sha256(second)
+    )
+
+
+@pytest.mark.unit
+def test_rendered_resolution_lists_redacted_coverage_observers() -> None:
+    observer = StackCoverageObserver(
+        id="playwright",
+        test_types=("e2e",),
+        command="curl https://person:password@example.test/report",
+        report_path="artifacts/playwright.json",
+        adapter="playwright-json",
+        mode="isolated",
+        required=True,
+    )
+    resolved = resolve_stacks(
+        ["browser"],
+        {
+            "browser": _stack(
+                "browser",
+                provides={"web_app.framework": "vite"},
+                coverage_observers=[observer],
+            )
+        },
+    )
+
+    data = resolved_to_dict(resolved)
+    markdown = render_resolved_markdown(resolved)
+
+    assert data["coverage_observers"][0]["owner"] == "browser"
+    assert "password" not in data["coverage_observers"][0]["command"]
+    assert "## Coverage Observers" in markdown
+    assert "password" not in markdown
 
 
 @pytest.mark.unit
@@ -171,6 +270,68 @@ def test_resolve_runnability_rejects_incompatible_runners() -> None:
 
 
 @pytest.mark.unit
+def test_resolve_runnability_merges_stack_owned_local_runner() -> None:
+    definitions = {
+        "browser": _stack(
+            "browser",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(profiles=("macos-compose-v1",)),
+            ),
+        ),
+        "persistence": _stack(
+            "persistence",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    allowed_services=("postgres",),
+                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
+                ),
+            ),
+        ),
+    }
+
+    resolved = resolve_stacks(["browser", "persistence"], definitions)
+
+    assert resolved.runnability.local_runner.profiles == ("macos-compose-v1",)
+    assert resolved.runnability.local_runner.allowed_services == ("postgres",)
+    assert resolved.runnability.local_runner.environment_bindings == (
+        ("DATABASE_URL", "postgres_url"),
+    )
+    assert resolved.runnability.local_runner.sources == ("browser", "persistence")
+
+
+@pytest.mark.unit
+def test_resolve_runnability_rejects_conflicting_local_environment_binding() -> None:
+    definitions = {
+        "primary": _stack(
+            "primary",
+            provides={"web_app.framework": "vite"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    environment_bindings=(("DATABASE_URL", "postgres_url"),),
+                )
+            ),
+        ),
+        "conflict": _stack(
+            "conflict",
+            provides={"data.database": "postgres"},
+            runnability=StackRunnability(
+                local_runner=StackLocalRunner(
+                    environment_bindings=(("DATABASE_URL", "browser_base_url"),),
+                )
+            ),
+        ),
+    }
+
+    with pytest.raises(
+        StackConflictError,
+        match="local runner environment binding conflict",
+    ):
+        resolve_stacks(["primary", "conflict"], definitions)
+
+
+@pytest.mark.unit
 def test_resolved_stack_contract_hash_is_selection_order_stable() -> None:
     definitions = {
         "web": _stack(
@@ -203,6 +364,39 @@ def test_resolved_stack_contract_hash_is_selection_order_stable() -> None:
 
 
 @pytest.mark.unit
+def test_resolved_stack_contract_hash_changes_with_local_runner_contract() -> None:
+    without_local_runner = resolve_stacks(
+        ["browser"],
+        {
+            "browser": _stack(
+                "browser",
+                provides={"web_app.framework": "vite"},
+                runnability=StackRunnability(policy="advisory"),
+            )
+        },
+    )
+    with_local_runner = resolve_stacks(
+        ["browser"],
+        {
+            "browser": _stack(
+                "browser",
+                provides={"web_app.framework": "vite"},
+                runnability=StackRunnability(
+                    policy="advisory",
+                    local_runner=StackLocalRunner(
+                        profiles=("macos-compose-v1",),
+                    )
+                ),
+            )
+        },
+    )
+
+    assert resolved_stack_contract_sha256(without_local_runner) != (
+        resolved_stack_contract_sha256(with_local_runner)
+    )
+
+
+@pytest.mark.unit
 def test_rendered_resolution_explains_runnability_obligations() -> None:
     resolved = resolve_stacks(
         ["web"],
@@ -231,6 +425,12 @@ def test_rendered_resolution_explains_runnability_obligations() -> None:
         "capabilities": ["start", "primary_journey"],
         "required_observations": ["browser_dom"],
         "sources": ["web"],
+        "local_runner": {
+            "profiles": [],
+            "allowed_services": [],
+            "environment_bindings": {},
+            "sources": [],
+        },
     }
     assert "## User Runnability" in markdown
     assert "Policy: `required`" in markdown

@@ -277,6 +277,7 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
 
     _add_workspace_nodes(node_records, root.name, workspace_role, sources)
     _add_workspace_relationships(
+        root,
         node_records,
         edge_records,
         metadata,
@@ -745,6 +746,7 @@ def _add_workspace_node(
 
 
 def _add_workspace_relationships(
+    root: Path,
     nodes: dict[str, tuple[GraphNode, set[str]]],
     edges: dict[tuple[str, str, str], tuple[GraphEdge, set[str]]],
     metadata: list[tuple[Path, str]],
@@ -763,6 +765,20 @@ def _add_workspace_relationships(
             if source is None and isinstance(target_path, str):
                 source = source_by_path.get(target_path)
             if source is None:
+                snapshot = _source_snapshot_for_declared_target(
+                    root,
+                    target_id=target_id if isinstance(target_id, str) else None,
+                    target_path=target_path if isinstance(target_path, str) else None,
+                )
+                if snapshot is not None:
+                    _add_workspace_snapshot_node(nodes, snapshot)
+                    _add_workspace_edge(
+                        edges,
+                        f"spec:{spec_id}",
+                        "TARGETS",
+                        snapshot.id,
+                    )
+                    continue
                 issues.append(
                     WorkspaceCompositionIssue(
                         "warning",
@@ -805,6 +821,67 @@ def _add_workspace_edge(
             )
         return
     records[identity] = (GraphEdge(source, edge_type, target, {}), set())
+
+
+def _source_snapshot_for_declared_target(
+    root: Path,
+    *,
+    target_id: str | None,
+    target_path: str | None,
+) -> GraphNode | None:
+    if not target_path:
+        return None
+    try:
+        resolved = _resolve_workspace_path(root, target_path)
+    except WorkspaceGraphError:
+        return None
+    if not resolved.is_dir() or resolved.is_symlink():
+        return None
+    path = _relative_path(root, resolved)
+    node_id = "source-snapshot:" + hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+    properties: dict[str, object] = {
+        "path": path,
+        "resolution_source": "targets.yml",
+        "source_fingerprint": _source_snapshot_fingerprint(resolved),
+    }
+    if target_id:
+        properties["declared_target_id"] = target_id
+    return GraphNode(node_id, "SourceSnapshot", properties)
+
+
+def _source_snapshot_fingerprint(source: Path) -> str:
+    inventory: list[dict[str, object]] = []
+    for path in sorted(source.rglob("*"), key=lambda value: value.as_posix()):
+        if path.is_symlink() or not path.is_file() or ".git" in path.parts:
+            continue
+        try:
+            relative = path.relative_to(source).as_posix()
+            stat_result = path.stat()
+            content_hash = _sha256(path.read_bytes())
+        except OSError as exc:
+            raise WorkspaceGraphError(f"workspace source snapshot is unreadable: {source}") from exc
+        inventory.append(
+            {
+                "path": relative,
+                "executable": bool(stat_result.st_mode & 0o111),
+                "content_hash": content_hash,
+            }
+        )
+    return _canonical_digest(inventory)
+
+
+def _add_workspace_snapshot_node(
+    records: dict[str, tuple[GraphNode, set[str]]],
+    snapshot: GraphNode,
+) -> None:
+    existing = records.get(snapshot.id)
+    if existing is None:
+        records[snapshot.id] = (snapshot, set())
+        return
+    node, member_specs = existing
+    if node.type != snapshot.type or dict(node.properties) != dict(snapshot.properties):
+        raise WorkspaceGraphError(f"source snapshot identity conflict: {snapshot.id}")
+    records[snapshot.id] = (node, member_specs)
 
 
 def _superseded_spec_ids(value: object) -> tuple[str, ...]:

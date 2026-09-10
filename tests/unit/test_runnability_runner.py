@@ -286,6 +286,7 @@ def _runner(provider: RecordingProvider) -> RunnabilityRunner:
         target_id="browser-game",
         strategy_id="default",
         build_id="build-1",
+        browser_helper=b"// harness-owned browser helper\n",
     )
 
 
@@ -359,6 +360,13 @@ def test_runner_proves_journey_and_persistence_in_one_fresh_sandbox(
         assert re.search(r"'[0-9a-f-]{36}'", statement)
     persistence_browser_plan = json.loads(
         provider.files["/tmp/echelon-user-runnability-plan.json"]
+    )
+    assert provider.files["/tmp/echelon-user-runnability-browser.mjs"] == (
+        b"// harness-owned browser helper\n"
+    )
+    assert any(
+        "node /tmp/echelon-user-runnability-browser.mjs" in command
+        for command in provider.commands
     )
     assert [step["action"] for step in persistence_browser_plan["steps"]] == ["goto"]
     assert validate_runnability_report(

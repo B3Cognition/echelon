@@ -197,6 +197,31 @@ def test_spec_frontmatter_target_archetypes_are_enforced(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+def test_stack_context_preflights_planned_coverage_types(
+    tmp_path: Path,
+    mock_stack_preflight: MagicMock,
+) -> None:
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# FR-001\n", encoding="utf-8")
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | planned | repair |\n",
+        encoding="utf-8",
+    )
+    coord = _coordinator_with_stacks(
+        ["browser-3d-game"],
+        ROOT,
+        target_archetypes=["browser_3d_game"],
+    )
+
+    coord._build_stack_context(spec_dir)
+
+    assert mock_stack_preflight.call_args.kwargs["coverage_test_types"] == ("unit",)
+
+
+@pytest.mark.unit
 def test_strategy_context_is_preserved_before_generated_stack_context() -> None:
     coord = _coordinator_with_stacks(["statsperform-stark-webapp"], ROOT)
 

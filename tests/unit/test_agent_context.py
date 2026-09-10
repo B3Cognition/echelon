@@ -19,6 +19,22 @@ from harness.agent_context import (
 )
 
 
+def test_repeated_journal_phases_are_union_with_type_conjunction(tmp_path):
+    import json
+    path = tmp_path / "journal.jsonl"
+    entries = [
+        {"phase": "phase2-decide", "type": "challenge", "data": "EARLY"},
+        {"phase": "phase3-consensus", "type": "challenge", "data": "REPAIR"},
+        {"phase": "phase3-consensus", "type": "decision", "data": "EXCLUDED"},
+    ]
+    path.write_text("\n".join(json.dumps(entry) for entry in entries))
+    selector = parse_context_pack_item("journal.jsonl [phase=phase2-decide, phase=phase3-consensus, type=challenge]")
+    rendered = render_journal(path, selector.filters, 8000)
+    assert "EARLY" in rendered.text
+    assert "REPAIR" in rendered.text
+    assert "EXCLUDED" not in rendered.text
+
+
 def test_parse_context_pack_item_extracts_filters_and_path() -> None:
     selector = parse_context_pack_item(
         ".specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]"

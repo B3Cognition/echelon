@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      REQUIRED_CHECKS: "Shell tests (unit + integration + e2e + validation),Python unit tests"
+      REQUIRED_CHECKS: "Shell tests (unit + integration + e2e + validation),Python unit tests,macOS local runner (docker),macOS local runner (podman)"
     steps:
       - uses: actions/checkout@v4
         with:

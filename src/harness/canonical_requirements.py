@@ -10,7 +10,7 @@ import re
 from typing import Iterable
 
 REQ_ID_RE = re.compile(
-    r"\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
+    r"(?<![A-Z0-9]-)\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
     r"(?:-[A-Z0-9]+(?:[_.:][A-Z0-9]+)*[a-z]?)+"
     r"\b(?!-[A-Za-z0-9])"
 )
@@ -60,7 +60,7 @@ def write_canonical_requirements(
 ) -> CanonicalRequirementInventoryResult:
     requirements = extract_canonical_requirements(spec_dir)
     verify_run_dir.mkdir(parents=True, exist_ok=True)
-    inventory_hash = _inventory_hash(requirements)
+    inventory_hash = canonical_requirement_fingerprint(requirements)
     json_path = verify_run_dir / INVENTORY_JSON
     markdown_path = verify_run_dir / INVENTORY_MD
     payload = {
@@ -116,12 +116,31 @@ def _collect_markdown_ids(
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for lineno, line in enumerate(lines, start=1):
         for item_id in REQ_ID_RE.findall(line):
-            rows.setdefault(
-                item_id,
-                CanonicalRequirement(
-                    item_id, source_kind, path.name, lineno, line.strip()
-                ),
+            candidate = CanonicalRequirement(
+                item_id, source_kind, path.name, lineno, line.strip()
             )
+            existing = rows.get(item_id)
+            if existing is None or (
+                _is_explicit_requirement_definition(line, item_id)
+                and not _is_explicit_requirement_definition(
+                    existing.source_text,
+                    item_id,
+                )
+            ):
+                rows[item_id] = candidate
+
+
+def _is_explicit_requirement_definition(line: str, item_id: str) -> bool:
+    """Return whether ``line`` defines, rather than merely cites, an ID."""
+    return (
+        re.match(
+            rf"^[ \t]*(?:#{{1,6}}[ \t]+)?"
+            rf"(?:(?:[-*+]|\d+[.)])[ \t]+)?"
+            rf"(?:\*\*)?{re.escape(item_id)}(?:\*\*)?[ \t]*:",
+            line,
+        )
+        is not None
+    )
 
 
 def _collect_task_metadata_ids(
@@ -152,7 +171,10 @@ def _split_reqs(value: str) -> Iterable[str]:
             yield item
 
 
-def _inventory_hash(requirements: list[CanonicalRequirement]) -> str:
+def canonical_requirement_fingerprint(
+    requirements: list[CanonicalRequirement],
+) -> str:
+    """Return the stable identity of a canonical requirement snapshot."""
     digest = hashlib.sha256()
     for row in requirements:
         digest.update(row.id.encode("utf-8"))

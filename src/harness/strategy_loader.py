@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List
+from codegen.retirement import require_soar, reject_soar_command
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,6 @@ class StrategySpec:
 # A per-spec file always wins if present (allows context/override).
 BUILTIN_STRATEGIES: Dict[str, StrategySpec] = {
     "default": StrategySpec(build_command="echelon build"),
-    "codegen": StrategySpec(build_command="echelon codegen"),
 }
 
 
@@ -69,6 +69,8 @@ def load_strategies(
     result: Dict[str, StrategySpec] = {}
 
     for sid in strategy_ids:
+        if sid.lower() in {"codegen", "codegenlight", "soar"}:
+            require_soar()
         filepath = strategies_dir / f"{sid}.md"
 
         if filepath.exists():
@@ -94,6 +96,8 @@ def load_strategies(
                 f"Built-in strategies (no file needed): {builtin_names}"
             )
 
+    for spec in result.values():
+        reject_soar_command(spec.build_command)
     return result
 
 

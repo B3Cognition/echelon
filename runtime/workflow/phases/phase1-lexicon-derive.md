@@ -31,6 +31,17 @@ No other artifact is writable in this phase.
    source.
 5. Return the single output using the declared result contract.
 
+## Controlled Grammar Reminder
+
+The derived file is parsed literally. A `REQ:` block contains `GIVEN:`,
+`WHEN:`, `THEN:`, required `OUTPUT:`, optional `CONSTRAINT:` / `DEPENDS:`, and
+an `EXAMPLE:` link to a source acceptance criterion. Start the file with literal
+`# SOURCE:` and `# SOURCE_SHA256:` metadata, followed by the `ARTIFACT:` and
+`TITLE:` header. An `AC: <AC-id>` block contains only `GIVEN:`, `WHEN:`,
+`THEN:`, and optional `CONSTRAINT:` lines. `AC:` blocks MUST NOT contain
+`OUTPUT:`, `EXAMPLE:`, or `DEPENDS:`. Keep an acceptance criterion's observable
+outcome in its `THEN:` line.
+
 The provider-free `phase1-lexicon` node performs structural certification after
 this dispatch.
 

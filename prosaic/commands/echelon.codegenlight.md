@@ -1,7 +1,6 @@
 ---
 name: echelon.codegenlight
-description: Standalone SOAR-powered build pipeline — RE → DECOMPOSE → IMPLEMENT →
-  GATE → TEST → DELIVER
+description: Disabled legacy SOAR command. Use the default Echelon delivery strategy.
 execution: command
 invocation: automatic
 effort: high
@@ -9,6 +8,12 @@ tools: full
 model_tier: strong
 ---
 # /codegen — SOAR-Powered Software Development Agent
+
+## Disabled — pending removal
+
+STOP. SOAR execution is disabled. Report that the user should use the default
+Echelon delivery strategy. Do not execute the historical workflow below, invoke
+SOAR, or attempt a fallback. The retained text is archival, not executable guidance.
 
 ## Role
 

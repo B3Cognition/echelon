@@ -19,6 +19,9 @@ _ANSI_COLORS = {
     "yellow": "33",
     "blue": "34",
     "magenta": "35",
+    # Prosaic's neutral prompt metadata uses these role-oriented names.
+    "purple": "35",
+    "orange": "33",
     "cyan": "36",
     "white": "37",
     "gray": "90",

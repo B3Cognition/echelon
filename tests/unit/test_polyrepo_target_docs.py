@@ -45,7 +45,7 @@ def test_readme_installation_and_configuration_docs_use_current_contract() -> No
     installation = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
 
     assert "Node.js with npm is\noptional" in text
-    assert "echelon delivery run 001 --strategy codegen" in text
+    assert "SOAR/codegen execution is disabled" in text
     assert "`.echelon/config.yml`" in text
     assert "`echelon-config.yml`" not in text
     assert "config-template.yml" not in text

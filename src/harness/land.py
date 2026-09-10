@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import hashlib
 import json
 import logging
 import re
@@ -19,7 +20,13 @@ from echelon.ui import banner as _banner
 from harness.errors import GitOpsError
 from harness.gitops import _run_git
 from harness.paths import build_dir, current_build_marker, runs_dir
-from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets, write_status
+from harness.spec_frontmatter import (
+    find_spec_dir,
+    read_frontmatter,
+    read_targets,
+    spec_content_ignoring_status,
+    write_status,
+)
 from kernel.fulfillment import (
     blocking_statuses,
     fulfillment_report_is_current,
@@ -30,6 +37,17 @@ from kernel.fulfillment import (
 )
 from kernel.spec_identity import spec_identity_aliases
 from harness.deferred_scope import active_entries, ledger_path
+from harness.canonical_requirements import extract_canonical_requirements
+from harness.coverage_evidence import (
+    active_unmapped_coverage_requirement_ids,
+    parse_coverage_map_obligations,
+)
+from harness.coverage_observation import (
+    CoverageObservationError,
+    CoverageObservationRef,
+    load_coverage_observation,
+    validate_coverage_observation,
+)
 from harness.product_inventory import product_evidence_fingerprint
 from harness.runnability_contract import (
     RunnabilityContractError,
@@ -51,7 +69,17 @@ from harness.verification_evidence import (
 )
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.paths import find_stack_extension_root
-from harness.stacks.resolver import resolve_stacks, resolved_stack_contract_sha256
+from harness.stacks.resolver import (
+    resolve_stacks,
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
+from harness.workspace_landing import (
+    WorkspaceLandingResult,
+    finalize_landed_topology,
+    finalize_workspace_landing,
+    landing_transition_allows_retry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +119,6 @@ _IMPLEMENTATION_INPUT_FILES = {
     "build.gradle.kts",
     "Makefile",
 }
-_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
 _LAND_GENERATED_DRIFT_EXACT = {
     "docs/perf/perf-metrics.json",
     "docs/perf/perf-metrics-pty.json",
@@ -150,15 +177,27 @@ def prepare_feature_branch(
 
     _discard_known_generated_land_drift(project_dir)
     dirty = _run_git(
-        ["status", "--porcelain", "--untracked-files=no"],
+        ["status", "--porcelain", "--untracked-files=all"],
         cwd=str(project_dir),
         check=False,
     )
     if dirty.stdout.strip():
+        dirty_lines = [line for line in dirty.stdout.splitlines() if line.strip()]
+        has_untracked = any(
+            line.startswith("?? ") for line in dirty_lines
+        )
+        dirty_paths = [line[3:].strip() for line in dirty_lines if len(line) >= 4]
+        detail = ", ".join(dirty_paths[:8])
+        if len(dirty_paths) > 8:
+            detail += f", and {len(dirty_paths) - 8} more"
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
-            message="working tree has tracked changes",
+            message=(
+                "working tree has untracked changes"
+                if has_untracked
+                else "working tree has tracked changes"
+            ) + (f": {detail}" if detail else ""),
         )
 
     default_branch = gitops.get_default_branch()
@@ -461,6 +500,30 @@ def resolve_land_repo(project_dir: Path, spec_dir: Path) -> Path:
     return target
 
 
+def read_landed_candidate_commit(
+    workspace_root: Path,
+    spec_id: str,
+    target_id: str,
+) -> str | None:
+    """Return the current landed target revision for an explicitly landed spec.
+
+    The spec lifecycle status is the canonical landing record.  This helper is
+    deliberately read-only: it neither refreshes Git nor changes a checkout,
+    and the caller must still prove that this revision has the sandbox-approved
+    content tuple before executing it locally.
+    """
+    del target_id  # Target routing is canonicalized by the spec's target list.
+    root = Path(workspace_root).expanduser().resolve(strict=True)
+    spec_dir = find_spec_dir(spec_id, root)
+    if spec_dir is None:
+        return None
+    status = str(read_frontmatter(spec_dir).get("status") or "").strip().lower()
+    if status != "landed":
+        return None
+    target = resolve_land_repo(root, spec_dir)
+    return _current_git_commit(target)
+
+
 def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     """Return the unambiguous newest legacy harness iteration for a spec.
 
@@ -537,6 +600,31 @@ def _validate_harness_branch_provenance(
     )
     if ancestry.returncode != 0:
         raise RuntimeError("verified fulfillment commit is not on the selected harness branch")
+
+
+def _verified_commit_is_on_default(
+    spec_dir: Path | None,
+    project_dir: Path,
+    gitops: Any,
+) -> bool:
+    """Return whether recorded fulfillment already belongs to the default tree."""
+    if spec_dir is None:
+        return False
+    try:
+        report = latest_fulfillment_report(spec_dir)
+        metadata = read_fulfillment_metadata(report) if report is not None else {}
+    except OSError:
+        return False
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        return False
+    default_branch = _land_default_branch(gitops)
+    ancestor = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, default_branch],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return ancestor.returncode == 0
 
 
 def _find_current_build_harness_branch(
@@ -669,11 +757,24 @@ def _finish_branchless_landing(
 
     if status == "landed" and not verified_commit:
         gitops.ensure_on_default_branch(str(project_dir))
-        _post_land_topology_reconciliation(
+        finalization = _finalize_workspace_landing_if_present(
+            spec_id,
+            workspace_root=wrapper_project_dir,
+            target_root=project_dir,
+        )
+        if not _workspace_landing_succeeded(spec_id, finalization):
+            return False
+        _clear_landed_active_authoring_pointer(
+            wrapper_project_dir,
+            spec_id,
+            "",
+        )
+        if _post_land_topology_reconciliation(
             spec_id,
             wrapper_project_dir,
             project_dir,
-        )
+        ) is False:
+            return False
         logger.info("land: %s is already landed (legacy status evidence)", spec_id)
         return True
 
@@ -722,7 +823,16 @@ def _finish_branchless_landing(
                 subtitle="Branchless status advancement requires complete provenance.",
             )
             return False
-        if recorded_spec_hash and recorded_spec_hash != current_spec_hash:
+        if (
+            recorded_spec_hash
+            and recorded_spec_hash != current_spec_hash
+            and not landing_transition_allows_retry(
+                spec_dir,
+                workspace_root=wrapper_project_dir,
+                recorded_hash=recorded_spec_hash,
+                current_hash=current_spec_hash,
+            )
+        ):
             problem = "fulfillment report spec input hash is stale"
             _banner(
                 "LAND - BRANCH NOT LANDED",
@@ -762,19 +872,25 @@ def _finish_branchless_landing(
             )
             for alias in spec_identity_aliases(spec_id):
                 _delete_harness_branches(alias, project_dir)
-            if spec_dir is not None and status != "landed":
-                write_status(spec_dir, "landed")
+            gitops.ensure_on_default_branch(str(project_dir))
+            finalization = _finalize_workspace_landing_if_present(
+                spec_id,
+                workspace_root=wrapper_project_dir,
+                target_root=project_dir,
+            )
+            if not _workspace_landing_succeeded(spec_id, finalization):
+                return False
             _clear_landed_active_authoring_pointer(
                 wrapper_project_dir,
                 spec_id,
                 "",
             )
-            gitops.ensure_on_default_branch(str(project_dir))
-            _post_land_topology_reconciliation(
+            if _post_land_topology_reconciliation(
                 spec_id,
                 wrapper_project_dir,
                 project_dir,
-            )
+            ) is False:
+                return False
             logger.info(
                 "land: %s has no feature branch, but verified commit %s is on %s",
                 spec_id,
@@ -906,7 +1022,13 @@ def land(
         )
         return False
 
-    if feature_branch is None:
+    already_on_default = feature_branch is None and _verified_commit_is_on_default(
+        spec_dir,
+        project_dir,
+        gitops,
+    )
+
+    if feature_branch is None and not already_on_default:
         try:
             feature_branch = _find_current_build_harness_branch(
                 spec_id,
@@ -1170,16 +1292,35 @@ def _check_runnability_before_land(
         ref=candidate_ref,
         stack_project_dir=wrapper_project_dir,
     )
-    if warning is None:
+    if warning is not None:
+        _banner(
+            "LAND — USER RUNNABILITY BLOCKED",
+            [
+                ("spec", spec_id),
+                ("problem", warning),
+                ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
+            ],
+            subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+        )
+        return False
+
+    coverage_warning = _coverage_observation_warning(
+        spec_id,
+        project_dir,
+        harness_root=harness_root,
+        ref=candidate_ref,
+        stack_project_dir=wrapper_project_dir,
+    )
+    if coverage_warning is None:
         return True
     _banner(
-        "LAND — USER RUNNABILITY BLOCKED",
+        "LAND — COVERAGE OBSERVATION BLOCKED",
         [
             ("spec", spec_id),
-            ("problem", warning),
+            ("problem", coverage_warning),
             ("next step", f"rerun delivery and inspect: echelon delivery status {spec_id}"),
         ],
-        subtitle="A fulfillment override cannot bypass stale or missing runnable evidence.",
+        subtitle="A fulfillment override cannot bypass stale per-case test evidence.",
     )
     return False
 
@@ -1426,7 +1567,124 @@ def _runnability_warning(
         return f"could not inspect the landing candidate for runnability: {exc}"
 
 
+def _coverage_observation_warning(
+    spec_id: str,
+    project_dir: Path,
+    *,
+    harness_root: Path,
+    ref: str | None = None,
+    stack_project_dir: Path | None = None,
+) -> str | None:
+    """Return a blocking warning for stale required per-case coverage evidence.
+
+    Landing is the only carry-forward caller: an otherwise-identical merge
+    commit may reuse the observation, but every product-affecting hash remains
+    authoritative. Ordinary fulfillment keeps exact-commit validation.
+    """
+    try:
+        configured_root = (
+            Path(stack_project_dir).resolve() if stack_project_dir else project_dir.resolve()
+        )
+        configured = _resolved_landing_stacks(configured_root)
+        if not any(item.observer.required for item in configured.coverage_observers):
+            return None
+        with _land_candidate_tree(project_dir, ref) as candidate:
+            resolution_root = (
+                candidate
+                if configured_root == project_dir.resolve()
+                else configured_root
+            )
+            resolved = _resolved_landing_stacks(resolution_root)
+
+            spec_root = Path(stack_project_dir).resolve() if stack_project_dir else project_dir
+            spec_ref = ref if spec_root == project_dir.resolve() else None
+            with _land_spec_dir(spec_id, spec_root, ref=spec_ref) as spec_dir:
+                if spec_dir is None or not (spec_dir / "coverage-map.md").is_file():
+                    return "required coverage observers need the active spec coverage-map.md"
+                coverage_map_hash = hashlib.sha256(
+                    (spec_dir / "coverage-map.md").read_bytes()
+                ).hexdigest()
+                canonical_ids = {
+                    item.id for item in extract_canonical_requirements(spec_dir)
+                }
+                owner_deferred_ids = {
+                    item_id
+                    for entry in active_entries(spec_dir)
+                    for item_id in entry.selected_ids
+                    if not item_id.startswith("T-")
+                }
+                obligations = tuple(
+                    obligation
+                    for row in parse_coverage_map_obligations(
+                        spec_dir / "coverage-map.md", canonical_ids
+                    )
+                    for obligation in row
+                )
+                unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
+                    canonical_ids=canonical_ids,
+                    obligations=obligations,
+                    deferred_ids=owner_deferred_ids,
+                )
+                if unmapped_requirement_ids:
+                    return (
+                        "required coverage map has no planned test obligation for active "
+                        "requirement(s): "
+                        + ", ".join(unmapped_requirement_ids[:20])
+                    )
+                if not any(
+                    obligation.requirement_id not in owner_deferred_ids
+                    for obligation in obligations
+                ):
+                    return None
+
+            runnability_contract_hash: str | None = None
+            if resolved.runnability.policy == "required":
+                contract = load_runnability_contract(candidate)
+                if contract is None or not contract.enabled:
+                    return "required coverage observation has no enabled runnability contract"
+                runnability_contract_hash = runnability_contract_sha256(contract)
+
+            state = _latest_runnability_state(Path(harness_root), spec_id)
+            summary = state.get("coverage_observation") if state is not None else None
+            if not isinstance(summary, dict) or summary.get("status") != "passed":
+                return "no passing required coverage observation was recorded for this delivery"
+            raw_ref = summary.get("ref")
+            if not isinstance(raw_ref, dict):
+                return "passing coverage observation lacks an immutable reference"
+            observation_ref = CoverageObservationRef.from_mapping(raw_ref)
+            observation = load_coverage_observation(observation_ref.path)
+            if observation.ref != observation_ref:
+                return "coverage observation reference does not match its immutable artifact"
+            candidate_fingerprint = product_evidence_fingerprint(candidate)
+            validation = validate_coverage_observation(
+                observation.ref,
+                candidate_fingerprint=candidate_fingerprint,
+                coverage_map_hash=coverage_map_hash,
+                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+                runnability_contract_hash=runnability_contract_hash,
+                allow_equivalent_product=True,
+            )
+            if validation.valid:
+                return None
+            return f"coverage observation is stale: {validation.reason}"
+    except (
+        CoverageObservationError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        tarfile.TarError,
+    ) as exc:
+        return f"could not validate required coverage observation: {exc}"
+
+
 def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
+    resolved = _resolved_landing_stacks(project_dir)
+    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
+
+
+def _resolved_landing_stacks(project_dir: Path):
+    """Resolve the candidate-owned stack plan used for landing evidence."""
     from harness.config import get_full_resolved_config
 
     root = Path(project_dir).resolve()
@@ -1438,7 +1696,7 @@ def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
     archetypes = stacks.get("target_archetypes") or []
     if not isinstance(selected, list) or not isinstance(archetypes, list):
         raise ValueError("stack selection must use list values")
-    resolved = resolve_stacks(
+    return resolve_stacks(
         [str(item) for item in selected],
         load_stack_definitions(
             extension_root=find_stack_extension_root(root),
@@ -1446,7 +1704,6 @@ def _resolved_runnability_requirement(project_dir: Path) -> tuple[bool, str]:
         ),
         target_archetypes={str(item) for item in archetypes} or None,
     )
-    return resolved.runnability.policy == "required", resolved_stack_contract_sha256(resolved)
 
 
 def _latest_runnability_state(harness_root: Path, spec_id: str) -> dict[str, object] | None:
@@ -1558,7 +1815,7 @@ def _prepare_for_land(
             subtitle=(
                 "Echelon stopped on semantic conflicts."
                 if has_conflicts
-                else "Echelon stopped before mutating the default branch."
+                else "Echelon stopped before mutating the target checkout."
             ),
         )
         return None
@@ -1985,12 +2242,13 @@ def _spec_change_is_status_only(
     new = _show_ref_file(project_dir, new_ref, relpath)
     if old is None or new is None:
         return False
-    return _without_spec_status(old) == _without_spec_status(new)
+    old_content = _without_spec_status(old)
+    new_content = _without_spec_status(new)
+    return old_content is not None and new_content is not None and old_content == new_content
 
 
-def _without_spec_status(text: str) -> str:
-    text = _FRONTMATTER_RE.sub("", text, count=1)
-    return re.sub(r"^\*\*Status\*\*:\s*.*(?:\n|$)", "", text, count=1, flags=re.MULTILINE)
+def _without_spec_status(text: str) -> tuple[dict[str, Any], str] | None:
+    return spec_content_ignoring_status(text)
 
 
 def _current_git_commit(project_dir: Path) -> str | None:
@@ -2116,25 +2374,77 @@ def _finish_landing(
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
 
-    spec_dir = find_spec_dir(spec_id, spec_project_dir)
-    if spec_dir:
-        write_status(spec_dir, "landed")
+    finalization = _finalize_workspace_landing_if_present(
+        spec_id,
+        workspace_root=spec_project_dir,
+        target_root=project_dir,
+    )
+    if not _workspace_landing_succeeded(spec_id, finalization):
+        return False
     _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
-    _post_land_topology_reconciliation(
+    if _post_land_topology_reconciliation(
         spec_id,
         spec_project_dir,
         project_dir,
-    )
+    ) is False:
+        return False
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _finalize_workspace_landing_if_present(
+    spec_id: str,
+    *,
+    workspace_root: Path,
+    target_root: Path,
+) -> WorkspaceLandingResult:
+    """Retain legacy state-only landing while finalizing every canonical spec."""
+    if find_spec_dir(spec_id, workspace_root) is None:
+        logger.info(
+            "land: %s has no canonical spec directory; skipping workspace publication",
+            spec_id,
+        )
+        return WorkspaceLandingResult(ok=True, reason="legacy_spec_absent")
+    return finalize_workspace_landing(
+        spec_id,
+        workspace_root=workspace_root,
+        target_root=target_root,
+    )
+
+
+def _workspace_landing_succeeded(
+    spec_id: str,
+    result: WorkspaceLandingResult,
+) -> bool:
+    if result.ok:
+        return True
+
+    fields = [
+        ("spec", spec_id),
+        ("problem", result.detail or result.reason or "workspace finalization failed"),
+    ]
+    if result.paths:
+        fields.append(("files", "\n".join(result.paths)))
+    fields.extend(
+        [
+            ("state", "implementation may already be merged; lifecycle finalization is pending"),
+            ("next step", f"echelon delivery land {spec_id}"),
+        ]
+    )
+    _banner(
+        "LAND — WORKSPACE FINALIZATION BLOCKED",
+        fields,
+        subtitle="Echelon did not claim a complete landing with dirty or unpublished state.",
+    )
+    return False
 
 
 def _post_land_topology_reconciliation(
     spec_id: str,
     workspace_root: Path,
     target_root: Path,
-) -> None:
+) -> bool:
     """Report independent topology and semantic freshness after successful landing."""
     source_id = _configured_source_id_for_target(workspace_root, target_root)
     default_head = _current_git_commit(target_root)
@@ -2157,6 +2467,11 @@ def _post_land_topology_reconciliation(
         except Exception as exc:  # noqa: BLE001 - landing must remain successful.
             reconciliation_detail = str(exc)
 
+    finalization = finalize_landed_topology(spec_id, workspace_root)
+    if not _workspace_landing_succeeded(spec_id, finalization):
+        return False
+    # Committing workspace metadata can change a same-repository source HEAD.
+    # Audit the final state, not the pre-commit snapshot.
     topology_status = _landed_topology_status(workspace_root, source_id)
     semantic_status = _landed_semantic_re_status(workspace_root, source_id)
     _log_landed_freshness("topology", topology_status, reconciliation_detail)
@@ -2165,6 +2480,23 @@ def _post_land_topology_reconciliation(
         topology_status != "current" or semantic_status != "current"
     ):
         logger.warning("next: echelon re refresh --source %s", source_id)
+
+    for root in dict.fromkeys((workspace_root, target_root)):
+        if not (root / ".git").exists():
+            continue  # Legacy non-Git orchestration roots have no checkout.
+        status = _run_git(
+            ["status", "--porcelain", "--untracked-files=all"], cwd=str(root), check=False,
+        )
+        if status.returncode != 0 or status.stdout.strip():
+            return _workspace_landing_succeeded(
+                spec_id,
+                WorkspaceLandingResult(
+                    ok=False, reason="post_land_dirty",
+                    detail=f"post-landing reconciliation did not leave a clean checkout at {root}",
+                    paths=tuple(status.stdout.splitlines()),
+                ),
+            )
+    return True
 
 
 def _landed_topology_status(workspace_root: Path, source_id: str | None) -> str:

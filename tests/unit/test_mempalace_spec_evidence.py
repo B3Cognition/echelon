@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -522,3 +523,93 @@ def test_audit_spec_evidence_memory_reports_stale_hash(
 
     assert report.status == "fail"
     assert report.stale == ["evidence-drawer"]
+
+
+@pytest.mark.unit
+def test_audit_spec_evidence_keeps_superseded_extra_as_history(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    write_evidence_workspace(tmp_path)
+    current_document = "EVID-001: Published evidence fact."
+    current_document_hash = hashlib.sha256(current_document.encode("utf-8")).hexdigest()
+
+    class FakeCollection:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            rows = {
+                "evidence-current": {
+                    "document": current_document,
+                    "metadata": {
+                        "wing": "demo-wing",
+                        "room": "spec-fulfillment-evidence",
+                        "artifact_kind": "spec-evidence",
+                        "scope": "spec-evidence",
+                        "spec_id": "003-demo",
+                        "canonical": True,
+                        "artifact_path": "specs/003-demo/fulfillment-report.md",
+                        "source_file": "specs/003-demo/fulfillment-report.md",
+                        "artifact_hash": "sha256:new",
+                        "canonical_spec_sha256": "new",
+                        "requirement_content_sha256": current_document_hash,
+                        "requirement_id": "EVID-001",
+                        "deterministic_identity_schema_version": 1,
+                        "lifecycle_status": "active",
+                    },
+                },
+                "evidence-history": {
+                    "document": "EVID-001: Earlier verification evidence.",
+                    "metadata": {
+                        "wing": "demo-wing",
+                        "room": "spec-fulfillment-evidence",
+                        "artifact_kind": "spec-evidence",
+                        "scope": "spec-evidence",
+                        "spec_id": "003-demo",
+                        "canonical": False,
+                        "artifact_path": "runs/old/fulfillment-report.md",
+                        "source_file": "runs/old/fulfillment-report.md",
+                        "requirement_id": "EVID-001",
+                        "lifecycle_status": "superseded",
+                    },
+                },
+            }
+            selected = rows.items() if ids is None else ((key, rows[key]) for key in ids if key in rows)
+            selected = list(selected)
+            return {
+                "ids": [key for key, _row in selected],
+                "documents": [row["document"] for _key, row in selected],
+                "metadatas": [row["metadata"] for _key, row in selected],
+            }
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def open_collection_read_only(self):
+            return FakeCollection()
+
+        def plan_spec_evidence_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "specs/003-demo/fulfillment-report.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="evidence-current",
+                    requirement_id="EVID-001",
+                    room="spec-fulfillment-evidence",
+                    source=source,
+                    artifact_hash="sha256:new",
+                    canonical_spec_sha256="new",
+                    requirement_content_sha256=current_document_hash,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_spec_evidence.create_spec_evidence_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_spec_evidence import audit_spec_evidence_memory
+
+    report = audit_spec_evidence_memory(tmp_path, "003-demo")
+
+    assert report.status == "warn"
+    assert report.historical == ["evidence-history"]
+    assert report.stale == []

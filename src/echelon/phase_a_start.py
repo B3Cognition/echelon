@@ -1059,6 +1059,27 @@ def _resolve_source(root: Path) -> SpecRun | None:
     return resolve_active_spec_run(root)
 
 
+def _is_clean_preparing_source_without_checkpoint(root: Path, source: SpecRun) -> bool:
+    """Allow replacement only for a run that failed before authoring began."""
+    state = _load_state(source.run_dir)
+    base_commit = state.get("phase_a_base_commit")
+    if (
+        state.get("status") != "preparing"
+        or state.get("completed_phases") not in (None, [])
+        or state.get("phase_completion_outcomes") not in (None, [])
+        or not isinstance(base_commit, str)
+        or not base_commit
+    ):
+        return False
+    try:
+        branch_commit = run_git(
+            root, "rev-parse", "--verify", f"{source.feature_branch}^{{commit}}"
+        ).stdout.strip()
+    except GitHelperError:
+        return False
+    return branch_commit == base_commit
+
+
 def start_phase_a_spec(
     project_root: Path,
     run_id: str,
@@ -1099,11 +1120,15 @@ def start_phase_a_spec(
                         raise PhaseAStartError(
                             f"active run branch is {source.feature_branch!r}, but Git is on {observed!r}"
                         )
-                    source_checkpoint = validate_spec_checkpoint(root, source)
+                    try:
+                        source_checkpoint = validate_spec_checkpoint(root, source)
+                    except SpecSwitchError:
+                        if not _is_clean_preparing_source_without_checkpoint(root, source):
+                            raise
 
                 dirty_paths = spec_worktree_paths(root)
                 if dirty_paths:
-                    if source is None:
+                    if source is None or source_checkpoint is None:
                         raise DirtySpecWorktreeError(dirty_paths)
                     if dirty_action == "refuse":
                         raise DirtySpecWorktreeError(dirty_paths)

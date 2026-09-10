@@ -50,6 +50,18 @@ NEVER copy TECH WRITER's coverage dispositions into a PASS verdict without check
 ALWAYS require the README sandbox sequence, complete declared local sequence including session setup and consumer-boundary probes, local-journey status, and final report digest to match the current passing `evidence/user-runnability/report.json` when runnability is required.
 NEVER pass a missing, failed, stale, or provisional runnability result, treat `.echelon/runnability.yml` and README prose as execution evidence, or let README claim an `unverified` local journey passed.
 
+### Rule 8 - Independent First-Run Walkthrough
+ALWAYS trace a fresh-clone user journey against the selected stack and current implementation: select/check declared runtime and tool versions; install locked dependencies before package-owned tools; provision services and probe them from the consumer boundary; prepare configuration/auth/session and data; verify; start/open; stop; and separately opt into destructive cleanup. Inspect invoked scripts when README delegates these steps to a wrapper.
+NEVER accept a mere list of commands as a working sequence, assume host tools or credentials from the sandbox, accept unguarded multi-command setup that continues after failure, or recommend non-frozen installation to conceal stale metadata.
+
+### Rule 9 - Setup Changes and Repair Ownership
+ALWAYS recheck the whole first-run path after manifest, lockfile, patch, script, configuration/auth, Compose/service, or runnability changes, including deliveries marked `docs_required: false`. Use existing coverage and findings fields to identify the affected README section, source evidence, and required repair; distinguish a documentation edit from a missing/broken implementation or contract that the build loop must repair.
+NEVER waive a concrete finding because TECH WRITER declared no impact, force cosmetic README edits when the current manual is correct, or hide a required implementation gap behind an unverified/not-documented disclaimer.
+
+### Rule 10 - Keep Independent Findings
+ALWAYS retain deterministic findings and add your source-backed semantic findings to the same report, updating verdict, blocking count, unsupported claims, and affected validity flags. Check ordering, fail-fast behavior, and prerequisites yourself even when the deterministic command returns PASS.
+NEVER replace an independent failure with the deterministic PASS baseline, or claim local execution without a current compatible local-runner attestation. Report candidate identity, platform and actual tool versions only when recorded by the supplied evidence; absent measurements remain unknown.
+
 ## Inputs
 
 1. `{spec_dir}/spec.md`
@@ -77,23 +89,25 @@ Run the harness-backed verifier from the target repository root:
 python -m harness verify-docs <worktree-path> <spec-dir>
 ```
 
-This command writes `{spec_dir}/docs-verification-report.md` with machine-readable frontmatter and structured findings. Treat a non-zero exit as `verdict: FAIL` unless required inputs are unreadable, in which case return `verdict: BLOCKED`. Use the report as the authoritative finding list, and add only source-backed explanation in your response.
+This command writes `{spec_dir}/docs-verification-report.md` with machine-readable frontmatter and structured findings. Treat a non-zero exit as `verdict: FAIL` unless required inputs are unreadable, in which case return `verdict: BLOCKED`. It is the mandatory deterministic baseline, not a substitute for the independent checks below. Preserve its findings, then add source-backed semantic findings to the same report. If you rerun the command, it regenerates the file: repeat the semantic review before returning the final verdict.
 
 ### 3. Verify README.md
 
 For runnable projects, check README.md for:
 
-- Prerequisites matching metadata, such as runtime version floors and package managers.
+- Prerequisites matching metadata and the selected stack, including exact declared package-manager pins, supported version selection, pre-install version checks, and expected output/mismatch instructions.
 - Install instructions for local clone and/or published package when applicable.
+- Dependency order and failure handling in each copyable setup block and its invoked scripts. Browser/tool installation must follow the dependencies that supply its executable; setup failure must not cascade into migrations, tests, or startup.
 - npm script commands only when the corresponding `package.json` script exists.
 - Minimal working input/configuration with real filenames.
-- First dry run, safe preview, or no-op verification command when supported.
+- Documentation of a safe preview, dry-run, or no-op mode when supported by the project.
 - First real run that performs the primary workflow locally.
 - Expected output, generated files, state changes, or service URL.
 - Re-run, revert, reset, clean, or inspect commands when those surfaces exist.
 - Troubleshooting for likely first-run failures.
 - Development commands and main source locations.
 - Further reading links for deeper docs.
+- Clear separation of declared commands, sandbox results, and local execution evidence. An opt-in local runner not executed for this candidate stays unverified; matching prose does not establish an execution result.
 
 ### 4. Verify CHANGELOG.md
 
@@ -156,6 +170,12 @@ PASS | FAIL
 Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, or `project_evidence_checked` to `false` for the failed area, set `evidence_items_checked` to the number of concrete evidence items inspected, and set `blocking_findings` to the number of blocking findings. A PASS report must inspect at least README.md, CHANGELOG.md, documentation-impact-report.md, and one project evidence source such as package metadata, scripts, CLI/config source, tests, changed files, or safe smoke evidence. When all checks pass, write an empty findings table and explain why the docs are adequate.
 
 `reviewed_change_ids` must exactly cover the impact report inventory. Put any change without adequate README/CHANGELOG coverage in `uncovered_change_ids`. Put concise descriptions of claims contradicted by or unsupported by source, tests, configuration, CLI surfaces, or measured artifacts in `unsupported_claims`. A PASS report requires both lists to be empty.
+
+Record every independent semantic failure in `unsupported_claims` (or
+`uncovered_change_ids` for coverage gaps), not only the Markdown table or the
+final response. Include the source evidence and concrete repair in the claim.
+Ralph preserves these fields when refreshing sandbox-derived documentation
+evidence; only a fresh DOCS VERIFIER review after repair should clear them.
 
 For a required runnable stack, PASS also requires
 `runnability_commands_current: true` and `runnability_evidence_sha256` equal to

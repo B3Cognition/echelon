@@ -428,7 +428,7 @@ class TestCmdLand:
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")
     def test_exit_code_1_on_failure(
-        self, mock_load_config, mock_gitops_cls, mock_land
+        self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
         """Exit code 1 when land() returns False."""
         from echelon.cli import _cmd_land
@@ -441,6 +441,9 @@ class TestCmdLand:
             _cmd_land(["042"])
 
         assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "see the specific blocker above" in captured.err
+        assert "PR merge blocked?" not in captured.err
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")

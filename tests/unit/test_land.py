@@ -1,6 +1,7 @@
 """Tests for harness.land — idempotent spec completion."""
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import subprocess
@@ -15,6 +16,7 @@ from harness.land import (
     LandOptions,
     LandPrepareResult,
     _check_runnability_before_land,
+    _coverage_observation_warning,
     _check_ready_before_land,
     _delete_harness_branches,
     _fulfillment_warning,
@@ -28,6 +30,8 @@ from harness.land import (
     resolve_land_repo,
 )
 from harness.deferred_scope import apply_defer
+from harness.coverage_contract import parse_coverage_obligations
+from harness.coverage_observation import write_coverage_observation
 from harness.errors import GitOpsError
 from harness.product_inventory import product_evidence_fingerprint
 from harness.runnability_contract import (
@@ -36,6 +40,8 @@ from harness.runnability_contract import (
 )
 from harness.runnability_evidence import RunnabilityStage, write_runnability_report
 from harness.verification_evidence import VerificationStage, write_verification_receipt
+from harness.test_execution_evidence import ObservedTestExecution
+from harness.workspace_landing import WorkspaceLandingResult
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -187,6 +193,181 @@ def test_land_accepts_merge_only_commit_when_three_hashes_match(tmp_path: Path) 
     )
 
     assert warning is None
+
+def test_land_accepts_merge_only_commit_only_with_matching_coverage_observation(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    harness_root = tmp_path / "harness"
+    project.mkdir()
+    _init_repo(project)
+    test_path = project / "tests" / "save.test.ts"
+    test_path.parent.mkdir()
+    test_path.write_text(
+        "test('save persists [echelon:UT-001]', () => {});\n",
+        encoding="utf-8",
+    )
+    spec_dir = project / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# FR-001\n", encoding="utf-8")
+    coverage_map = spec_dir / "coverage-map.md"
+    coverage_map.write_text(
+        "# Coverage\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| FR-001 | UT-001 | unit | deferred-automation | deferred-automation | test | repair |\n",
+        encoding="utf-8",
+    )
+    commit = _commit(project, "README.md", "# Demo\n", "product")
+    fingerprint = product_evidence_fingerprint(project)
+    stage = VerificationStage(
+        name="verify",
+        command=("pnpm", "verify"),
+        exit_code=0,
+        duration_ms=1,
+        stdout=b"passed\n",
+        stderr=b"",
+    )
+    standard = write_verification_receipt(
+        evidence_dir=tmp_path / "standard",
+        spec_id="042-demo",
+        strategy_id="default",
+        build_id="build-coverage",
+        candidate_commit=commit,
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="sandbox",
+        stages=(stage,),
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    observer = write_verification_receipt(
+        evidence_dir=tmp_path / "observer",
+        spec_id="042-demo",
+        strategy_id="default",
+        build_id="build-coverage",
+        candidate_commit=commit,
+        fingerprint_before=fingerprint,
+        fingerprint_after=fingerprint,
+        verifier_source="sandbox",
+        stages=(stage,),
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    obligations = parse_coverage_obligations(
+        "FR-001",
+        "UT-001",
+        "unit",
+        "deferred-automation",
+        "deferred-automation",
+        "persisted test",
+        "add tagged test",
+        {"FR-001"},
+    )
+    observation = write_coverage_observation(
+        evidence_dir=tmp_path / "coverage",
+        candidate_commit=commit,
+        candidate_fingerprint=fingerprint,
+        coverage_map_hash=hashlib.sha256(coverage_map.read_bytes()).hexdigest(),
+        resolved_stack_hash="stack-hash",
+        observer_plan_hash="observer-plan-hash",
+        runnability_contract_hash=None,
+        verification_receipt=standard,
+        observer_receipts={"vitest": observer},
+        obligations=obligations,
+        executions=(
+            ObservedTestExecution(
+                observer_id="vitest",
+                test_type="unit",
+                file="tests/save.test.ts",
+                title="save persists [echelon:UT-001]",
+                project="default",
+                status="passed",
+                retry_count=0,
+            ),
+        ),
+        candidate_worktree=project,
+        attempt_sequence=1,
+        sensitive_environment={},
+    )
+    state_dir = harness_root / "runs" / "build-coverage" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "042-demo",
+                "coverage_observation": {
+                    "status": "passed",
+                    "ref": observation.ref.as_mapping(),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved = SimpleNamespace(
+        coverage_observers=(SimpleNamespace(observer=SimpleNamespace(required=True)),),
+        runnability=SimpleNamespace(policy="not_applicable"),
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "merge-only publication commit"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+    )
+
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+        )
+
+    assert warning is None
+
+    coverage_map.write_text(
+        coverage_map.read_text(encoding="utf-8") + "\n# Changed coverage\n",
+        encoding="utf-8",
+    )
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+    )
+
+    assert warning is not None
+    assert "coverage observation is stale" in warning
+
+    coverage_map.write_text(
+        "# Coverage\n\n"
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "|---|---|---|---|---|---|---|\n",
+        encoding="utf-8",
+    )
+    with patch("harness.land._resolved_landing_stacks", return_value=resolved), patch(
+        "harness.land.resolved_stack_contract_sha256", return_value="stack-hash"
+    ), patch(
+        "harness.land.resolved_coverage_observer_plan_sha256",
+        return_value="observer-plan-hash",
+    ):
+        warning = _coverage_observation_warning(
+            "042-demo",
+            project,
+            harness_root=harness_root,
+        )
+
+    assert warning is not None
+    assert "no planned test obligation" in warning
 
 
 def test_land_blocks_changed_candidate_contract(tmp_path: Path) -> None:
@@ -848,6 +1029,8 @@ class TestLand:
         gitops.ensure_on_default_branch.assert_called_once_with(str(tmp_path))
 
     def test_writes_landed_status_to_spec_frontmatter(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
         spec_dir = tmp_path / "specs" / "042-my-feature"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -863,7 +1046,12 @@ class TestLand:
         gitops = _make_gitops()
         with patch("harness.land.prepare_feature_branch") as prepare:
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
-            land("042", project_dir=tmp_path, gitops=gitops)
+            land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(allow_fulfillment_gaps=True),
+            )
         from harness.spec_frontmatter import read_frontmatter
         assert read_frontmatter(spec_dir)["status"] == "landed"
 
@@ -1032,6 +1220,106 @@ class TestLand:
         assert result is False
         from harness.spec_frontmatter import read_frontmatter
         assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+
+    def test_no_branch_retries_sealed_terminal_status_transition(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.fulfillment_runner import (
+            _implementation_input_hash,
+            _spec_input_hash,
+        )
+        from harness.workspace_landing import finalize_workspace_landing
+
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs/042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        spec_hash = _spec_input_hash(spec_dir)
+        implementation_hash = _implementation_input_hash(tmp_path)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            f"verified_commit: {verified}\n"
+            f"spec_input_hash: {spec_hash}\n"
+            f"implementation_input_hash: {implementation_hash}\n"
+            "---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | README.md |\n",
+            encoding="utf-8",
+        )
+        transition = finalize_workspace_landing(
+            "042-my-feature",
+            workspace_root=tmp_path,
+            target_root=tmp_path,
+        )
+        assert transition.ok is True
+
+        with (
+            patch("harness.land._check_ready_before_land", return_value=True),
+            patch("harness.land._cleanup_worktrees") as cleanup,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+        ):
+            result = land(
+                "042-my-feature",
+                project_dir=tmp_path,
+                gitops=_make_gitops(None),
+            )
+
+        assert result is True
+        cleanup.assert_called_once()
+        assert delete_harness.call_count == 2
+
+    def test_no_branch_recovers_status_write_interrupted_before_transition_seal(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.fulfillment_runner import (
+            _implementation_input_hash,
+            _spec_input_hash,
+        )
+        from harness.spec_frontmatter import write_status
+        from harness.workspace_landing import landing_transition_covers_hashes
+
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs/042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        spec_hash = _spec_input_hash(spec_dir)
+        implementation_hash = _implementation_input_hash(tmp_path)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            f"verified_commit: {verified}\n"
+            f"spec_input_hash: {spec_hash}\n"
+            f"implementation_input_hash: {implementation_hash}\n"
+            "---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | README.md |\n",
+            encoding="utf-8",
+        )
+        _git(tmp_path, "add", "specs/042-my-feature")
+        _git(tmp_path, "commit", "-m", "verified spec inputs")
+        write_status(spec_dir, "landed")
+        assert not (spec_dir / "landing-transition.json").exists()
+
+        with (
+            patch("harness.land._check_ready_before_land", return_value=True),
+            patch("harness.land._cleanup_worktrees"),
+            patch("harness.land._delete_harness_branches"),
+        ):
+            result = land(
+                "042-my-feature",
+                project_dir=tmp_path,
+                gitops=_make_gitops(None),
+            )
+
+        assert result is True
+        assert _spec_input_hash(spec_dir) == spec_hash
 
     def test_numeric_selector_uses_canonical_identity_for_branch_lookup(
         self, tmp_path: Path
@@ -1813,13 +2101,17 @@ def test_polyrepo_land_uses_target_harness_pr_state_and_cleans_its_worktree(
         lambda path, *, keep_branch: path.rmdir()
     )
 
-    result = land(
-        "042",
-        project_dir=workspace,
-        harness_root=harness_root,
-        gitops=gitops,
-        options=LandOptions(allow_fulfillment_gaps=True),
-    )
+    with patch(
+        "harness.land._finalize_workspace_landing_if_present",
+        return_value=WorkspaceLandingResult(ok=True),
+    ):
+        result = land(
+            "042",
+            project_dir=workspace,
+            harness_root=harness_root,
+            gitops=gitops,
+            options=LandOptions(allow_fulfillment_gaps=True),
+        )
 
     assert result is True
     gitops.merge_pr.assert_called_once_with(pr_url)
@@ -1868,12 +2160,16 @@ def test_polyrepo_branchless_cleanup_uses_target_harness_root(tmp_path: Path) ->
         lambda path, *, keep_branch: path.rmdir()
     )
 
-    result = land(
-        "043",
-        project_dir=workspace,
-        harness_root=harness_root,
-        gitops=gitops,
-    )
+    with patch(
+        "harness.land._finalize_workspace_landing_if_present",
+        return_value=WorkspaceLandingResult(ok=True),
+    ):
+        result = land(
+            "043",
+            project_dir=workspace,
+            harness_root=harness_root,
+            gitops=gitops,
+        )
 
     assert result is True
     gitops.merge_pr.assert_not_called()
@@ -1986,12 +2282,16 @@ def test_finish_landing_runs_one_topology_hook_after_checkout_and_status(
     from harness.land import _finish_landing
     from harness.spec_frontmatter import read_frontmatter
 
+    _init_repo(tmp_path)
+    _commit(tmp_path, "README.md", "base\n", "base")
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: ready_to_land\n---\n# Spec\n",
         encoding="utf-8",
     )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "ready")
     gitops = _make_gitops()
 
     def assert_post_land(spec_id: str, workspace_root: Path, target_root: Path) -> None:
@@ -2023,17 +2323,106 @@ def test_finish_landing_runs_one_topology_hook_after_checkout_and_status(
 
 
 @pytest.mark.unit
+def test_finish_landing_stops_before_pointer_clear_when_workspace_finalize_fails(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_landing
+    from harness.workspace_landing import WorkspaceLandingResult
+
+    gitops = _make_gitops()
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._delete_local_branch"),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+        patch(
+            "harness.land._finalize_workspace_landing_if_present",
+            return_value=WorkspaceLandingResult(
+                ok=False,
+                reason="workspace_dirty",
+                detail="workspace has unrelated changes",
+                paths=("?? notes.txt",),
+            ),
+        ) as finalize,
+        patch("harness.land._clear_landed_active_authoring_pointer") as clear,
+        patch("harness.land._post_land_topology_reconciliation") as reconcile,
+    ):
+        result = _finish_landing(
+            "001-demo",
+            "001-feature",
+            tmp_path / "target",
+            gitops,
+            spec_project_dir=tmp_path / "workspace",
+        )
+
+    assert result is False
+    finalize.assert_called_once_with(
+        "001-demo",
+        workspace_root=tmp_path / "workspace",
+        target_root=tmp_path / "target",
+    )
+    clear.assert_not_called()
+    reconcile.assert_not_called()
+
+
+@pytest.mark.unit
+def test_finish_landing_clears_pointer_only_after_workspace_finalize_succeeds(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_landing
+    from harness.workspace_landing import WorkspaceLandingResult
+
+    gitops = _make_gitops()
+    order: list[str] = []
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._delete_local_branch"),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+        patch(
+            "harness.land._finalize_workspace_landing_if_present",
+            side_effect=lambda *args, **kwargs: (
+                order.append("finalize")
+                or WorkspaceLandingResult(ok=True)
+            ),
+        ),
+        patch(
+            "harness.land._clear_landed_active_authoring_pointer",
+            side_effect=lambda *args: order.append("clear"),
+        ),
+        patch(
+            "harness.land._post_land_topology_reconciliation",
+            side_effect=lambda *args: order.append("topology"),
+        ),
+    ):
+        result = _finish_landing(
+            "001-demo",
+            "001-feature",
+            tmp_path / "target",
+            gitops,
+            spec_project_dir=tmp_path / "workspace",
+        )
+
+    assert result is True
+    assert order == ["finalize", "clear", "topology"]
+
+
+@pytest.mark.unit
 def test_branchless_idempotent_land_runs_same_post_land_topology_hook(
     tmp_path: Path,
 ) -> None:
     from harness.land import _finish_branchless_landing
 
+    _init_repo(tmp_path)
+    _commit(tmp_path, "README.md", "base\n", "base")
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
         "---\nstatus: landed\n---\n# Spec\n",
         encoding="utf-8",
     )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "landed")
     gitops = _make_gitops(feature_branch=None)
     order: list[str] = []
     gitops.ensure_on_default_branch.side_effect = lambda path: order.append("checkout")
@@ -2805,12 +3194,50 @@ def test_land_finishes_cleanup_when_default_already_contains_feature(
 
 
 @pytest.mark.unit
+def test_land_skips_stale_harness_fallback_when_verified_commit_is_on_default(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    verified = _commit(repo, "feature.txt", "feature\n", "landed feature")
+    spec_dir = repo / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        "---\n"
+        f"verified_commit: {verified}\n"
+        "---\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | feature.txt | high | ok |\n",
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch=None)
+    with (
+        patch("harness.land._find_current_build_harness_branch") as current_build,
+        patch("harness.land._find_latest_harness_branch") as legacy_branch,
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+    ):
+        result = land("001", project_dir=repo, gitops=gitops)
+
+    assert result is True
+    current_build.assert_not_called()
+    legacy_branch.assert_not_called()
+
+
+@pytest.mark.unit
 def test_land_clears_active_authoring_pointer_for_landed_spec(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, ".gitignore", "/runs/\n", "ignore runtime state")
     _git(repo, "checkout", "-b", "001-feature")
     _commit(repo, "feature.txt", "feature\n", "feature")
     _git(repo, "checkout", "main")
@@ -2993,6 +3420,40 @@ def test_prepare_feature_branch_blocks_dirty_tracked_worktree_without_checkout(
     assert result.branch == "001-feature"
     assert "tracked changes" in result.message
     assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    gitops.get_default_branch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_blocks_untracked_output_without_deleting_it(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    output = repo / "test-results/result.json"
+    output.parent.mkdir()
+    output.write_text("{}\n", encoding="utf-8")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "blocked"
+    assert "untracked" in result.message
+    assert "test-results/result.json" in result.message
+    assert output.read_text(encoding="utf-8") == "{}\n"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
     gitops.get_default_branch.assert_not_called()
 
 
@@ -3483,6 +3944,7 @@ class TestLandIntegration:
         sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t.com"], check=True, capture_output=True)
         sp.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], check=True, capture_output=True)
         (tmp_path / "README.md").write_text("hi")
+        (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
         sp.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
         sp.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True)
         verified_commit = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()

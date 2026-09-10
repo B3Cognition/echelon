@@ -1,4 +1,4 @@
-schema_version: "1.2"
+schema_version: "1.4"
 stack:
   id: game-persistence-postgres
   name: Game Persistence with Postgres
@@ -29,6 +29,12 @@ runnability:
   required_observations:
     - http
     - postgres_query
+  local_runner:
+    allowed_services:
+      - postgres
+    environment_bindings:
+      DATABASE_URL: postgres_url
+      TEST_DATABASE_URL: postgres_url
 provisioning:
   - id: postgres-verify
     scope: verification

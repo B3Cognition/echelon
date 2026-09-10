@@ -1,0 +1,19 @@
+{
+  "name": "local-runner-browser-postgres-fixture",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "migrate": "tsx scripts/migrate.ts",
+    "start": "node scripts/start.mjs",
+    "stop": "node scripts/stop.mjs",
+    "issue-session": "node scripts/issue-session.mjs",
+    "db:probe": "tsx scripts/db-probe.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.57.0",
+    "pg": "8.16.3",
+    "tsx": "4.20.6"
+  }
+}

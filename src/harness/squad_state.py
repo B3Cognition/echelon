@@ -8,12 +8,13 @@ import json
 import logging
 import os
 import secrets
+import re
 import stat
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping
 
@@ -21,6 +22,7 @@ from harness.blocked_decision import (
     BlockedDecisionError,
     build_blocked_decision_v3,
     ensure_blocked_decision,
+    is_valid_decision_id,
     normalize_escalation_options,
     validate_blocked_decision,
 )
@@ -36,7 +38,12 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
-from harness.human_input import AppliedHumanInputResolution, PreparedHumanInput
+from harness.human_input import (
+    AppliedHumanInputResolution,
+    AutonomousDefaultCandidate,
+    HumanInputPolicyError,
+    PreparedHumanInput,
+)
 from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
@@ -130,6 +137,11 @@ _MAX_STATE_BYTES = 16_777_216
 _ACTIVE_HUMAN_INPUT_DECISION_STATUSES = frozenset(
     {"pending", "resolving", "awaiting_human"}
 )
+BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY = (
+    "banzai_default_candidate_protocol_version"
+)
+BANZAI_DEFAULT_REASSESSMENT_KEY = "banzai_default_reassessment"
+BANZAI_EVIDENCE_REASSESSMENT_KEY = "banzai_evidence_reassessment"
 _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
     {
         "blocked_decision",
@@ -139,6 +151,7 @@ _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
         "blocked_reason",
         "escalation_question",
         "escalation_options",
+        "autonomous_default_candidate",
     }
 )
 _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
@@ -151,6 +164,7 @@ _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
         "escalation_risk_level",
         "escalation_recommended_answer",
         "escalation_default_answer",
+        "autonomous_default_candidate",
     }
 )
 _HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
@@ -177,6 +191,11 @@ _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
         "recovery_instruction",
         "escalation_question",
         "escalation_options",
+        "autonomous_default_candidate",
+        "autonomous_default_ledger",
+        BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY,
+        BANZAI_DEFAULT_REASSESSMENT_KEY,
+        BANZAI_EVIDENCE_REASSESSMENT_KEY,
         "state_revision",
         "updated_at",
     }
@@ -196,6 +215,386 @@ class StateAdvanceError(RuntimeError):
         super().__init__(message)
         self.json_path = json_path
         self.validator = validator
+
+
+def _autonomous_default_candidate_from_state(
+    value: object,
+) -> AutonomousDefaultCandidate:
+    """Validate one controller-owned pending default candidate postimage."""
+    if not isinstance(value, Mapping):
+        raise StateAdvanceError(
+            "autonomous default candidate is missing",
+            json_path="$.autonomous_default_candidate",
+            validator="human_input_authority",
+        )
+    payload = dict(value)
+    fingerprint = payload.pop("fingerprint", None)
+    try:
+        candidate = AutonomousDefaultCandidate.from_provider_payload(payload)
+    except (HumanInputPolicyError, TypeError, ValueError) as exc:
+        raise StateAdvanceError(
+            "autonomous default candidate is invalid",
+            json_path="$.autonomous_default_candidate",
+            validator="human_input_authority",
+        ) from exc
+    if fingerprint != candidate.fingerprint:
+        raise StateAdvanceError(
+            "autonomous default candidate fingerprint is invalid",
+            json_path="$.autonomous_default_candidate.fingerprint",
+            validator="human_input_authority",
+        )
+    return candidate
+
+
+def _autonomous_default_candidate_for_decision(
+    state: Mapping[str, Any],
+    decision: Mapping[str, object],
+) -> AutonomousDefaultCandidate | None:
+    """Bind a pending candidate to its sealed recommendation evidence."""
+    evidence = decision.get("recommendation_evidence")
+    candidate_evidence = (
+        [
+            item
+            for item in evidence
+            if isinstance(item, Mapping)
+            and item.get("kind") == "banzai_default_candidate"
+        ]
+        if isinstance(evidence, list)
+        else []
+    )
+    pending = state.get("autonomous_default_candidate")
+    if not candidate_evidence:
+        if pending is not None:
+            raise StateAdvanceError(
+                "unbound autonomous default candidate is present",
+                json_path="$.autonomous_default_candidate",
+                validator="human_input_authority",
+            )
+        return None
+    if len(candidate_evidence) != 1:
+        raise StateAdvanceError(
+            "autonomous default evidence is invalid",
+            json_path="$.blocked_decision.recommendation_evidence",
+            validator="human_input_authority",
+        )
+    candidate = _autonomous_default_candidate_from_state(pending)
+    expected_reference = (
+        f"{candidate.issue_id}:{','.join(candidate.source_references)}"
+    )
+    if (
+        candidate_evidence[0].get("id") != f"banzai-default:{candidate.issue_id}"
+        or candidate_evidence[0].get("reference") != expected_reference
+        or candidate_evidence[0].get("digest") != candidate.fingerprint
+        or decision.get("question") != candidate.question
+    ):
+        raise StateAdvanceError(
+            "autonomous default candidate does not match sealed decision",
+            json_path="$.blocked_decision",
+            validator="human_input_authority",
+        )
+    return candidate
+
+
+def _autonomous_default_ledger_entries(
+    state: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    raw_ledger = state.get("autonomous_default_ledger", [])
+    if not isinstance(raw_ledger, list):
+        raise StateAdvanceError(
+            "autonomous default ledger is invalid",
+            json_path="$.autonomous_default_ledger",
+            validator="human_input_authority",
+        )
+    entries: list[dict[str, object]] = []
+    fingerprints: set[str] = set()
+    for entry in raw_ledger:
+        if not isinstance(entry, Mapping):
+            raise StateAdvanceError(
+                "autonomous default ledger entry is invalid",
+                json_path="$.autonomous_default_ledger",
+                validator="human_input_authority",
+            )
+        fingerprint = entry.get("fingerprint")
+        if (
+            not isinstance(fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+            or fingerprint in fingerprints
+        ):
+            raise StateAdvanceError(
+                "autonomous default ledger fingerprint is invalid",
+                json_path="$.autonomous_default_ledger",
+                validator="human_input_authority",
+            )
+        fingerprints.add(fingerprint)
+        entries.append(deepcopy(dict(entry)))
+    return entries
+
+
+def _banzai_default_reassessment_record(
+    state: Mapping[str, Any],
+) -> dict[str, object] | None:
+    """Validate the controller-owned Banzai WHY2 reassessment ledger."""
+    return validate_banzai_default_reassessment_record(
+        state.get(BANZAI_DEFAULT_REASSESSMENT_KEY)
+    )
+
+
+def _banzai_evidence_reassessment_record(
+    state: Mapping[str, Any],
+) -> dict[str, object] | None:
+    return validate_banzai_evidence_reassessment_record(
+        state.get(BANZAI_EVIDENCE_REASSESSMENT_KEY)
+    )
+
+
+def validate_banzai_evidence_reassessment_record(
+    raw: object,
+) -> dict[str, object] | None:
+    """Validate the bounded decision-evidence retry ledger."""
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw) != {"schema_version", "attempts"}
+        or raw.get("schema_version") not in {1, 2}
+        or not isinstance(raw.get("attempts"), list)
+        or len(raw["attempts"]) > 8
+    ):
+        raise StateAdvanceError(
+            "Banzai evidence reassessment record is invalid",
+            json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+    attempts: list[dict[str, object]] = []
+    seen_questions: set[str] = set()
+    for attempt in raw["attempts"]:
+        expected_keys = {
+            "decision_id",
+            "question_sha256",
+            "evidence_sha256",
+            "drawer_ids",
+            "reassessed_at",
+        }
+        if raw.get("schema_version") == 2:
+            expected_keys.update({"evidence_path", "status", "dispatched_at"})
+        if (
+            not isinstance(attempt, Mapping)
+            or set(attempt) != expected_keys
+            or not is_valid_decision_id(attempt.get("decision_id"))
+            or not isinstance(attempt.get("question_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", attempt["question_sha256"])
+            is None
+            or not isinstance(attempt.get("evidence_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", attempt["evidence_sha256"])
+            is None
+            or not isinstance(attempt.get("drawer_ids"), list)
+            or not 1 <= len(attempt["drawer_ids"]) <= 10
+            or not all(
+                isinstance(item, str)
+                and item
+                and len(item.encode("utf-8")) <= 256
+                for item in attempt["drawer_ids"]
+            )
+            or not _is_utc_reassessment_timestamp(attempt.get("reassessed_at"))
+            or (
+                raw.get("schema_version") == 2
+                and (
+                    attempt.get("status") not in {"armed", "consumed"}
+                    or (
+                        attempt.get("status") == "armed"
+                        and attempt.get("dispatched_at") is not None
+                    )
+                    or (
+                        attempt.get("status") == "consumed"
+                        and not _is_utc_reassessment_timestamp(
+                            attempt.get("dispatched_at")
+                        )
+                    )
+                )
+            )
+            or (
+                raw.get("schema_version") == 2
+                and (
+                    attempt.get("evidence_path") is not None
+                    and (
+                        not isinstance(attempt.get("evidence_path"), str)
+                        or not attempt["evidence_path"].startswith(
+                            "context/decision-evidence/"
+                        )
+                        or Path(attempt["evidence_path"]).is_absolute()
+                        or ".." in Path(attempt["evidence_path"]).parts
+                        or len(attempt["evidence_path"].encode("utf-8")) > 512
+                    )
+                )
+            )
+            or attempt["question_sha256"] in seen_questions
+        ):
+            raise StateAdvanceError(
+                "Banzai evidence reassessment record is invalid",
+                json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+                validator="human_input_authority",
+            )
+        seen_questions.add(str(attempt["question_sha256"]))
+        attempts.append(deepcopy(dict(attempt)))
+    if (
+        raw.get("schema_version") == 2
+        and sum(attempt["status"] == "armed" for attempt in attempts) > 1
+    ):
+        raise StateAdvanceError(
+            "Banzai evidence reassessment record is invalid",
+            json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+    return {"schema_version": int(raw["schema_version"]), "attempts": attempts}
+
+
+def validate_banzai_default_reassessment_record(
+    raw: object,
+) -> dict[str, object] | None:
+    """Validate one durable reassessment ledger for controller and CLI use."""
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise _invalid_banzai_default_reassessment_record()
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is int and schema_version == 1:
+        return _validate_v1_banzai_default_reassessment_record(raw)
+    if type(schema_version) is int and schema_version == 2:
+        return _validate_v2_banzai_default_reassessment_record(raw)
+    raise _invalid_banzai_default_reassessment_record()
+
+
+def _invalid_banzai_default_reassessment_record() -> StateAdvanceError:
+    return StateAdvanceError(
+        "Banzai default reassessment record is invalid",
+        json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+        validator="human_input_authority",
+    )
+
+
+def _validate_v1_banzai_default_reassessment_record(
+    raw: Mapping[str, object],
+) -> dict[str, object]:
+    if set(raw) != {
+        "schema_version",
+        "decision_id",
+        "source_phase",
+        "question_sha256",
+        "reassessed_at",
+    }:
+        raise _invalid_banzai_default_reassessment_record()
+    decision_id = raw.get("decision_id")
+    source_phase = raw.get("source_phase")
+    question_sha256 = raw.get("question_sha256")
+    reassessed_at = raw.get("reassessed_at")
+    if (
+        type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 1
+        or not is_valid_decision_id(decision_id)
+        or source_phase != "phase1-why2"
+        or not isinstance(question_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
+        or not _is_utc_reassessment_timestamp(reassessed_at)
+    ):
+        raise _invalid_banzai_default_reassessment_record()
+    return {
+        "schema_version": 1,
+        "decision_id": decision_id,
+        "source_phase": source_phase,
+        "question_sha256": question_sha256,
+        "reassessed_at": reassessed_at,
+    }
+
+
+def _validate_v2_banzai_default_reassessment_record(
+    raw: Mapping[str, object],
+) -> dict[str, object]:
+    if (
+        type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 2
+        or set(raw)
+        != {
+        "schema_version",
+        "source_phase",
+        "initial_attempt",
+        "upgrade_attempt",
+        }
+        or raw.get("source_phase") != "phase1-why2"
+    ):
+        raise _invalid_banzai_default_reassessment_record()
+    initial = _validate_banzai_default_reassessment_attempt(
+        raw.get("initial_attempt"),
+        require_timestamp=False,
+        require_protocol_fingerprint=False,
+    )
+    upgrade = _validate_banzai_default_reassessment_attempt(
+        raw.get("upgrade_attempt"),
+        require_timestamp=True,
+        require_protocol_fingerprint=True,
+    )
+    return {
+        "schema_version": 2,
+        "source_phase": "phase1-why2",
+        "initial_attempt": initial,
+        "upgrade_attempt": upgrade,
+    }
+
+
+def _validate_banzai_default_reassessment_attempt(
+    raw: object,
+    *,
+    require_timestamp: bool,
+    require_protocol_fingerprint: bool,
+) -> dict[str, object]:
+    required_keys = {"decision_id", "question_sha256", "protocol_fingerprint"}
+    if require_timestamp:
+        required_keys.add("reassessed_at")
+    if not isinstance(raw, Mapping) or set(raw) != required_keys:
+        raise _invalid_banzai_default_reassessment_record()
+    decision_id = raw.get("decision_id")
+    question_sha256 = raw.get("question_sha256")
+    protocol_fingerprint = raw.get("protocol_fingerprint")
+    if (
+        not is_valid_decision_id(decision_id)
+        or not isinstance(question_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
+        or (
+            require_protocol_fingerprint
+            and (
+                not isinstance(protocol_fingerprint, str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", protocol_fingerprint)
+                is None
+            )
+        )
+        or (not require_protocol_fingerprint and protocol_fingerprint is not None)
+    ):
+        raise _invalid_banzai_default_reassessment_record()
+    validated: dict[str, object] = {
+        "decision_id": decision_id,
+        "question_sha256": question_sha256,
+        "protocol_fingerprint": protocol_fingerprint,
+    }
+    if require_timestamp:
+        reassessed_at = raw.get("reassessed_at")
+        if not _is_utc_reassessment_timestamp(reassessed_at):
+            raise _invalid_banzai_default_reassessment_record()
+        validated["reassessed_at"] = reassessed_at
+    return validated
+
+
+def _is_utc_reassessment_timestamp(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value.encode("utf-8")) > 128
+    ):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() == timedelta(0)
 
 
 class StateDurabilityError(StateAdvanceError):
@@ -1144,6 +1543,36 @@ def _validate_human_input_authority_write(
     current_is_authority = _is_human_input_decision(current_decision)
     candidate_is_authority = _is_human_input_decision(candidate_decision)
 
+    if (
+        not allow_update
+        and current.get("autonomous_default_ledger")
+        != candidate.get("autonomous_default_ledger")
+    ):
+        raise StateAdvanceError(
+            "generic state writes cannot mutate autonomous default ledger",
+            json_path="$.autonomous_default_ledger",
+            validator="human_input_authority",
+        )
+    current_reassessment = _banzai_default_reassessment_record(current)
+    candidate_reassessment = _banzai_default_reassessment_record(candidate)
+    if not allow_update and current_reassessment != candidate_reassessment:
+        raise StateAdvanceError(
+            "generic state writes cannot mutate Banzai default reassessment",
+            json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+    current_evidence_reassessment = _banzai_evidence_reassessment_record(current)
+    candidate_evidence_reassessment = _banzai_evidence_reassessment_record(candidate)
+    if (
+        not allow_update
+        and current_evidence_reassessment != candidate_evidence_reassessment
+    ):
+        raise StateAdvanceError(
+            "generic state writes cannot mutate Banzai evidence reassessment",
+            json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+            validator="human_input_authority",
+        )
+
     if candidate_is_authority:
         try:
             validate_decision_recovery_pair(
@@ -2090,6 +2519,22 @@ class SquadStateStore:
             status=initial_status,
             autonomy_mode=str(autonomy_mode),
         )
+        candidate = request.autonomous_default_candidate
+        if candidate is None:
+            state.pop("autonomous_default_candidate", None)
+        else:
+            ledger = _autonomous_default_ledger_entries(state)
+            if any(
+                entry["fingerprint"] == candidate.fingerprint
+                for entry in ledger
+            ):
+                raise StateAdvanceError(
+                    "autonomous default candidate was already resolved",
+                    json_path="$.autonomous_default_ledger",
+                    validator="human_input_authority",
+                )
+            state["autonomous_default_candidate"] = candidate.to_dict()
+            _autonomous_default_candidate_for_decision(state, decision)
         recovery = _human_input_recovery_for_decision(decision)
         if recovery is None:
             raise StateAdvanceError(
@@ -2147,6 +2592,43 @@ class SquadStateStore:
                 desired,
                 request,
                 initial_status=initial_status,
+            )
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def set_consensus_banzai_issue_decision(
+        self,
+        request: PreparedHumanInput,
+    ) -> dict[str, Any]:
+        """Seal a completed Phase 3 Banzai issue through its exact authority."""
+        if (
+            type(request) is not PreparedHumanInput
+            or request.schema_version != 2
+            or request.source_kind != "controller_safeguard"
+            or request.producer_id != "banzai_issue_resolution"
+            or request.reason_code != "banzai_issue_resolution"
+            or request.phase_id != "phase3-consensus"
+        ):
+            raise StateAdvanceError(
+                "consensus Banzai issue decision has an invalid authority",
+                json_path="$.human_input",
+                validator="human_input_authority",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if (
+                before.get("status") not in {"running", "in_progress"}
+                or before.get("phase") != "phase3-consensus"
+            ):
+                raise StateAdvanceError(
+                    "consensus Banzai issue decision is stale",
+                    json_path="$.phase",
+                    validator="stale_state",
+                )
+            desired = deepcopy(before)
+            self._seal_human_input_decision_unlocked(
+                desired,
+                request,
+                initial_status="pending",
             )
             return self._commit_human_input_state_unlocked(before, desired)
 
@@ -2338,6 +2820,404 @@ class SquadStateStore:
                 migrated["options"]
             )
             self._replace_human_input_decision_unlocked(desired, migrated)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def rearm_awaiting_banzai_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Promote one policy-reclassified v3 Banzai decision for resolution.
+
+        The controller must establish current-policy eligibility before calling
+        this method. This state transition only accepts the exact unresolved
+        decision shape and preserves every sealed recommendation field.
+        """
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision.get("automatic_eligible") is not False
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != decision["source_phase"]
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+            ):
+                raise StateAdvanceError(
+                    "only intact awaiting schema-v3 Banzai decisions may rearm",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            rearmed = {
+                **decision,
+                "status": "pending",
+                "automatic_eligible": True,
+            }
+            self._replace_human_input_decision_unlocked(desired, rearmed)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def reassess_awaiting_banzai_legacy_why2_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Clear one pre-candidate WHY2 question for a policy-governed retry.
+
+        This deliberately cannot resolve a product decision.  It only returns
+        the exact historical WHY2 gate to its source phase once, giving the
+        current provider protocol an opportunity to emit a bounded candidate.
+        A subsequent ordinary awaiting-human decision remains human-owned.
+        """
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            if _banzai_default_reassessment_record(before) is not None:
+                raise StateAdvanceError(
+                    "legacy Banzai WHY2 decision was already reassessed",
+                    json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+                    validator="human_input_authority",
+                )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision["resolution_handler"] != "clarification_resume"
+                or decision.get("automatic_eligible") is not False
+                or decision.get("options") != []
+                or decision.get("recommended_answer") is not None
+                or decision.get("recommended_option_id") is not None
+                or decision.get("risk_level") is not None
+                or decision.get("recommendation_authority") != "workflow_policy"
+                or decision.get("recommendation_evidence") != []
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != "phase1-why2"
+            ):
+                raise StateAdvanceError(
+                    "only intact pre-candidate Banzai WHY2 decisions may reassess",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            for key in (
+                "blocked_decision",
+                "recovery_instruction",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_options",
+                "escalation_resolved",
+                "escalation_resolver",
+                "escalation_selected_option",
+                "escalation_risk_level",
+                "escalation_recommended_answer",
+                "escalation_default_answer",
+                "autonomous_default_candidate",
+            ):
+                desired.pop(key, None)
+            self._transition_status(desired, "running")
+            desired["status"] = "running"
+            desired["phase"] = "phase1-why2"
+            desired[BANZAI_DEFAULT_REASSESSMENT_KEY] = {
+                "schema_version": 1,
+                "decision_id": str(decision["id"]),
+                "source_phase": "phase1-why2",
+                "question_sha256": hashlib.sha256(
+                    str(decision["question"]).encode("utf-8")
+                ).hexdigest(),
+                "reassessed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def reassess_awaiting_banzai_why2_after_protocol_upgrade(
+        self,
+        decision_id: str,
+        *,
+        protocol_fingerprint: str,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Spend the single protocol-upgrade retry for one legacy WHY2 gate."""
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", protocol_fingerprint) is None:
+            raise StateAdvanceError(
+                "Banzai protocol fingerprint is invalid",
+                json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+                validator="human_input_authority",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            reassessment = _banzai_default_reassessment_record(before)
+            if reassessment is None or reassessment["schema_version"] != 1:
+                raise StateAdvanceError(
+                    "Banzai protocol upgrade retry was already consumed",
+                    json_path=f"$.{BANZAI_DEFAULT_REASSESSMENT_KEY}",
+                    validator="human_input_authority",
+                )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision["resolution_handler"] != "clarification_resume"
+                or decision.get("automatic_eligible") is not False
+                or decision.get("options") != []
+                or decision.get("recommended_answer") is not None
+                or decision.get("recommended_option_id") is not None
+                or decision.get("risk_level") is not None
+                or decision.get("recommendation_authority") != "workflow_policy"
+                or decision.get("recommendation_evidence") != []
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != "phase1-why2"
+            ):
+                raise StateAdvanceError(
+                    "only intact legacy Banzai WHY2 decisions may upgrade retry",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            for key in (
+                "blocked_decision",
+                "recovery_instruction",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_options",
+                "escalation_resolved",
+                "escalation_resolver",
+                "escalation_selected_option",
+                "escalation_risk_level",
+                "escalation_recommended_answer",
+                "escalation_default_answer",
+                "autonomous_default_candidate",
+            ):
+                desired.pop(key, None)
+            self._transition_status(desired, "running")
+            desired["phase"] = "phase1-why2"
+            desired[BANZAI_DEFAULT_REASSESSMENT_KEY] = {
+                "schema_version": 2,
+                "source_phase": "phase1-why2",
+                "initial_attempt": {
+                    "decision_id": reassessment["decision_id"],
+                    "question_sha256": reassessment["question_sha256"],
+                    "protocol_fingerprint": None,
+                },
+                "upgrade_attempt": {
+                    "decision_id": str(decision["id"]),
+                    "question_sha256": hashlib.sha256(
+                        str(decision["question"]).encode("utf-8")
+                    ).hexdigest(),
+                    "protocol_fingerprint": protocol_fingerprint,
+                    "reassessed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def reassess_awaiting_banzai_why2_with_evidence(
+        self,
+        decision_id: str,
+        *,
+        question_sha256: str,
+        evidence_sha256: str,
+        evidence_path: str,
+        drawer_ids: tuple[str, ...],
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        """Retry one WHY2 question once after trusted evidence retrieval."""
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", question_sha256) is None
+            or re.fullmatch(r"[0-9a-f]{64}", evidence_sha256) is None
+            or not isinstance(evidence_path, str)
+            or not evidence_path.startswith("context/decision-evidence/")
+            or Path(evidence_path).is_absolute()
+            or ".." in Path(evidence_path).parts
+            or len(evidence_path.encode("utf-8")) > 512
+            or not 1 <= len(drawer_ids) <= 10
+            or not all(
+                isinstance(item, str)
+                and item
+                and len(item.encode("utf-8")) <= 256
+                for item in drawer_ids
+            )
+        ):
+            raise StateAdvanceError(
+                "Banzai evidence reassessment input is invalid",
+                json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+                validator="human_input_authority",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"awaiting_human"}),
+            )
+            actual_question_sha256 = hashlib.sha256(
+                str(decision["question"]).encode("utf-8")
+            ).hexdigest()
+            if actual_question_sha256 != question_sha256:
+                raise StateAdvanceError(
+                    "Banzai evidence reassessment question changed",
+                    json_path="$.blocked_decision.question",
+                    validator="human_input_authority",
+                )
+            existing = _banzai_evidence_reassessment_record(before)
+            attempts = list(existing["attempts"]) if existing is not None else []
+            # Legacy v1 attempts lacked an immutable evidence path. Preserve
+            # their question identities for bounded retry accounting while
+            # marking them explicitly as non-dispatch-bound history.
+            if existing is not None and existing["schema_version"] == 1:
+                attempts = [
+                    {
+                        **attempt,
+                        "evidence_path": None,
+                        "status": "consumed",
+                        "dispatched_at": attempt["reassessed_at"],
+                    }
+                    for attempt in attempts
+                ]
+            if any(
+                attempt["question_sha256"] == question_sha256
+                for attempt in attempts
+            ):
+                raise StateAdvanceError(
+                    "Banzai WHY2 question was already reassessed with evidence",
+                    json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+                    validator="human_input_authority",
+                )
+            if len(attempts) >= 8:
+                raise StateAdvanceError(
+                    "Banzai evidence reassessment limit was reached",
+                    json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+                    validator="human_input_authority",
+                )
+            if (
+                decision["schema_version"] != 3
+                or decision["autonomy_mode"] != "banzai"
+                or decision["source_kind"] != "provider_escalation"
+                or decision["producer_id"] != "phase1-why2"
+                or decision["source_phase"] != "phase1-why2"
+                or decision["reason_code"] != "human_clarification_required"
+                or decision["classification"] != "material"
+                or decision["resolution_handler"] != "clarification_resume"
+                or decision.get("automatic_eligible") is not False
+                or decision.get("options") != []
+                or int(decision["attempts"]) != 0
+                or decision.get("failure_code") is not None
+                or before.get("status") != "blocked"
+                or before.get("autonomy_mode") != "banzai"
+                or before.get("phase") != "phase1-why2"
+            ):
+                raise StateAdvanceError(
+                    "only intact Banzai WHY2 decisions may retry with evidence",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            for key in (
+                "blocked_decision",
+                "recovery_instruction",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_options",
+                "escalation_resolved",
+                "escalation_resolver",
+                "escalation_selected_option",
+                "escalation_risk_level",
+                "escalation_recommended_answer",
+                "escalation_default_answer",
+                "autonomous_default_candidate",
+            ):
+                desired.pop(key, None)
+            self._transition_status(desired, "running")
+            desired["status"] = "running"
+            desired["phase"] = "phase1-why2"
+            attempts.append(
+                {
+                    "decision_id": str(decision["id"]),
+                    "question_sha256": question_sha256,
+                    "evidence_sha256": evidence_sha256,
+                    "evidence_path": evidence_path,
+                    "drawer_ids": list(drawer_ids),
+                    "reassessed_at": datetime.now(timezone.utc).isoformat(),
+                    "status": "armed",
+                    "dispatched_at": None,
+                }
+            )
+            desired[BANZAI_EVIDENCE_REASSESSMENT_KEY] = {
+                "schema_version": 2,
+                "attempts": attempts,
+            }
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def consume_armed_banzai_evidence_reassessment(
+        self,
+        *,
+        expected_state_revision: int,
+        expected_evidence_sha256: str,
+    ) -> dict[str, Any]:
+        """Mark the one evidence-bound WHY2 retry dispatched, retaining audit history."""
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if before.get("state_revision") != expected_state_revision:
+                raise StateAdvanceError(
+                    "Banzai evidence dispatch state changed",
+                    json_path="$.state_revision",
+                    validator="evidence_binding",
+                )
+            record = _banzai_evidence_reassessment_record(before)
+            armed = (
+                [attempt for attempt in record["attempts"] if attempt["status"] == "armed"]
+                if record is not None and record["schema_version"] == 2
+                else []
+            )
+            if (
+                before.get("phase") != "phase1-why2"
+                or len(armed) != 1
+                or armed[0]["evidence_sha256"] != expected_evidence_sha256
+            ):
+                raise StateAdvanceError(
+                    "Banzai evidence dispatch binding changed",
+                    json_path=f"$.{BANZAI_EVIDENCE_REASSESSMENT_KEY}",
+                    validator="evidence_binding",
+                )
+            desired = deepcopy(before)
+            desired_record = desired[BANZAI_EVIDENCE_REASSESSMENT_KEY]
+            for attempt in desired_record["attempts"]:
+                if attempt["status"] == "armed":
+                    attempt["status"] = "consumed"
+                    attempt["dispatched_at"] = datetime.now(timezone.utc).isoformat()
             return self._commit_human_input_state_unlocked(before, desired)
 
     def fail_pending_v2_banzai_human_input_migration(
@@ -3224,6 +4104,20 @@ class SquadStateStore:
                 expected_state_revision=expected_state_revision,
                 allowed_statuses=_ACTIVE_HUMAN_INPUT_DECISION_STATUSES,
             )
+            default_candidate = _autonomous_default_candidate_for_decision(
+                before,
+                decision,
+            )
+            ledger = _autonomous_default_ledger_entries(before)
+            if default_candidate is not None and any(
+                entry["fingerprint"] == default_candidate.fingerprint
+                for entry in ledger
+            ):
+                raise StateAdvanceError(
+                    "autonomous default candidate was already resolved",
+                    json_path="$.autonomous_default_ledger",
+                    validator="human_input_authority",
+                )
             resolved = build_human_input_resolution_postimage(
                 decision,
                 resolution,
@@ -3270,6 +4164,7 @@ class SquadStateStore:
                 "escalation_question",
                 "escalation_options",
                 "escalation_resolved",
+                "autonomous_default_candidate",
             ):
                 desired.pop(key, None)
             for key, value in detached_updates.items():
@@ -3285,6 +4180,31 @@ class SquadStateStore:
                 desired,
                 resolved,
             )
+            if default_candidate is not None:
+                selected_answer = resolved.get("answer_text")
+                if not isinstance(selected_answer, str) or not selected_answer:
+                    raise StateAdvanceError(
+                        "autonomous default resolution must select free text",
+                        json_path="$.blocked_decision.answer_text",
+                        validator="human_input_authority",
+                    )
+                desired["autonomous_default_ledger"] = [
+                    *ledger,
+                    {
+                        "schema_version": 1,
+                        "decision_id": str(resolved["id"]),
+                        "fingerprint": default_candidate.fingerprint,
+                        "authority_capability": (
+                            default_candidate.authority_capability
+                        ),
+                        "issue_id": default_candidate.issue_id,
+                        "question": default_candidate.question,
+                        "selected_answer": selected_answer,
+                        "resolved_by": str(resolved["resolved_by"]),
+                        "source_phase": str(resolved["source_phase"]),
+                        "resolved_at": str(resolved["resolved_at"]),
+                    },
+                ]
             if (
                 completion_marker is not None
                 and completion_intent is not None
@@ -3370,6 +4290,10 @@ class SquadStateStore:
         )
         if repair_state is not None:
             initial_state["phase1_quality_repair"] = repair_state
+        if autonomy_mode == "banzai":
+            # New runs understand the candidate protocol.  Its absence is the
+            # narrow compatibility signal for a pre-protocol WHY2 decision.
+            initial_state[BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY] = 1
         with self._lock(exclusive=True):
             self._save_unlocked(initial_state)
 
@@ -3386,6 +4310,11 @@ class SquadStateStore:
 
     def _transition_status(self, state: dict, new_status: str) -> None:
         current = state.get("status", "running")
+        # A provider result may carry a blocking status while its sealed
+        # controller control effect carries the same status.  That is one
+        # idempotent transition, not an invalid lifecycle reversal.
+        if new_status == current:
+            return
         allowed = VALID_SQUAD_TRANSITIONS.get(current, set())
         if new_status not in allowed:
             logger.warning(
@@ -3492,6 +4421,101 @@ class SquadStateStore:
                 allow_human_input_authority_update=authority_changed,
             )
             return True
+
+    def commit_phase3_issue_review(
+        self, *, snapshot: RoutingStateSnapshot, review_dispatch_id: str,
+        review, input_manifest: Mapping[str, str],
+    ) -> bool:
+        """CAS-persist independent SAGE evidence without changing the whole gate."""
+        from dataclasses import asdict
+        from harness.phase3_repair import IssueReview, validate_issue_review
+
+        if type(review) is not IssueReview or not review_dispatch_id:
+            return False
+        state = deepcopy(snapshot.state)
+        if snapshot.phase != "phase3-consensus" or state.get("run_id") != review.identity.run_id:
+            return False
+        selected = state.get("selected_issue_resolution")
+        ledger = state.get("issue_resolution_ledger")
+        entry = ledger.get(selected) if isinstance(ledger, dict) else None
+        if (not isinstance(entry, dict) or entry.get("status") != "repaired"
+                or entry.get("repair_identity") != asdict(review.identity)
+                or dict(review.reviewed_artifacts) != dict(input_manifest)):
+            return False
+        receipts = state.setdefault("phase3_issue_reviews", {})
+        if review_dispatch_id in receipts:
+            return False
+        payload = {"schema_version": 1, "identity": asdict(review.identity),
+                   "outcome": review.outcome, "reviewed_artifacts": dict(review.reviewed_artifacts),
+                   "rationale": review.rationale}
+        validate_issue_review(payload, expected=review.identity, expected_manifest=input_manifest)
+        receipts[review_dispatch_id] = payload
+        entry["last_review_dispatch_id"] = review_dispatch_id
+        submission = max(1, int(entry.get("submission_count", 0)))
+        entry["submission_count"] = submission
+        if review.outcome != "resolved" and entry.get("last_reviewed_submission") != submission:
+            entry["reviewed_unresolved_count"] = int(entry.get("reviewed_unresolved_count", 0)) + 1
+        entry["last_reviewed_submission"] = submission
+        entry.pop("review_revalidation_required", None)
+        if review.outcome == "resolved":
+            entry["status"] = "validated"
+            state["selected_issue_resolution"] = None
+            state["issue_resolution_repair_baseline"] = None
+            recovery = dict(state.get("issue_resolution_recovery") or {})
+            recovery.update({"issue_id": selected, "status": "validated"})
+            state["issue_resolution_recovery"] = recovery
+        return self.commit_routing_snapshot_state(snapshot, state)
+
+    def invalidate_phase3_issue_review(
+        self, *, snapshot: RoutingStateSnapshot, review_dispatch_id: str,
+    ) -> bool:
+        """Keep historical evidence but require review of regenerated inputs."""
+        state = deepcopy(snapshot.state)
+        if snapshot.phase != "phase3-consensus":
+            return False
+        ledger = state.get("issue_resolution_ledger") or {}
+        for issue_id, entry in ledger.items():
+            if (entry.get("status") in {"validated", "repaired"}
+                    and state.get("selected_issue_resolution") in {None, issue_id}
+                    and entry.get("last_review_dispatch_id") == review_dispatch_id):
+                entry["status"] = "repaired"
+                entry["review_revalidation_required"] = True
+                state["selected_issue_resolution"] = issue_id
+                state["issue_resolution_repair_baseline"] = {
+                    "issue_id": issue_id, "repair_phase": entry["repair_phase"],
+                }
+                state["issue_resolution_recovery"] = {"issue_id": issue_id, "status": "awaiting_review"}
+                return self.commit_routing_snapshot_state(snapshot, state)
+        return False
+
+    def reconcile_phase3_review_inputs(self, *, snapshot: RoutingStateSnapshot,
+                                      input_manifest: Mapping[str, str]) -> bool:
+        """Queue stale historical closures for review without resurrecting work."""
+        if snapshot.phase != "phase3-consensus":
+            return False
+        from harness.phase3_repair_routing import reconcile_review_state
+        state = reconcile_review_state(snapshot.state, input_manifest)
+        if state == snapshot.state:
+            return True
+        return self.commit_routing_snapshot_state(snapshot, state)
+
+    def claim_phase3_revalidation(self, *, snapshot: RoutingStateSnapshot,
+                                 identity, input_manifest: Mapping[str, str]) -> bool:
+        """At most one final-candidate review for the same immutable inputs."""
+        from dataclasses import asdict
+        state = deepcopy(snapshot.state)
+        entry = (state.get("issue_resolution_ledger") or {}).get(state.get("selected_issue_resolution"))
+        if (snapshot.phase != "phase3-consensus" or not isinstance(entry, dict)
+                or entry.get("status") != "repaired"
+                or entry.get("repair_identity") != asdict(identity)):
+            return False
+        key = hashlib.sha256(json.dumps({"identity": asdict(identity),
+            "manifest": dict(input_manifest)}, sort_keys=True).encode()).hexdigest()
+        claims = state.setdefault("phase3_review_revalidations", {})
+        if key in claims:
+            return False
+        claims[key] = {"identity": asdict(identity), "input_manifest": dict(input_manifest)}
+        return self.commit_routing_snapshot_state(snapshot, state)
 
     def prepare_routing_decision(
         self,
@@ -3871,6 +4895,15 @@ class SquadStateStore:
                 + decision.token_usage_delta
             )
             next_state.pop("controller_contract_error", None)
+            if decision.record_completion and not decision.conditional_skip:
+                # Successful validated completion opens the next repair cycle.
+                # Keep this atomic with advancement; resumes/skips/failures
+                # cannot replenish a phase's repair budget.
+                counts = next_state.get("phase_output_retry_counts")
+                if isinstance(counts, dict) and from_phase in counts:
+                    counts = dict(counts)
+                    counts.pop(from_phase)
+                    next_state["phase_output_retry_counts"] = counts
             if human_input is None:
                 next_state.pop("recovery_instruction", None)
             else:

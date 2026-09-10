@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,6 +108,24 @@ def is_process_alive(pid: int) -> bool:
         return True
     except (OSError, ProcessLookupError):
         return False
+
+
+def state_lock_owner_is_alive(state_file: Path) -> bool:
+    """Return whether a delivery state file's lock names a live process.
+
+    A missing, malformed, or dead lock cannot prove that a ``running`` JSON
+    record still has an executing owner.  Callers use this to present abrupt
+    process loss as an interrupted, recoverable delivery rather than live work.
+    """
+    try:
+        lock_text = state_file.with_suffix(".lock").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
+    if match is None:
+        return False
+    pid = int(match.group(1))
+    return pid > 0 and is_process_alive(pid)
 
 
 class StateStore:
@@ -365,6 +384,7 @@ class StateStore:
         declared_targets: list[str] | None = None,
         target_task_ids: list[str] | None = None,
         enabled_phases: list[str] | None = None,
+        delivery_stack_snapshot: dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -400,6 +420,11 @@ class StateStore:
             "blocked_phase": None,
             "interrupted_phase": None,
             "verified_commit": None,
+            # This is a controller-owned snapshot of the resolved delivery
+            # stack contract.  It intentionally remains absent from legacy
+            # states: later local verification must never reinterpret a
+            # historical candidate through mutable project configuration.
+            "delivery_stack_snapshot": delivery_stack_snapshot,
             "visual_evidence": None,
             "mode": mode,
             "outer_iter": 0,

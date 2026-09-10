@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echelon"
-version = "4.0.15"
-description = "Multi-agent cognitive system with SOAR-powered build pipeline, MemPalace requirements memory, and 34-metric requirements quality analysis"
+version = "4.1.0"
+description = "Multi-agent development system with verified delivery, MemPalace requirements memory, and 34-metric requirements quality analysis"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -70,6 +70,7 @@ markers = [
   "docker: Tests that require Docker daemon",
   "docker_image(name): Tests that require a local Docker image",
   "slow: Tests that take > 30s",
+  "macos_engine: Explicit real-engine macOS local runner acceptance",
 ]
 
 [tool.hatch.metadata]

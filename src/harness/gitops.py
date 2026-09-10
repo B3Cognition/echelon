@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -437,8 +438,11 @@ class GitOpsManager:
                 # The mirror has stale data for those refs but that is acceptable —
                 # those branches are actively in use and do not need to be updated.
                 logger.warning(
-                    "Mirror fetch skipped branch(es) locked in worktrees: %s", e
+                    "Mirror refresh incomplete because branch(es) are locked in "
+                    "active worktrees; locked refs were left unchanged: %s",
+                    e,
                 )
+                return
             else:
                 raise
         logger.info("Fetched mirror at %s", self._mirror_path)
@@ -477,11 +481,20 @@ class GitOpsManager:
                 ["branch", "--remotes", "--list", f"*/{pattern}"],
                 cwd=str(self._mirror_path),
             )
-            return [
-                _clean_branch_listing(branch)
-                for branch in result.stdout.splitlines()
-                if branch.strip() and " -> " not in branch
-            ]
+            branches: list[str] = []
+            for raw in result.stdout.splitlines():
+                if not raw.strip() or " -> " in raw:
+                    continue
+                remote_ref = _clean_branch_listing(raw)
+                if "/" not in remote_ref:
+                    continue
+                branch_name = remote_ref.split("/", 1)[1]
+                # Git's wildcard can cross slash boundaries. Feature lookup
+                # owns only top-level canonical branches; nested harness refs
+                # are resolved from current-build provenance.
+                if "/" not in branch_name and fnmatchcase(branch_name, pattern):
+                    branches.append(remote_ref)
+            return branches
 
         for alias in spec_identity_aliases(spec_id):
             for pattern in (alias, f"{alias}-*"):
@@ -500,6 +513,23 @@ class GitOpsManager:
                         ),
                     )[0]
                     chosen = chosen_remote.split("/", 1)[1]
+                    existing = _run_git(
+                        [
+                            "show-ref",
+                            "--verify",
+                            "--quiet",
+                            f"refs/heads/{chosen}",
+                        ],
+                        cwd=str(self._mirror_path),
+                        check=False,
+                    )
+                    if existing.returncode == 0:
+                        logger.info(
+                            "Reused existing local mirror branch %s for fetched %s",
+                            chosen,
+                            chosen_remote,
+                        )
+                        return chosen
                     _run_git(
                         ["branch", "--no-track", chosen, chosen_remote],
                         cwd=str(self._mirror_path),
@@ -1017,11 +1047,12 @@ class GitOpsManager:
         # traces must remain available locally without entering product commits.
         exclusions = [str(path).strip() for path in exclude_paths if str(path).strip()]
         if exclusions:
+            # `git add . :(exclude)test-results/**` fails when test-results is
+            # ignored, even if its tracked files only need to stay unstaged.
+            # Stage normally first (which safely ignores untracked ignored
+            # files), then unstage the caller-owned generated paths.
+            _run_git(["add", "-A"], cwd=worktree_path)
             _run_git(["reset", "--", *exclusions], cwd=worktree_path, check=False)
-            _run_git(
-                ["add", "-A", "--", ".", *[f":(exclude){path}" for path in exclusions]],
-                cwd=worktree_path,
-            )
         else:
             _run_git(["add", "-A"], cwd=worktree_path)
         secret_scan = scan_git_staged(worktree_path)
@@ -1640,6 +1671,34 @@ class GitOpsManager:
             return head_branch
         except GitOpsError:
             return self._config.target_default_branch
+
+    def commit_is_ancestor_of_default(self, commit: str) -> bool:
+        """Return whether ``commit`` is already contained in the target default branch.
+
+        Delivery recovery uses this to avoid replaying a stale checkpoint that was
+        successfully landed before the prior process died.  An unavailable mirror
+        or an unknown commit is deliberately treated as not landed so recovery is
+        conservative and does not discard unfinished work.
+        """
+        if not self._mirror_path.exists():
+            return False
+        result = _run_git(
+            ["merge-base", "--is-ancestor", commit, self.get_default_branch()],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        return result.returncode == 0
+
+    def commit_is_ancestor(self, commit: str, descendant: str) -> bool:
+        """Return whether two delivery commits belong to one retained lineage."""
+        if not self._mirror_path.exists():
+            return False
+        result = _run_git(
+            ["merge-base", "--is-ancestor", commit, descendant],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        return result.returncode == 0
 
     def local_merge(
         self, push_branch: str, spec_id: str, spec_name: str = ""

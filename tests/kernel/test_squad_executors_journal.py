@@ -37,6 +37,21 @@ from harness.spec_lexicon_gate import SpecLexiconGateResult
 from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
+def test_artifact_repair_prompt_is_scoped_to_owner_and_not_inventory_protocol():
+    from harness.squad_executors import _render_controller_repair_context
+
+    state = {"phase": "phase3-sentinel", "phase_output_recovery": {
+        "phase": "phase3-sentinel", "invalid_outputs": [
+            {"path": "coverage-map.md", "reason": "line 4: ambiguous types"}
+        ],
+    }}
+    prompt = _render_controller_repair_context(state)
+    assert "coverage-map.md: line 4: ambiguous types" in prompt
+    assert "source frontier" not in prompt
+    state["phase"] = "phase3-plan"
+    assert "Phase Output Repair" not in _render_controller_repair_context(state)
+
+
 def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
     if squad_dir is None:
         squad_dir = tmp_path / "squad" / "run-test"
@@ -88,6 +103,91 @@ def test_agent_executor_defaults_to_one_hour_timeout(tmp_path: Path) -> None:
     executor._exec_agent_with_contract("Do work.", MagicMock())
 
     assert executor._provider.exec_agent.call_args.kwargs["timeout_ms"] == 3_600_000
+
+
+def test_agent_phase_metadata_limits_writes_to_declared_outputs(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    node = PhaseNode(
+        id="phase1-why2",
+        type="agent",
+        agent="echelon.sage",
+        outputs=[
+            "quality-gates.md",
+            "issues.md",
+            "issues → state.json.issues_log (severity-tagged)",
+        ],
+    )
+
+    metadata = executor._phase_prompt_metadata(
+        node,
+        {"spec_dir": "specs/001-demo"},
+        {"model_tier": "strong", "tools": "full"},
+    )
+
+    assert metadata["model_tier"] == "strong"
+    assert metadata["tool_write_scope_exclusive"] is True
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
+
+
+def test_agent_executor_passes_sage_review_scope_to_provider(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    agent_path = tmp_path / "ext" / "agents" / "sage.md"
+    agent_path.parent.mkdir(parents=True)
+    agent_path.write_text(
+        "---\nmodel_tier: strong\n---\n# SAGE\n",
+        encoding="utf-8",
+    )
+    executor._graph.agent_file.return_value = "agents/sage.md"
+    executor._provider.exec_agent.return_value = _result(verdict="PASS")
+    store = SquadStateStore(tmp_path / "squad" / "run-test")
+    store.initialize("run", "banzai", "test", 0, "phase1-why2")
+    state = store.load()
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+
+    executor.execute(
+        PhaseNode(
+            id="phase1-why2",
+            type="agent",
+            agent="echelon.sage",
+            outputs=["quality-gates.md", "issues.md"],
+            allowed_verdicts=["PASS"],
+        ),
+        store,
+    )
+
+    metadata = executor._provider.exec_agent.call_args.kwargs["prompt_metadata"]
+    assert metadata["tool_write_scope_exclusive"] is True
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
+
+
+def test_sage_consensus_scope_includes_only_review_reports(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    metadata = executor._phase_prompt_metadata(
+        PhaseNode(id="phase3-consensus", type="staged_parallel"),
+        {"spec_dir": str(spec_dir)},
+        {},
+        agent_id="echelon.sage",
+        outputs=["issues (CRITICAL | HIGH | MEDIUM)"],
+    )
+
+    assert metadata["tool_write_paths"] == [
+        str(spec_dir / "issues.md"),
+        str(spec_dir / "quality-gates.md"),
+    ]
 
 
 def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
@@ -1260,6 +1360,85 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     assert "STAGING_DIR" in prompt
 
 
+def test_assemble_prompt_injects_generic_decision_escalation_boundary(tmp_path):
+    """Question-capable agents get one domain-neutral Banzai default policy."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-tracker", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+        },
+    )
+
+    assert "### Decision Escalation Boundary" in prompt
+    assert "reversible, internal product choice" in prompt
+    assert "Preserving existing behavior" in prompt
+    assert "user-owned fact or authorization" in prompt
+    assert "The controller, not the provider, decides whether to apply" in prompt
+
+
+@pytest.mark.parametrize(
+    "phase_id",
+    ["phase1-discover", "phase1-tracker", "phase1-what"],
+)
+@pytest.mark.parametrize("render_mode", ["bounded", "legacy"])
+def test_assemble_prompt_injects_declared_immutable_user_request(
+    tmp_path,
+    monkeypatch,
+    phase_id,
+    render_mode,
+):
+    """Removing the user_request selector handling must hide the run's intent."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    monkeypatch.setenv("ECHELON_CONTEXT_RENDER_MODE", render_mode)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    request = (
+        "Model the player with limbs; animate hands and legs while moving, "
+        "bob the head, and animate left/right turns."
+    )
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id=phase_id, type="agent", context_pack=["user_request"]),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+            "user_message": request,
+        },
+    )
+
+    assert "# Original user request (immutable run input)" in prompt
+    assert request in prompt
+    assert "Explicit user requirements are authoritative" in prompt
+
+
+def test_assemble_prompt_rejects_missing_declared_user_request(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+
+    with pytest.raises(
+        ControllerStateContractViolation,
+        match="declared user request is missing",
+    ):
+        ex._assemble_prompt(
+            PhaseNode(
+                id="phase1-tracker",
+                type="agent",
+                context_pack=["user_request"],
+            ),
+            {
+                "squad_dir": str(squad_dir),
+                "staging_dir": str(squad_dir / "staging"),
+            },
+        )
+
+
 def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
     """SAGE receives project-resolved gates instead of copied prompt literals."""
     config = tmp_path / ".echelon" / "config.yml"
@@ -2173,6 +2352,61 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
     assert "manual_phase_runs" not in state_store.load()
 
 
+def test_staged_why3_failure_persists_controller_owned_repair_phase(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues — WHY3
+
+### ISS-001: Test strategy structure
+- **Responsible agent:** SENTINEL
+- **Action Required:** Amend test-strategy.md.
+""",
+        encoding="utf-8",
+    )
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="FAIL")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "FAIL"
+    assert state_store.load()["why3_repair_phase"] == "phase3-sentinel"
+
+    provider.exec_agent.return_value = _result(verdict="PASS")
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "PASS"
+    assert "why3_repair_phase" not in state_store.load()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -2803,6 +3037,8 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
     assert "- `tasks_lexicon_pass` (boolean)" not in prompt
     assert "- `tasks_lexicon_attempts` (integer)" in prompt
     assert "Allowed verdicts: `COMPLETE`, `BLOCKED`" in prompt
+    assert "Operate in **PLAN2** mode." in prompt
+    assert "Operate in **first-pass** planning mode." not in prompt
     assert "quality_scores" not in prompt
 
 
@@ -3387,19 +3623,38 @@ def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
     assert "unsupported artifact 'unknown'" in result.state_updates["blocked_reason"]
 
 
-def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):
+@pytest.mark.parametrize("valid_coverage", [True, False])
+@pytest.mark.parametrize("tasks_exist", [True, False])
+def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(
+    tmp_path, valid_coverage, tasks_exist
+):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
-    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "spec.md").write_text(
+        "# Spec\n- **FR-001**: Create an element.\n", encoding="utf-8"
+    )
+    if tasks_exist:
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+            "  **Named Test Ownership:** `UT-001`.\n",
+            encoding="utf-8",
+        )
 
     shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
     shadow_spec_dir.mkdir(parents=True)
     (shadow_spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
     (shadow_spec_dir / "test-architecture.md").write_text("# Test Architecture\n", encoding="utf-8")
-    (shadow_spec_dir / "coverage-map.md").write_text("# Coverage Map\n", encoding="utf-8")
+    coverage = "# Coverage Map\n"
+    if valid_coverage:
+        coverage += (
+            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+        )
+    (shadow_spec_dir / "coverage-map.md").write_text(coverage, encoding="utf-8")
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -3441,11 +3696,19 @@ def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_pat
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "COMPLETE"
+    if valid_coverage:
+        assert result.verdict == "COMPLETE"
+        recovery_updates = result.state_updates
+    else:
+        assert isinstance(result, ExecutorBlockedResult)
+        assert result.reason == "invalid_phase_outputs"
+        assert result.result.verdict == "BLOCKED"
+        assert result.result.state_updates["invalid_outputs"][0]["path"] == "coverage-map.md"
+        recovery_updates = result.result.state_updates["recovery_state_updates"]
     assert (spec_dir / "test-strategy.md").exists()
     assert (spec_dir / "test-architecture.md").exists()
-    assert (spec_dir / "coverage-map.md").exists()
-    assert result.state_updates["shadow_output_recovered"] == [
+    assert (spec_dir / "coverage-map.md").read_text(encoding="utf-8") == coverage
+    assert recovery_updates["shadow_output_recovered"] == [
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
@@ -3504,3 +3767,77 @@ def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output
     assert isinstance(result, ExecutorBlockedResult)
     assert result.reason == "missing_phase_outputs"
     assert not (spec_dir / "test-strategy.md").exists()
+
+
+@pytest.mark.parametrize("render_mode", ["legacy", "bounded"])
+def test_how_repair_prompt_has_current_issue_checklist_not_retired_selection(tmp_path, monkeypatch, render_mode):
+    monkeypatch.setenv("ECHELON_CONTEXT_RENDER_MODE", render_mode)
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+    (spec / "issues.md").write_text("CURRENT-GEOMETRY-REPAIR: define samples from scene fixtures")
+    (spec / "tasks.md").write_text("G-VIS-CHECKLIST: initial and restored camera fixtures")
+    state = {"phase": "phase3-how", "why3_verdict": "FAIL", "spec_dir": str(spec),
+        "why3_repair_phase": "phase3-how", "selected_issue_resolution": "ISS-A",
+        "issue_resolution_ledger": {"ISS-A": {"status": "repaired", "repair_phase": "phase3-how",
+            "title": "OLD-ENUM-REPAIR", "decision": "Add ignored"}}}
+    prompt = _executor(tmp_path)._assemble_prompt(PhaseNode(id="phase3-how", type="agent"), state)
+    assert "CURRENT-GEOMETRY-REPAIR" in prompt
+    assert "G-VIS-CHECKLIST" in prompt
+    assert "Issue: ISS-A — OLD-ENUM-REPAIR" not in prompt
+
+
+def test_how_repair_missing_current_issues_is_not_silently_dispatched(tmp_path):
+    from harness.phase3_repair import RepairContractError
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "spec.md").write_text("Visible anatomy")
+    with pytest.raises(RepairContractError, match="issues.md"):
+        _executor(tmp_path)._assemble_prompt(PhaseNode(id="phase3-how", type="agent"), {
+            "phase": "phase3-how", "why3_verdict": "FAIL", "why3_repair_phase": "phase3-how", "spec_dir": str(spec)})
+
+
+@pytest.mark.parametrize("autonomy_mode", ["banzai", "semi", "guided"])
+def test_phase3_plan_after_assess2_repair_reconciles_before_fresh_consensus(
+    tmp_path, autonomy_mode
+):
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+    (spec / "issues.md").write_text("G-VIS: repair the occluded torso sample.")
+    (spec / "plan.md").write_text("Use the repaired upper-torso sample.")
+    (spec / "tasks.md").write_text("T-001 consumes G-VIS.")
+    (spec / "implementability-report.md").write_text(
+        "ASSESS2 rejected the superseded torso-centre sample."
+    )
+    state = {
+        "phase": "phase3-plan",
+        "autonomy_mode": autonomy_mode,
+        "why3_verdict": "PASS",
+        "assess2_verdict": "REJECTED",
+        "phase_recommendation": "phase3-how",
+        "spec_dir": str(spec),
+    }
+
+    prompt = _executor(tmp_path)._assemble_prompt(
+        PhaseNode(id="phase3-plan", type="agent"), state
+    )
+
+    assert "Operate in **first-pass** planning mode." in prompt
+    assert "ASSESS2 rejected the superseded torso-centre sample" in prompt
+    assert "superseded gate evidence is repair input, not a current dispatch blocker" in prompt
+    assert "return `COMPLETE` so fresh consensus can reassess the complete candidate" in prompt
+
+
+def test_ordinary_phase3_plan_declares_first_pass_mode_without_repair_handoff(tmp_path):
+    spec = tmp_path / "run" / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("Preserve visible anatomy.")
+
+    prompt = _executor(tmp_path)._assemble_prompt(
+        PhaseNode(id="phase3-plan", type="agent"),
+        {"phase": "phase3-plan", "spec_dir": str(spec)},
+    )
+
+    assert "Operate in **first-pass** planning mode." in prompt
+    assert "superseded gate evidence is repair input" not in prompt

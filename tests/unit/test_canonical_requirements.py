@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from harness.canonical_requirements import (
+    extract_canonical_requirements,
     write_canonical_requirements,
     write_requirement_audit,
 )
@@ -73,6 +74,26 @@ def test_write_canonical_requirements_extracts_stable_ids_from_spec_inputs(tmp_p
     assert "| FR-005 | task_metadata | tasks.md |" in markdown
 
 
+def test_explicit_requirement_definition_supersedes_earlier_reference(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **AC-001**: Boundary behavior. Verification: FR-014.\n"
+        "- **FR-014**: Apply the inclusive boundary.\n",
+        encoding="utf-8",
+    )
+
+    rows = {row.id: row for row in extract_canonical_requirements(spec_dir)}
+
+    assert rows["FR-014"].source_line == 2
+    assert rows["FR-014"].source_text == (
+        "- **FR-014**: Apply the inclusive boundary."
+    )
+    assert rows["AC-001"].source_line == 1
+
+
 def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
     tmp_path,
 ):
@@ -97,6 +118,27 @@ def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
     assert result.count == 1
     payload = json.loads((verify_run_dir / "canonical-requirements.json").read_text())
     assert [row["id"] for row in payload["requirements"]] == ["FR-001"]
+
+
+def test_canonical_requirements_do_not_extract_suffixes_from_test_case_ids(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Users can collect an item.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement | Test cases |\n"
+        "| --- | --- |\n"
+        "| FR-001 | E2E-EDGE-001; UT-AC-002; E2E-FR-003 |\n",
+        encoding="utf-8",
+    )
+
+    rows = extract_canonical_requirements(spec_dir)
+
+    assert [row.id for row in rows] == ["FR-001"]
 
 
 def test_write_canonical_requirements_supports_suffix_ids_without_inventing_ranges(

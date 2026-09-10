@@ -664,6 +664,42 @@ def test_merges_shared_identity_and_adds_workspace_relationships(
 
 
 @pytest.mark.unit
+def test_declared_target_path_without_source_registry_creates_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "sources" / "browser-3d-game"
+    target.mkdir(parents=True)
+    target.joinpath("package.json").write_text('{"name":"game"}\n', encoding="utf-8")
+    _write_config(tmp_path)
+    spec_dir = _spec_dir(tmp_path, "003-browser-game")
+    spec_dir.joinpath("targets.yml").write_text(
+        "schema_version: 1\n"
+        "targets:\n"
+        "  - id: browser-3d-game\n"
+        "    path: sources/browser-3d-game\n"
+        "    role: primary\n",
+        encoding="utf-8",
+    )
+    _write_member_graph(spec_dir, _member_graph("003-browser-game"))
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    nodes = {node.id: node for node in result.graph.nodes}
+    edges = {(edge.source, edge.type, edge.target) for edge in result.graph.edges}
+
+    snapshot = next(node for node in nodes.values() if node.type == "SourceSnapshot")
+    assert snapshot.properties["path"] == "sources/browser-3d-game"
+    assert snapshot.properties["resolution_source"] == "targets.yml"
+    assert snapshot.properties["source_fingerprint"].startswith("sha256:")
+    assert ("spec:003-browser-game", "TARGETS", snapshot.id) in edges
+    assert not [issue for issue in result.issues if issue.code == "target_unresolved"]
+
+
+@pytest.mark.unit
 def test_workspace_graph_deduplicates_re_source_topology(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

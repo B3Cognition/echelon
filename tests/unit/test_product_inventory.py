@@ -170,6 +170,30 @@ def test_product_evidence_fingerprint_ignores_control_plane_but_tracks_product(
     assert product_evidence_fingerprint(project) != original
 
 
+def test_product_evidence_fingerprint_ignores_root_gitignore_only(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-b", "main")
+    (project / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (project / ".gitignore").write_text("test-results/\n", encoding="utf-8")
+    nested = project / "fixture"
+    nested.mkdir()
+    (nested / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
+    _git(project, "add", "app.py", ".gitignore", "fixture/.gitignore")
+
+    original = product_evidence_fingerprint(project)
+    (project / ".gitignore").write_text(
+        "test-results/\nplaywright-report/\n",
+        encoding="utf-8",
+    )
+    assert product_evidence_fingerprint(project) == original
+
+    (nested / ".gitignore").write_text("*.cache\n", encoding="utf-8")
+    assert product_evidence_fingerprint(project) != original
+
+
 def test_product_evidence_fingerprint_ignores_verifier_output_roots(
     tmp_path: Path,
 ) -> None:

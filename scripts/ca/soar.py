@@ -368,6 +368,16 @@ def _build_chunk(matched_rule: dict, run_id: str, cycle: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def enrich_context(context_pack: dict, run_id: str) -> dict:
+    """Retired overlay: preserve regular context without learning or writes."""
+    return dict(context_pack)
+
+
+def update_soar_memory(outcome: dict, run_id: str) -> None:
+    """Retired learning hook, retained as a no-op for existing callers."""
+    return None
+
+
+def _retired_enrich_context(context_pack: dict, run_id: str) -> dict:
     """Run a Match-Select-Apply cycle and inject soar_state into context_pack.
 
     ADR-005 public interface. Position 6 in the COMMANDER pre-dispatch sequence.
@@ -413,7 +423,7 @@ def enrich_context(context_pack: dict, run_id: str) -> dict:
     return enriched
 
 
-def update_soar_memory(outcome: dict, run_id: str) -> None:
+def _retired_update_soar_memory(outcome: dict, run_id: str) -> None:
     """Post-dispatch learning hook: create ChunkRecord on successful outcome.
 
     ADR-005 public interface. Called by COMMANDER after each agent dispatch.

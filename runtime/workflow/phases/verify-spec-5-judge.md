@@ -12,6 +12,7 @@ Provide SPEC-GUARD with:
 - `{verify_run_dir}/judgment-prepass.md`
 - `{verify_run_dir}/coverage-evidence.json`
 - `{verify_run_dir}/coverage-evidence.md`
+- `{verify_run_dir}/coverage-observation-context.json` when present
 - fulfillment checklist
 - implementation evidence map
 - `spec.md`
@@ -84,11 +85,15 @@ Active ledger-backed deferrals are already mechanical `DEFERRED_SCOPE` rows and
 must not appear in the fallback queue. Do not inspect, debate, or describe them
 as implementation gaps.
 
-Coverage evidence is deterministic and precedes agent judgment. Never upgrade
-a `coverage_deferred`, `coverage_escalated`, `coverage_missing`, or
-`coverage_contradictory` pre-pass result based on implementation-map confidence,
-task checkboxes, or source inspection. The listed task and test-case IDs are
-mandatory repair context for the delivery loop.
+Coverage evidence is deterministic and precedes agent judgment. A strict-stack
+`coverage_observed_passed` row is already mechanically backed by Ralph's
+immutable per-case sandbox observation, even if the implementation map records
+only medium structural confidence. Never replace that result with a declaration
+of strong evidence. Conversely, never upgrade `coverage_deferred`,
+`coverage_escalated`, `coverage_missing`, `coverage_contradictory`, or an
+unobserved strict row based on implementation-map confidence, task checkboxes,
+or source inspection. The listed task and test-case IDs are mandatory repair
+context for the delivery loop.
 
 Use `{verify_run_dir}/canonical-requirements.json` as the only allowed
 requirement row set. Judge every canonical ID exactly once. Do not add report

@@ -1,4 +1,10 @@
 # Phase: phase3-how
+
+When returning from an ASSESS2 rejection, the harness supplies the current
+`implementability-report.md` as required repair context, even if WHY3 passed.
+Address its concrete feasibility findings without weakening product requirements.
+An independent selected-issue closure does not resolve another gate's rejection;
+fresh consensus must reassess the repaired candidate.
 # Source: echelon.run.md §8 — HOW Phase (Architecture)
 # Agent: echelon.architect (ARCHITECT)
 # Read by: echelon.commander (COMMANDER) before dispatching echelon.architect (ARCHITECT)
@@ -21,6 +27,15 @@ Read and include in the subagent prompt:
 - `reasoning-journal.jsonl`
 
 ### Dispatch
+
+On a Phase 3 repair, the harness supplies a mandatory current repair handoff:
+`issues.md`, the current architecture/contracts, test strategy and tasks, plus
+consensus challenge history. Address the current finding assigned to ARCHITECT;
+do not repeat a previously submitted repair merely because its old decision is
+still in the journal. A submitted repair awaits independent SAGE review. Preserve
+validated requirements, distinguish observed facts from proposed mechanisms, and
+request an owner handoff for changes outside ARCHITECT's artifacts. Missing
+required repair context is a context failure, not permission to invent an answer.
 
 The active runtime dispatches this role with the following request:
 

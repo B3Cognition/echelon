@@ -649,10 +649,12 @@ def test_phase1_what_consumes_discovery_artifacts_in_place():
     assert "${STAGING_DIR}/user-clarifications.md" in text
 
 
-def test_constitution_prompt_keeps_canonical_workspace_output():
+def test_constitution_prompt_uses_controller_publishable_run_local_draft():
     prompt = RUNTIME_ROOT / "workflow" / "phases" / "phase1-constitution.md"
+    text = prompt.read_text()
 
-    assert ".echelon/constitution.md" in prompt.read_text()
+    assert "${SQUAD_DIR}/constitution.draft.md" in text
+    assert ".echelon/constitution.md" not in text
 
 
 def test_phase2_decide_routes_kill_status_through_echelon_result():

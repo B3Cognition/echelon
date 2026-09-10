@@ -33,6 +33,12 @@ def test_runnability_browser_3d_with_persistence_requires_all_service_observatio
     )
     assert "local_journey" in resolved.runnability.capabilities
     assert "DATABASE_URL" in resolved.services[0].environment_names
+    assert resolved.runnability.local_runner.profiles == ("macos-compose-v1",)
+    assert resolved.runnability.local_runner.allowed_services == ("postgres",)
+    assert resolved.runnability.local_runner.environment_bindings == (
+        ("DATABASE_URL", "postgres_url"),
+        ("TEST_DATABASE_URL", "postgres_url"),
+    )
 
 
 @pytest.mark.unit
@@ -42,6 +48,7 @@ def test_runnability_browser_wasm_requires_linux_container_user_journey() -> Non
     assert resolved.runnability.policy == "required"
     assert resolved.runnability.runner == "linux_container"
     assert "browser_dom" in resolved.runnability.required_observations
+    assert resolved.runnability.local_runner.profiles == ("macos-compose-v1",)
 
 
 @pytest.mark.unit

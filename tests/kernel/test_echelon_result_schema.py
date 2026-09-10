@@ -368,6 +368,25 @@ def test_evidence_route_requires_actionable_declared_reference_request():
         )
 
 
+def test_finding_routes_accept_the_controller_owned_banzai_default_route():
+    validate_evidence_routing_state_updates(
+        {
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [
+                    {
+                        "issue_id": "ISS-001",
+                        "route": "autonomous_default_candidate",
+                        "rationale": "A bounded product calibration is unresolved.",
+                    }
+                ]
+            },
+        },
+        verdict="STOP_AND_ASK",
+        require_finding_routes=True,
+    )
+
+
 def test_result_contract_rejects_unstructured_pending_evidence_route():
     contract = EchelonResultContract(
         allowed_state_update_keys=frozenset({

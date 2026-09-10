@@ -70,6 +70,66 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     assert result is None
 
 
+def test_commit_is_ancestor_of_default_checks_the_mirror_default_branch(tmp_path):
+    """Stale-checkpoint recovery must query the target mirror, not a worktree."""
+    gitops = _make_gitops(tmp_path)
+    gitops._mirror_path.mkdir(parents=True)
+    commit = "a" * 40
+
+    with patch.object(gitops, "get_default_branch", return_value="main"), patch(
+        "harness.gitops._run_git",
+        return_value=SimpleNamespace(returncode=0),
+    ) as run_git:
+        assert gitops.commit_is_ancestor_of_default(commit) is True
+
+    run_git.assert_called_once_with(
+        ["merge-base", "--is-ancestor", commit, "main"],
+        cwd=str(gitops._mirror_path),
+        check=False,
+    )
+
+
+def test_commit_excludes_ignored_verification_artifacts_after_staging(tmp_path):
+    """Checkpoint commits retain source changes when tracked test-results are ignored."""
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    results = repo / "test-results"
+    results.mkdir()
+    (repo / ".gitignore").write_text("/test-results/\n", encoding="utf-8")
+    (repo / "source.txt").write_text("before\n", encoding="utf-8")
+    (results / "trace.zip").write_text("generated\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "-f", ".gitignore", "source.txt", "test-results/trace.zip"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+    (repo / "source.txt").write_text("after\n", encoding="utf-8")
+    (results / "trace.zip").unlink()
+
+    gitops = _make_gitops(tmp_path)
+    gitops.commit(str(repo), "checkpoint", exclude_paths=("test-results/**",))
+
+    committed = subprocess.run(
+        ["git", "show", "--format=", "--name-status", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "M\tsource.txt" in committed
+    assert "test-results/trace.zip" not in committed
+    assert subprocess.run(
+        ["git", "diff", "--name-only"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() == "test-results/trace.zip"
+
+
 def test_destroy_worktree_reports_git_failure_when_given_path(tmp_path, caplog):
     """A failed cleanup with a Path preserves Git's diagnostic instead of raising TypeError."""
     gitops = _make_gitops(tmp_path)

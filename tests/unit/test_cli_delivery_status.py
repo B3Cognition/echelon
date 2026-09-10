@@ -13,6 +13,7 @@ def _write_delivery_state(
     *,
     strategy: str = "default",
     user_runnability: dict | None = None,
+    coverage_observation: dict | None = None,
 ) -> Path:
     state_dir = project_root / "runs" / "build-20260710-101500-000000" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -36,6 +37,8 @@ def _write_delivery_state(
             }
     if user_runnability is not None:
         payload["user_runnability"] = user_runnability
+    if coverage_observation is not None:
+        payload["coverage_observation"] = coverage_observation
     state_file.write_text(
         json.dumps(payload, indent=2),
         encoding="utf-8",
@@ -136,13 +139,23 @@ def test_build_blocked_status_matches_executable_fresh_run_recovery() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("status", ["initialized", "running", "interrupted"])
+@pytest.mark.parametrize("status", ["initialized", "interrupted"])
 def test_non_blocked_status_matches_delivery_run_dispatch(status: str) -> None:
     from echelon.cli import _delivery_status_next_step
 
     next_step = _delivery_status_next_step({"status": status}, "001")
 
     assert next_step == "echelon delivery run 001"
+
+
+@pytest.mark.unit
+def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
+    from echelon.cli import _delivery_status_next_step
+
+    next_step = _delivery_status_next_step({"status": "running"}, "001")
+
+    assert next_step == "delivery is active; monitor with echelon delivery status 001"
+    assert "delivery run" not in next_step
 
 
 @pytest.mark.unit
@@ -175,6 +188,50 @@ def test_delivery_status_shows_failed_runnability_action(
     assert "missing_local_auth_bootstrap" in output
     assert "/runs/report.md" in output
     assert "delivery will repair this current-spec product gap" in output
+
+
+@pytest.mark.unit
+def test_delivery_status_shows_strict_coverage_observation_summary(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_delivery_status
+
+    _write_delivery_state(
+        tmp_path,
+        coverage_observation={
+            "status": "passed",
+            "requirements_observed": 3,
+            "requirements_total": 3,
+            "observers": {
+                "playwright-e2e": {"status": "passed", "execution_count": 2},
+                "vitest-core": {"status": "passed", "execution_count": 4},
+            },
+            "fingerprints": {
+                "candidate_fingerprint": "product",
+                "coverage_map_hash": "map",
+                "resolved_stack_hash": "stack",
+                "observer_plan_hash": "observer-plan",
+                "runnability_contract_hash": "contract",
+            },
+        },
+    )
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    payload = json.loads(capsys.readouterr().out)["latest"]
+    assert payload["coverage_observation"]["requirements_observed"] == 3
+    assert payload["coverage_observation"]["observers"]["vitest-core"] == {
+        "passed": 4,
+        "total": 4,
+    }
+    assert payload["coverage_observation"]["fingerprint_tuple_complete"] is True
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+    output = capsys.readouterr().out
+    assert "3 / 3 requirements observed" in output
+    assert "playwright-e2e: 2/2 passed" in output
+    assert "vitest-core: 4/4 passed" in output
+    assert "product + map + stack + observer-plan + contract match" in output
 
 
 @pytest.mark.unit
@@ -350,6 +407,34 @@ def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.Capt
 
 
 @pytest.mark.unit
+def test_delivery_status_reports_dead_running_lock_as_interrupted(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An abruptly lost delivery process must not look active to an operator."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "running"
+    state["termination_reason"] = None
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    state_file.with_suffix(".lock").write_text(
+        "pid=999999999\ntimestamp=2026-07-10T10:15:00+00:00\nrun_id=lost\n",
+        encoding="utf-8",
+    )
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["status"] == "interrupted"
+    assert latest["termination_reason"] == "execution_lost"
+    assert latest["next"] == "echelon delivery run 001"
+    assert latest["execution"] == "process exited; checkpoint preserved"
+    assert json.loads(state_file.read_text(encoding="utf-8"))["status"] == "running"
+
+
+@pytest.mark.unit
 def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -496,3 +581,75 @@ def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budge
     payload = json.loads(capsys.readouterr().out)
     assert payload["latest"]["next"].startswith("echelon delivery run 001")
     assert "escalation" not in payload["latest"]
+
+
+@pytest.mark.unit
+def test_delivery_status_keeps_matching_local_pass_after_later_preflight_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A host preflight retry must not erase a content-matching earlier pass."""
+    from harness.local_runner_candidate import EffectiveLocalCandidate
+    from harness.local_runner_evidence import (
+        LocalRunnabilityAttestationInput,
+        local_runner_profile_digest,
+        write_local_runnability_attestation,
+    )
+
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    stack_snapshot = {
+        "schema_version": 1,
+        "resolved_stack_hash": "e" * 64,
+        "observer_plan_hash": "f" * 64,
+        "resolved": {"runnability": {"local_runner": {"profiles": ["macos-compose-v1"]}}},
+    }
+    state["delivery_stack_snapshot"] = stack_snapshot
+    state["coverage_observation"] = {
+        "status": "passed",
+        "fingerprints": {
+            "candidate_fingerprint": "a" * 64,
+            "runnability_contract_hash": "d" * 64,
+            "resolved_stack_hash": "e" * 64,
+            "observer_plan_hash": "f" * 64,
+        },
+        "ref": {"receipt_sha256": "1" * 64},
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    candidate = EffectiveLocalCandidate(
+        build_id="build-20260710-101500-000000",
+        sandbox_candidate_commit="b" * 40,
+        effective_candidate_commit="c" * 40,
+        product_fingerprint="a" * 64,
+        contract_hash="d" * 64,
+        stack_hash="e" * 64,
+        observer_plan_hash="f" * 64,
+        sandbox_receipt_sha256="1" * 64,
+        mirror_path=tmp_path / "runs" / "mirror.git",
+        stack_snapshot=stack_snapshot,
+    )
+    evidence_root = state_file.parents[1] / "evidence" / "local-runnability"
+    for sequence, status in ((1, "passed"), (2, "host_preflight_failed")):
+        write_local_runnability_attestation(
+            evidence_root,
+            LocalRunnabilityAttestationInput(
+                status=status,
+                candidate=candidate,
+                sandbox_receipt_sha256="1" * 64,
+                runner_profile_digest=local_runner_profile_digest(candidate),
+                cleanup_complete=status == "passed",
+                redacted_logs="safe",
+                attempt_sequence=sequence,
+                local_run_id=f"local-{('a' if sequence == 1 else 'b') * 32}",
+            ),
+        )
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+
+    output = capsys.readouterr().out
+    assert "local verification" in output
+    assert "passed" in output
+    assert "last local attempt" in output
+    assert "host_preflight_failed" in output

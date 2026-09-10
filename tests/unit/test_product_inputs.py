@@ -1094,6 +1094,26 @@ def test_unsupported_file_and_escaping_symlink_block_preflight(tmp_path: Path) -
         resolve_product_inputs(project, project / "runs/run-1", [parse_input_declaration("requirement:input")])
 
 
+def test_extensionless_png_reference_is_accepted_by_content_signature(tmp_path: Path) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "input" / "version_01"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"\x89PNG\r\n\x1a\nimage-data")
+
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("reference:sources/input")],
+    )
+
+    manifest = json.loads(resolution.manifest_path.read_text(encoding="utf-8"))
+    accepted = [item for item in manifest["resources"] if item["status"] == "accepted"]
+    assert accepted[0]["source_locator"] == "sources/input/version_01"
+    assert accepted[0]["media_type"] == "image/png"
+
+
 def test_figma_bundle_is_accepted_and_url_requires_connector(tmp_path: Path) -> None:
     from echelon.product_inputs import ProductInputError, parse_input_declaration, resolve_product_inputs
 

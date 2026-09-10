@@ -29,7 +29,7 @@ from harness.stacks.resolver import ResolvedStacks, resolved_stack_contract_sha2
 from harness.verification_plan import materialize_services
 
 
-_BROWSER_HELPER = "/workspace/.echelon/runtime/scripts/user-runnability-browser.mjs"
+_BROWSER_HELPER = "/tmp/echelon-user-runnability-browser.mjs"
 _PLAN_PATH = "/tmp/echelon-user-runnability-plan.json"
 _SERVICE_OBSERVATION = {
     "web": "browser_dom",
@@ -68,6 +68,7 @@ class RunnabilityRunner:
         target_id: str,
         strategy_id: str,
         build_id: str,
+        browser_helper: bytes | None = None,
     ) -> None:
         self._provider = provider
         self._sandbox_spec_factory = sandbox_spec_factory
@@ -75,6 +76,7 @@ class RunnabilityRunner:
         self._target_id = target_id
         self._strategy_id = strategy_id
         self._build_id = build_id
+        self._browser_helper = browser_helper
 
     def run(
         self,
@@ -224,6 +226,14 @@ class RunnabilityRunner:
             spec = self._sandbox_spec_factory(worktree)
             spec = replace(spec, env={**spec.env, **variables})
             handle = self._provider.create(spec)
+
+            if _requires_browser_helper(contract):
+                if self._browser_helper is None:
+                    raise _InfrastructureFailure(
+                        "sandbox_prerequisites",
+                        "Harness-owned browser runnability helper is unavailable.",
+                    )
+                self._provider.write_file(handle, _BROWSER_HELPER, self._browser_helper)
 
             prerequisite_commands = _sandbox_prerequisite_commands(resolved)
             if prerequisite_commands:
@@ -1038,6 +1048,13 @@ def _missing_stack_observation(
             if required not in kinds
         ),
         None,
+    )
+
+
+def _requires_browser_helper(contract: RunnabilityContract) -> bool:
+    return any(
+        observation.kind == "browser_dom"
+        for observation in contract.primary_journey.observations
     )
 
 

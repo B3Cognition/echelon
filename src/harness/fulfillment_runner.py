@@ -11,7 +11,15 @@ import subprocess
 import tempfile
 from typing import Mapping, Protocol
 
-from harness.canonical_requirements import INVENTORY_JSON
+from harness.canonical_requirements import (
+    INVENTORY_JSON,
+    canonical_requirement_fingerprint,
+    extract_canonical_requirements,
+)
+from harness.coverage_evidence import write_coverage_evidence
+from harness.coverage_observation import CoverageObservationResult
+from harness.deferred_scope import active_entries
+from harness.durable_json import write_json_atomic
 from harness.judgment_prepass import (
     assemble_fulfillment_report,
     write_judgment_prepass,
@@ -69,6 +77,11 @@ MEASURED_EVIDENCE_INPUT_DIRS = (
 )
 
 FULFILLMENT_VERIFIER_VERSION = "verified-ledger-v3-coverage-evidence"
+
+
+def fulfillment_contract_hash() -> str:
+    """Return the stable contract identity for verified-fulfillment rows."""
+    return hashlib.sha256(FULFILLMENT_VERIFIER_VERSION.encode("utf-8")).hexdigest()
 
 IMPLEMENTATION_INPUT_FILES = (
     "pyproject.toml",
@@ -170,6 +183,11 @@ class FulfillmentRunner:
         reconcile: bool = False,
         dry_run: bool = False,
         verification_evidence: Mapping[str, object] | None = None,
+        coverage_observation: CoverageObservationResult | None = None,
+        observer_required: bool = False,
+        verify_run_dir: Path | str | None = None,
+        source_id: str | None = None,
+        source_root: Path | str | None = None,
     ) -> FulfillmentRefreshResult:
         if dry_run and not reconcile:
             return FulfillmentRefreshResult(
@@ -185,6 +203,13 @@ class FulfillmentRunner:
             orchestration_root,
             explicit_spec_dir=spec_dir,
         )
+        if observer_required and coverage_observation is None:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope=scope,
+                reason="required coverage observation is missing or invalid",
+            )
         commit = _current_git_commit(worktree)
         evidence = _validated_verification_evidence(
             verification_evidence,
@@ -199,6 +224,11 @@ class FulfillmentRunner:
                 reason="verification evidence is invalid or stale",
             )
         evidence_sha256 = evidence.evidence_sha256 if evidence is not None else None
+        coverage_observation_sha256 = (
+            coverage_observation.ref.observation_sha256
+            if coverage_observation is not None
+            else None
+        )
         spec_input_hash = (
             _spec_input_hash(resolved_spec_dir)
             if resolved_spec_dir is not None
@@ -211,6 +241,7 @@ class FulfillmentRunner:
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
             verification_evidence_sha256=evidence_sha256,
+            coverage_observation_sha256=coverage_observation_sha256,
         )
         report = (
             latest_fulfillment_report(resolved_spec_dir)
@@ -233,6 +264,9 @@ class FulfillmentRunner:
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
                 verification_evidence=evidence,
+                coverage_observation=coverage_observation,
+                coverage_observation_sha256=coverage_observation_sha256,
+                observer_required=observer_required,
             )
         force_execution = reconcile or dry_run
         if not force_execution and _latest_full_report_matches_cache(
@@ -251,6 +285,8 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -272,7 +308,24 @@ class FulfillmentRunner:
             scope=scope,
             reconcile=reconcile,
             dry_run=dry_run,
+            verify_run_dir=verify_run_dir,
         )
+        try:
+            _prepare_coverage_observation_context(
+                verify_run_dir=artifact_policy.verify_run_dir,
+                spec_dir=resolved_spec_dir,
+                observation=coverage_observation,
+                observer_required=observer_required,
+            )
+        except (OSError, ValueError) as exc:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="full",
+                reason=f"required coverage observation context is invalid: {exc}",
+                cache_key=cache_key,
+                report_path=report_path,
+            )
         if not force_execution:
             direct_result = _try_direct_no_fallback_refresh(
                 worktree=worktree,
@@ -284,6 +337,10 @@ class FulfillmentRunner:
                 implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
+                coverage_observation=coverage_observation,
+                coverage_observation_sha256=coverage_observation_sha256,
+                observer_required=observer_required,
             )
             if direct_result is not None:
                 return direct_result
@@ -326,6 +383,8 @@ class FulfillmentRunner:
             prompt=prompt,
             policy=artifact_policy,
             verification_evidence=evidence,
+            source_id=source_id,
+            source_root=source_root,
         )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
@@ -355,6 +414,37 @@ class FulfillmentRunner:
                 report_path=report_path,
             )
         if exit_code == 0:
+            reconciliation_error = _complete_requested_progress_reconciliation(
+                artifact_policy
+            )
+            if reconciliation_error:
+                _block_verify_spec_lifecycle(
+                    artifact_policy.verify_run_dir, reconciliation_error
+                )
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason=f"verify-spec reconciliation failed: {reconciliation_error}",
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
+            lifecycle_error = _finalize_completed_verify_spec_lifecycle(
+                artifact_policy.verify_run_dir,
+                project_root=worktree,
+                policy=artifact_policy,
+                source_id=source_id,
+                source_root=source_root,
+            )
+            if lifecycle_error:
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason=lifecycle_error,
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
             if not _latest_report_matches_latest_audit(
                 worktree,
                 spec_id,
@@ -378,6 +468,7 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                coverage_observation_sha256=coverage_observation_sha256,
                 cache_key=cache_key,
             )
             report = (
@@ -406,6 +497,8 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=evidence_sha256,
+                verification_evidence=evidence,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -441,6 +534,9 @@ class FulfillmentRunner:
         implementation_input_hash: str | None,
         verification_evidence_sha256: str | None,
         verification_evidence: VerificationEvidenceRef | None,
+        coverage_observation: CoverageObservationResult | None,
+        coverage_observation_sha256: str | None,
+        observer_required: bool,
     ) -> FulfillmentRefreshResult:
         if spec_dir is None or commit is None:
             return FulfillmentRefreshResult(
@@ -462,6 +558,7 @@ class FulfillmentRunner:
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
             verification_evidence_sha256=verification_evidence_sha256,
+            coverage_observation_sha256=coverage_observation_sha256,
         )
         impacted_requirement_ids = tuple(
             sorted(set(plan.impacted_requirement_ids) | set(ledger_plan.rechecked_requirement_ids))
@@ -497,6 +594,8 @@ class FulfillmentRunner:
                         spec_input_hash=spec_input_hash,
                         implementation_input_hash=implementation_input_hash,
                         verification_evidence_sha256=verification_evidence_sha256,
+                        verification_evidence=verification_evidence,
+                        coverage_observation_sha256=coverage_observation_sha256,
                     )
                     return FulfillmentRefreshResult(
                         status="cached",
@@ -518,6 +617,8 @@ class FulfillmentRunner:
                         if verification_evidence is not None
                         else None
                     ),
+                    coverage_observation=coverage_observation,
+                    observer_required=observer_required,
                 )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -540,6 +641,8 @@ class FulfillmentRunner:
                     if verification_evidence is not None
                     else None
                 ),
+                coverage_observation=coverage_observation,
+                observer_required=observer_required,
             )
 
         skill_path = find_skill(
@@ -573,6 +676,21 @@ class FulfillmentRunner:
             scoped_ids=impacted_requirement_ids,
             base_full_verify_commit=plan.base_full_verify_commit,
         )
+        try:
+            _prepare_coverage_observation_context(
+                verify_run_dir=artifact_policy.verify_run_dir,
+                spec_dir=spec_dir,
+                observation=coverage_observation,
+                observer_required=observer_required,
+            )
+        except (OSError, ValueError) as exc:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="scoped",
+                reason=f"required coverage observation context is invalid: {exc}",
+                report_path=report_path,
+            )
         arguments += f" verify_run_dir={artifact_policy.verify_run_dir}"
         if verification_evidence is not None:
             arguments += (
@@ -655,6 +773,8 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 verification_evidence_sha256=verification_evidence_sha256,
+                verification_evidence=verification_evidence,
+                coverage_observation_sha256=coverage_observation_sha256,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -749,6 +869,7 @@ def _stamp_latest_report(
     spec_input_hash: str | None = None,
     implementation_input_hash: str | None = None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
     cache_key: str | None = None,
 ) -> None:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
@@ -772,6 +893,8 @@ def _stamp_latest_report(
         extra_metadata["implementation_input_hash"] = implementation_input_hash
     if verification_evidence_sha256:
         extra_metadata["verification_evidence_sha256"] = verification_evidence_sha256
+    if coverage_observation_sha256:
+        extra_metadata["coverage_observation_sha256"] = coverage_observation_sha256
     if cache_key:
         extra_metadata["verify_cache_key"] = cache_key
     stamp_fulfillment_report(
@@ -829,6 +952,10 @@ def _try_direct_no_fallback_refresh(
     implementation_input_hash: str,
     cache_key: str | None,
     verification_evidence_sha256: str | None,
+    verification_evidence: VerificationEvidenceRef | None,
+    coverage_observation: CoverageObservationResult | None,
+    coverage_observation_sha256: str | None,
+    observer_required: bool,
 ) -> FulfillmentRefreshResult | None:
     if spec_dir is None or commit is None:
         return None
@@ -845,6 +972,8 @@ def _try_direct_no_fallback_refresh(
         prepass = write_judgment_prepass(
             spec_dir=spec_dir,
             verify_run_dir=verify_run_dir,
+            coverage_observation=coverage_observation,
+            observer_required=observer_required,
         )
         if prepass.fallback_count:
             return None
@@ -897,6 +1026,7 @@ def _try_direct_no_fallback_refresh(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         verification_evidence_sha256=verification_evidence_sha256,
+        coverage_observation_sha256=coverage_observation_sha256,
         cache_key=cache_key,
     )
     if not fulfillment_report_is_current(report, current_commit=commit):
@@ -915,6 +1045,8 @@ def _try_direct_no_fallback_refresh(
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         verification_evidence_sha256=verification_evidence_sha256,
+        verification_evidence=verification_evidence,
+        coverage_observation_sha256=coverage_observation_sha256,
     )
     return FulfillmentRefreshResult(
         status="refreshed",
@@ -976,10 +1108,30 @@ def _spec_input_hash(spec_dir: Path | None) -> str | None:
         digest.update(b"\0")
         if path.is_file():
             digest.update(b"1\0")
-            digest.update(path.read_bytes())
+            digest.update(_normalized_scope_input_bytes(filename, path))
         else:
             digest.update(b"0\0")
     return digest.hexdigest()
+
+
+def _normalized_scope_input_bytes(filename: str, path: Path) -> bytes:
+    """Exclude lifecycle-only status transitions from fulfillment provenance."""
+    content = path.read_text(encoding="utf-8")
+    if filename == "spec.md":
+        content = re.sub(
+            r"\A(---\n.*?^status:\s*)[^\n]*(\n---)",
+            r"\1<lifecycle>\2",
+            content,
+            count=1,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        content = re.sub(
+            r"(?m)^\*\*Status\*\*:\s*[^\n]*$",
+            "**Status**: <lifecycle>",
+            content,
+            count=1,
+        )
+    return content.encode("utf-8")
 
 
 def _implementation_input_hash(worktree: Path) -> str:
@@ -1024,6 +1176,8 @@ def _write_verified_fulfillment_ledger(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    verification_evidence: Mapping[str, object] | VerificationEvidenceRef | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> dict[str, int] | None:
     if (
         spec_dir is None
@@ -1033,12 +1187,44 @@ def _write_verified_fulfillment_ledger(
     ):
         return None
     artifact_hashes = _implementation_artifact_hashes(worktree)
+    receipt = None
+    if isinstance(verification_evidence, VerificationEvidenceRef):
+        raw_receipt = verification_evidence
+        receipt = _validated_verification_evidence(
+            raw_receipt.as_mapping(),
+            worktree=worktree,
+            candidate_commit=raw_receipt.candidate_commit,
+        )
+    elif isinstance(verification_evidence, Mapping):
+        try:
+            raw_receipt = VerificationEvidenceRef.from_mapping(verification_evidence)
+        except (TypeError, ValueError):
+            raw_receipt = None
+        if raw_receipt is not None:
+            receipt = _validated_verification_evidence(
+                verification_evidence,
+                worktree=worktree,
+                candidate_commit=raw_receipt.candidate_commit,
+            )
+    fingerprint = product_evidence_fingerprint(worktree) if receipt is not None else ""
+    verifier_version = _ledger_verifier_version(
+        verification_evidence_sha256,
+        coverage_observation_sha256,
+    )
+    requirement_set_fingerprint = canonical_requirement_fingerprint(
+        extract_canonical_requirements(spec_dir)
+    )
+    contract_hash = fulfillment_contract_hash()
     ledger = build_verified_ledger(
         report_path=report,
         spec_input_hash=spec_input_hash,
         implementation_input_hash=implementation_input_hash,
         artifact_hashes=artifact_hashes,
-        verifier_version=_ledger_verifier_version(verification_evidence_sha256),
+        verifier_version=verifier_version,
+        receipt_refs=(receipt.as_mapping(),) if receipt is not None else (),
+        candidate_content_fingerprint=fingerprint,
+        contract_hash=contract_hash,
+        requirement_set_fingerprint=requirement_set_fingerprint,
     )
     write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
     plan = plan_verified_ledger_reuse(
@@ -1046,9 +1232,7 @@ def _write_verified_fulfillment_ledger(
         current_spec_input_hash=spec_input_hash,
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
-        current_verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256
-        ),
+        current_verifier_version=verifier_version,
     )
     return {
         "reused": len(plan.reused_requirement_ids),
@@ -1066,6 +1250,7 @@ def _verified_ledger_reuse_plan(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> VerifiedLedgerReusePlan:
     if report is None or spec_input_hash is None or implementation_input_hash is None:
         return VerifiedLedgerReusePlan(
@@ -1085,7 +1270,8 @@ def _verified_ledger_reuse_plan(
             implementation_input_hash=implementation_input_hash,
             artifact_hashes=artifact_hashes,
             verifier_version=_ledger_verifier_version(
-                verification_evidence_sha256
+                verification_evidence_sha256,
+                coverage_observation_sha256,
             ),
         )
     return plan_verified_ledger_reuse(
@@ -1094,7 +1280,8 @@ def _verified_ledger_reuse_plan(
         current_implementation_input_hash=implementation_input_hash,
         current_artifact_hashes=artifact_hashes,
         current_verifier_version=_ledger_verifier_version(
-            verification_evidence_sha256
+            verification_evidence_sha256,
+            coverage_observation_sha256,
         ),
     )
 
@@ -1134,7 +1321,11 @@ def _implementation_input_paths(worktree: Path) -> list[Path]:
         if not root.exists():
             continue
         for path in root.rglob("*.json"):
-            if path.is_file() and not _is_ignored_implementation_path(path):
+            if (
+                path.is_file()
+                and not path.name.startswith(".")
+                and not _is_ignored_implementation_path(path)
+            ):
                 paths.add(path)
     for filename in IMPLEMENTATION_INPUT_FILES:
         path = worktree / filename
@@ -1169,6 +1360,7 @@ def _verify_cache_key(
     spec_input_hash: str | None,
     implementation_input_hash: str | None,
     verification_evidence_sha256: str | None = None,
+    coverage_observation_sha256: str | None = None,
 ) -> str | None:
     if commit is None or spec_input_hash is None or implementation_input_hash is None:
         return None
@@ -1183,13 +1375,59 @@ def _verify_cache_key(
     digest.update(implementation_input_hash.encode("utf-8"))
     digest.update(b"\0")
     digest.update((verification_evidence_sha256 or "").encode("utf-8"))
+    digest.update(b"\0")
+    digest.update((coverage_observation_sha256 or "").encode("utf-8"))
     return digest.hexdigest()
 
 
-def _ledger_verifier_version(verification_evidence_sha256: str | None) -> str:
-    if not verification_evidence_sha256:
-        return FULFILLMENT_VERIFIER_VERSION
-    return f"{FULFILLMENT_VERIFIER_VERSION}+host:{verification_evidence_sha256}"
+def _prepare_coverage_observation_context(
+    *,
+    verify_run_dir: Path,
+    spec_dir: Path | None,
+    observation: CoverageObservationResult | None,
+    observer_required: bool,
+) -> None:
+    """Freeze the Ralph-supplied observation for Python-owned workflow steps."""
+    if not observer_required or observation is None:
+        return
+    if spec_dir is None:
+        raise ValueError("required coverage observation has no spec directory")
+    canonical_ids = [item.id for item in extract_canonical_requirements(spec_dir)]
+    deferred_ids = {
+        item_id
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
+    write_coverage_evidence(
+        spec_dir=spec_dir,
+        verify_run_dir=verify_run_dir,
+        canonical_ids=canonical_ids,
+        deferred_ids=deferred_ids,
+        observation=observation,
+        observer_required=True,
+    )
+    write_json_atomic(
+        verify_run_dir / "coverage-observation-context.json",
+        {
+            "schema_version": 1,
+            "observer_required": True,
+            "coverage_observation": observation.ref.as_mapping(),
+        },
+        trusted_root=verify_run_dir,
+    )
+
+
+def _ledger_verifier_version(
+    verification_evidence_sha256: str | None,
+    coverage_observation_sha256: str | None = None,
+) -> str:
+    parts = [FULFILLMENT_VERIFIER_VERSION]
+    if verification_evidence_sha256:
+        parts.append(f"host:{verification_evidence_sha256}")
+    if coverage_observation_sha256:
+        parts.append(f"coverage:{coverage_observation_sha256}")
+    return "+".join(parts)
 
 
 def _provider_session_limit_reason(
@@ -1329,6 +1567,206 @@ class VerifySpecArtifactWritePolicy:
         return True
 
 
+def _finalize_completed_verify_spec_lifecycle(
+    verify_run_dir: Path,
+    *,
+    project_root: Path,
+    policy: VerifySpecArtifactWritePolicy,
+    source_id: str | None,
+    source_root: Path | str | None,
+) -> str:
+    """Reject a provider-success result whose Python-owned lifecycle is open.
+
+    Legacy test executors can return a report without executing a verify-spec
+    workflow, so there is no finalizable lifecycle to inspect.  A real workflow
+    stamps `fulfillment_artifacts: valid`; from that point a zero provider exit
+    must be accompanied by the deterministic completion transition.
+    """
+    state_path = verify_run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(state, dict) or state.get("fulfillment_artifacts") != "valid":
+        return ""
+    if state.get("status") == "complete":
+        return ""
+
+    if state.get("topology_evidence") not in {"ready", "degraded", "unavailable"}:
+        if policy.spec_dir is None or not source_id or source_root is None:
+            detail = "verify topology source binding is unavailable"
+            _block_verify_spec_lifecycle(verify_run_dir, detail)
+            return f"verify-spec lifecycle finalization failed: {detail}"
+        from harness.topology_evidence import (
+            TopologyEvidenceError,
+            write_topology_evidence_receipt,
+        )
+
+        try:
+            write_topology_evidence_receipt(
+                project_root,
+                verify_run_dir,
+                policy.spec_dir,
+                workspace_root=policy.workspace_root,
+                source_id=source_id,
+                source_root=Path(source_root),
+            )
+            _reopen_provider_topology_block(verify_run_dir)
+        except (OSError, ValueError, DurableJsonError, TopologyEvidenceError) as exc:
+            detail = f"verify topology evidence finalization failed: {exc}"
+            _block_verify_spec_lifecycle(verify_run_dir, detail)
+            return f"verify-spec lifecycle finalization failed: {detail}"
+
+    from harness.verify_spec_run import (
+        VerifySpecRunInitError,
+        block_verify_spec_run,
+        complete_verify_spec_run,
+    )
+
+    try:
+        complete_verify_spec_run(verify_run_dir)
+    except VerifySpecRunInitError as exc:
+        detail = str(exc)
+        try:
+            block_verify_spec_run(verify_run_dir, reason=detail)
+        except VerifySpecRunInitError as block_exc:
+            detail = f"{detail}; could not record blocked state: {block_exc}"
+        return f"verify-spec lifecycle finalization failed: {detail}"
+    return ""
+
+
+def _reopen_provider_topology_block(verify_run_dir: Path) -> None:
+    """Clear only the provider's now-resolved deterministic topology block."""
+    state_path = verify_run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict) or state.get("status") != "blocked":
+        return
+    if state.get("blocked_reason") != "verify topology evidence is not finalized":
+        return
+    state["status"] = "in_progress"
+    state.pop("blocked_at", None)
+    state.pop("blocked_reason", None)
+    write_json_atomic(state_path, state, trusted_root=verify_run_dir)
+
+
+def _complete_requested_progress_reconciliation(
+    policy: VerifySpecArtifactWritePolicy,
+) -> str:
+    """Run the deterministic reconciliation phase after the provider writes evidence.
+
+    This phase is declared commander-internal, so its completion cannot depend
+    on an LLM deciding to execute a trailing command after it has produced a
+    valid fulfillment report.
+    """
+    if policy.spec_dir is None:
+        return ""
+    state_path = policy.verify_run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return f"verify state is unavailable or malformed: {exc}"
+    if not isinstance(state, dict):
+        return "verify state must be a JSON object"
+    if state.get("reconcile") is not True:
+        return ""
+    if state.get("progress_reconciliation") in {"applied", "dry_run"}:
+        return ""
+
+    from harness.progress_reconciliation import (
+        reconcile_progress,
+        write_progress_reconciliation_candidates,
+    )
+    from harness.task_requirement_mapping import (
+        apply_task_requirement_mapping,
+        write_task_requirement_mapping_candidates,
+    )
+
+    tasks_path = policy.spec_dir / "tasks.md"
+    report_path = policy.spec_dir / "fulfillment-report.md"
+    gaps_path = policy.spec_dir / "fulfillment-gaps.md"
+    if not tasks_path.is_file() or not report_path.is_file():
+        return "tasks.md or fulfillment-report.md is missing"
+    dry_run = state.get("dry_run") is True
+    try:
+        mapping_candidates = write_task_requirement_mapping_candidates(
+            tasks_path=tasks_path,
+            out_path=policy.verify_run_dir / "task-requirement-map.candidates.json",
+        )
+        mapping_result = apply_task_requirement_mapping(
+            tasks_path=tasks_path,
+            candidate_path=policy.verify_run_dir / "task-requirement-map.candidates.json",
+            out_plan_json=policy.verify_run_dir / "task-requirement-map-plan.json",
+            out_plan_md=policy.verify_run_dir / "task-requirement-map-plan.md",
+            out_applied_json=None
+            if dry_run
+            else policy.verify_run_dir / "task-requirement-map-applied.json",
+            out_applied_md=None
+            if dry_run
+            else policy.verify_run_dir / "task-requirement-map-applied.md",
+            dry_run=dry_run,
+        )
+        progress_candidates = write_progress_reconciliation_candidates(
+            tasks_path=tasks_path,
+            fulfillment_report_path=report_path,
+            fulfillment_gaps_path=gaps_path,
+            out_path=policy.verify_run_dir / "progress-reconciliation-candidates.json",
+        )
+        progress_result = reconcile_progress(
+            tasks_path=tasks_path,
+            candidate_path=policy.verify_run_dir / "progress-reconciliation-candidates.json",
+            out_plan_json=policy.verify_run_dir / "progress-reconciliation-plan.json",
+            out_plan_md=policy.verify_run_dir / "progress-reconciliation-plan.md",
+            out_applied_json=None
+            if dry_run
+            else policy.verify_run_dir / "progress-reconciliation-applied.json",
+            out_applied_md=None
+            if dry_run
+            else policy.verify_run_dir / "progress-reconciliation-applied.md",
+            dry_run=dry_run,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return str(exc)
+
+    state.update(
+        {
+            "task_requirement_mapping_candidates": "ready",
+            "task_requirement_mapping_safe_count": len(
+                mapping_candidates["task_requirement_mappings"]
+            ),
+            "task_requirement_mapping_ambiguous_count": len(
+                mapping_candidates["ambiguous_task_requirement_mappings"]
+            ),
+            "task_requirement_mapping": "dry_run" if dry_run else "applied",
+            "task_requirement_mapping_applied_count": mapping_result.applied_count,
+            "progress_reconciliation_candidates": "ready",
+            "progress_reconciliation_safe_count": progress_result.safe_count,
+            "progress_reconciliation_ambiguous_count": progress_result.ambiguous_count,
+            "progress_reconciliation": "dry_run" if dry_run else "applied",
+            "progress_reconciliation_applied_count": progress_result.applied_count,
+        }
+    )
+    try:
+        from harness.durable_json import write_json_atomic
+
+        write_json_atomic(
+            state_path,
+            state,
+            trusted_root=policy.workspace_root,
+        )
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    return ""
+
+
+def _block_verify_spec_lifecycle(verify_run_dir: Path, reason: str) -> None:
+    from harness.verify_spec_run import VerifySpecRunInitError, block_verify_spec_run
+
+    try:
+        block_verify_spec_run(verify_run_dir, reason=reason)
+    except VerifySpecRunInitError:
+        pass
+
+
 def _verify_spec_artifact_write_policy(
     *,
     worktree: Path,
@@ -1341,36 +1779,55 @@ def _verify_spec_artifact_write_policy(
     base_full_verify_commit: str | None = None,
     reconcile: bool = False,
     dry_run: bool = False,
+    verify_run_dir: Path | str | None = None,
 ) -> VerifySpecArtifactWritePolicy:
     workspace_root = _run_pointer_root(
         worktree,
         spec_dir=spec_dir,
         orchestration_root=orchestration_root,
     ).resolve()
-    seed = (cache_key or hashlib.sha256(spec_id.encode("utf-8")).hexdigest())[:16]
-    timestamp = f"fulfillment-{scope}-{seed}"
-    if spec_dir is not None and (spec_dir / "spec.md").is_file():
-        verify_run_dir = init_verify_spec_run(
-            project_root=worktree,
-            spec_id=spec_id,
-            spec_dir=spec_dir,
-            verify_scope=scope,
-            scoped_ids=scoped_ids,
-            base_full_verify_commit=base_full_verify_commit,
-            reconcile=reconcile,
-            dry_run=dry_run,
-            timestamp=timestamp,
-        ).verify_run_dir.resolve()
+    if verify_run_dir is not None:
+        selected_run_dir = Path(verify_run_dir).expanduser().resolve()
+        try:
+            selected_run_dir.relative_to((workspace_root / "runs").resolve())
+        except ValueError as exc:
+            raise ValueError("caller-owned verify run is outside workspace runs") from exc
+        state_path = selected_run_dir / "state.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("caller-owned verify run state is unavailable") from exc
+        if not isinstance(state, dict) or state.get("status") != "in_progress":
+            raise ValueError("caller-owned verify run is not in progress")
+        if str(state.get("spec_id") or "") != spec_id:
+            raise ValueError("caller-owned verify run belongs to another spec")
+        if spec_dir is not None and Path(str(state.get("spec_dir") or "")).resolve() != spec_dir.resolve():
+            raise ValueError("caller-owned verify run belongs to another spec directory")
     else:
-        verify_run_dir = (
-            workspace_root / "runs" / f"verify-spec-{spec_id}-{timestamp}"
-        ).resolve()
-        verify_run_dir.mkdir(parents=True, exist_ok=True)
+        seed = (cache_key or hashlib.sha256(spec_id.encode("utf-8")).hexdigest())[:16]
+        timestamp = f"fulfillment-{scope}-{seed}"
+        if spec_dir is not None and (spec_dir / "spec.md").is_file():
+            selected_run_dir = init_verify_spec_run(
+                project_root=worktree,
+                spec_id=spec_id,
+                spec_dir=spec_dir,
+                verify_scope=scope,
+                scoped_ids=scoped_ids,
+                base_full_verify_commit=base_full_verify_commit,
+                reconcile=reconcile,
+                dry_run=dry_run,
+                timestamp=timestamp,
+            ).verify_run_dir.resolve()
+        else:
+            selected_run_dir = (
+                workspace_root / "runs" / f"verify-spec-{spec_id}-{timestamp}"
+            ).resolve()
+            selected_run_dir.mkdir(parents=True, exist_ok=True)
     return VerifySpecArtifactWritePolicy(
         workspace_root=workspace_root,
         spec_dir=spec_dir.resolve() if spec_dir is not None else None,
         spec_id=spec_id,
-        verify_run_dir=verify_run_dir,
+        verify_run_dir=selected_run_dir,
     )
 
 
@@ -1381,9 +1838,21 @@ def _exec_verify_spec_prompt(
     prompt: str,
     policy: VerifySpecArtifactWritePolicy,
     verification_evidence: VerificationEvidenceRef | None = None,
+    source_id: str | None = None,
+    source_root: Path | str | None = None,
 ) -> int:
     """Run fulfillment with narrowly scoped access to external artifacts."""
     from harness.llm_provider import AICodingCliProvider
+
+    topology_env = {
+        "ECHELON_WORKSPACE_ROOT": str(policy.workspace_root.resolve()),
+        "ECHELON_SOURCE_ROOT": str(
+            Path(source_root).resolve()
+            if source_root is not None
+            else Path(worktree_path).resolve()
+        ),
+        "ECHELON_SOURCE_ID": source_id or Path(worktree_path).resolve().name or ".",
+    }
 
     if not isinstance(prompt_executor, AICodingCliProvider):
         return prompt_executor.exec_prompt(worktree_path, prompt)
@@ -1410,6 +1879,7 @@ def _exec_verify_spec_prompt(
     result = prompt_executor.run_prompt_result(
         worktree_path,
         prompt,
+        extra_env=topology_env,
         request_metadata={
             "prompt_metadata": {
                 "tool_read_roots": read_roots,

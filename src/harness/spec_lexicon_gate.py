@@ -191,13 +191,19 @@ def _validate_spec_lexicon_artifacts(
     glossary_path: Path,
     artifact_type: str,
 ) -> dict[str, object]:
-    from lexicon.source_contract import source_contract_findings
+    from lexicon.source_contract import (
+        source_approved_terms,
+        source_contract_findings,
+    )
     from lexicon.validity import validate as validate_lexicon
 
     derived_text = derived_path.read_text(encoding="utf-8")
     validation = validate_lexicon(
         derived_text,
-        glossary=_load_glossary_terms(glossary_path),
+        glossary=(
+            _load_glossary_terms(glossary_path)
+            | source_approved_terms(source_path)
+        ),
         artifact_type=artifact_type,
     )
     raw_findings = [

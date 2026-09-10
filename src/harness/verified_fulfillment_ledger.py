@@ -27,6 +27,11 @@ class VerifiedLedgerRow:
     verifier_version: str
     verify_scope: str
     source_report_path: str
+    receipt_refs: tuple[Mapping[str, str], ...] = ()
+    candidate_content_fingerprint: str = ""
+    contract_hash: str = ""
+    requirement_set_fingerprint: str = ""
+    selected_evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,7 +53,7 @@ def verified_fulfillment_ledger_path(spec_dir: Path) -> Path:
 
 def write_verified_ledger(path: Path, ledger: VerifiedFulfillmentLedger) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "rows": [
             {
                 "requirement_id": row.requirement_id,
@@ -62,6 +67,11 @@ def write_verified_ledger(path: Path, ledger: VerifiedFulfillmentLedger) -> None
                 "verifier_version": row.verifier_version,
                 "verify_scope": row.verify_scope,
                 "source_report_path": row.source_report_path,
+                "receipt_refs": [dict(ref) for ref in row.receipt_refs],
+                "candidate_content_fingerprint": row.candidate_content_fingerprint,
+                "contract_hash": row.contract_hash,
+                "requirement_set_fingerprint": row.requirement_set_fingerprint,
+                "selected_evidence": list(row.selected_evidence),
             }
             for row in ledger.rows
         ],
@@ -92,6 +102,24 @@ def read_verified_ledger(path: Path) -> VerifiedFulfillmentLedger:
                 verifier_version=_string(item.get("verifier_version")),
                 verify_scope=_string(item.get("verify_scope")),
                 source_report_path=_string(item.get("source_report_path")),
+                receipt_refs=tuple(
+                    {
+                        str(key): str(value)
+                        for key, value in ref.items()
+                    }
+                    for ref in item.get("receipt_refs", [])
+                    if isinstance(ref, dict)
+                ),
+                candidate_content_fingerprint=_string(
+                    item.get("candidate_content_fingerprint")
+                ),
+                contract_hash=_string(item.get("contract_hash")),
+                requirement_set_fingerprint=_string(
+                    item.get("requirement_set_fingerprint")
+                ),
+                selected_evidence=tuple(
+                    str(ref) for ref in item.get("selected_evidence", [])
+                ),
             )
         )
     return VerifiedFulfillmentLedger(rows=tuple(rows))
@@ -104,6 +132,10 @@ def build_verified_ledger(
     implementation_input_hash: str,
     artifact_hashes: Mapping[str, str],
     verifier_version: str,
+    receipt_refs: tuple[Mapping[str, str], ...] = (),
+    candidate_content_fingerprint: str = "",
+    contract_hash: str = "",
+    requirement_set_fingerprint: str = "",
 ) -> VerifiedFulfillmentLedger:
     """Build a row-level ledger from a fulfillment report."""
     metadata = read_fulfillment_metadata(report_path)
@@ -130,6 +162,11 @@ def build_verified_ledger(
                 verifier_version=verifier_version,
                 verify_scope=verify_scope,
                 source_report_path=str(report_path),
+                receipt_refs=tuple(dict(ref) for ref in receipt_refs),
+                candidate_content_fingerprint=candidate_content_fingerprint,
+                contract_hash=contract_hash,
+                requirement_set_fingerprint=requirement_set_fingerprint,
+                selected_evidence=evidence_refs,
             )
         )
     return VerifiedFulfillmentLedger(rows=tuple(rows))

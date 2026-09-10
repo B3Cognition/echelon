@@ -9,10 +9,19 @@ from harness.spec_frontmatter import (
     read_frontmatter,
     read_target_entries,
     read_targets,
+    spec_content_ignoring_status,
     write_target_delivery,
     write_status,
     write_targets,
 )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("frontmatter", ["false", "0", "[]"])
+def test_status_ignored_comparison_rejects_non_mapping_yaml(frontmatter: str) -> None:
+    assert spec_content_ignoring_status(
+        f"---\n{frontmatter}\n---\n# Body\n"
+    ) is None
 
 
 def _make_spec_dir(tmp_path: Path, content: str, filename: str = "spec.md") -> Path:

@@ -7,7 +7,11 @@ from pathlib import Path
 from harness.spec_frontmatter import read_frontmatter
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.paths import find_stack_extension_root
-from harness.stacks.preflight import render_preflight_markdown, run_stack_preflight
+from harness.stacks.preflight import (
+    coverage_test_types_from_spec,
+    render_preflight_markdown,
+    run_stack_preflight,
+)
 from harness.stacks.renderer import render_resolved_markdown
 from harness.stacks.resolver import resolve_stacks
 
@@ -74,7 +78,12 @@ def build_stack_context(
         ]
     )
     stack_context = render_resolved_markdown(resolved)
-    preflight = render_preflight_markdown(run_stack_preflight(resolved))
+    preflight = render_preflight_markdown(
+        run_stack_preflight(
+            resolved,
+            coverage_test_types=coverage_test_types_from_spec(spec_dir),
+        )
+    )
     runnability_schema = _render_runnability_contract_schema(resolved.runnability)
     return (
         f"{contract}{stack_context.rstrip()}"

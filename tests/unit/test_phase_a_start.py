@@ -296,6 +296,21 @@ def test_next_spec_requires_a_checkpoint_even_when_prior_status_is_nonfinal(
     assert (repo / "runs" / ".current").read_text().strip() == "run-a"
 
 
+def test_next_spec_replaces_clean_preparing_run_without_a_checkpoint(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    start_phase_a_spec(repo, "run-a", "Build audit logging")
+    base = _git(repo, "rev-parse", "HEAD^{commit}")
+
+    outcome = start_phase_a_spec(repo, "run-b", "Build search dashboard")
+
+    assert outcome.source is not None
+    assert outcome.source.run_dir.name == "run-a"
+    assert outcome.source_checkpoint is None
+    assert _git(repo, "branch", "--show-current") == outcome.bootstrap.feature_branch
+    assert (repo / "runs" / ".current").read_text().strip() == "run-b"
+    assert _git(repo, "rev-parse", "001-build-audit-logging^{commit}") == base
+
+
 def test_next_spec_can_discard_dirty_changes_only_with_confirmation(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     _checkpoint_active_run(repo)

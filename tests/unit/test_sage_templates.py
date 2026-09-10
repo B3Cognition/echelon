@@ -98,6 +98,15 @@ class TestSageTemplates:
         assert "route to CARTOGRAPHER" in text
         assert "If any issue requires CARTOGRAPHER" in text
 
+    def test_sage_treats_task_backed_deferred_automation_as_phase_a_planning_evidence(
+        self,
+    ) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "planning-time obligation" in text
+        assert "Do not raise a Phase A issue" in text
+        assert "delivery evidence gate" in text
+
     def test_sage_understanding_contract_uses_certified_evidence(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 

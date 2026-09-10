@@ -9,7 +9,8 @@ class TestChiefTemplates:
     def test_chief_prompt_uses_canonical_agent_label(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert ".echelon/constitution.md" in text
+        assert "${SQUAD_DIR}/constitution.draft.md" in text
+        assert ".echelon/constitution.md" not in text
         assert "agent: echelon-chief (CHIEF)" in text
         assert "agent: CHIEF" not in text
 

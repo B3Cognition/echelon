@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import re
 import subprocess
-from typing import Mapping
+from typing import Iterable, Mapping
 
 import yaml
 
@@ -66,6 +66,7 @@ def write_docs_verification_report(
     spec_dir: Path | str,
     *,
     runnability_report: RunnabilityEvidenceRef | None = None,
+    preserve_independent_findings: bool = False,
 ) -> DocsVerificationResult:
     """Evaluate docs and write the machine-readable docs verification report."""
     worktree = Path(worktree_path)
@@ -74,6 +75,36 @@ def write_docs_verification_report(
         spec = worktree / spec
 
     result = verify_docs(worktree, spec, runnability_report=runnability_report)
+    if preserve_independent_findings and result.report_path.exists():
+        previous = _frontmatter(result.report_path)
+        claims = list(dict.fromkeys([
+            *result.unsupported_claims, *_string_list(previous.get("unsupported_claims")),
+        ]))
+        uncovered = list(dict.fromkeys([
+            *result.uncovered_change_ids, *_string_list(previous.get("uncovered_change_ids")),
+        ]))
+        findings = list(result.findings)
+        for claim in claims:
+            if claim not in result.unsupported_claims:
+                findings.append(_finding(
+                    _next_id(findings), "README.md", "Independent Review", claim,
+                    "DOCS VERIFIER unsupported_claims",
+                    "Repair this source-backed finding and regenerate the independent docs review.",
+                ))
+        for change_id in uncovered:
+            if change_id not in result.uncovered_change_ids:
+                findings.append(_finding(
+                    _next_id(findings), REPORT_NAME, "Coverage Map",
+                    f"{change_id} remains uncovered by independent review",
+                    "DOCS VERIFIER uncovered_change_ids",
+                    "Repair the coverage gap and regenerate the independent docs review.",
+                ))
+        if claims or uncovered:
+            result = replace(
+                result, verdict="FAIL", findings=tuple(findings),
+                blocking_findings=sum(f.severity == "blocking" for f in findings),
+                unsupported_claims=tuple(claims), uncovered_change_ids=tuple(uncovered),
+            )
     result.report_path.parent.mkdir(parents=True, exist_ok=True)
     result.report_path.write_text(_report_markdown(result), encoding="utf-8")
     return result
@@ -84,6 +115,7 @@ def verify_docs(
     spec_dir: Path | str,
     *,
     runnability_report: RunnabilityEvidenceRef | None = None,
+    changed_files: Iterable[str] | None = None,
 ) -> DocsVerificationResult:
     """Evaluate TECH WRITER documentation artifacts deterministically."""
     worktree = Path(worktree_path)
@@ -193,6 +225,9 @@ def verify_docs(
             metadata.get("docs_required") is False
             and reason
             and runnability_payload is None
+            and not first_run_inputs_changed(
+                changed_files if changed_files is not None else _changed_paths(worktree)
+            )
         ):
             return _result(
                 report_path=report_path,
@@ -332,7 +367,11 @@ def verify_docs(
                         )
                     )
 
-    if not changelog.exists():
+    if metadata.get("docs_required") is False:
+        # A setup-triggered README re-review does not impose a new changelog
+        # format on an otherwise no-impact legacy project.
+        pass
+    elif not changelog.exists():
         changelog_valid = False
         findings.append(
             _finding(
@@ -421,6 +460,24 @@ def readme_first_run_manual_failure(readme: Path, worktree: Path) -> str:
         missing.append("Prerequisites")
     if package_requires_node(worktree) and "node" not in lowered:
         missing.append("Node.js prerequisite from package.json")
+    package = package_json(worktree / "package.json")
+    pin = package.get("packageManager") if isinstance(package, dict) else None
+    # Only interpret exact ecosystem pins. Do not guess versions from lockfile
+    # formats or treat URLs/ranges as executable version requirements.
+    pinned = re.fullmatch(
+        r"(npm|pnpm|yarn|bun)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+\S+)?",
+        pin if isinstance(pin, str) else "",
+    )
+    if pinned:
+        manager, version = pinned.groups()
+        plain = re.sub(r"[`*]", "", text)
+        if not re.search(
+            rf"\b{manager}(?:@|[ \t|:]+(?:version[ \t]+)?)[vV]?"
+            rf"{re.escape(version)}(?![\w-]|\.\d)",
+            plain,
+            re.IGNORECASE,
+        ):
+            missing.append(f"{manager}@{version} prerequisite from package.json#packageManager")
     if "install" not in lowered:
         missing.append("install instructions")
     if not _has_terms(lowered, ("configuration", "config")):
@@ -453,6 +510,44 @@ def readme_first_run_manual_failure(readme: Path, worktree: Path) -> str:
     if not missing:
         return ""
     return "README.md is not a first-run manual; missing: " + ", ".join(missing)
+
+
+def first_run_inputs_changed(paths: Iterable[str]) -> bool:
+    """Recognize setup surfaces for re-review, not automatic README rewrites.
+
+    This is a conservative ecosystem-independent trigger. Semantic changes in
+    arbitrary application/auth code still need DOCS VERIFIER's source review.
+    """
+    names = {
+        "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
+        "pnpm-workspace.yaml", "yarn.lock", "bun.lock", "bun.lockb", ".npmrc",
+        ".yarnrc.yml", ".node-version", ".nvmrc", ".tool-versions",
+        "pyproject.toml", "setup.py", "setup.cfg", "uv.lock", "poetry.lock",
+        "Pipfile", "Pipfile.lock", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
+        "go.mod", "go.sum", "Gemfile", "Gemfile.lock", "composer.json", "composer.lock",
+        "Makefile", "Justfile", "Dockerfile", "Containerfile",
+    }
+    for raw_path in paths:
+        # Match both sides of a rename: moving a setup script out of scripts/
+        # changes the documented path just as moving one into it does.
+        for raw in str(raw_path).split(" -> "):
+            path = Path(raw.strip().strip('"'))
+            name = path.name
+            if "fixtures" in path.parts and {"test", "tests"}.intersection(path.parts):
+                continue
+            if (
+                name in names
+                or name.startswith(("Dockerfile.", "Containerfile."))
+                or re.fullmatch(r"requirements(?:[-_.][\w.-]+)?\.(?:txt|in)", name)
+                or ("requirements" in path.parts and path.suffix in {".txt", ".in"})
+                or re.fullmatch(r"(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml", name)
+                or (name.startswith(".env") and name.endswith((".example", ".sample", ".template")))
+                or path.suffix in {".patch", ".diff"}
+                or "scripts" in path.parts
+                or path.as_posix().endswith(".echelon/runnability.yml")
+            ):
+                return True
+    return False
 
 
 def unsupported_readme_npm_script_commands(readme: Path, worktree: Path) -> list[str]:
@@ -583,8 +678,6 @@ def _changed_paths(worktree: Path) -> set[str]:
         if len(line) < 4:
             continue
         path = line[3:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
         changed.add(path.strip('"'))
     return changed
 

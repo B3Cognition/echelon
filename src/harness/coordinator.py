@@ -50,7 +50,18 @@ from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
+from harness.task_progress import (
+    TaskProgressError,
+    summarize_task_progress,
+    update_task_progress_markdown,
+)
 from harness.stacks.context import build_stack_context
+from harness.stacks.renderer import resolved_to_dict
+from harness.stacks.resolver import (
+    ResolvedStacks,
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
 from harness.visual_ralph import VisualRalphController
 from harness.state import (
     DELIVERY_STATE_VERSION,
@@ -69,6 +80,23 @@ logger = logging.getLogger(__name__)
 def _split_env_list(raw: str | None) -> list[str]:
     """Parse a comma-separated orchestrator contract without empty entries."""
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _delivery_stack_snapshot(resolved: object) -> dict[str, object] | None:
+    """Freeze the stack-owned local-verification inputs for a fresh build.
+
+    A delivery may resume for days while project configuration changes.  The
+    local runner therefore consumes this persisted snapshot and its digests,
+    rather than resolving the candidate's or target's current config again.
+    """
+    if not isinstance(resolved, ResolvedStacks):
+        return None
+    return {
+        "schema_version": 1,
+        "resolved": resolved_to_dict(resolved),
+        "resolved_stack_hash": resolved_stack_contract_sha256(resolved),
+        "observer_plan_hash": resolved_coverage_observer_plan_sha256(resolved),
+    }
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -173,6 +201,7 @@ class StrategyCoordinator:
         build_id: str = "",
         orchestration_root: str | Path | None = None,
         fresh_branch_bases: Mapping[str, str] | None = None,
+        fresh_completed_task_ids: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -189,6 +218,7 @@ class StrategyCoordinator:
         self._strategies_dir = _strategies_dir_fn(Path(base_dir))
         self._escalation_dir = self._build_dir
         self._fresh_branch_bases = dict(fresh_branch_bases or {})
+        self._fresh_completed_task_ids = dict(fresh_completed_task_ids or {})
 
         # Convergence event for kill_losers
         self._convergence_event = threading.Event()
@@ -376,6 +406,46 @@ class StrategyCoordinator:
 
     # === Private methods ===
 
+    @staticmethod
+    def _inherit_fresh_task_progress(
+        *,
+        state_store: StateStore,
+        tasks_file: Path | None,
+        task_ids: tuple[str, ...],
+    ) -> None:
+        """Restore checkpoint-owned progress before the next provider dispatch."""
+        if not task_ids or tasks_file is None or not tasks_file.is_file():
+            return
+        markdown = tasks_file.read_text(encoding="utf-8", errors="replace")
+        applied: list[str] = []
+        for task_id in task_ids:
+            try:
+                updated = update_task_progress_markdown(markdown, task_id, "DONE")
+            except TaskProgressError:
+                continue
+            if updated != markdown or f"- [x] {task_id}" in markdown:
+                applied.append(task_id)
+            markdown = updated
+        if not applied:
+            return
+        tasks_file.write_text(markdown, encoding="utf-8")
+        summary = summarize_task_progress(markdown)
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": summary.total_tasks,
+            "completed_tasks": summary.terminal_tasks,
+            "tasks_completed_pct": (
+                round(summary.terminal_tasks * 100 / summary.total_tasks)
+                if summary.total_tasks
+                else 0
+            ),
+            "task_results": {
+                task_id: {"status": "DONE"} for task_id in applied
+            },
+        }
+        state["inherited_checkpoint_task_ids"] = applied
+        state_store.write(state)
+
     def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
         """Snapshot the delivery phases selected for a new run."""
         phases = ["implementation"]
@@ -552,6 +622,7 @@ class StrategyCoordinator:
     def _verified_evidence_updates(
         self,
         *,
+        spec_id: str,
         implementation: ImplementationResult,
         worktree_path: Path,
         verified_commit: str,
@@ -575,10 +646,61 @@ class StrategyCoordinator:
             worktree_path, ref.candidate_commit, verified_commit
         ):
             return {}
-        return {
+        updates: dict[str, Any] = {
             "verified_evidence": ref.as_mapping(),
             "verified_product_fingerprint": fingerprint,
         }
+        spec_dir = find_spec_dir(
+            spec_id,
+            self._orchestration_root or Path(self._base_dir).resolve(),
+        )
+        if spec_dir is not None:
+            from harness.canonical_requirements import (
+                canonical_requirement_fingerprint,
+                extract_canonical_requirements,
+            )
+            from harness.fulfillment_runner import (
+                _spec_input_hash,
+                fulfillment_contract_hash,
+            )
+            from harness.verified_fulfillment_ledger import (
+                read_verified_ledger,
+                verified_fulfillment_ledger_path,
+            )
+
+            requirements = extract_canonical_requirements(spec_dir)
+
+            updates.update(
+                {
+                    "verified_spec_input_hash": _spec_input_hash(spec_dir),
+                    "verified_requirement_set_fingerprint": (
+                        canonical_requirement_fingerprint(requirements)
+                    ),
+                    "verified_contract_hash": fulfillment_contract_hash(),
+                    "verified_requirement_snapshot": [
+                        {
+                            "id": item.id,
+                            "source_kind": item.source_kind,
+                            "source_file": item.source_file,
+                            "source_line": item.source_line,
+                            "source_text": item.source_text,
+                        }
+                        for item in requirements
+                    ],
+                }
+            )
+            ledger_path = verified_fulfillment_ledger_path(spec_dir)
+            if ledger_path.is_file():
+                updates["verified_fulfillment_rows"] = [
+                    {
+                        "requirement_id": item.requirement_id,
+                        "status": item.status,
+                        "evidence_refs": list(item.selected_evidence or item.evidence_refs),
+                        "verified_at": item.verified_at,
+                    }
+                    for item in read_verified_ledger(ledger_path).rows
+                ]
+        return updates
 
     def _verified_checkpoint_updates(
         self,
@@ -609,6 +731,7 @@ class StrategyCoordinator:
         }
         updates.update(
             self._verified_evidence_updates(
+                spec_id=spec_id,
                 implementation=implementation,
                 worktree_path=worktree_path,
                 verified_commit=verified_commit,
@@ -1208,8 +1331,16 @@ class StrategyCoordinator:
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
                     enabled_phases=self._enabled_phases(llm_provider),
+                    delivery_stack_snapshot=_delivery_stack_snapshot(
+                        getattr(self._config, "resolved_stacks", None)
+                    ),
                 )
                 state_store.transition("running")
+                self._inherit_fresh_task_progress(
+                    state_store=state_store,
+                    tasks_file=tasks_file,
+                    task_ids=self._fresh_completed_task_ids.get(strategy_id, ()),
+                )
 
             stack_context = self._build_stack_context(spec_dir)
             strategy_context = self._combine_strategy_context(

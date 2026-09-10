@@ -16,6 +16,7 @@ Per FR-STRATEGY-004b: cancel_requested check between exec calls
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -31,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
+from harness.candidate_evidence import CandidateEvidenceRunner
 from harness.config import HarnessConfig
 from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
@@ -38,6 +40,21 @@ from harness.documentation_gate import (
     evaluate_documentation_gate,
     write_not_applicable_documentation_impact_report,
 )
+from harness.coverage_evidence import (
+    active_unmapped_coverage_requirement_ids,
+    parse_coverage_map_obligations,
+    task_owned_coverage_case_ids,
+)
+from harness.deferred_scope import active_entries
+from harness.coverage_observation import (
+    CoverageObservationError,
+    CoverageObservationRef,
+    CoverageObservationResult,
+    load_coverage_observation,
+    validate_coverage_observation,
+    write_coverage_observation,
+)
+from harness.coverage_observer_runner import run_coverage_observers
 from harness.docs_verifier import write_docs_verification_report
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
@@ -75,11 +92,20 @@ from harness.task_progress import (
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from harness.verification_evidence import (
+    VerificationEvidenceRef,
     VerificationStage,
     redact_verification_text,
     write_verification_receipt,
 )
 from harness.verification_plan import build_verification_plan, materialize_services
+from harness.stacks.resolver import (
+    resolved_coverage_observer_plan_sha256,
+    resolved_stack_contract_sha256,
+)
+from harness.stacks.preflight import (
+    coverage_observer_preflight_findings,
+    required_coverage_observers_for_types,
+)
 from harness.verify_detection import detect_verify_command
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
@@ -104,7 +130,7 @@ _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
-_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
+_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS = {"coverage-observer-scope-invalid"}
 _TASK_HEADER_RE = re.compile(r"^- \[[ xX]\] (?P<task_id>T-[A-Za-z0-9-]+)\b")
 _TASK_FILE_BULLET_RE = re.compile(r"^\s*-\s+`(?P<path>[^`]+)`(?:\s|$)")
 _VERIFICATION_ARTIFACT_PATHS = (
@@ -324,6 +350,19 @@ class RalphController:
         self._fresh_branch_base = fresh_branch_base
         self._defer_target_merge = defer_target_merge
         self._resume_worktree_path = resume_worktree_path
+        self._candidate_evidence_runner = CandidateEvidenceRunner(
+            provider=self._provider,
+            config=lambda: self._config,
+            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
+                str(worktree), 0
+            ),
+            evidence_root=self._state_store.state_dir.parent / "evidence",
+            spec_id=self._spec_id,
+            target_id=_runnability_target_id(self._config.target_repo),
+            strategy_id=self._strategy_id,
+            build_id=self._build_id
+            or str(self._state_store.read().get("run_id") or "run"),
+        )
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -382,6 +421,8 @@ class RalphController:
         build_prompt: str = "",
     ) -> ImplementationResult:
         """Inner implementation of run_loop (signal handlers installed)."""
+        from codegen.retirement import reject_soar_command
+        reject_soar_command(build_command)
         state = self._state_store.read()
         if not state:
             raise RuntimeError("State not initialized. Call state_store.initialize() first.")
@@ -414,8 +455,8 @@ class RalphController:
         # Resolve the spec's feature branch once. When found, all worktrees are
         # checked out on that branch so spec artifacts (spec.md, tasks.md,
         # constitution.md, etc.) are available without the build agent needing to
-        # merge them in manually.  Falls back to legacy harness/* branching when no
-        # feature branch exists (first-time or pure-harness workflows).
+        # merge them in manually. Falls back to an ordinary harness delivery
+        # branch when no source-owned feature branch exists.
         feature_branch: Optional[str] = None
         try:
             feature_branch = self._gitops.find_feature_branch(self._spec_id)
@@ -427,13 +468,14 @@ class RalphController:
                 )
             else:
                 logger.info(
-                    "No feature branch found for spec '%s' — using legacy harness/* branching",
+                    "No source-owned feature branch found for spec '%s' — using "
+                    "a harness delivery branch",
                     self._spec_id,
                 )
         except Exception as e:
             logger.warning(
                 "Could not resolve feature branch for spec '%s' (continuing with "
-                "legacy harness/* mode): %s",
+                "a harness delivery branch): %s",
                 self._spec_id, e,
             )
 
@@ -1507,6 +1549,15 @@ class RalphController:
                 "tokens_used": tokens_used,
                 "final_verify": verify_result,
             }
+        if _is_sandbox_browser_runtime_unavailable(verify_result):
+            return {
+                "converged": False,
+                "blocked": True,
+                "blocked_reason": "verification_infrastructure",
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
 
         failure_history: List[List[str]] = []
         current_verify = verify_result
@@ -1992,157 +2043,11 @@ class RalphController:
             and self._config.verification.execution == "host"
         ):
             return self._exec_verify_locally(worktree_path)
-
-        owned_handle = False
-        try:
-            if handle is None:
-                handle = self._provider.create(
-                    self._build_sandbox_spec(worktree_path, 0)
-                )
-                owned_handle = True
-            verification_plan = build_verification_plan(
-                Path(worktree_path), self._config,
-                services=tuple(self._config.verification_services),
-            )
-            service_env: dict[str, str] = {}
-            verification_stages: list[VerificationStage] = []
-            if verification_plan.services:
-                start_services = getattr(self._provider, "start_services", None)
-                if start_services is None:
-                    raise NotSupportedError(
-                        "sandbox provider does not support verification services"
-                    )
-                materialized_services = materialize_services(
-                    verification_plan.services, session_id=handle.session_id
-                )
-                start_services(handle, materialized_services.services)
-                service_env = dict(materialized_services.verifier_environment)
-            fingerprint_before = _safe_product_evidence_fingerprint(worktree_path)
-            candidate_path = Path(worktree_path)
-            candidate_commit = (
-                _current_git_commit(candidate_path)
-                if candidate_path.is_dir()
-                else None
-            )
-            sandbox_context = {
-                "mode": "sandbox",
-                "image": verification_plan.image,
-                "network": "internal",
-                "services": [service.service_name for service in verification_plan.services],
-            }
-            for command in verification_plan.bootstrap_commands:
-                bootstrap_started_at = datetime.now(timezone.utc).isoformat()
-                bootstrap = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
-                verification_stages.append(VerificationStage(
-                    name="bootstrap", command=tuple(shlex.split(command)),
-                    exit_code=bootstrap.exit_code, duration_ms=bootstrap.duration_ms,
-                    stdout=bootstrap.stdout.encode(), stderr=bootstrap.stderr.encode(),
-                    started_at=bootstrap_started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                ))
-                if bootstrap.exit_code != 0:
-                    failures = [FailureEntry(
-                        category=FailureCategory.BUILD,
-                        id="sandbox-bootstrap",
-                        error=(bootstrap.stdout + bootstrap.stderr)[-2000:],
-                    )]
-                    return self._attach_host_verification_receipt(
-                        worktree_path=worktree_path,
-                        candidate_commit=candidate_commit,
-                        fingerprint_before=fingerprint_before,
-                        fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
-                        verifier_source="sandbox",
-                        detection_evidence=("sandbox bootstrap",),
-                        stages=tuple(verification_stages),
-                        failures=failures,
-                        duration_s=bootstrap.duration_ms / 1000.0,
-                        execution_context=sandbox_context,
-                    )
-
-            command = self._config.verify_command
-            detection_evidence: tuple[str, ...] = ("harness verify_command",)
-            legacy_sandbox_verifier = False
-            if not command:
-                if self._llm_build_runner is None:
-                    # Existing sandbox-native build providers return the
-                    # structured result from their harness verifier. Keep that
-                    # contract while LLM delivery uses detected project commands.
-                    command = "echelon verify"
-                    legacy_sandbox_verifier = True
-                else:
-                    detection = detect_verify_command(Path(worktree_path))
-                    if detection.command is None:
-                        return VerifyResult(
-                            passed=False,
-                            failures=[FailureEntry(
-                                category=FailureCategory.BUILD,
-                                id="local-verify-skipped",
-                                error=(
-                                    "no high-confidence verifier was detected; "
-                                    "set harness.verify_command"
-                                ),
-                            )],
-                        )
-                    command = detection.command
-                    detection_evidence = tuple(detection.evidence)
-            stage_started_at = datetime.now(timezone.utc).isoformat()
-            result = self._provider.exec(handle, command, env=service_env, timeout_ms=600_000)
-
-            if legacy_sandbox_verifier:
-                try:
-                    return VerifyResult.from_dict(json.loads(result.stdout))
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    return VerifyResult(
-                        passed=result.exit_code == 0,
-                        failures=[] if result.exit_code == 0 else [FailureEntry(
-                            category=FailureCategory.TEST,
-                            id="verify-command",
-                            error=(result.stdout + result.stderr)[-2000:],
-                        )],
-                        duration_s=result.duration_ms / 1000.0,
-                        token_usage=_estimate_tokens(result),
-                    )
-
-            verify = VerifyResult(
-                passed=result.exit_code == 0,
-                failures=[] if result.exit_code == 0 else [FailureEntry(
-                    category=FailureCategory.TEST,
-                    id="verify-command",
-                    error=(result.stdout + result.stderr)[-2000:],
-                )],
-                duration_s=result.duration_ms / 1000.0,
-                token_usage=_estimate_tokens(result),
-            )
-            return self._attach_host_verification_receipt(
-                worktree_path=worktree_path,
-                candidate_commit=candidate_commit,
-                fingerprint_before=fingerprint_before,
-                fingerprint_after=_safe_product_evidence_fingerprint(worktree_path),
-                verifier_source="sandbox",
-                detection_evidence=("sandbox provider", *detection_evidence),
-                stages=(*verification_stages, VerificationStage(
-                    name="verify", command=tuple(shlex.split(command)),
-                    exit_code=result.exit_code, duration_ms=result.duration_ms,
-                    stdout=result.stdout.encode(), stderr=result.stderr.encode(),
-                    started_at=stage_started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )),
-                failures=verify.failures,
-                duration_s=verify.duration_s,
-                execution_context=sandbox_context,
-            )
-        except SandboxError as exc:
-            return VerifyResult(
-                passed=False,
-                failures=[FailureEntry(
-                    category=FailureCategory.OTHER,
-                    id="sandbox-verification-unavailable",
-                    error=str(exc),
-                )],
-            )
-        finally:
-            if owned_handle and handle is not None:
-                self._provider.destroy(handle)
+        return self._candidate_evidence_runner.run_standard(
+            handle=handle,
+            worktree=Path(worktree_path),
+            allow_legacy_structured=self._llm_build_runner is None,
+        )
 
     def _apply_fulfillment_gate(
         self,
@@ -2153,7 +2058,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -2293,6 +2198,10 @@ class RalphController:
             candidate_commit=_current_git_commit(Path(worktree_path)) or "",
             evidence_dir=self._runnability_evidence_dir(),
         )
+        verify_result = self._apply_coverage_observation_gate(
+            verify_result,
+            worktree_path,
+        )
         verify_result = self._refresh_fulfillment_report(
             verify_result,
             worktree_path,
@@ -2309,6 +2218,244 @@ class RalphController:
             verify_result, worktree_path, require_completion=True
         )
 
+    def _apply_coverage_observation_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Attach fail-closed per-case execution evidence for required stacks.
+
+        This deliberately runs after the candidate-owned runnability journey:
+        its contract hash is part of the immutable coverage-observation tuple.
+        It runs before fulfillment refresh, where later phases consume the
+        recorded observation rather than a green aggregate verifier.
+        """
+        spec_dir = self._find_existing_spec_dir(worktree_path)
+        required_case_ids = _completed_task_coverage_case_ids(
+            spec_dir / "tasks.md" if spec_dir is not None else None
+        )
+        gate = self._candidate_evidence_runner.apply_coverage(
+            verify_result=verify_result,
+            worktree=Path(worktree_path),
+            spec_dir=spec_dir,
+            evidence_dir=self._coverage_observer_evidence_dir(),
+            required_case_ids=required_case_ids,
+        )
+        if gate.state_summary is not None:
+            self._record_coverage_observation_summary(gate.state_summary)
+        return gate.verify_result
+
+
+    @staticmethod
+    def _verification_receipt_from_result(
+        verify_result: VerifyResult,
+    ) -> VerificationEvidenceRef | None:
+        try:
+            return VerificationEvidenceRef.from_mapping(
+                verify_result.verification_evidence
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _runnability_contract_hash(verify_result: VerifyResult) -> str | None:
+        raw = verify_result.verification_evidence.get("runnability_evidence")
+        if not isinstance(raw, Mapping):
+            return None
+        value = raw.get("contract_hash")
+        return str(value) if isinstance(value, str) and value else None
+
+    def _coverage_observation_for_fulfillment(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> tuple[CoverageObservationResult | None, bool, str]:
+        """Return the current strict observation for fulfillment, or a reason.
+
+        The observation is a Ralph-owned immutable artifact. Fulfillment must
+        not discover a path from provider-authored output or reuse it after the
+        product, coverage map, selected stacks, observer plan, or required
+        runnability contract changes.
+        """
+        resolved = getattr(self._config, "resolved_stacks", None)
+        observers = tuple(
+            item
+            for item in getattr(resolved, "coverage_observers", ())
+            if item.observer.required
+        )
+        if not observers:
+            return None, False, ""
+
+        try:
+            spec_dir = self._find_existing_spec_dir(worktree_path)
+            if spec_dir is None:
+                raise CoverageObservationError("active spec directory is unavailable")
+            coverage_map = spec_dir / "coverage-map.md"
+            canonical_ids = {
+                item.id for item in extract_canonical_requirements(spec_dir)
+            }
+            obligations = tuple(
+                obligation
+                for row in parse_coverage_map_obligations(coverage_map, canonical_ids)
+                for obligation in row
+            )
+            owner_deferred_ids = {
+                item_id
+                for entry in active_entries(spec_dir)
+                for item_id in entry.selected_ids
+                if not item_id.startswith("T-")
+            }
+            unmapped_requirement_ids = active_unmapped_coverage_requirement_ids(
+                canonical_ids=canonical_ids,
+                obligations=obligations,
+                deferred_ids=owner_deferred_ids,
+            )
+            if unmapped_requirement_ids:
+                return (
+                    None,
+                    True,
+                    "coverage map has no planned test obligation for active requirement(s): "
+                    + ", ".join(unmapped_requirement_ids[:20]),
+                )
+            if not any(
+                obligation.requirement_id not in owner_deferred_ids
+                for obligation in obligations
+            ):
+                return None, False, ""
+            coverage_map_hash = hashlib.sha256(coverage_map.read_bytes()).hexdigest()
+        except (CoverageObservationError, OSError, ValueError) as exc:
+            return None, True, f"coverage observation inputs are invalid: {exc}"
+
+        raw_ref = verify_result.verification_evidence.get("coverage_observation")
+        if not isinstance(raw_ref, Mapping):
+            return (
+                None,
+                True,
+                "selected stack requires a coverage observation, but Ralph did "
+                "not attach one to the passed verification evidence",
+            )
+        try:
+            declared = CoverageObservationRef.from_mapping(raw_ref)
+            loaded = load_coverage_observation(declared.path)
+            if loaded.ref != declared:
+                raise CoverageObservationError(
+                    "coverage observation reference does not match its immutable artifact"
+                )
+            candidate_fingerprint = _safe_product_evidence_fingerprint(worktree_path)
+            if not candidate_fingerprint:
+                raise CoverageObservationError(
+                    "candidate product fingerprint is unavailable"
+                )
+            candidate_commit = _current_git_commit(Path(worktree_path))
+            if not candidate_commit:
+                raise CoverageObservationError("candidate commit is unavailable")
+            runnability_contract_hash = self._runnability_contract_hash(verify_result)
+            if (
+                str(getattr(resolved.runnability, "policy", "not_applicable"))
+                == "required"
+                and runnability_contract_hash is None
+            ):
+                raise CoverageObservationError(
+                    "required runnability contract evidence is missing"
+                )
+            validation = validate_coverage_observation(
+                loaded.ref,
+                candidate_commit=candidate_commit,
+                candidate_fingerprint=candidate_fingerprint,
+                coverage_map_hash=coverage_map_hash,
+                resolved_stack_hash=resolved_stack_contract_sha256(resolved),
+                observer_plan_hash=resolved_coverage_observer_plan_sha256(resolved),
+                runnability_contract_hash=runnability_contract_hash,
+            )
+            if not validation.valid:
+                raise CoverageObservationError(validation.reason)
+        except (CoverageObservationError, OSError, ValueError) as exc:
+            return None, True, f"coverage observation is invalid: {exc}"
+        return loaded, True, ""
+
+    def _coverage_observer_evidence_dir(self) -> Path:
+        return (
+            self._state_store.state_dir.parent
+            / "evidence"
+            / self._strategy_id
+        )
+
+    @staticmethod
+    def _next_coverage_observation_attempt(evidence_dir: Path) -> int:
+        root = Path(evidence_dir) / "coverage-observation"
+        highest = 0
+        for path in root.glob("attempt-*.json") if root.exists() else ():
+            match = re.match(r"attempt-(\d+)-", path.name)
+            if match is not None:
+                highest = max(highest, int(match.group(1)))
+        return highest + 1
+
+    def _record_coverage_observation_state(
+        self,
+        observation: object,
+        observer_evidence: Mapping[str, object],
+    ) -> None:
+        ref = getattr(observation, "ref", None)
+        requirements = getattr(observation, "requirements", {})
+        raw_fingerprints = getattr(observation, "fingerprints", {})
+        fingerprints = {
+            key: str(raw_fingerprints.get(key) or "")
+            for key in (
+                "coverage_map_hash",
+                "resolved_stack_hash",
+                "observer_plan_hash",
+                "runnability_contract_hash",
+            )
+            if isinstance(raw_fingerprints, Mapping) and raw_fingerprints.get(key)
+        }
+        if isinstance(ref, CoverageObservationRef) and ref.candidate_fingerprint:
+            fingerprints["candidate_fingerprint"] = ref.candidate_fingerprint
+        state = self._state_store.read()
+        state["coverage_observation"] = {
+            "status": "passed" if getattr(ref, "passed", False) else "failed",
+            "path": str(getattr(ref, "path", "")),
+            "ref": ref.as_mapping() if isinstance(ref, CoverageObservationRef) else None,
+            "requirements_observed": sum(
+                item.status == "observed" for item in requirements.values()
+            ) if isinstance(requirements, Mapping) else 0,
+            "requirements_total": len(requirements) if isinstance(requirements, Mapping) else 0,
+            "observers": dict(observer_evidence),
+            "fingerprints": fingerprints,
+        }
+        self._state_store.write(state)
+
+    def _record_coverage_observation_summary(
+        self, summary: Mapping[str, object]
+    ) -> None:
+        state = self._state_store.read()
+        state["coverage_observation"] = dict(summary)
+        self._state_store.write(state)
+
+    def _coverage_observation_failure(
+        self,
+        verify_result: VerifyResult,
+        *,
+        failure_id: str,
+        error: str,
+        observer_evidence: Mapping[str, object] | None = None,
+    ) -> VerifyResult:
+        evidence = dict(verify_result.verification_evidence)
+        if observer_evidence is not None:
+            evidence["coverage_observers"] = dict(observer_evidence)
+        return VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=failure_id,
+                    error=error,
+                )
+            ],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=evidence,
+        )
+
     def _apply_user_runnability_gate(
         self,
         verify_result: VerifyResult,
@@ -2318,163 +2465,17 @@ class RalphController:
         evidence_dir: Path,
     ) -> VerifyResult:
         """Require a fresh composed journey when resolved stacks demand it."""
-        if not verify_result.passed or not worktree_path:
-            return verify_result
-
-        resolved_policy = getattr(self._config, "resolved_runnability", None)
-        policy = str(getattr(resolved_policy, "policy", "not_applicable"))
-        required = policy == "required"
-        spec_dir = self._find_spec_dir(worktree_path)
-        if spec_dir is not None:
-            try:
-                disposition = read_runnability_disposition(spec_dir)
-            except RunnabilityDispositionError as exc:
-                return self._runnability_failure(
-                    verify_result,
-                    failure_id="user-runnability-disposition-invalid",
-                    error=f"Owner runnability disposition is invalid: {exc}",
-                    details={"disposition": str(spec_dir / "runnability-disposition.json")},
-                )
-            if disposition is not None and disposition.status == "deferred":
-                self._record_user_runnability_state(
-                    {
-                        "status": "deferred",
-                        "failed_stage": None,
-                        "failure_class": "owner_deferred",
-                        "summary": disposition.reason,
-                        "report": disposition.evidence_report,
-                        "candidate_fingerprint": "",
-                        "contract_hash": "",
-                        "stack_hash": "",
-                        "user_commands": {},
-                    }
-                )
-                return verify_result
-
-        candidate_contract_path = Path(worktree_path) / RUNNABILITY_CONTRACT_PATH
-        if not candidate_contract_path.exists():
-            if not required:
-                return verify_result
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-missing",
-                error=(
-                    "Selected stacks require a composed user-runnability journey, but "
-                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
-                ),
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Add the project-owned runnability contract and real journey.",
-                },
-            )
-
-        try:
-            contract = load_runnability_contract(Path(worktree_path))
-        except (OSError, RunnabilityContractError) as exc:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-invalid",
-                error=f"Candidate runnability contract is invalid: {exc}",
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Repair the candidate-owned runnability contract.",
-                },
-            )
-
-        if contract is None:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-missing",
-                error=(
-                    "Selected stacks require a composed user-runnability journey, but "
-                    f"{RUNNABILITY_CONTRACT_PATH} is missing from the candidate."
-                ),
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Add the project-owned runnability contract and real journey.",
-                },
-            )
-        if not contract.enabled:
-            if not required:
-                return verify_result
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-contract-disabled",
-                error="A candidate contract cannot disable a stack-required runnability gate.",
-                details={
-                    "contract": str(RUNNABILITY_CONTRACT_PATH),
-                    "required_repair": "Enable and complete the candidate runnability contract.",
-                },
-            )
-
-        resolved_stacks = getattr(self._config, "resolved_stacks", None)
-        if resolved_stacks is None:
-            return self._runnability_failure(
-                verify_result,
-                failure_id="user-runnability-stack-resolution-missing",
-                error="Resolved stack evidence is unavailable for the runnability gate.",
-                details={
-                    "required_repair": "Rerun delivery with resolved stack runtime data."
-                },
-            )
-
-        runner = RunnabilityRunner(
-            provider=self._provider,
-            sandbox_spec_factory=lambda worktree: self._build_sandbox_spec(
-                str(worktree), 0
-            ),
-            spec_id=self._spec_id,
-            target_id=_runnability_target_id(self._config.target_repo),
-            strategy_id=self._strategy_id,
-            build_id=self._build_id or str(self._state_store.read().get("run_id") or "run"),
-        )
-        result = runner.run(
+        gate = self._candidate_evidence_runner.apply_runnability(
+            verify_result=verify_result,
             worktree=Path(worktree_path),
-            contract=contract,
-            resolved=resolved_stacks,
+            spec_dir=self._find_existing_spec_dir(worktree_path),
             candidate_commit=candidate_commit,
             evidence_dir=evidence_dir,
-            attempt_sequence=_next_runnability_attempt_sequence(evidence_dir),
         )
-        self._record_user_runnability_result(result)
-        if result.status == "runnable":
-            evidence = dict(verify_result.verification_evidence)
-            evidence["runnability_evidence"] = result.evidence.as_mapping()
-            return VerifyResult(
-                passed=True,
-                failures=list(verify_result.failures),
-                duration_s=verify_result.duration_s,
-                token_usage=verify_result.token_usage,
-                verification_evidence=evidence,
-            )
+        if gate.state_summary is not None:
+            self._record_user_runnability_state(gate.state_summary)
+        return gate.verify_result
 
-        report_path = str(result.evidence.markdown_path)
-        failure_id = (
-            "user-runnability-sandbox-prerequisite"
-            if result.failure_class == "sandbox_prerequisite_missing"
-            else f"user-runnability-{result.failure_class.replace('_', '-')}"
-        )
-        repair = (
-            "Repair the sandbox/provider prerequisite and retry delivery."
-            if result.failure_class == "sandbox_prerequisite_missing"
-            else "Repair the candidate product or .echelon/runnability.yml, then retry delivery."
-        )
-        return self._runnability_failure(
-            verify_result,
-            failure_id=failure_id,
-            error=(
-                f"User runnability {result.failure_class} failed at "
-                f"{result.failed_stage or 'unknown'}: "
-                f"{result.summary}. Evidence: {report_path}"
-            ),
-            details={
-                "failed_stage": result.failed_stage,
-                "failure_class": result.failure_class,
-                "summary": result.summary,
-                "report": report_path,
-                "required_repair": repair,
-            },
-        )
 
     def _runnability_failure(
         self,
@@ -2590,6 +2591,7 @@ class RalphController:
                 Path(worktree_path),
                 spec_dir,
                 runnability_report=runnability_ref,
+                preserve_independent_findings=True,
             )
 
         gate = evaluate_documentation_gate(
@@ -2776,7 +2778,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir = self._find_existing_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -3009,14 +3011,39 @@ class RalphController:
                 verification_evidence=dict(verify_result.verification_evidence),
             )
 
+        coverage_observation, observer_required, coverage_error = (
+            self._coverage_observation_for_fulfillment(
+                verify_result,
+                worktree_path,
+            )
+        )
+        if coverage_error:
+            return self._coverage_observation_failure(
+                verify_result,
+                failure_id="coverage-observation-invalid",
+                error=coverage_error,
+            )
         refresh_kwargs: dict[str, object] = {
-            "spec_dir": self._find_spec_dir(worktree_path),
+            "spec_dir": (
+                self._find_existing_spec_dir(worktree_path)
+                if observer_required
+                else self._find_spec_dir(worktree_path)
+            ),
             "orchestration_root": (
                 self._orchestration_root(Path(worktree_path))
                 if self._spec_artifacts_mode() == "external"
                 else None
-            )
+            ),
         }
+        delivery_state = self._state_store.read()
+        source_id = str(delivery_state.get("source_id") or "").strip()
+        source_root = str(delivery_state.get("source_root") or "").strip()
+        if source_id and source_root:
+            refresh_kwargs["source_id"] = source_id
+            refresh_kwargs["source_root"] = source_root
+        if observer_required:
+            refresh_kwargs["observer_required"] = True
+            refresh_kwargs["coverage_observation"] = coverage_observation
         if verify_result.verification_evidence:
             refresh_kwargs["verification_evidence"] = dict(
                 verify_result.verification_evidence
@@ -4117,6 +4144,16 @@ class RalphController:
             "Do not read, inspect, recreate, or write `echelon_result.json`; Ralph deliberately removes that legacy fallback at the start of every slice so stale results cannot cross specs.\n"
             "Ignore any generic workflow or agent instruction to return `echelon_result` or `state_updates`; those apply to standalone squad execution, not this delivery build slice.\n"
         )
+        verification_execution_boundary = (
+            "## Verification Execution Boundary\n"
+            "Ralph owns the configured full verifier and its provisioned execution environment.\n"
+            "Do not run the configured full verifier from the coding CLI.\n"
+            "Do not launch or provision database, Docker, browser, Playwright, or external service dependencies from the coding CLI.\n"
+            "Do not report unavailable service credentials or an unavailable browser as a product blocker.\n"
+            "Run focused, service-free checks that help validate your change, such as targeted unit tests, lint, typecheck, or a production build.\n"
+            "Ralph runs the configured full verifier after your build slice and treats that result as authoritative.\n"
+        )
+        coverage_observation_contract = self._coverage_observation_contract_block()
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -4160,10 +4197,36 @@ class RalphController:
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "Ralph state is not a build input; do not read, search for, or infer from state.json/state directories.\n"
             "Do not search for state.json; Ralph provides bounded progress context in this prompt.\n"
+            f"{verification_execution_boundary}"
+            f"{coverage_observation_contract}"
             f"{delivery_output_contract}"
             f"{progress_ledger_block}"
         )
         return f"{block}\n{prompt}\n\n{delivery_output_contract}"
+
+    def _coverage_observation_contract_block(self) -> str:
+        """Tell build providers how required structured coverage is bound."""
+        resolved = getattr(self._config, "resolved_stacks", None)
+        required_observers = tuple(
+            item
+            for item in getattr(resolved, "coverage_observers", ())
+            if item.observer.required
+        )
+        if not required_observers:
+            return ""
+        return (
+            "## Coverage Observation Contract\n"
+            "Selected stacks require structured coverage observation. For every "
+            "coverage-map test-case ID that your slice implements, the executed "
+            "test title must end with an Echelon case tag, for example "
+            "`[echelon:UT-EXAMPLE-001]`. Use the coverage-map test-case ID, "
+            "not an AC/FR requirement ID. A single test may list multiple "
+            "comma-separated case IDs only when it genuinely proves each case "
+            "and their planned test types match the executing observer. Each case "
+            "ID must appear in exactly one physical test identity; duplicate case "
+            "tags are invalid. Do not edit the coverage map or weaken its required "
+            "observations.\n"
+        )
 
     def _write_build_slice_context(
         self,
@@ -4315,7 +4378,7 @@ class RalphController:
             return []
         return [
             f"- verify_command: `{verify_command}`",
-            "- Run this from `worktree` before reporting completed_task_ids when feasible.",
+            "- Ralph executes this after your build slice; do not run it from the coding CLI.",
         ]
 
     def _build_slice_target_manifest_excerpts(
@@ -4339,6 +4402,17 @@ class RalphController:
                     lines.append(
                         f"  - package_manager: `{manager_name}` (lockfile: `{lockfile}`)"
                     )
+
+                pinned_manager = manifest.get("packageManager")
+                if isinstance(pinned_manager, str) and pinned_manager.strip():
+                    lines.append(f"  - packageManager (declared): `{_single_line(pinned_manager)}`")
+                engines = manifest.get("engines")
+                if isinstance(engines, dict):
+                    for tool, constraint in sorted(engines.items())[:script_limit]:
+                        if isinstance(constraint, str):
+                            lines.append(
+                                f"  - engine {_single_line(tool)}: `{_single_line(constraint)}`"
+                            )
 
                 for field in ("main", "module", "types"):
                     value = _single_line(str(manifest.get(field) or ""))
@@ -5073,6 +5147,27 @@ class RalphController:
             return Path(base_dir).resolve()
         return (fallback or Path.cwd()).resolve()
 
+    def _find_existing_spec_dir(self, worktree_path: str | Path) -> Path | None:
+        """Find a spec for evidence validation without changing the candidate.
+
+        Standard verification is already bound to a product fingerprint. Evidence
+        gates therefore must never materialize a missing worktree-owned spec
+        after that verification; doing so would invalidate the receipt they are
+        about to consume.
+        """
+        worktree = Path(worktree_path)
+        if self._spec_artifacts_mode() == "worktree":
+            return self._find_spec_dir_in_root(worktree)
+
+        state = self._state_store.read()
+        state_spec_dir = state.get("spec_dir")
+        if state_spec_dir:
+            candidate = Path(str(state_spec_dir))
+            if not candidate.is_absolute():
+                candidate = self._orchestration_root(worktree) / candidate
+            return candidate if candidate.is_dir() else None
+        return find_spec_dir(self._spec_id, self._orchestration_root(worktree))
+
     def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
         worktree = Path(worktree_path)
         if self._spec_artifacts_mode() == "worktree":
@@ -5313,6 +5408,11 @@ class RalphController:
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
             "If a failure mentions stale/scoped fulfillment evidence, treat it as "
             "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
+            "Ralph owns browser verification execution. Browser or Playwright evidence "
+            "must not be run from the coding CLI. Do not launch Chromium. Do not run "
+            "Playwright or browser E2E commands there. Ralph will rerun the configured "
+            "authoritative verifier after this repair. You may run focused non-browser "
+            "checks that do not invoke a browser.\n\n"
             f"Inner fix {inner_iter}. "
             + (
                 "The prior repair did not clear this failure: diagnose before editing. "
@@ -5325,7 +5425,64 @@ class RalphController:
             )
             + "Fix these verification failures without re-running the full build pipeline:\n"
             + failures_text
+            + self._coverage_observation_repair_block(verify_result)
         )
+
+    @staticmethod
+    def _coverage_observation_repair_block(verify_result: VerifyResult) -> str:
+        """Return bounded, harness-owned case-level repair guidance.
+
+        Coverage observation is an evidence contract, so an aggregate failed
+        requirement tells a provider too little to repair responsibly.  Pass
+        only validated, redacted case debt generated by Ralph; never send a
+        provider the mutable coverage map or raw reporter output as authority.
+        """
+        cases: list[tuple[str, str, str, str]] = []
+        from harness.coverage_contract import is_coverage_case_id
+        valid_types = {"unit", "integration", "e2e", "contract"}
+        valid_statuses = {
+            "unbound",
+            "duplicate_binding",
+            "invalid_report",
+            "observer_missing",
+            "failed",
+            "skipped",
+        }
+        for failure in verify_result.failures:
+            if failure.id != "coverage-observation-gaps":
+                continue
+            raw_cases = failure.details.get("test_cases")
+            if not isinstance(raw_cases, Mapping):
+                continue
+            for raw_case_id, raw_case in raw_cases.items():
+                case_id = str(raw_case_id).strip()
+                if not is_coverage_case_id(case_id) or not isinstance(raw_case, Mapping):
+                    continue
+                test_type = str(raw_case.get("test_type") or "").strip()
+                status = str(raw_case.get("status") or "").strip()
+                if test_type not in valid_types or status not in valid_statuses:
+                    continue
+                reason = _compact_provider_note(raw_case.get("reason"), limit=280)
+                cases.append((case_id, test_type, status, reason or status))
+        if not cases:
+            return ""
+
+        lines = [
+            "\n\n## Coverage Observation Repair Contract",
+            "This is source-bound evidence debt, not an aggregate test-output failure. "
+            "Do not edit the coverage map or weaken its required observations.",
+            "Each listed case ID must appear in exactly one physical test identity. "
+            "For an unbound case, implement the planned behavior and bind a real matching test; "
+            "do not attach its tag to an unrelated test.",
+            "Repair these exact observed case bindings:",
+        ]
+        for case_id, test_type, status, reason in sorted(cases)[:50]:
+            lines.append(
+                f"- `[echelon:{case_id}]` ({test_type}) — {status}: {reason}"
+            )
+        if len(cases) > 50:
+            lines.append(f"- {len(cases) - 50} additional invalid case binding(s) omitted.")
+        return "\n".join(lines)
 
     # === Git operations ===
 
@@ -5476,7 +5633,7 @@ class RalphController:
             and not allow_without_task_progress
         ):
             return None
-        if not self._has_file_changes(worktree_path):
+        if not self._has_non_verify_worktree_changes(worktree_path):
             return None
 
         task_ids = _newly_completed_task_ids(before_build, after_build)
@@ -5513,6 +5670,11 @@ class RalphController:
             "completed_tasks_after": after_completed,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        from harness.task_progress import checkpoint_input_hash
+
+        checkpoint["checkpoint_input_hash"] = checkpoint_input_hash(
+            self._find_existing_spec_dir(worktree_path)
+        )
         state = self._state_store.read()
         checkpoints = state.get("checkpoint_commits")
         if not isinstance(checkpoints, list):
@@ -5762,17 +5924,18 @@ class RalphController:
                 worktree_path=worktree_path,
                 stage="dirty_adjudication",
             )
-        try:
-            self._gitops.commit(
-                worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
-            )
-        except Exception as e:
-            logger.warning("Commit failed for %s: %s", worktree_path, e)
-            raise CommitPushError(
-                f"Commit failed: {e}",
-                branch=branch,
-                worktree_path=worktree_path,
-            ) from e
+        if self._has_non_verify_worktree_changes(worktree_path):
+            try:
+                self._gitops.commit(
+                    worktree_path, message, exclude_paths=_VERIFICATION_ARTIFACT_PATHS
+                )
+            except Exception as e:
+                logger.warning("Commit failed for %s: %s", worktree_path, e)
+                raise CommitPushError(
+                    f"Commit failed: {e}",
+                    branch=branch,
+                    worktree_path=worktree_path,
+                ) from e
 
         # Detect the actual branch rather than assuming a harness/* name.
         # create_worktree() checks out the feature branch directly in
@@ -5890,12 +6053,22 @@ class RalphController:
                 self._state_store.write(state)
             except Exception as state_exc:
                 logger.warning("Could not persist target merge evidence: %s", state_exc)
-            logger.info(
-                "Merged verified delivery branch %s into %s for %s",
-                branch,
-                default_branch,
-                self._spec_id,
-            )
+            if merge_evidence.get("target_synced") is False:
+                logger.warning(
+                    "Published verified delivery branch %s into harness mirror %s "
+                    "for %s; target checkout remains unsynced (%s)",
+                    branch,
+                    default_branch,
+                    self._spec_id,
+                    merge_evidence.get("target_sync_skip_reason") or "unknown reason",
+                )
+            else:
+                logger.info(
+                    "Merged verified delivery branch %s into %s for %s",
+                    branch,
+                    default_branch,
+                    self._spec_id,
+                )
             return True
         except Exception as exc:
             logger.warning(
@@ -6062,47 +6235,16 @@ class RalphController:
 
     def _build_sandbox_spec(self, worktree_path: str, outer_iter: int) -> SandboxSpec:
         """Build SandboxSpec from config and context."""
-        from harness.provider import NetworkPolicy, ResourceLimits as ProviderResourceLimits
-
-        from harness.verification_plan import build_verification_plan
-
-        verification_plan = build_verification_plan(
-            Path(worktree_path),
-            self._config,
-            services=tuple(self._config.verification_services),
+        from harness.verification_stack_runtime import (
+            build_verification_sandbox_spec,
         )
-        return SandboxSpec(
-            image=verification_plan.image,
-            image_source="config_override" if self._config.base_image else "fingerprint",
-            worktree_mount=worktree_path,
-            container_mount="/workspace",
-            resource_limits=ProviderResourceLimits(
-                memory=self._config.resource_limits.memory,
-                cpu=self._config.resource_limits.cpu,
-                pids=self._config.resource_limits.pids,
-                storage=self._config.resource_limits.storage,
-            ),
-            network_policy=NetworkPolicy(
-                allowlist=self._config.network.allowlist,
-                proxy_image=self._config.network.proxy_image,
-            ),
-            env={
-                "ECHELON_HARNESS_RUN": "1",
-                # Corepack uses Node's fetch implementation. Conventional
-                # HTTP(S)_PROXY alone is not honoured unless this opt-in is
-                # present, which would otherwise make clean Node sandboxes try
-                # external DNS from the internal-only network.
-                "NODE_OPTIONS": "--use-env-proxy",
-            },
-            secrets_env={},
-            post_create_command=None,
-            forward_ports=[],
-            labels={
-                "strategy_id": self._strategy_id,
-                "spec_id": self._spec_id,
-                "run_id": str(outer_iter),
-            },
-            ephemeral_volumes=["node_modules"],
+
+        return build_verification_sandbox_spec(
+            self._config,
+            worktree=Path(worktree_path),
+            spec_id=self._spec_id,
+            strategy_id=self._strategy_id,
+            run_id=str(outer_iter),
         )
 
     def _append_iteration_log(
@@ -6179,7 +6321,7 @@ class RalphController:
             return None
         note = _compact_provider_note(str(result.get("stdout") or ""))
         failures = verify_result.failures or []
-        primary_failure = _compact_provider_note(failures[0].error) if failures else ""
+        primary_failure = _compact_failure_summary(failures[0]) if failures else ""
         summary: dict[str, object] = {
             "provider": provider,
             "phase": phase,
@@ -7073,6 +7215,14 @@ def _is_provider_session_limit_verify_result(verify_result: VerifyResult) -> boo
     )
 
 
+def _is_sandbox_browser_runtime_unavailable(verify_result: VerifyResult) -> bool:
+    return any(
+        failure.category == FailureCategory.OTHER
+        and failure.id == "sandbox-browser-runtime-unavailable"
+        for failure in verify_result.failures
+    )
+
+
 def _provider_session_limit_failure_text(verify_result: VerifyResult) -> str:
     for failure in verify_result.failures:
         if failure.id == "fulfillment-refresh-provider-session-limit":
@@ -7184,6 +7334,56 @@ def _compact_provider_note(value: object, *, limit: int = 360) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
+
+
+def _completed_task_coverage_case_ids(tasks_path: Path | None) -> set[str] | None:
+    """Return coverage cases owned by completed tasks in a partial delivery.
+
+    ``None`` means the task ledger is complete and the full coverage map must
+    be observed.  An empty set is meaningful for a partial ledger whose
+    completed tasks declare no direct test ownership.
+    """
+    if tasks_path is None or not tasks_path.is_file():
+        return None
+    markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    summary = summarize_task_progress(markdown)
+    if not summary.valid:
+        return None
+    if summary.terminal_tasks == summary.total_tasks:
+        return None
+
+    completed = {
+        task_id
+        for task_id, status in summary.task_statuses.items()
+        if status in {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}
+    }
+    ownership = task_owned_coverage_case_ids(tasks_path)
+    return {
+        case_id
+        for task_id in completed
+        for case_id in ownership.get(task_id, set())
+    }
+
+
+def _compact_failure_summary(failure: object, *, limit: int = 360) -> str:
+    """Prefer a named failed test over an arbitrary slice of verbose output."""
+    error = redact_verification_text(str(getattr(failure, "error", "") or ""), os.environ)
+    failure_id = str(getattr(failure, "id", "") or "").strip()
+    for raw_line in error.splitlines():
+        line = " ".join(raw_line.split())
+        match = re.match(
+            r"^(?:×|✗|✕|✘|FAIL(?:ED)?)\s+(.+)$",
+            line,
+            re.IGNORECASE,
+        )
+        if match is None:
+            match = re.match(r"^(\[[^]]+\]\s+›\s+.+)$", line)
+        if not match:
+            continue
+        detail = match.group(1).strip()
+        rendered = f"{failure_id}: {detail}" if failure_id else detail
+        return _compact_provider_note(rendered, limit=limit)
+    return _compact_provider_note(error, limit=limit)
 
 
 def _safe_int(value: object) -> int:
@@ -8216,6 +8416,7 @@ def _build_context_agent_sections(sections: list[str]) -> dict[str, list[str]]:
             "Current Requirement Excerpts",
             "Referenced Requirement Excerpts",
             "Spec-Adjacent Artifact Excerpts",
+            "Target Manifest Excerpts",
             "Target Layout Excerpts",
             "Quality Commands",
             "Last Verify Failures",

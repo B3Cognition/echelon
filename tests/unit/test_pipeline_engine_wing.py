@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+pytest.skip("SOAR execution is disabled pending removal", allow_module_level=True)
 
 from codegen.memory.context import MemPalaceContext
 from codegen.pipeline.pipeline_engine import PipelineEngine

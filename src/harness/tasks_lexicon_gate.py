@@ -1,12 +1,12 @@
 """Provider-free certification of the configured tasks Lexicon artifact."""
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from harness.lexicon_gate_io import write_json_atomic
+from lexicon.glossary import load_glossary_terms
 
 
 TASKS_LEXICON_ACTIONS = frozenset(
@@ -257,7 +257,10 @@ def _validate_tasks_gate_artifacts(
 
             lexicon_report = validate_tasks(
                 tasks_text,
-                glossary=_load_glossary_terms(glossary_path),
+                glossary=(
+                    _load_glossary_terms(glossary_path)
+                    | _controlled_spec_terms(spec_ref_path)
+                ),
                 spec_text=spec_ref_path.read_text(encoding="utf-8"),
             )
             findings.extend(
@@ -326,13 +329,24 @@ def _validate_tasks_gate_artifacts(
 
 
 def _load_glossary_terms(glossary_path: Path) -> set[str]:
-    if not glossary_path.is_file():
+    return load_glossary_terms(glossary_path)
+
+
+def _controlled_spec_terms(spec_ref_path: Path) -> set[str]:
+    """Return identifier terms owned by a parseable controlled requirements spec.
+
+    Phase 3 follows a passed Phase 1 Lexicon gate, so task artifacts may repeat
+    measurable terms from that controlled requirement projection without adding
+    redundant glossary entries.  Parsing first keeps an arbitrary malformed
+    file from becoming an authority for task vocabulary.
+    """
+    try:
+        from lark.exceptions import LarkError
+        from lexicon.parser import parse
+        from lexicon.resolver import content_terms
+
+        text = spec_ref_path.read_text(encoding="utf-8")
+        parse(text)
+    except (OSError, LarkError):
         return set()
-    glossary: set[str] = set()
-    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        terms = re.findall(r"\*\*([^*]+)\*\*", line)
-        glossary.update(term.strip() for term in terms or [line])
-    return glossary
+    return {term for term, _line in content_terms(text)}

@@ -1,5 +1,9 @@
 # Echelon Pipeline Matrix
 
+> SOAR/codegen execution is disabled pending removal. The SOAR rows below are
+> historical reference, not supported choices. Use the default delivery strategy;
+> shared memory and graph utilities remain supported.
+
 Echelon currently has two independent pipeline choices:
 
 1. **Spec authoring format** in Phase A.

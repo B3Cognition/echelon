@@ -310,7 +310,8 @@ class TestPhaseGraph:
             ),
             ("provider_escalation", "phase1-why2", "human_clarification_required"): (
                 "material", "require_human", "clarification_resume", True,
-                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                frozenset({"phase1-why2"}),
+                frozenset({"phase1-why2", "phase1-what"}),
                 ("user_message", "phase", "quality_scores"),
                 ("{spec_dir}/spec.md", "{spec_dir}/issues.md"), (),
             ),
@@ -381,8 +382,14 @@ class TestPhaseGraph:
                 "banzai_issue_resolution",
             ): (
                 "material", "require_human", "banzai_issue_resolution", False,
-                frozenset({"phase1-why2"}),
-                frozenset({"phase1-what"}),
+                frozenset({"phase1-why2", "phase3-consensus"}),
+                frozenset({
+                    "phase1-discover",
+                    "phase1-what",
+                    "phase3-how",
+                    "phase3-sentinel",
+                    "phase3-plan",
+                }),
                 (
                     "phase",
                     "issue_resolution_ledger",
@@ -395,6 +402,7 @@ class TestPhaseGraph:
                 "material", "require_human", "phase_dispatch_limit", False,
                 dispatch_phases,
                 frozenset({
+                    "phase1-discover",
                     "phase1-what",
                     "phase3-how",
                     "phase3-sentinel",
@@ -649,6 +657,14 @@ class TestPhaseGraph:
         assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
         assert why2.evidence_routing == "finding_routes"
 
+    def test_why2_declares_the_controller_owned_banzai_default_route(self):
+        why2 = self.graph.get("phase1-why2")
+        policy = why2.human_input_policies[0]
+
+        assert "autonomous_default_candidate" in why2.allowed_state_updates
+        assert why2.state_update_types["autonomous_default_candidate"] == "object"
+        assert "phase1-what" in policy.allowed_target_phases
+
     def test_why2_declares_proportional_quality_policy_as_controller_owned(self):
         workflow = yaml.safe_load(PROSAIC_RUNTIME_DEFINITION.read_text(encoding="utf-8"))
         why2_definition = next(
@@ -674,7 +690,7 @@ class TestPhaseGraph:
     def test_why2_keeps_global_iteration_routes_for_perfectionist_mode(self):
         why2 = self.graph.get("phase1-why2")
 
-        assert why2.transitions[1:3] == [
+        assert why2.transitions[3:5] == [
             {
                 "to": "phase1-what",
                 "condition": "verdict = FAIL AND iteration < max_iterations",
@@ -1279,6 +1295,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         },
         "phase1_quality_certificate": {
             "spec_quality_certificate",
+            "why2_repair_phase",
         },
         "feasibility_structural": {
             "structural_action",
@@ -1302,7 +1319,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         name: graph.controller_contract(name).state_update_keys
         for name in expected
     } == expected
-    assert len(set().union(*expected.values())) == 25
+    assert len(set().union(*expected.values())) == 26
 
 
 def test_production_contracts_reject_incomplete_success_results() -> None:

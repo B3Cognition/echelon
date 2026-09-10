@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 
 from echelon.cli import (
@@ -11,6 +12,23 @@ from echelon.cli import (
     _print_open_issues,
     _print_staging_artifacts,
 )
+
+
+@pytest.mark.parametrize("reason", ["missing_phase_outputs", "invalid_phase_outputs"])
+def test_invalid_artifact_recovery_guidance_includes_validation_error(tmp_path, capsys, reason):
+    run_dir = tmp_path / "runs" / "spec-test"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name)
+    (run_dir / "state.json").write_text(json.dumps({
+        "status": "blocked", "phase": "terminal-blocked", "blocked_reason": reason,
+        "phase_output_recovery": {"phase": "phase3-sentinel", "missing_outputs": [],
+            "invalid_outputs": [{"path": "coverage-map.md", "reason": "line 4: ambiguous test types"}]},
+        "last_dispatch": {"phase_id": "phase3-sentinel", "verdict": "BLOCKED"},
+    }))
+    _print_next_steps(tmp_path, "blocked")
+    output = capsys.readouterr().out
+    assert "coverage-map.md: line 4: ambiguous test types" in output
+    assert "echelon spec continue" in output
 
 
 def _valid_plan_conformance_json() -> str:

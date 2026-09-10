@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +15,29 @@ from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_
 from echelon.spec_switch import SpecSwitchError
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+from echelon.spec_lifecycle import SpecRunExecutionLock
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stderr or result.stdout)
+    return result.stdout.strip()
+
+
+def _init_status_repo(repo: Path) -> None:
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Echelon Test")
+    _git(repo, "config", "user.email", "echelon@example.test")
+    (repo / "README.md").write_text("# Workspace\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "initial")
 
 
 def _write_build_state(
@@ -148,6 +173,167 @@ def _proportional_quality_decision() -> dict[str, object]:
         source_state_revision=0,
         now="2026-08-14T10:00:00+00:00",
     )
+
+
+@pytest.mark.parametrize("historical_status", ["done", "blocked", "interrupted", "in_progress"])
+def test_status_reports_canonical_landed_spec_instead_of_ready_to_build(
+    tmp_path: Path,
+    capsys,
+    historical_status: str,
+) -> None:
+    _init_status_repo(tmp_path)
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Demo\n\n**Status**: landed\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    _git(tmp_path, "add", "specs/001-demo")
+    _git(tmp_path, "commit", "-m", "publish landed spec")
+    run_dir = tmp_path / "runs/spec-complete"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": historical_status,
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+                "completed_phases": ["phase1-constitution"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "LANDED" in output
+    assert "No action required; delivery is already landed." in output
+    assert "READY TO BUILD" not in output
+    assert "echelon delivery run" not in output
+    assert "echelon spec continue" not in output
+    assert "RUN BLOCKED" not in output
+    assert "No active run found" in output
+
+
+def test_unpublished_landed_authoring_branch_is_not_reported_as_landed(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_status_repo(tmp_path)
+    _git(tmp_path, "switch", "-c", "001-demo")
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Pending publication\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    _git(tmp_path, "add", "specs/001-demo")
+    _git(tmp_path, "commit", "-m", "finalize source only")
+    run_dir = tmp_path / "runs/spec-complete"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "done",
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "No action required; delivery is already landed." not in output
+
+
+def test_blocked_reopened_run_is_not_hidden_by_older_landed_snapshot(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs/spec-reopened"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Previously landed snapshot\n",
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "spec_id": "001-demo",
+                "published_spec_dir": "specs/001-demo",
+                "blocked_reason": "provider_failure",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "RUN BLOCKED" in output
+
+
+def test_completed_reopened_run_is_not_hidden_by_older_landed_snapshot(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_status_repo(tmp_path)
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Previously landed snapshot\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "publish landed spec")
+    _git(tmp_path, "switch", "-c", "001-demo")
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: In Progress\n---\n# Reopened scope\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "specs/001-demo/spec.md")
+    _git(tmp_path, "commit", "-m", "reopen landed spec")
+    run_dir = tmp_path / "runs/spec-reopened"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "done",
+                "phase": "done",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    output = capsys.readouterr().out
+    assert "LANDED" not in output
+    assert "No action required; delivery is already landed." not in output
 
 
 def test_status_shows_current_authorized_quality_debt_without_calling_it_passed(
@@ -492,6 +678,35 @@ def test_latest_converged_harness_build_is_ready_to_land(tmp_path: Path) -> None
     assert _find_converged_harness_build(tmp_path) == ("001-demo", None)
 
 
+def test_latest_polyrepo_target_build_is_ready_to_land(tmp_path: Path) -> None:
+    state_dir = (
+        tmp_path
+        / "runs"
+        / "targets"
+        / "browser-game"
+        / "runs"
+        / "build-20260908-091159-701868"
+        / "state"
+    )
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "007-animate-character-use-product",
+                "status": "converged",
+                "termination_reason": "converged",
+                "pr_url": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _find_converged_harness_build(tmp_path) == (
+        "007-animate-character-use-product",
+        None,
+    )
+
+
 def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     tmp_path: Path,
     capsys,
@@ -726,8 +941,82 @@ def test_status_uses_phase_instead_of_stale_last_dispatch(tmp_path: Path, capsys
     _cmd_status(tmp_path)
 
     out = capsys.readouterr().out
-    assert "Phase   phase1-what" in out
-    assert "Phase   phase2-decide" not in out
+    assert re.search(r"^  Phase\s+phase1-what$", out, flags=re.MULTILINE)
+    assert not re.search(r"^  Phase\s+phase2-decide$", out, flags=re.MULTILINE)
+    assert re.search(
+        r"^  Execution\s+inactive \(running state may be stale\)$",
+        out,
+        flags=re.MULTILINE,
+    )
+    assert "echelon spec continue" in out
+
+
+def test_status_does_not_suggest_continue_while_the_run_execution_lease_is_live(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_id = "spec-20260904-062901-960244"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "running",
+                "phase": "phase3-sentinel",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with SpecRunExecutionLock.acquire(run_dir, "squad-exec-live"):
+        _cmd_status(tmp_path)
+
+    out = capsys.readouterr().out
+    assert re.search(
+        r"^  Execution\s+active \(squad-exec-live\)$",
+        out,
+        flags=re.MULTILINE,
+    )
+    assert "Wait for the active run to finish; do not start a second continuation." in out
+    assert "echelon spec continue" not in out
+
+
+def test_status_explains_banzai_consensus_retry_is_autonomous(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_id = "spec-20260904-062901-960244"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "agent_blocked",
+                "autonomy_mode": "banzai",
+                "recovery_instruction": {
+                    "schema_version": 1,
+                    "kind": "retry_phase",
+                    "reason_code": "agent_blocked",
+                    "phase": "phase3-consensus",
+                    "requires_human_input": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "echelon spec continue" in out
+    assert "Banzai-eligible SAGE issue" in out
+    assert "automatically" in out
 
 
 def test_status_lists_active_spec_checkpoint_stash_and_other_runs(

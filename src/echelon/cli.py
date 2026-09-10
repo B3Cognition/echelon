@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,6 +31,12 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+from harness.banzai_protocol import active_banzai_default_protocol_fingerprint
+from harness.squad_state import (
+    StateAdvanceError,
+    validate_banzai_default_reassessment_record,
+    validate_banzai_evidence_reassessment_record,
+)
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
     RecoveryInstruction,
@@ -40,7 +46,14 @@ from harness.recovery_instruction import (
     validate_recovery_instruction,
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
-from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.phase_a_readiness import coverage_contract_error, validate_phase_a_readiness
+from harness.phase1_quality import has_current_phase1_quality_prerequisite
+from harness.state import state_lock_owner_is_alive
+from harness.issue_identity import (
+    issue_fingerprint,
+    matching_issue_resolution,
+    record_issue_resolution,
+)
 
 try:
     from codegen.memory.collision import check_wing_collision
@@ -66,12 +79,27 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.15"
+CLI_VERSION = "4.1.0"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
     default="echelon spec run",
 )
+
+
+@dataclass(frozen=True)
+class LocalActionPlan:
+    """The exact host-local action that an operator confirms before it runs."""
+
+    spec_id: str
+    target_id: str
+    engine: str
+    candidate_fingerprint: str
+    planned_actions: tuple[str, ...]
+    digest: str
+    workspace_root: Path | None = field(default=None, repr=False)
+    target_root: Path | None = field(default=None, repr=False)
+    candidate: object | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -226,6 +254,9 @@ Commands:
   delivery init                              Initialize delivery environment: sandbox, mirror, verify.
   delivery target <spec_id>                  Prepare target-scoped delivery metadata from spec targets.
   delivery status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state.
+  delivery verify-local <spec_id> [--target <id>] [--engine auto|docker|podman] [--yes]
+                                            Explicit macOS local verification; does not affect landing.
+  delivery cleanup-local <local-run-id>      Recover one journalled local verification run.
   delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
@@ -406,7 +437,8 @@ def _workspace_git_preflight_for_squad_run(
     # existing run before new-spec branch/slug machinery sees its empty description.
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     # An explicit phase is an intentional recovery command.  It must reuse the
     # existing run before any new-spec branch/slug machinery sees its empty
@@ -722,6 +754,12 @@ def _cmd_init(
 ) -> None:
     echelon_cfg = project_dir / ".echelon" / "config.yml"
     runtime_dir = project_dir / ".echelon" / "runtime"
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    setup_commit = OwnedOutputCommit(
+        project_dir, [echelon_cfg, project_dir / ".gitignore"],
+        "chore: record Echelon workspace setup", preserve_dirty=True,
+    )
 
     from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
 
@@ -845,6 +883,7 @@ def _cmd_init(
         if result.returncode != 0:
             sys.exit(result.returncode)
 
+    setup_commit.commit()
     # Step 4: Confirm
     _banner("ECHELON INIT — COMPLETE", [
         ("Config",       str(echelon_cfg)),
@@ -1051,7 +1090,14 @@ def _cmd_land(args: list[str]) -> None:
         _archive_squad_run(project_dir, spec_id)
         sys.exit(0)
     else:
-        _banner("LAND", [("spec", spec_id), ("status", "could not be landed (PR merge blocked?)")], file=sys.stderr)
+        _banner(
+            "LAND",
+            [
+                ("spec", spec_id),
+                ("status", "could not be landed; see the specific blocker above"),
+            ],
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -1219,6 +1265,42 @@ def _delivery_provisioning_blockers(
     return blockers
 
 
+def _refresh_workspace_runtime_for_delivery(project_root: Path) -> None:
+    """Deploy the installed Echelon-owned bundle before a delivery reads it.
+
+    ``.echelon/runtime`` and ``.echelon/prosaic`` are generated, ignored
+    workspace state.  Delivery must not silently run an older managed bundle
+    after the CLI has been upgraded, because that can remove new stack-owned
+    verification requirements from the resolved contract.
+    """
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    try:
+        install_prosaic_bundle(project_root)
+    except ProsaicBundleInstallError as exc:
+        print(
+            "✗ Could not refresh Echelon's managed runtime before delivery.\n"
+            f"  Workspace: {project_root}\n"
+            f"  Error: {exc}\n"
+            "  Fix: rerun the Echelon installer, then retry this delivery command.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
+def _resolve_delivery_stack_contract(project_root: Path, target_root: Path):
+    """Resolve the current installed stack contract for one delivery target."""
+    from harness.verification_stack_runtime import resolve_verification_stacks
+
+    project_root = project_root.resolve()
+    target_root = target_root.resolve()
+    _refresh_workspace_runtime_for_delivery(project_root)
+    return resolve_verification_stacks(project_root, target_root)
+
+
 def _resolve_delivery_verification_services(
     config: object,
     *,
@@ -1226,28 +1308,7 @@ def _resolve_delivery_verification_services(
     target_root: Path,
 ) -> None:
     """Attach target-applicable sandbox services from the stack contract."""
-    from harness.config import get_full_resolved_config
-
-    target_config_dir = target_root.resolve() / ".echelon"
-    stack_config_root = (
-        target_root.resolve()
-        if target_root.resolve() != project_root.resolve()
-        and any((target_config_dir / name).is_file() for name in ("config.yml", "local.yml"))
-        else project_root.resolve()
-    )
-    resolved_config = get_full_resolved_config(stack_config_root)
-    stacks = resolved_config.get("stacks") or {}
-    if not isinstance(stacks, Mapping):
-        raise StackSelectionError("stacks must be a mapping")
-    selected = stacks.get("selected") or []
-    archetypes = stacks.get("target_archetypes") or []
-    if not isinstance(selected, list) or not isinstance(archetypes, list):
-        raise StackSelectionError("stack selection must use list values")
-    resolved = resolve_stacks(
-        [str(value) for value in selected],
-        _load_stack_definitions_for_project(project_root),
-        target_archetypes={str(value) for value in archetypes} or None,
-    )
+    resolved = _resolve_delivery_stack_contract(project_root, target_root)
     config.verification_services = list(resolved.services)
     config.resolved_stacks = resolved
     config.resolved_runnability = resolved.runnability
@@ -2392,16 +2453,16 @@ def _cmd_harness_run(
             target_repo=target_repo_path,
             spec_id=spec_id,
         )
-    if config.verification.execution == "host":
-        _block_if_delivery_provisioning_incomplete(
-            project_root=config_root,
-            target_root=Path(config.target_repo),
-        )
     _resolve_delivery_verification_services(
         config,
         project_root=config_root,
         target_root=Path(config.target_repo),
     )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2957,16 +3018,16 @@ def _cmd_harness_resume(
             spec_id=spec_id,
         )
 
-    if config.verification.execution == "host":
-        _block_if_delivery_provisioning_incomplete(
-            project_root=config_root,
-            target_root=Path(config.target_repo),
-        )
     _resolve_delivery_verification_services(
         config,
         project_root=config_root,
         target_root=Path(config.target_repo),
     )
+    if config.verification.execution == "host":
+        _block_if_delivery_provisioning_incomplete(
+            project_root=config_root,
+            target_root=Path(config.target_repo),
+        )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
@@ -3504,7 +3565,7 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
         run_id = current_file.read_text().strip()
         if run_id:
             run_dir = base_dir / run_id
-            if run_dir.exists():
+            if _is_squad_run_dir(run_dir, require_state=False):
                 return run_dir
     # No .current pointer — fall back to newest run dir that has state.json
     all_runs = _iter_run_dirs(project_root)
@@ -3594,6 +3655,22 @@ def _recovery_action_from_instruction(
             note="runtime contracts are compatible; the blocked phase will retry without rewind",
         )
     if kind in {RecoveryKind.RETRY_PHASE, RecoveryKind.WAIT_FOR_PROVIDER}:
+        output_recovery = run_state.get("phase_output_recovery")
+        output_detail = ""
+        if isinstance(output_recovery, dict) and output_recovery.get("phase") == phase:
+            invalid = output_recovery.get("invalid_outputs")
+            if isinstance(invalid, list):
+                output_detail = "; ".join(
+                    f"{item['path']}: {item['reason']}"
+                    for item in invalid
+                    if isinstance(item, dict) and item.get("path") and item.get("reason")
+                )
+        is_banzai_consensus_repair = (
+            kind == RecoveryKind.RETRY_PHASE
+            and instruction.reason_code == "agent_blocked"
+            and instruction.phase == "phase3-consensus"
+            and run_state.get("autonomy_mode") == "banzai"
+        )
         return _RunRecoveryAction(
             "retry_phase",
             reason=reason,
@@ -3602,8 +3679,14 @@ def _recovery_action_from_instruction(
             note=(
                 "wait for the provider reset, then retry the blocked phase"
                 if kind == RecoveryKind.WAIT_FOR_PROVIDER
-                else "will retry the blocked phase without rewind"
-            ),
+                else (
+                    "will retry Phase 3 consensus; any explicit Banzai-eligible "
+                    "SAGE issue will be sealed and routed to its owning repair "
+                    "phase automatically"
+                    if is_banzai_consensus_repair
+                    else "will retry the blocked phase without rewind"
+                )
+            ) + (f". Repair required: {output_detail}" if output_detail else ""),
         )
     if kind == RecoveryKind.RESOLVE_DECISION:
         return _RunRecoveryAction(
@@ -3718,10 +3801,29 @@ def _v2_automatic_decision_is_registered(
     graph: object | None = None,
 ) -> bool:
     """Reconstruct intrinsic v2 automatic eligibility from registered policy."""
-    if decision.get("schema_version") != 2 or project_root is None:
+    return (
+        decision.get("schema_version") == 2
+        and _decision_automatic_eligibility_under_current_policy(
+            decision,
+            project_root=project_root,
+            graph=graph,
+        )
+    )
+
+
+def _decision_automatic_eligibility_under_current_policy(
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+    graph: object | None = None,
+) -> bool:
+    """Recalculate registered v2/v3 recommendation eligibility for recovery."""
+    if decision.get("schema_version") not in {2, 3} or project_root is None:
         return False
     try:
-        from harness.human_input import v2_automatic_decision_is_registered
+        from harness.human_input import (
+            decision_recommendation_is_automatic_under_policy,
+        )
 
         if graph is None:
             from harness.phase_graph import load_workspace_phase_graph
@@ -3733,7 +3835,10 @@ def _v2_automatic_decision_is_registered(
             str(decision.get("producer_id") or ""),
             str(decision.get("reason_code") or ""),
         )
-        return v2_automatic_decision_is_registered(decision, policy)
+        return decision_recommendation_is_automatic_under_policy(
+            decision,
+            policy,
+        )
     except (AttributeError, KeyError, OSError, TypeError, ValueError):
         return False
 
@@ -3744,9 +3849,12 @@ def _automatic_decision_is_eligible(
     project_root: Path | None,
     graph: object | None = None,
 ) -> bool:
-    if decision.get("schema_version") == 3:
-        return decision.get("automatic_eligible") is True
-    return _v2_automatic_decision_is_registered(
+    if (
+        decision.get("schema_version") == 3
+        and decision.get("automatic_eligible") is True
+    ):
+        return True
+    return _decision_automatic_eligibility_under_current_policy(
         decision,
         project_root=project_root,
         graph=graph,
@@ -3820,6 +3928,57 @@ def _versioned_decision_recovery_action(
             decision,
             project_root=project_root,
         )
+    if _legacy_banzai_why2_reassessment_is_available(run_state, decision):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "will re-evaluate this pre-candidate Banzai WHY2 question "
+                "once under the current bounded-default policy"
+            ),
+        )
+    protocol_upgrade_action = _v1_banzai_why2_protocol_upgrade_recovery_action(
+        run_state,
+        decision,
+        project_root=project_root,
+    )
+    if protocol_upgrade_action is not None:
+        return protocol_upgrade_action
+    if _banzai_why2_evidence_reassessment_is_available(run_state, decision):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "will search canonical evidence for this exact Banzai WHY2 "
+                "question before requiring a human answer"
+            ),
+        )
+    if (
+        status == "awaiting_human"
+        and decision.get("schema_version") == 3
+        and decision.get("automatic_eligible") is False
+        and source_kind == "provider_escalation"
+        and decision.get("autonomy_mode") == "banzai"
+        and run_state.get("autonomy_mode") == "banzai"
+        and _automatic_decision_is_eligible(
+            decision,
+            project_root=project_root,
+        )
+    ):
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=str(decision["reason_code"]),
+            phase=str(decision["source_phase"]),
+            command="echelon spec continue",
+            note=(
+                "the current Banzai policy accepts this sealed product "
+                "recommendation as an autonomous default"
+            ),
+        )
     if (
         status != "failed"
         or decision.get("autonomy_mode") != "banzai"
@@ -3858,6 +4017,38 @@ def _versioned_decision_recovery_action(
         phase=source_phase,
         command=_command_display("echelon phase run", [source_phase]),
         note="replay the exact failed automatic decision source phase",
+    )
+
+
+def _banzai_why2_evidence_reassessment_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Expose one controller evidence preflight for each distinct question."""
+    if not _is_pre_candidate_banzai_why2_decision(decision):
+        return False
+    try:
+        validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+        record = validate_banzai_evidence_reassessment_record(
+            run_state.get("banzai_evidence_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    attempts = record["attempts"] if record is not None else []
+    question_sha256 = hashlib.sha256(
+        str(decision["question"]).encode("utf-8")
+    ).hexdigest()
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and len(attempts) < 8
+        and all(
+            attempt["question_sha256"] != question_sha256
+            for attempt in attempts
+        )
     )
 
 
@@ -4041,8 +4232,19 @@ def _decision_audit_fields(
         recommended_answer = str(
             decision.get("recommended_answer") or ""
         ).strip()
+        evidence = decision.get("recommendation_evidence")
+        controller_owned_banzai_default = (
+            recommended_option is None
+            and not recommended_answer
+            and isinstance(evidence, list)
+            and len(evidence) == 1
+            and isinstance(evidence[0], Mapping)
+            and evidence[0].get("kind") == "banzai_default_candidate"
+        )
         recommendation_target = (
-            _decision_option_display(decision, recommended_option)
+            "Controller-owned Banzai default"
+            if controller_owned_banzai_default
+            else _decision_option_display(decision, recommended_option)
             if recommended_option is not None
             else recommended_answer or "(human action only)"
         )
@@ -4438,7 +4640,7 @@ def _persisted_or_legacy_recovery_instruction(
     phase_output_recovery = run_state.get("phase_output_recovery")
     phase_output_instruction: RecoveryInstruction | None = None
     if (
-        reason in {"missing_phase_outputs", "invalid_evidence_inventory"}
+        reason in {"missing_phase_outputs", "invalid_phase_outputs", "invalid_evidence_inventory"}
         and isinstance(phase_output_recovery, dict)
     ):
         recovery_phase = str(
@@ -4471,6 +4673,145 @@ def _persisted_or_legacy_recovery_instruction(
     if phase_output_instruction is not None:
         return phase_output_instruction
     return None
+
+
+def _legacy_banzai_why2_reassessment_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Presentation-only view of the controller's narrow legacy retry gate."""
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and run_state.get("banzai_default_candidate_protocol_version") is None
+        and run_state.get("banzai_default_reassessment") is None
+        and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _v1_banzai_why2_protocol_upgrade_is_available(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> bool:
+    """Identify the one valid legacy marker eligible for an upgrade retry."""
+    try:
+        reassessment = validate_banzai_default_reassessment_record(
+            run_state.get("banzai_default_reassessment")
+        )
+    except StateAdvanceError:
+        return False
+    return (
+        run_state.get("status") == "blocked"
+        and run_state.get("phase") == "phase1-why2"
+        and run_state.get("autonomy_mode") == "banzai"
+        and run_state.get("banzai_default_candidate_protocol_version") is None
+        and reassessment is not None
+        and reassessment["schema_version"] == 1
+        and _is_pre_candidate_banzai_why2_decision(decision)
+    )
+
+
+def _v1_banzai_why2_protocol_upgrade_recovery_action(
+    run_state: Mapping[str, object],
+    decision: Mapping[str, object],
+    *,
+    project_root: Path | None,
+) -> _RunRecoveryAction | None:
+    """Present the bounded retry only when the active deployed bundle is safe."""
+    if not _v1_banzai_why2_protocol_upgrade_is_available(run_state, decision):
+        return None
+    if project_root is None:
+        return None
+    fingerprint = active_banzai_default_protocol_fingerprint(project_root)
+    if fingerprint.fingerprint is None:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=str(decision["reason_code"]),
+            phase="phase1-why2",
+            command="echelon workspace migrate-to-prosaic",
+            note=(
+                "the deployed candidate-protocol bundle cannot be verified: "
+                + fingerprint.diagnostic
+            ),
+        )
+    return _RunRecoveryAction(
+        "resolve_decision",
+        reason=str(decision["reason_code"]),
+        phase="phase1-why2",
+        command="echelon spec continue",
+        note=(
+            "will re-evaluate this legacy Banzai WHY2 question once using the "
+            "refreshed candidate-protocol bundle"
+        ),
+    )
+
+
+def _is_pre_candidate_banzai_why2_decision(
+    decision: Mapping[str, object],
+) -> bool:
+    """Identify the only historic decision eligible for protocol reassessment."""
+    return (
+        decision.get("schema_version") == 3
+        and decision.get("status") == "awaiting_human"
+        and decision.get("autonomy_mode") == "banzai"
+        and decision.get("source_kind") == "provider_escalation"
+        and decision.get("producer_id") == "phase1-why2"
+        and decision.get("source_phase") == "phase1-why2"
+        and decision.get("reason_code") == "human_clarification_required"
+        and decision.get("classification") == "material"
+        and decision.get("resolution_handler") == "clarification_resume"
+        and decision.get("automatic_eligible") is False
+        and decision.get("options") == []
+        and decision.get("recommended_answer") is None
+        and decision.get("recommended_option_id") is None
+        and decision.get("risk_level") is None
+        and decision.get("recommendation_authority") == "workflow_policy"
+        and decision.get("recommendation_evidence") == []
+        and decision.get("attempts") == 0
+        and decision.get("failure_code") is None
+    )
+
+
+def _restore_interrupted_legacy_banzai_why2_reassessment(
+    state: dict[str, object],
+) -> bool:
+    """Repair the exact transient state emitted by the retired retry path."""
+    raw_decision = state.get("blocked_decision")
+    if (
+        not isinstance(raw_decision, Mapping)
+        or state.get("status") != "running"
+        or state.get("phase") != "phase1-why2"
+        or state.get("autonomy_mode") != "banzai"
+        or state.get("blocked_reason") is not None
+        or state.get("recovery_instruction") is not None
+        or state.get("escalation_question") is not None
+        or state.get("escalation_options") is not None
+        or state.get("banzai_default_candidate_protocol_version") is not None
+        or state.get("banzai_default_reassessment") is not None
+    ):
+        return False
+    try:
+        from harness.blocked_decision import validate_blocked_decision
+
+        decision = validate_blocked_decision(raw_decision)
+    except ValueError:
+        return False
+    if not _is_pre_candidate_banzai_why2_decision(decision):
+        return False
+    state["status"] = "blocked"
+    state["blocked_reason"] = decision["reason_code"]
+    state["recovery_instruction"] = RecoveryInstruction(
+        kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+        reason_code=str(decision["reason_code"]),
+        phase="phase1-why2",
+        requires_human_input=True,
+        schema_version=2,
+        decision_id=str(decision["id"]),
+    ).to_dict()
+    state["escalation_question"] = decision["question"]
+    state["escalation_options"] = []
+    return True
 
 
 def _render_escalation_options(options: object) -> str:
@@ -4523,6 +4864,7 @@ def _is_retryable_dispatch_block_reason(reason: str) -> bool:
     return (
         reason in {
             "missing_phase_outputs",
+            "invalid_phase_outputs",
             "missing_echelon_result",
             "agent_timeout",
             "agent_blocked",
@@ -4684,6 +5026,28 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    if reason in {"repair_no_progress", "repair_action_unclassified", "repair_review_stale",
+                  "repair_review_missing", "repair_context_incomplete", "repair_budget_exhausted",
+                  "repair_external_prerequisite", "repair_human_decision"}:
+        selected = run_state.get("selected_issue_resolution")
+        entry = (run_state.get("issue_resolution_ledger") or {}).get(selected) or {}
+        pending = run_state.get("phase3_pending_action") or {}
+        receipt = (run_state.get("phase3_issue_reviews") or {}).get(entry.get("last_review_dispatch_id")) or {}
+        owner = entry.get("repair_phase") or (pending.get("assessment") or {}).get("owner_phase") or "phase3-consensus"
+        issue = selected or pending.get("issue_id") or "current Phase 3 finding"
+        action = (entry.get("repair_action") or pending.get("assessment") or {}).get("action") or entry.get("decision") or "classify or revalidate the current repair"
+        detail = receipt.get("rationale") or (run_state.get("phase3_last_blocker") or {}).get("detail") or "Inspect current issues and assessment evidence."
+        action_label = "proposed" if pending else "submitted"
+        prerequisite = "Resolve the stated evidence/authority prerequisite before continuing; existing repair limits are retained."
+        if reason == "repair_budget_exhausted":
+            prerequisite = (
+                f"Iteration budget exhausted ({run_state.get('iteration', '?')}/{run_state.get('max_iterations', '?')}); "
+                "the next repair was not dispatched. Additional repair budget requires explicit authorization; no limit was reset."
+            )
+        return _RunRecoveryAction("manual_recovery", reason=reason, phase=owner,
+            command="echelon spec status",
+            note=f"{issue}; owner {owner}; {action_label}: {str(action)[:400]}. {str(detail)[:800]} {prerequisite}")
+
     try:
         decision_recovery = _versioned_decision_recovery_action(
             run_state,
@@ -4738,6 +5102,49 @@ def _classify_run_recovery(
     all_ledger_entries_validated = bool(ledger_entries) and all(
         entry.get("status") == "validated" for entry in ledger_entries
     )
+
+    selected_issue = str(
+        run_state.get("selected_issue_resolution") or ""
+    ).strip()
+    selected_entry = (
+        ledger.get(selected_issue)
+        if selected_issue and isinstance(ledger, dict)
+        else None
+    )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and run_state.get("why2_repair_phase") == "phase1-discover"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="discovery_artifact_repair",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry WHY2 so its controller-owned discovery-artifact route "
+                "can run before proportional specification repair."
+            ),
+        )
+    if (
+        reason == "proportional_quality_candidate_integrity_failed"
+        and isinstance(selected_entry, dict)
+        and selected_entry.get("status") == "repaired"
+        and str((run_state.get("last_dispatch") or {}).get("phase_id") or "")
+        == "phase1-why2"
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="issue_resolution_revalidation",
+            phase="phase1-why2",
+            command="echelon spec continue",
+            note=(
+                "Retry the completed named repair against current authoritative "
+                "SAGE and Understanding evidence. Any unrelated integrity "
+                "failure remains blocking."
+            ),
+        )
 
     if reason == "issue_resolution_next":
         if all_ledger_entries_validated:
@@ -4804,6 +5211,20 @@ def _classify_run_recovery(
             ),
         )
 
+    if reason == "phase_dispatch_limit_option_contract_failed":
+        phase = str(run_state.get("phase") or "").strip()
+        if phase and phase != "terminal-blocked":
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="phase_dispatch_limit_option_contract_retry",
+                phase=phase,
+                command="echelon spec continue",
+                note=(
+                    "Retry the sealed dispatch-cap option preparation against "
+                    "the installed controller contract without resetting the cap."
+                ),
+            )
+
     if (
         reason == "phase_dispatch_limit_evidence_missing"
         and _active_dispatch_cap_evidence_exists(run_state, project_root)
@@ -4822,6 +5243,47 @@ def _classify_run_recovery(
             )
 
     phase = str(run_state.get("phase") or "").strip()
+    certificate = run_state.get("spec_quality_certificate")
+    certificate_source_sha256 = (
+        str(certificate.get("source_sha256") or "").strip()
+        if isinstance(certificate, Mapping)
+        else ""
+    )
+    epoch_recovery = run_state.get(
+        "phase_dispatch_limit_certification_epoch_recovery"
+    )
+    epoch_already_recovered = (
+        isinstance(epoch_recovery, Mapping)
+        and epoch_recovery.get("phase") == phase
+        and epoch_recovery.get("source_sha256") == certificate_source_sha256
+    )
+    if (
+        reason.startswith("phase_dispatch_limit_evidence_")
+        and phase
+        in {
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        and project_root is not None
+        and re.fullmatch(r"[0-9a-f]{64}", certificate_source_sha256) is not None
+        and not epoch_already_recovered
+        and has_current_phase1_quality_prerequisite(
+            run_state,
+            project_root=project_root,
+        )
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="phase_dispatch_limit_certification_epoch",
+            phase=phase,
+            command="echelon spec continue",
+            note=(
+                "The capped downstream phase now has a current Phase 1 "
+                "quality certificate. Retry it in that certification epoch "
+                "instead of interpreting PASS issues.md as repair evidence."
+            ),
+        )
     if (
         reason.startswith("phase_dispatch_limit_evidence_")
         and phase
@@ -4862,7 +5324,7 @@ def _classify_run_recovery(
     recovery = run_state.get("issue_resolution_recovery")
     if (
         isinstance(recovery, dict)
-        and recovery.get("status") != "consumed"
+        and recovery.get("status") not in {"consumed", "validated"}
         and str(recovery.get("issue_id") or "").strip()
     ):
         return _RunRecoveryAction(
@@ -4960,15 +5422,19 @@ def _classify_run_recovery(
     )
     if tasks_lexicon_block:
         return _RunRecoveryAction(
-            "manual_recovery",
+            "retry_phase",
             reason="tasks_lexicon_gate_exhausted",
-            phase="phase3-plan",
-            command="echelon phase run phase3-plan",
+            phase=(
+                last_dispatch_phase
+                if last_dispatch_phase
+                in {"phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"}
+                else "phase3-tasks-lexicon"
+            ),
+            command="echelon spec continue",
             note=(
-                "The hard Tasks Lexicon gate failed. Re-run the Phase 3 planning "
-                "node to repair tasks.md from tasks-lexicon-report.json; the "
-                "controller will revalidate the repaired plan through the "
-                "deterministic Tasks Lexicon gate."
+                "Retry the deterministic Tasks Lexicon gate before requesting "
+                "another planning pass. If the validator still finds debt, it "
+                "will retain the evidence and block without dispatching a provider."
             ),
         )
 
@@ -5019,6 +5485,22 @@ def _classify_run_recovery(
         )
 
     if reason == "phase_a_readiness_failed":
+        readiness_blockers = run_state.get("phase_a_readiness_blockers")
+        if isinstance(readiness_blockers, list) and any(
+            isinstance(blocker, str)
+            and blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness_blockers
+        ):
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase="phase3-sentinel",
+                command="echelon spec continue",
+                note=(
+                    "will send the recorded coverage-map contract finding to "
+                    "SENTINEL and validate its replacement before advancing"
+                ),
+            )
         traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
         if traceability_blockers:
             return _RunRecoveryAction(
@@ -5169,6 +5651,15 @@ def _phase_a_result_line(status: str, state: dict) -> str:
     return "  ·  ".join(parts)
 
 
+def _issue_explicitly_resolved(title: str, body: str) -> bool:
+    """Recognize resolution markers, not ordinary mentions of resolved evidence."""
+    return bool(
+        re.search(r"(?:[✓✔]\s*RESOLVED|\[RESOLVED\]|\(RESOLVED\))\s*$", title, re.IGNORECASE)
+        or re.search(r"\*\*Status(?::)?\*\*\s*:?[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
+        or re.search(r"(?m)^[ \t]*(?:-[ \t]*)?No action required\.?[ \t]*$", body, re.IGNORECASE)
+    )
+
+
 def _current_issues_recap(
     project_root: Path,
     squad_dir: Path,
@@ -5209,15 +5700,11 @@ def _current_issues_recap(
         issues: list[str] = []
         severity_counts: dict[str, int] = {}
         for title, body in issue_blocks:
-            issue_id_match = re.match(r"^(ISS-\d+):", title.strip())
-            issue_id = issue_id_match.group(1) if issue_id_match else ""
             if (
-                (issue_id and isinstance(ledger.get(issue_id), dict)
-                 and ledger[issue_id].get("status") == "validated")
-                or
-                "RESOLVED" in title.upper()
-                or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
-                or re.search(r"\bNo action required\b", body, re.IGNORECASE)
+                matching_issue_resolution(
+                    ledger, issue_fingerprint(title, body)
+                ).get("status") == "validated"
+                or _issue_explicitly_resolved(title, body)
             ):
                 continue
             severity = re.search(r"\*\*Severity(?::)?\*\*\s*:?\s*(\w+)", body)
@@ -5240,27 +5727,24 @@ def _current_issues_recap(
 def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict) -> list[dict[str, str]]:
     """Extract user-decidable issue guidance from the canonical SAGE report."""
     recap = _current_issues_recap(project_root, squad_dir, state)
-    if recap is None:
-        return []
-    _summary, issues_path_text = recap
-    try:
-        issues_md = Path(issues_path_text).read_text(errors="replace")
-    except OSError:
-        return []
     requests: list[dict[str, str]] = []
-    for title, body in re.findall(
+    issues_md = ""
+    if recap is not None:
+        _summary, issues_path_text = recap
+        try:
+            issues_md = Path(issues_path_text).read_text(errors="replace")
+        except OSError:
+            pass
+    issue_blocks = re.findall(
         r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
         issues_md,
         re.MULTILINE | re.DOTALL,
-    ):
+    )
+    for title, body in issue_blocks:
         issue_id_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
         if not issue_id_match:
             continue
-        if (
-            "RESOLVED" in title.upper()
-            or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
-            or re.search(r"\bNo action required\b", body, re.IGNORECASE)
-        ):
+        if _issue_explicitly_resolved(title, body):
             continue
         action = re.search(r"\*\*Action Required:\*\*\s*(.+)", body)
         amendment = re.search(r"\*\*Required Amendment\*\*:\s*(.+)", body)
@@ -5288,6 +5772,7 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
             continue
         request = {
             "issue_id": issue_id_match.group(1),
+            "issue_fingerprint": issue_fingerprint(title, body),
             "title": issue_id_match.group(2),
             "severity": severity.group(1).upper() if severity else "ISSUE",
             "guidance": guidance,
@@ -5302,6 +5787,38 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
             if value:
                 request[key] = value.lower() if key == "banzai_eligible" else value
         requests.append(request)
+    represented_fingerprints = {
+        request["issue_fingerprint"] for request in requests
+    }
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, dict):
+        for issue_id, entry in ledger.items():
+            if not isinstance(entry, dict) or entry.get("status") != "pending":
+                continue
+            fingerprint = str(entry.get("issue_fingerprint") or "").strip()
+            if not fingerprint or fingerprint in represented_fingerprints:
+                continue
+            request = {
+                "issue_id": str(entry.get("issue_id") or issue_id),
+                "issue_fingerprint": fingerprint,
+                "title": str(entry.get("title") or issue_id),
+                "severity": str(entry.get("severity") or "ISSUE"),
+                "guidance": str(
+                    entry.get("guidance")
+                    or "Apply the preserved issue resolution."
+                ),
+                "repair_phase": str(
+                    entry.get("repair_phase") or "phase1-what"
+                ),
+            }
+            decision = str(entry.get("decision") or "").strip()
+            if decision:
+                request["suggested_option"] = decision
+            evidence = str(entry.get("rationale") or "").strip()
+            if evidence:
+                request["evidence_basis"] = evidence
+            requests.append(request)
+            represented_fingerprints.add(fingerprint)
     return requests
 
 
@@ -5313,8 +5830,8 @@ def _issue_resolution_guidance_recap(
     ledger = ledger if isinstance(ledger, dict) else {}
     lines: list[str] = []
     for request in _issue_resolution_requests(project_root, squad_dir, state):
-        entry = ledger.get(request["issue_id"])
-        if isinstance(entry, dict) and entry.get("status") == "validated":
+        entry = matching_issue_resolution(ledger, request["issue_fingerprint"])
+        if entry.get("status") == "validated":
             continue
         lines.append(
             f"- {request['issue_id']} [{request['severity']}]: {request['guidance']}"
@@ -5341,8 +5858,9 @@ def _issue_resolution_screen_guidance(
         request
         for request in _issue_resolution_requests(project_root, squad_dir, state)
         if not (
-            isinstance(ledger.get(request["issue_id"]), dict)
-            and ledger[request["issue_id"]].get("status") == "validated"
+            matching_issue_resolution(
+                ledger, request["issue_fingerprint"]
+            ).get("status") == "validated"
         )
     ]
     for index, request in enumerate(unresolved_requests):
@@ -5408,8 +5926,8 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     ledger = state.get("issue_resolution_ledger")
     if not isinstance(ledger, dict):
         ledger = {}
-    existing = ledger.get(issue_id)
-    if isinstance(existing, dict):
+    existing = matching_issue_resolution(ledger, matching["issue_fingerprint"])
+    if existing:
         existing_status = str(existing.get("status") or "").strip()
         existing_decision = " ".join(
             str(existing.get("decision") or "").split()
@@ -5435,7 +5953,9 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     unresolved_before = [
         item["issue_id"]
         for item in requests
-        if ledger.get(item["issue_id"], {}).get("status") != "validated"
+        if matching_issue_resolution(
+            ledger, item["issue_fingerprint"]
+        ).get("status") != "validated"
     ]
     if unresolved_before and unresolved_before[0] != issue_id:
         print(
@@ -5443,12 +5963,19 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
             file=sys.stderr,
         )
         raise SystemExit(1)
-    ledger[issue_id] = {
+    repair_phase = str(matching.get("repair_phase") or "phase1-what").strip()
+    if repair_phase not in {"phase1-discover", "phase1-what"}:
+        print(
+            f"✗ {issue_id} has unsupported Phase 1 repair owner {repair_phase!r}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    ledger = record_issue_resolution(ledger, issue_id, {
         **matching,
         "status": "selected",
         "decision": decision,
-        "repair_phase": "phase1-what",
-    }
+        "repair_phase": repair_phase,
+    })
     state["issue_resolution_ledger"] = ledger
     state["selected_issue_resolution"] = issue_id
     # A new decision starts a new targeted-validation allowance, even when it
@@ -5456,7 +5983,7 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     state.pop("issue_resolution_revalidation_attempted", None)
     state["issue_resolution_repair_baseline"] = {
         "issue_id": issue_id,
-        "repair_phase": "phase1-what",
+        "repair_phase": repair_phase,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     # This is a controller-owned recovery edge, not an agent instruction and
@@ -5465,17 +5992,34 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     state["issue_resolution_recovery"] = {
         "issue_id": issue_id,
         "from_phase": "phase1-why2",
-        "to_phase": "phase1-what",
+        "to_phase": repair_phase,
         "reason": "issue_resolution",
     }
     dispatch_counts = state.get("phase_dispatch_counts")
     if isinstance(dispatch_counts, dict):
+        reset_phases = {
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        if repair_phase == "phase1-discover":
+            reset_phases.update({
+                "phase1-discover",
+                "phase1-synthesizer",
+                "phase1-modeler",
+                "phase1-tracker",
+                "phase1-why1",
+                "phase1-constitution",
+            })
         state["phase_dispatch_counts"] = {
             phase: count
             for phase, count in dispatch_counts.items()
-            if phase not in {"phase1-what", "phase1-understanding", "phase1-why2"}
+            if phase not in reset_phases
         }
-    state["phase"] = "phase1-what"
+    state["phase"] = repair_phase
     state["status"] = "running"
     for key in (
         "blocked_reason",
@@ -5487,7 +6031,7 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     ):
         state.pop(key, None)
     state["phase_dispatch_limit_recovery"] = {
-        "phase": "phase1-what",
+        "phase": repair_phase,
         "resolver": "issue_resolution",
     }
     store.save(state)
@@ -6043,10 +6587,22 @@ def _iter_run_dirs(project_root: Path) -> list[Path]:
     base = project_root / "runs"
     if base.exists():
         for d in base.iterdir():
-            if d.is_dir() and not d.name.startswith(".") and (d / "state.json").exists():
+            if _is_squad_run_dir(d):
                 dirs.append(d)
     dirs.sort(key=lambda d: d.name, reverse=True)
     return dirs
+
+
+def _is_squad_run_dir(path: Path, *, require_state: bool = True) -> bool:
+    """Whether ``path`` is a resumable Phase-A squad run.
+
+    Verify-spec audits also persist a ``state.json`` under ``runs/``.  Their
+    lifecycle is intentionally bounded and read-only, so they must never be
+    selected by generic planning commands such as ``echelon spec continue``.
+    """
+    if not path.is_dir() or (require_state and not (path / "state.json").is_file()):
+        return False
+    return not path.name.startswith("verify-spec-")
 
 
 def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
@@ -6055,7 +6611,6 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
     Returns None when a newer squad run exists than the newest harness build;
     that means new spec work has been done since the last harness run.
     """
-    import json as _json
     runs = project_root / "runs"
     if not runs.exists():
         return None
@@ -6072,23 +6627,16 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
             if ts > latest_squad_ts:
                 latest_squad_ts = ts
 
-    for build in sorted(runs.glob("build-*/"), reverse=True):
-        build_ts = build.name.partition("-")[2]
-        if latest_squad_ts > build_ts:
-            # A squad run is newer than this harness build — new spec work exists
-            return None
-        state_dir = build / "state"
-        if not state_dir.exists():
-            continue
-        for state_file in sorted(state_dir.glob("*.json")):
-            try:
-                data = _json.loads(state_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    data.setdefault("build_id", build.name)
-                    return data
-            except Exception:
-                pass
-    return None
+    states = _iter_harness_build_states(project_root)
+    if not states:
+        return None
+    latest = states[0]
+    build_id = str(latest.get("build_id") or "")
+    build_ts = build_id.partition("-")[2]
+    if latest_squad_ts > build_ts:
+        # A squad run is newer than this harness build — new spec work exists.
+        return None
+    return latest
 
 
 def _iter_harness_build_states(project_root: Path) -> list[dict]:
@@ -6119,6 +6667,296 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
                         data.setdefault("target_id", target_id)
                     states.append(data)
     return sorted(states, key=lambda state: str(state.get("build_id") or ""), reverse=True)
+
+
+def _local_delivery_workspace_root(project_dir: Path) -> Path:
+    configured = os.environ.get("ECHELON_POLYREPO_ROOT", "").strip()
+    root = Path(configured).expanduser() if configured else Path(project_dir)
+    if root.is_symlink():
+        raise ValueError("local verification workspace root is symlinked")
+    try:
+        root = root.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("local verification workspace root is unavailable") from exc
+    if not root.is_dir():
+        raise ValueError("local verification workspace root is unavailable")
+    return root
+
+
+def _resolve_local_delivery_target(
+    project_dir: Path, spec_id: str, requested_target: str | None
+) -> tuple[Path, Path, str, str]:
+    """Resolve one declared target; local verification never guesses a target."""
+    from harness.spec_frontmatter import find_spec_dir, read_target_entries
+
+    workspace = _local_delivery_workspace_root(project_dir)
+    spec_dir = find_spec_dir(spec_id, workspace)
+    if spec_dir is None:
+        raise ValueError(f"spec {spec_id!r} was not found in this workspace")
+    entries = read_target_entries(spec_dir)
+    if not entries:
+        raise ValueError("spec has no declared delivery target")
+    selector = (requested_target or "").strip()
+    matches = []
+    for entry in entries:
+        entry_id = str(entry.get("id") or "").strip()
+        path_value = str(entry.get("path") or "").strip()
+        if not path_value:
+            continue
+        if not selector or selector in {entry_id, path_value, Path(path_value).name}:
+            matches.append((entry_id, path_value))
+    if len(matches) != 1:
+        if selector:
+            raise ValueError(
+                "--target must identify exactly one declared delivery target"
+            )
+        raise ValueError(
+            "spec has multiple delivery targets; rerun with --target <target-id>"
+        )
+    target_id, target_value = matches[0]
+    target = Path(target_value).expanduser()
+    if not target.is_absolute():
+        target = workspace / target
+    if target.is_symlink():
+        raise ValueError("local verification target is symlinked")
+    try:
+        target = target.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError("local verification target is unavailable") from exc
+    if not target.is_dir():
+        raise ValueError("local verification target is unavailable")
+    return workspace, target, target_id or target.name, spec_dir.name
+
+
+def _select_local_engine(engine: str) -> str:
+    requested = engine.strip().lower()
+    if requested not in {"auto", "docker", "podman"}:
+        raise ValueError("--engine must be auto, docker, or podman")
+    if requested != "auto":
+        return requested
+    if shutil.which("docker"):
+        return "docker"
+    if shutil.which("podman"):
+        return "podman"
+    raise ValueError("no supported local engine found; install Docker Desktop or Podman")
+
+
+def _local_candidate_fingerprint(candidate: object) -> str:
+    fields = (
+        "product_fingerprint",
+        "contract_hash",
+        "stack_hash",
+        "observer_plan_hash",
+        "sandbox_receipt_sha256",
+    )
+    payload = {name: str(getattr(candidate, name, "")) for name in fields}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _build_local_action_plan(
+    project_dir: Path,
+    spec_id: str,
+    target_id: str | None,
+    engine: str,
+    *,
+    build_id: str | None = None,
+) -> LocalActionPlan:
+    """Resolve immutable sandbox evidence before any host resource is created."""
+    from harness.local_runner_candidate import (
+        LocalCandidateRequest,
+        resolve_effective_local_candidate,
+    )
+
+    workspace, target, resolved_target_id, resolved_spec_id = _resolve_local_delivery_target(
+        project_dir, spec_id, target_id
+    )
+    candidate = resolve_effective_local_candidate(
+        LocalCandidateRequest(
+            workspace_root=workspace,
+            target_root=target,
+            spec_id=resolved_spec_id,
+            target_id=resolved_target_id,
+            build_id=build_id,
+        )
+    )
+    selected_engine = _select_local_engine(engine)
+    actions = (
+        "materialize the sandbox-approved candidate in a managed detached worktree",
+        "start a run-ID-labelled PostgreSQL container on a generated loopback port",
+        "run the declared lifecycle in a scrubbed, run-local host environment",
+        "observe the browser, restart persistence, and PostgreSQL boundary independently",
+        "record a redacted immutable attestation and remove only journalled resources",
+    )
+    fingerprint = _local_candidate_fingerprint(candidate)
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "spec_id": resolved_spec_id,
+                "target_id": resolved_target_id,
+                "engine": selected_engine,
+                "candidate_fingerprint": fingerprint,
+                "planned_actions": actions,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return LocalActionPlan(
+        spec_id=resolved_spec_id,
+        target_id=resolved_target_id,
+        engine=selected_engine,
+        candidate_fingerprint=fingerprint,
+        planned_actions=actions,
+        digest=digest,
+        workspace_root=workspace,
+        target_root=target,
+        candidate=candidate,
+    )
+
+
+def _confirm_local_action_plan(action_plan: LocalActionPlan) -> None:
+    _banner(
+        "LOCAL DELIVERY VERIFICATION",
+        [
+            ("spec", action_plan.spec_id),
+            ("target", action_plan.target_id),
+            ("engine", action_plan.engine),
+            ("candidate", action_plan.candidate_fingerprint[:12]),
+            ("action", "; ".join(action_plan.planned_actions)),
+            ("authority", "opt-in macOS evidence only; delivery landing remains sandbox-authoritative"),
+        ],
+        subtitle="Trusted candidate code will run in a managed worktree.",
+    )
+    answer = input("Start this explicit host-local verification? [y/N] ").strip().lower()
+    if answer not in {"y", "yes"}:
+        print("No host-local resources were started.")
+        raise SystemExit(1)
+
+
+def _run_local_delivery_verification(
+    project_dir: Path,
+    action_plan: LocalActionPlan,
+    keep_on_failure: bool,
+):
+    """Run the exact candidate that the operator approved, without landing authority."""
+    from harness.local_runner import (
+        LocalRunnabilityRunner,
+        LocalRunnerOptions,
+        LocalVerificationRequest,
+    )
+    from harness.local_runner_candidate import LocalCandidateRequest
+
+    if (
+        action_plan.workspace_root is None
+        or action_plan.target_root is None
+        or action_plan.candidate is None
+    ):
+        raise ValueError("local action plan is incomplete")
+    candidate = action_plan.candidate
+    mirror = Path(getattr(candidate, "mirror_path"))
+    build_id = str(getattr(candidate, "build_id"))
+    browser_helper = (
+        Path(project_dir) / ".echelon" / "runtime" / "scripts" / "user-runnability-browser.mjs"
+    )
+    if not browser_helper.is_file():
+        browser_helper = (
+            Path(__file__).resolve().parents[2]
+            / "runtime"
+            / "scripts"
+            / "user-runnability-browser.mjs"
+        )
+    request = LocalVerificationRequest(
+        workspace_root=action_plan.workspace_root,
+        target_root=action_plan.target_root,
+        spec_id=action_plan.spec_id,
+        target_id=action_plan.target_id,
+        candidate_request=LocalCandidateRequest(
+            workspace_root=action_plan.workspace_root,
+            target_root=action_plan.target_root,
+            spec_id=action_plan.spec_id,
+            target_id=action_plan.target_id,
+            build_id=build_id,
+        ),
+        local_run_root=mirror.parent / build_id / "local-runs",
+    )
+    runner = LocalRunnabilityRunner(
+        candidate_resolver=lambda _request: candidate,
+        browser_helper=browser_helper,
+        recovery_workspace_root=action_plan.workspace_root,
+    )
+    return runner.verify(
+        request,
+        LocalRunnerOptions(
+            engine=action_plan.engine,
+            action_confirmed=True,
+            keep_on_failure=keep_on_failure,
+        ),
+    )
+
+
+def _print_local_verification_result(result: object) -> None:
+    status = str(getattr(result, "status", "failed"))
+    fields = [
+        ("status", status),
+        ("local run", str(getattr(result, "local_run_id", "-"))),
+        ("cleanup", "complete" if getattr(result, "cleanup_complete", False) else "recovery required"),
+    ]
+    attestation = getattr(result, "attestation_path", None)
+    if attestation is not None:
+        fields.append(("local evidence", str(attestation)))
+    summary = str(getattr(result, "summary", "")).strip()
+    if summary:
+        fields.append(("summary", summary))
+    if not getattr(result, "cleanup_complete", False):
+        fields.append(("recovery", f"echelon delivery cleanup-local {getattr(result, 'local_run_id', '<local-run-id>')}"))
+    _banner(
+        "LOCAL DELIVERY VERIFICATION",
+        fields,
+        subtitle="Separate local evidence; it never changes delivery landing authority.",
+    )
+
+
+def _cmd_delivery_verify_local(
+    spec_id: str,
+    *,
+    target_id: str | None,
+    engine: str,
+    assume_yes: bool,
+    keep_on_failure: bool,
+    project_root: Path | None = None,
+) -> None:
+    if keep_on_failure and assume_yes:
+        raise ValueError("--keep-on-failure cannot be combined with --yes")
+    if sys.platform != "darwin":
+        raise ValueError("local verification is supported on macOS only")
+    root = project_root or Path.cwd()
+    try:
+        action_plan = _build_local_action_plan(root, spec_id, target_id, engine)
+        if not assume_yes:
+            _confirm_local_action_plan(action_plan)
+        result = _run_local_delivery_verification(root, action_plan, keep_on_failure)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(str(exc)) from exc
+    _print_local_verification_result(result)
+    if str(getattr(result, "status", "")) != "passed":
+        raise SystemExit(1)
+
+
+def _cmd_delivery_cleanup_local(
+    local_run_id: str, *, project_root: Path | None = None
+) -> None:
+    from harness.local_runner import LocalRunnabilityRunner
+
+    root = _local_delivery_workspace_root(project_root or Path.cwd())
+    try:
+        result = LocalRunnabilityRunner(recovery_workspace_root=root).cleanup(local_run_id)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(str(exc)) from exc
+    _print_local_verification_result(result)
+    if str(result.status) != "cleanup_complete":
+        raise SystemExit(1)
 
 
 def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
@@ -6261,11 +7099,123 @@ def _delivery_status_next_step(
                 f"echelon delivery run {effective_spec}"
             )
         return f"echelon delivery continue {effective_spec}"
-    if status in {"initialized", "running", "interrupted"}:
+    if status == "running":
+        return (
+            "delivery is active; monitor with "
+            f"echelon delivery status {effective_spec}"
+        )
+    if status in {"initialized", "interrupted"}:
         return f"echelon delivery run {effective_spec}"
     if status in {"failed", "cancelled_by_coordinator"}:
         return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
     return f"echelon delivery run {effective_spec}"
+
+
+def _delivery_status_effective_state(state: dict) -> dict:
+    """Overlay an orphaned running record as an interrupted delivery.
+
+    Status must stay read-only: a later ``delivery run`` owns checkpoint
+    recovery.  It still must not tell an operator to wait for a PID that has
+    already exited.
+    """
+    if str(state.get("status") or "") != "running":
+        return state
+    raw_state_file = str(state.get("state_file") or "").strip()
+    if raw_state_file and state_lock_owner_is_alive(Path(raw_state_file)):
+        return state
+    observed = dict(state)
+    observed["status"] = "interrupted"
+    observed["termination_reason"] = "execution_lost"
+    observed["execution"] = "process exited; checkpoint preserved"
+    return observed
+
+
+def _delivery_status_local_verification(state: Mapping[str, object]) -> dict[str, str] | None:
+    """Read immutable local evidence without resolving or modifying a candidate."""
+    raw_state_file = str(state.get("state_file") or "").strip()
+    if not raw_state_file:
+        return None
+    state_file = Path(raw_state_file)
+    if state_file.is_symlink() or state_file.name == "":
+        return None
+    build_root = state_file.parent.parent
+    evidence_root = build_root / "evidence" / "local-runnability"
+    if not evidence_root.exists() or evidence_root.is_symlink():
+        return None
+    try:
+        candidate = _local_evidence_candidate_from_state(state, build_root)
+    except ValueError as exc:
+        return {
+            "status": "unavailable",
+            "reason": str(exc),
+            "runner": "opt-in macOS (Docker Desktop or Podman)",
+        }
+    try:
+        from harness.local_runner_evidence import select_local_verification_status
+
+        selected = select_local_verification_status(evidence_root, candidate)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"local evidence is unreadable: {exc}",
+            "runner": "opt-in macOS (Docker Desktop or Podman)",
+        }
+    result = {
+        "status": selected.display_status,
+        "runner": "opt-in macOS (Docker Desktop or Podman)",
+    }
+    if selected.valid_pass_path is not None:
+        result["evidence"] = str(selected.valid_pass_path)
+    if selected.latest_attempt_path is not None:
+        result["last_attempt"] = selected.latest_attempt_status
+        result["last_attempt_evidence"] = str(selected.latest_attempt_path)
+    return result
+
+
+def _local_evidence_candidate_from_state(state: Mapping[str, object], build_root: Path):
+    """Build the content-authoritative attestation tuple from sealed delivery state."""
+    from harness.local_runner_candidate import EffectiveLocalCandidate
+
+    raw_coverage = state.get("coverage_observation")
+    snapshot = state.get("delivery_stack_snapshot")
+    if not isinstance(raw_coverage, Mapping) or raw_coverage.get("status") != "passed":
+        raise ValueError("passing sandbox coverage evidence is unavailable")
+    if not isinstance(snapshot, Mapping) or snapshot.get("schema_version") != 1:
+        raise ValueError("sealed delivery stack snapshot is unavailable")
+    fingerprints = raw_coverage.get("fingerprints")
+    reference = raw_coverage.get("ref")
+    if not isinstance(fingerprints, Mapping) or not isinstance(reference, Mapping):
+        raise ValueError("sandbox evidence fingerprint tuple is unavailable")
+    values = {
+        "product_fingerprint": fingerprints.get("candidate_fingerprint"),
+        "contract_hash": fingerprints.get("runnability_contract_hash"),
+        "stack_hash": fingerprints.get("resolved_stack_hash"),
+        "observer_plan_hash": fingerprints.get("observer_plan_hash"),
+        "sandbox_receipt_sha256": reference.get("receipt_sha256"),
+    }
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
+        raise ValueError("sandbox evidence fingerprint tuple is malformed")
+    if (
+        snapshot.get("resolved_stack_hash") != values["stack_hash"]
+        or snapshot.get("observer_plan_hash") != values["observer_plan_hash"]
+        or not isinstance(snapshot.get("resolved"), Mapping)
+    ):
+        raise ValueError("sealed stack evidence does not match sandbox coverage")
+    build_id = str(state.get("build_id") or build_root.name).strip()
+    if not re.fullmatch(r"build-[A-Za-z0-9][A-Za-z0-9._-]{0,127}", build_id):
+        raise ValueError("delivery build identity is malformed")
+    return EffectiveLocalCandidate(
+        build_id=build_id,
+        sandbox_candidate_commit="0" * 40,
+        effective_candidate_commit="0" * 40,
+        product_fingerprint=str(values["product_fingerprint"]),
+        contract_hash=str(values["contract_hash"]),
+        stack_hash=str(values["stack_hash"]),
+        observer_plan_hash=str(values["observer_plan_hash"]),
+        sandbox_receipt_sha256=str(values["sandbox_receipt_sha256"]),
+        mirror_path=build_root.parent / "mirror.git",
+        stack_snapshot=dict(snapshot),
+    )
 
 
 def _delivery_status_summary(
@@ -6273,6 +7223,7 @@ def _delivery_status_summary(
     *,
     project_root: Path,
 ) -> dict:
+    state = _delivery_status_effective_state(state)
     spec_id = str(state.get("spec_id") or "")
     strategy = str(state.get("strategy_id") or "default")
     status = str(state.get("status") or "unknown")
@@ -6309,6 +7260,7 @@ def _delivery_status_summary(
         "salvage_commit": str(state.get("salvage_commit") or ""),
         "checkpoint_count": checkpoint_count,
         "state_file": str(state.get("state_file") or ""),
+        "execution": str(state.get("execution") or ""),
         "next": _delivery_status_next_step(state, spec_id, escalation),
     }
     if escalation is not None:
@@ -6322,6 +7274,14 @@ def _delivery_status_summary(
     runnability = _normalized_delivery_runnability(state.get("user_runnability"))
     if runnability is not None:
         summary["user_runnability"] = runnability
+    coverage_observation = _normalized_delivery_coverage_observation(
+        state.get("coverage_observation")
+    )
+    if coverage_observation is not None:
+        summary["coverage_observation"] = coverage_observation
+    local_verification = _delivery_status_local_verification(state)
+    if local_verification is not None:
+        summary["local_verification"] = local_verification
     last_verify = state.get("last_verify_result")
     if isinstance(last_verify, dict):
         verification_evidence = last_verify.get("verification_evidence")
@@ -6405,6 +7365,8 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         fields.append(("target", str(summary["target"])))
     if summary.get("mode"):
         fields.append(("mode", str(summary["mode"])))
+    if summary.get("execution"):
+        fields.append(("execution", str(summary["execution"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
     tokens = int(summary.get("tokens_used") or 0)
     budget = summary.get("token_budget")
@@ -6462,6 +7424,26 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
         visual_path = str(visual_evidence.get("path") or "").strip()
         if visual_path:
             fields.append(("visual evidence", visual_path))
+    local_verification = summary.get("local_verification")
+    if isinstance(local_verification, dict):
+        fields.append(
+            ("local verification", str(local_verification.get("status") or "unknown"))
+        )
+        runner = str(local_verification.get("runner") or "").strip()
+        if runner:
+            fields.append(("local runner", runner))
+        evidence = str(local_verification.get("evidence") or "").strip()
+        if evidence:
+            fields.append(("local evidence", evidence))
+        latest_status = str(local_verification.get("last_attempt") or "").strip()
+        if latest_status:
+            fields.append(("last local attempt", latest_status))
+        latest_evidence = str(local_verification.get("last_attempt_evidence") or "").strip()
+        if latest_evidence and latest_evidence != evidence:
+            fields.append(("last local evidence", latest_evidence))
+        reason = str(local_verification.get("reason") or "").strip()
+        if reason:
+            fields.append(("local reason", reason))
     escalation = summary.get("escalation")
     if isinstance(escalation, dict):
         question = str(escalation.get("question") or "").strip()
@@ -6580,6 +7562,34 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
                     else "review the owner-approved runnability deferral",
                 )
             )
+    coverage_observation = summary.get("coverage_observation")
+    if isinstance(coverage_observation, dict):
+        observed = int(coverage_observation.get("requirements_observed") or 0)
+        total = int(coverage_observation.get("requirements_total") or 0)
+        coverage_status = str(coverage_observation.get("status") or "unknown")
+        fields.append(
+            (
+                "coverage",
+                f"{observed} / {total} requirements observed ({coverage_status})",
+            )
+        )
+        observers = coverage_observation.get("observers")
+        if isinstance(observers, dict):
+            for observer_id, observer in sorted(observers.items()):
+                if not isinstance(observer, dict):
+                    continue
+                passed = int(observer.get("passed") or 0)
+                total_runs = int(observer.get("total") or 0)
+                fields.append(
+                    ("observer", f"{observer_id}: {passed}/{total_runs} passed")
+                )
+        if coverage_observation.get("fingerprint_tuple_complete") is True:
+            fields.append(
+                (
+                    "evidence",
+                    "product + map + stack + observer-plan + contract match (recorded candidate)",
+                )
+            )
     checkpoint_count = int(summary.get("checkpoint_count") or 0)
     if checkpoint_count:
         fields.append(("checkpoints", str(checkpoint_count)))
@@ -6671,6 +7681,67 @@ def _normalized_delivery_runnability(value: object) -> dict[str, object] | None:
             else {}
         ),
     }
+
+
+def _normalized_delivery_coverage_observation(value: object) -> dict[str, object] | None:
+    """Normalize Ralph's strict coverage state for stable operator reporting."""
+    if not isinstance(value, dict):
+        return None
+    status = str(value.get("status") or "").strip()
+    if not status:
+        return None
+    observed = _nonnegative_delivery_count(value.get("requirements_observed"))
+    total = _nonnegative_delivery_count(value.get("requirements_total"))
+    observers: dict[str, dict[str, int]] = {}
+    raw_observers = value.get("observers")
+    if isinstance(raw_observers, dict):
+        for raw_id, raw_observer in sorted(raw_observers.items()):
+            if not isinstance(raw_observer, dict):
+                continue
+            observer_id = str(raw_id).strip()
+            if not observer_id:
+                continue
+            execution_count = _nonnegative_delivery_count(
+                raw_observer.get("execution_count")
+            )
+            passed = (
+                execution_count
+                if str(raw_observer.get("status") or "").strip() == "passed"
+                else 0
+            )
+            observers[observer_id] = {
+                "passed": passed,
+                "total": execution_count,
+            }
+    raw_fingerprints = value.get("fingerprints")
+    fingerprints: dict[str, str] = {}
+    if isinstance(raw_fingerprints, dict):
+        for key in (
+            "candidate_fingerprint",
+            "coverage_map_hash",
+            "resolved_stack_hash",
+            "observer_plan_hash",
+            "runnability_contract_hash",
+        ):
+            item = str(raw_fingerprints.get(key) or "").strip()
+            if item:
+                fingerprints[key] = item
+    fingerprint_tuple_complete = status == "passed" and len(fingerprints) == 5
+    return {
+        "status": status,
+        "requirements_observed": observed,
+        "requirements_total": total,
+        "observers": observers,
+        "fingerprints": fingerprints,
+        "fingerprint_tuple_complete": fingerprint_tuple_complete,
+    }
+
+
+def _nonnegative_delivery_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
@@ -6860,6 +7931,116 @@ def _phase_a_buildable(result_status: str, blockers: list) -> bool:
     return not blockers and result_status not in ("blocked", "interrupted")
 
 
+def _canonical_delivery_lifecycle(
+    project_root: Path,
+) -> tuple[str, str, Path] | None:
+    """Resolve terminal lifecycle state from the published default-branch tree."""
+    import json as _json
+
+    run_dir = _find_current_run_dir(project_root)
+    state: dict = {}
+    if run_dir is not None and (run_dir / "state.json").is_file():
+        try:
+            loaded = _json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            state = loaded
+
+    if (
+        state
+        and str(state.get("status") or "") != "done"
+        and (project_root / "runs" / ".current").is_file()
+    ):
+        return None
+
+    spec_id = str(state.get("spec_id") or "").strip()
+    candidate = _published_continue_spec_dir(project_root, state)
+    if candidate is None and not spec_id:
+        candidate = _single_project_spec_dir(project_root)
+        spec_id = candidate.name if candidate is not None else ""
+    if candidate is None:
+        return None
+
+    try:
+        from harness.spec_frontmatter import read_frontmatter
+
+        working_status = str(read_frontmatter(candidate).get("status") or "").strip()
+    except (OSError, ValueError, TypeError):
+        return None
+
+    try:
+        import yaml as _yaml
+        from echelon.phase_a_git import resolve_phase_a_default_branch
+        from harness.config import get_full_resolved_config
+
+        resolved = get_full_resolved_config(project_root)
+        configured = resolved.get("target_default_branch", "")
+        if not configured and isinstance(resolved.get("harness"), dict):
+            configured = resolved["harness"].get("target_default_branch", "")
+        default_branch, _default_commit = resolve_phase_a_default_branch(
+            project_root,
+            str(configured or ""),
+        )
+        relpath = f"specs/{candidate.name}/spec.md"
+        published = subprocess.run(
+            ["git", "show", f"{default_branch}:{relpath}"],
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        published_status = ""
+        if published.returncode == 0:
+            match = re.match(
+                r"^---\n(.*?)\n---(?:\n|$)",
+                published.stdout,
+                re.DOTALL,
+            )
+            metadata = _yaml.safe_load(match.group(1)) if match else {}
+            if isinstance(metadata, dict):
+                published_status = str(metadata.get("status") or "").strip()
+    except Exception:
+        published_status = ""
+
+    if published_status == "landed" and working_status == "landed":
+        return "landed", spec_id or candidate.name, candidate
+    if working_status == "landed":
+        return "pending_publication", spec_id or candidate.name, candidate
+    return None
+
+
+def _print_terminal_delivery_lifecycle(project_root: Path) -> bool:
+    lifecycle = _canonical_delivery_lifecycle(project_root)
+    if lifecycle is None:
+        return False
+    status, spec_id, spec_dir = lifecycle
+    if status == "landed":
+        _banner(
+            "NEXT STEP",
+            [
+                ("spec", spec_id),
+                ("status", "landed"),
+                ("spec directory", str(spec_dir)),
+                ("next", "No action required; delivery is already landed."),
+            ],
+            subtitle="LANDED",
+        )
+    else:
+        _banner(
+            "NEXT STEP",
+            [
+                ("spec", spec_id),
+                ("status", "landing finalization pending"),
+                ("spec directory", str(spec_dir)),
+                ("next", f"echelon delivery land {spec_id}"),
+            ],
+            subtitle="FINALIZATION PENDING",
+        )
+    return True
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -6871,6 +8052,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     import re as _re
 
     if result_status not in ("done", "blocked", "interrupted"):
+        return
+
+    if _print_terminal_delivery_lifecycle(project_root):
         return
 
     # ── Latest harness build owns next-step guidance when present ───────────
@@ -7671,7 +8855,8 @@ def _select_squad_dir(
     status = state.get("status")
     recovery = state.get("issue_resolution_recovery")
     manual_recovery = manual_recovery or (
-        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+        isinstance(recovery, dict)
+        and recovery.get("status") not in {"consumed", "validated"}
     )
     if manual_recovery and status == "blocked":
         return existing_dir, False
@@ -8188,6 +9373,14 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
+    if not is_fresh and not isinstance(existing_state.get("phase"), str):
+        # Older interrupted verify-spec runs can predate routing-state
+        # persistence. They have no trustworthy partial phase to resume, so
+        # restart them at the deterministic no-op init node.
+        existing_state["phase"] = "init"
+        state_store.save(existing_state)
+        existing_state = state_store.load()
+        print("[squad] restored missing routing phase to init", flush=True)
     try:
         spec_authoring_mode = resolve_spec_authoring_mode(
             existing_state,
@@ -8200,6 +9393,9 @@ def _cmd_run(
     if existing_state.get("spec_authoring_mode") != spec_authoring_mode:
         existing_state["spec_authoring_mode"] = spec_authoring_mode
         state_store.save(existing_state)
+        # save() advances the optimistic state revision. Reload before any
+        # further migration write in this invocation.
+        existing_state = state_store.load()
     run_message = message
     if not is_fresh:
         existing_message = str(existing_state.get("user_message") or "").strip()
@@ -8829,7 +10025,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                 if _phase_a_ready_to_build(project_root, current_state):
                     return None
                 if current_state.get("status") == "done":
-                    return "phase4-document"
+                    return _done_phase_a_repair_phase(project_root, current_state)
                 return recommended
         except Exception:
             current_state = {}
@@ -8922,7 +10118,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     if current_state.get("status") == "done" and not _phase_a_ready_to_build(project_root, current_state):
-        return "phase4-document"
+        return _done_phase_a_repair_phase(project_root, current_state)
 
     readiness = validate_phase_a_readiness(
         current_state,
@@ -8935,6 +10131,11 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         ),
     )
     if not readiness.ready:
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
         if "spec.md" in readiness.missing:
             return "phase1-what"
         if any(name in readiness.missing for name in ("plan.md", "research.md", "data-model.md")):
@@ -8944,6 +10145,19 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     return None  # build is ready
+
+
+def _done_phase_a_repair_phase(project_root: Path, state: dict) -> str:
+    """Route a completed run to the owner of its invalid build artifact."""
+    spec_dir = _build_target_continue_spec_dir(project_root, state)
+    if spec_dir is not None:
+        readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+        if any(
+            blocker.startswith("coverage-map.md invalid:")
+            for blocker in readiness.blockers
+        ):
+            return "phase3-sentinel"
+    return "phase4-document"
 
 
 def _explicit_run_local_spec_needs_publication(
@@ -9261,6 +10475,19 @@ def _cmd_status(project_root: Path) -> None:
         except Exception:
             pass
 
+    # Landing clears the authoring pointer. A historical fallback must not
+    # revive its old blocked/running guidance over a published terminal spec.
+    if (
+        not (project_root / "runs" / ".current").is_file()
+        and _canonical_delivery_lifecycle(project_root) is not None
+    ):
+        fields = [("Status", "No active run found")]
+        if run_dir is not None:
+            fields.append(("Prior run", str(run_dir)))
+        _banner("RUN STATE", fields)
+        _print_terminal_delivery_lifecycle(project_root)
+        return
+
     if not run_dir or not state:
         _banner("RUN STATE", [
             ("Status", "No active run found"),
@@ -9325,7 +10552,26 @@ def _cmd_status(project_root: Path) -> None:
             fields.append(("Provider limit", provider_limit_message))
         action = _RunRecoveryAction("advance")
         if run_status in ("running", "in_progress"):
-            fields.append(("Next", "echelon spec continue"))
+            from echelon.spec_lifecycle import (
+                active_phase_a_execution_owner,
+                active_spec_run_execution_owner,
+            )
+
+            execution_owner = (
+                active_spec_run_execution_owner(run_dir)
+                or active_phase_a_execution_owner(project_root)
+            )
+            if execution_owner is not None:
+                fields.append(("Execution", f"active ({execution_owner})"))
+                fields.append(
+                    (
+                        "Next",
+                        "Wait for the active run to finish; do not start a second continuation.",
+                    )
+                )
+            else:
+                fields.append(("Execution", "inactive (running state may be stale)"))
+                fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
             action = _classify_run_recovery(state, project_root=project_root)
             if action.reason == "phase_dispatch_limit":
@@ -9425,21 +10671,28 @@ def _cmd_continue_impl(
         else:
             i += 1
 
-    squad_dir = _find_current_run_dir(project_root)
+    # ``continue`` is a mutating operation.  Unlike status/reporting paths it
+    # must never infer an active run from historical directories: a workspace
+    # can retain many completed specs and bounded verify-spec audits.
+    current_pointer = project_root / "runs" / ".current"
+    squad_dir = _find_current_run_dir(project_root) if current_pointer.is_file() else None
     if not squad_dir or not (squad_dir / "state.json").exists():
         _workspace_git_preflight(
             project_root,
             command_name=_command_display("echelon spec continue", args),
         )
         print(
-            "No prior run found in this project.\n"
+            "No active spec run found in this project.\n"
             "Start a new run:  echelon spec run \"<task description>\"",
             flush=True,
         )
         return
 
     state = _json.loads((squad_dir / "state.json").read_text())
-    if _supersede_quality_guard_decision(state):
+    if (
+        _restore_interrupted_legacy_banzai_why2_reassessment(state)
+        or _supersede_quality_guard_decision(state)
+    ):
         (squad_dir / "state.json").write_text(
             _json.dumps(state, indent=2, ensure_ascii=False)
         )
@@ -9571,6 +10824,33 @@ def _cmd_continue_impl(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        if next_phase == "phase3-sentinel":
+            spec_dir = _resolve_phase_target_spec_dir(project_root, state, squad_dir)
+            coverage_error = (
+                coverage_contract_error(
+                    spec_dir, check_task_ownership=(spec_dir / "tasks.md").exists()
+                )
+                if spec_dir is not None
+                else None
+            )
+            if coverage_error is not None:
+                state["phase_output_recovery"] = {
+                    "phase": "phase3-sentinel",
+                    "invalid_outputs": [{
+                        "path": "coverage-map.md",
+                        "reason": coverage_error,
+                    }],
+                    "prior_state_updates": {},
+                }
+            elif spec_dir is not None and (spec_dir / "coverage-map.md").is_file():
+                recovery = state.get("phase_output_recovery")
+                if isinstance(recovery, dict) and recovery.get("phase") == next_phase:
+                    # Revalidation supersedes obsolete errors (including the
+                    # legacy pre-planning tasks.md dependency), not missing files.
+                    recovery["invalid_outputs"] = [
+                        item for item in recovery.get("invalid_outputs", [])
+                        if item.get("path") != "coverage-map.md"
+                    ]
         if clear_recovery:
             state["blocked_reason"] = None
             state["escalation_question"] = None
@@ -9700,7 +10980,30 @@ def _cmd_continue_impl(
             subtitle="Run paused. Deterministic recovery required.",
         )
         return
-    if action.reason == "phase_dispatch_limit_evidence_retry":
+    if action.reason == "phase_dispatch_limit_option_contract_retry":
+        start_phase(
+            action.phase,
+            verb="Retrying dispatch-cap option preparation",
+            clear_recovery=True,
+        )
+        return
+    if action.reason in {
+        "phase_dispatch_limit_evidence_retry",
+        "phase_dispatch_limit_certification_epoch",
+    }:
+        if action.reason == "phase_dispatch_limit_certification_epoch":
+            certificate = state.get("spec_quality_certificate")
+            source_sha256 = (
+                str(certificate.get("source_sha256") or "").strip()
+                if isinstance(certificate, dict)
+                else ""
+            )
+            state["phase_dispatch_limit_certification_epoch_recovery"] = {
+                "schema_version": 1,
+                "phase": action.phase,
+                "source_sha256": source_sha256,
+                "consumed_at": datetime.now(timezone.utc).isoformat(),
+            }
         dispatch_counts = state.get("phase_dispatch_counts")
         if isinstance(dispatch_counts, dict):
             dispatch_counts = dict(dispatch_counts)
@@ -11849,15 +13152,9 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
 
 
 def _require_codegen_installation() -> None:
-    """Require the installer-owned codegen launcher before SOAR dispatch."""
-    launcher = Path(sys.executable).with_name("codegen")
-    if launcher.is_file() and os.access(launcher, os.X_OK):
-        return
-    print(
-        "echelon codegen: the optional SOAR/codegen pipeline is not installed.\n"
-        "Install it with: bash scripts/install.sh --with-codegen",
-        file=sys.stderr,
-    )
+    """Retain the compatibility entry point but never dispatch retired SOAR."""
+    from codegen.retirement import MESSAGE
+    print(MESSAGE, file=sys.stderr)
     sys.exit(2)
 
 
@@ -18654,8 +19951,13 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         migrate_legacy_deploy_state,
     )
     from harness.phase_graph import load_workspace_phase_graph
+    from echelon.owned_output_commit import OwnedOutputCommit
 
     config_path = project_root / ".echelon" / "config.yml"
+    setup_commit = OwnedOutputCommit(
+        project_root, [config_path, project_root / ".gitignore", project_root / ".echelon/constitution.md"],
+        "chore: record Echelon workspace migration", preserve_dirty=True,
+    )
     legacy_config = project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not config_path.exists():
         if not legacy_config.is_file():
@@ -18702,6 +20004,7 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         print(f"✗ Could not migrate deployment state: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
+    setup_commit.commit()
     print("✓ Prosaic migration complete")
     print(f"  prose:   {project_root / '.echelon' / 'prosaic'}")
     print(f"  runtime: {runtime_root}")
@@ -18739,6 +20042,7 @@ def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",
+        "/.echelon/.banzai-default-protocol.lock",
         "/.prosaic-manifest.json",
         "/.prosaic-backups/",
     )

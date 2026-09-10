@@ -160,6 +160,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",
+        "/.echelon/.banzai-default-protocol.lock",
         "/.prosaic-manifest.json",
         "/.prosaic-backups/",
         "/.echelon/cache/",

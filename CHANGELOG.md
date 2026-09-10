@@ -4,7 +4,66 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-09-09
+
+### Fixed
+
+- **Standalone planner repair handoff** — In Banzai, a blocked PLAN phase with
+  an identity-bound submitted repair returns to consensus for independent
+  review before another dependency can become a human clarification. Explicit
+  blocker reasons are retained as content-bound advisory context, not owner or
+  answer authority. The blocked phase is not marked complete; repeated identical
+  handoffs stop across restarts, and existing review, budget and mode safeguards
+  remain unchanged.
+
+- **Phase 3 repair handoffs** — Retain independent per-issue SAGE closure even
+  when PLAN2 blocks on another issue. Banzai can assign bounded technical work
+  to existing owners without accepting an unsupported answer. Durable review
+  receipts, current-finding checks and dependency revalidation survive restarts
+  and reused issue labels. Two unresolved reviewed submissions stop with
+  actionable evidence; existing quality gates, permissions and limits remain.
+
+### Added
+
+- **Strict browser coverage observation** — Browser 3D and browser WASM stacks
+  now declare isolated Vitest and Playwright JSON observers. Ralph binds every
+  active planned case to a tagged, source-backed test execution in a fresh
+  sandbox, records the immutable product/map/stack/observer-plan/contract
+  fingerprint tuple, and blocks unsupported test types before spending a
+  delivery attempt. Isolated observer JSON is copied from a sandbox-only path
+  into harness evidence rather than written to the candidate worktree.
+  Fulfillment and landing consume that evidence; merge-only landing commits
+  remain valid when the product fingerprint tuple is unchanged.
+
 ### Changed
+
+- **Phase-aware coverage validation** — Initial SENTINEL validation no longer
+  requires tasks from the later planning phase. Once tasks exist, ownership
+  consistency remains enforced, and final readiness still requires tasks.
+  Continuation revalidates the active run-local coverage map before clearing
+  obsolete errors; current coverage/task mismatches retain repair guidance.
+
+- **Bounded Banzai artifact repair** — Missing or invalid phase outputs now get
+  up to three automatic same-phase repairs per cycle. Only committed successful
+  phase completion replenishes the durable budget; restart, continuation, and
+  skipped phases do not. SENTINEL and the coverage template instruct one test
+  case and one type per row, including regeneration and pre-return checks.
+  Invalid outputs are distinguished from missing files, coverage errors include
+  row/requirement context, and continuation guidance includes the validation
+  error. Strict coverage validation and semi-mode behavior are preserved.
+
+- **SOAR disabled pending removal** — Retired codegen execution, delivery strategies,
+  resumes, installation opt-in, and cognitive overlay are disabled. Historical
+  source and installed files are retained. SOAR-specific suites are excluded;
+  shared MemPalace/graph utilities and normal spec/default delivery remain active.
+
+- **Source-backed first-run documentation review** — Documentation agents now
+  receive declared package-manager/runtime constraints and review tool version
+  selection, command ordering, fail-fast setup, and evidence boundaries across
+  the full user journey. Setup-file changes trigger README rechecks even on
+  no-impact deliveries; explicit verifier failures and unsupported claims are
+  no longer bypassed by that disposition. Correct existing docs need no
+  cosmetic edits, and local execution remains opt-in.
 
 - **EGR-167 / EGR-169 layered L3 semantic closure** — Opt-in RE v2
   protocol `2.5`/schema `4` now audits selected L2 authority in one immutable
@@ -44,6 +103,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   concrete architecture.
 
 ### Fixed
+
+- **Provider verification boundary** — Coding providers now reserve the
+  configured full verifier for Ralph's provisioned, authoritative environment.
+  Build and repair prompts instead direct providers to focused service-free
+  checks, preventing unprovisioned database, Docker, browser, Playwright, or
+  external-service attempts from wasting delivery repair cycles.
+
+- **Interrupted delivery visibility** — `echelon delivery status` now checks
+  the per-strategy execution lock. A dead or absent owner for a `running`
+  record is reported as an interrupted, checkpoint-preserved delivery rather
+  than misleadingly live work; new delivery budgets reuse the same shared
+  liveness check before recovering durable checkpoints.
+
+- **Coupled coverage requirements** — Fulfillment evidence now recognizes
+  slash-separated requirement IDs in one coverage-map row (for example,
+  `AC-001 / FR-001`), rather than falsely treating both requirements as
+  absent and exhausting delivery repair attempts.
+
+- **Harness-owned browser verification** — Ralph repair prompts now reserve
+  Chromium and Playwright execution for Echelon's configured authoritative
+  verifier. Coding providers may still run focused non-browser checks, but no
+  longer attempt browser launches from their restricted host sandbox.
+
+- **Live Phase A status and Banzai consensus recovery** — `echelon spec status`
+  now detects a live controller lease and tells operators to wait rather than
+  suggesting a concurrent continuation. A completed, explicitly
+  Banzai-eligible WHY3 issue now seals the existing controller-owned repair
+  route, while task-backed `deferred-automation` remains a valid Phase A
+  planning obligation and is enforced as execution evidence during delivery.
 
 - **EGR-168 deferred RE workspace synthesis** — Opt-in RE v2 protocol `2.7`
   and schema `6` now synthesize only an authenticated set of accepted complete

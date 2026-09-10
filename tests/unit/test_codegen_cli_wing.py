@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+pytest.skip("SOAR execution is disabled pending removal", allow_module_level=True)
 
 
 def test_run_pipeline_constructs_ctx_from_project(tmp_path):

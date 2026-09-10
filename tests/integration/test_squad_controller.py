@@ -950,6 +950,90 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
     return ctrl, store
 
 
+@pytest.mark.parametrize("mode, expected_attempts", [("banzai", 4), ("semi", 1)])
+def test_invalid_phase_outputs_retry_bounded_without_advancing(tmp_path, mode, expected_attempts):
+    from harness.squad_executors import ExecutorBlockedResult
+
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode=mode)
+    _mark_constitution_complete(tmp_path, store)
+    prompts = []
+
+    def invalid_output(node, state_store):
+        prompts.append(state_store.load().get("phase_output_recovery"))
+        return ExecutorBlockedResult(
+            reason="invalid_phase_outputs",
+            result=SquadAgentResult(
+                exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+                echelon_result={"verdict": "BLOCKED", "state_updates": {
+                    "blocked_reason": "invalid_phase_outputs",
+                    "invalid_outputs": [{"path": "coverage-map.md", "reason": "line 4: ambiguous test types"}],
+                    "missing_outputs": [], "recovery_state_updates": {},
+                }},
+            ),
+        )
+
+    ctrl._executors["agent"].execute = invalid_output
+    result = ctrl.run("msg", "greenfield")
+    assert result.status == "blocked"
+    state = store.load()
+    assert len(prompts) == expected_attempts
+    assert "phase1-what" not in state.get("completed_phases", [])
+    assert state["blocked_reason"] == "invalid_phase_outputs"
+    assert state["phase_output_recovery"]["invalid_outputs"][0]["path"] == "coverage-map.md"
+    if mode == "banzai":
+        assert prompts[1]["invalid_outputs"][0]["reason"] == "line 4: ambiguous test types"
+        assert state["phase_output_retry_counts"]["phase1-what"] == 3
+        # Restarting the controller cannot silently replenish the retry budget.
+        ctrl2, _ = _controller(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
+        assert not ctrl2._schedule_phase_output_retry("phase1-what", "invalid_phase_outputs")
+
+
+@pytest.mark.parametrize("reason, cancelled", [
+    ("agent_timeout", False), ("agent_blocked", False),
+    ("invalid_evidence_inventory", False), ("invalid_phase_outputs", True),
+])
+def test_output_retry_does_not_override_other_blockers_or_cancellation(tmp_path, reason, cancelled):
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode="banzai")
+    state = store.load()
+    state.update(status="blocked", phase="terminal-blocked", blocked_reason=reason,
+                 phase_output_recovery={"phase": "phase1-what", "missing_outputs": ["spec.md"]})
+    store.save(state)
+    before = store.load()
+    ctrl._cancelled = cancelled
+    assert not ctrl._schedule_phase_output_retry("phase1-what", reason)
+    assert store.load() == before
+
+
+def test_success_then_regeneration_gets_a_fresh_output_repair_cycle(tmp_path):
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what", autonomy_mode="banzai")
+    state = store.load()
+    state["phase_output_retry_counts"] = {"phase1-what": 3}
+    store.save(state)
+    prepared = prepare_phase_result(
+        PhaseNode(id="phase1-what", type="agent", allowed_state_updates=[]),
+        SquadAgentResult(exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+                         echelon_result={"verdict": "DONE", "state_updates": {}}),
+        controller_updates={},
+    )
+    decision = store.prepare_routing_decision(
+        prepared, snapshot=store.capture_routing_snapshot(expected_phase="phase1-what"),
+        from_phase="phase1-what", to_phase="phase1-understanding",
+    )
+    store.advance("phase1-what", "phase1-understanding", decision)
+    # A later regeneration fails. Returning to the phase does not itself reset
+    # anything: the successful completion above must have done that atomically.
+    state = store.load()
+    state.update(status="blocked", phase="terminal-blocked", blocked_reason="invalid_phase_outputs",
+                 phase_output_recovery={"phase": "phase1-what", "invalid_outputs": [
+                     {"path": "spec.md", "reason": "invalid regenerated artifact"}]})
+    store.save(state)
+    assert ctrl._schedule_phase_output_retry("phase1-what", "invalid_phase_outputs")
+    assert store.load()["phase_output_retry_counts"]["phase1-what"] == 1
+
+
 def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2505,6 +2589,7 @@ class TestConsensusCannotBeSkipped:
         )
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\nPreserve the requested behavior.\n")
         state = store.load()
         state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
         store.save(state)
@@ -2558,10 +2643,63 @@ class TestConsensusCannotBeSkipped:
         assert persisted["assess2_verdict"] == "REJECTED"
         assert persisted["gate_decision"] == "REJECTED"
         assert persisted["phase_recommendation"] == "phase3-how"
-        assert any(
+        assert not any(
             "Operate in **PLAN2** mode" in call.args[1]
             for call in provider.exec_agent.call_args_list
         )
+
+    def test_banzai_consensus_block_routes_first_eligible_issue_to_its_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-consensus",
+            max_iterations=5,
+        )
+        spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text(
+            "\n".join(
+                [
+                    "# Issues — WHY3",
+                    "",
+                    "### ISS-001: Architecture contradicts the accepted boundary",
+                    "- **Responsible agent:** HOW",
+                    "- **Action Required:** Remove the extra architecture invariant.",
+                    "",
+                    "### Resolution Guidance",
+                    "- **Decision required:** No user decision — agent repair",
+                    "- **Suggested option:** Remove the extra invariant.",
+                    "- **Evidence basis:** FR-001 constrains only the accepted boundary.",
+                    "- **Banzai eligible:** yes",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-consensus"
+        )
+
+        assert ctrl._route_banzai_consensus_issue_repair(
+            ctrl._graph.get("phase3-consensus"),
+            snapshot,
+        )
+
+        persisted = store.load()
+        assert persisted["status"] == "running"
+        assert persisted["phase"] == "phase3-how"
+        assert persisted["selected_issue_resolution"] == "ISS-001"
+        assert persisted["blocked_decision"]["resolved_by"] == "controller"
+        assert persisted["issue_resolution_ledger"]["ISS-001"]["status"] == "selected"
 
 
 class TestSolutionPhaseOrdering:
@@ -5293,6 +5431,7 @@ class TestCartographerResumeGuard:
                 "cartographer_resume_existing_spec": True,
                 "spec_dir": "specs/072-pr-pipeline-fix",
                 "feature_branch": "072-pr-pipeline-fix",
+                "user_message": "Repair the existing specification.",
             },
         )
 
@@ -5771,6 +5910,9 @@ class TestSquadControllerBasics:
 
         provider.exec_agent.side_effect = consensus_result
         ctrl, store = _controller(tmp_path, provider, mode="semi")
+        # Match the controller's configured budget to the persisted budget;
+        # final review adds a legitimate seventh dispatch to this fixture.
+        ctrl._max_iterations = 10
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=10)
         state = store.load()
         state["iteration"] = 4
@@ -5795,6 +5937,22 @@ class TestSquadControllerBasics:
         assert provider.exec_agent.called
         assert result.status == "done"
         assert store.load().get("blocked_reason") != "phase_dispatch_limit"
+
+    @pytest.mark.parametrize(
+        "phase",
+        [
+            "phase3-tasks-lexicon",
+            "phase3-understanding",
+            "phase3-consensus-tasks-lexicon",
+        ],
+    )
+    def test_phase3_review_cycle_uses_configured_iteration_budget(
+        self,
+        phase,
+    ):
+        from harness.squad import _phase_dispatch_limit
+
+        assert _phase_dispatch_limit(phase, max_iterations=10) == 11
 
     def test_why_fail_increments_on_fail(self, tmp_path):
         """why_fail_count increments when a WHY phase returns quality_gates.fail."""
@@ -6359,7 +6517,7 @@ class TestSquadControllerBasics:
         )
         assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
 
-    def test_passing_why3_validates_repaired_phase3_issue(self, tmp_path):
+    def test_passing_why3_without_issue_review_does_not_validate_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
         state = store.load()
@@ -6402,12 +6560,10 @@ class TestSquadControllerBasics:
         )
 
         refreshed = store.load()
-        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == (
-            "validated"
-        )
-        assert refreshed["selected_issue_resolution"] is None
-        assert refreshed["issue_resolution_repair_baseline"] is None
-        assert refreshed["issue_resolution_recovery"]["status"] == "validated"
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == "repaired"
+        assert refreshed["selected_issue_resolution"] == "ISS-001"
+        assert refreshed["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
+        assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
 
     def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -6452,11 +6608,129 @@ class TestSquadControllerBasics:
             snapshot,
         )
 
-        assert override is None
+        assert override == "terminal-blocked"
         assert request is None
         assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
         assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
         assert updates["selected_issue_resolution"] is None
+        assert updates["blocked_reason"] == "issue_resolution_next"
+
+    def test_passing_why2_routes_next_pending_issue_automatically_in_banzai(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                        "repair_phase": "phase1-what",
+                    },
+                    "ISS-002": {
+                        "issue_id": "ISS-002",
+                        "status": "pending",
+                        "repair_phase": "phase1-discover",
+                    },
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            snapshot,
+        )
+
+        override, updates, request = ctrl._coordinate_why_transition_state(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert override == "phase1-discover"
+        assert request is None
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "selected"
+        assert updates["selected_issue_resolution"] == "ISS-002"
+        assert updates["issue_resolution_repair_baseline"]["issue_id"] == "ISS-002"
+        assert updates["issue_resolution_recovery"]["to_phase"] == "phase1-discover"
+
+    def test_completed_proportional_repair_routes_next_pending_issue_in_banzai(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="proportional",
+        )
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                        "repair_phase": "phase1-what",
+                    },
+                    "ISS-002": {
+                        "issue_id": "ISS-002",
+                        "status": "pending",
+                        "repair_phase": "phase1-discover",
+                    },
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        assessment = squad_module.AuthoritativeQualityAssessment(
+            numeric_pass=False,
+            provider_verdict="FAIL",
+            sage_verdict="FAIL",
+            authoritative_issues=(),
+            exact_routes=(),
+            ordinary_pass=False,
+            proportional_failure=True,
+            hard_blockers=(
+                "sage_fail_without_issues",
+                "sage_finding_route_mismatch",
+            ),
+        )
+
+        completed = ctrl._coordinate_completed_proportional_issue_repair(
+            assessment,
+            snapshot,
+        )
+
+        assert completed is not None
+        override, updates, request = completed
+        assert override == "phase1-discover"
+        assert request is None
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "selected"
+        assert updates["selected_issue_resolution"] == "ISS-002"
+        assert updates["issue_resolution_recovery"]["to_phase"] == "phase1-discover"
 
     def test_failing_why2_validates_repaired_issue_absent_from_remaining_findings(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -7507,6 +7781,146 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_discovery_owned_why2_failure_routes_before_proportional_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Discovery evidence repair is not a spec-body quality candidate."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            issues_path.read_text(encoding="utf-8")
+            .replace("**Affected artifact:** spec.md", "**Affected artifact:** assumptions.md")
+            .replace("**Responsible agent:** WHAT", "**Responsible agent:** DISCOVER"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert next_phase == "phase1-discover"
+        assert persisted["phase"] == "phase1-discover"
+        assert persisted["why2_repair_phase"] == "phase1-discover"
+        assert persisted.get("blocked_reason") != (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+
+    @pytest.mark.parametrize("current_id", ["ISS-001", "ISS-017"])
+    def test_banzai_does_not_reselect_the_same_resolved_finding(
+        self, tmp_path: Path, current_id: str,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        content = issues_path.read_text().replace("ISS-QUALITY-0", "ISS-001").replace(
+            "**Banzai eligible:** no", "**Banzai eligible:** yes"
+        )
+        issues_path.write_text(content)
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        state.update({
+            "autonomy_mode": "banzai",
+            "issue_resolution_ledger": {"ISS-001": {
+                "status": "validated", "issue_fingerprint": candidate["issue_fingerprint"],
+            }},
+        })
+        store.save(state)
+        issues_path.write_text(content.replace("ISS-001", current_id))
+        snapshot = store.capture_routing_snapshot(expected_phase="phase1-why2")
+        assessment = SimpleNamespace(exact_routes=({"issue_id": current_id, "route": "spec_repair"},))
+
+        assert ctrl._prepare_banzai_quality_issue_resolution(snapshot, assessment) is None
+        assert store.load() == snapshot.state
+
+    @pytest.mark.parametrize("legacy_option", [False, True])
+    def test_issue_options_bind_current_artifact_evidence_and_read_legacy_seals(
+        self, tmp_path: Path, legacy_option: bool,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(issues_path.read_text().replace("ISS-QUALITY-0", "ISS-001").replace(
+            "**Banzai eligible:** no", "**Banzai eligible:** yes"
+        ))
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        if legacy_option:
+            candidate.pop("issue_fingerprint")
+        option = ctrl._dispatch_cap_options([candidate])[0]
+        resolved = ctrl._dispatch_cap_candidate_for_resolution(state, option)
+        assert len(resolved["issue_fingerprint"]) == 64
+        if not legacy_option:
+            issues_path.write_text(issues_path.read_text().replace(
+                "**Affected artifact:** spec.md", "**Affected artifact:** mental-model.md"
+            ))
+            with pytest.raises(HumanInputPolicyError, match="evidence changed"):
+                ctrl._dispatch_cap_candidate_for_resolution(state, option)
+
+    @pytest.mark.parametrize("old_identity", ["legacy", "different_title", "different_evidence"])
+    def test_banzai_reused_issue_id_recovers_after_quality_budget_exhaustion(
+        self, tmp_path: Path, old_identity: str,
+    ) -> None:
+        """A new contradiction must not inherit an unrelated ISS-001 resolution."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path, automatic_consumed=3)
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        current = (
+            issues_path.read_text()
+            .replace("ISS-QUALITY-0", "ISS-001")
+            .replace("- **HIGH:** 0", "- **HIGH:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("**Severity:** LOW", "**Severity:** HIGH")
+            .replace("**Type:** incompleteness", "**Type:** contradiction")
+            .replace("**Banzai eligible:** no", "**Banzai eligible:** yes")
+        )
+        old = current.replace(
+            "Residual quality debt" if old_identity == "different_title" else
+            "The immutable Understanding score is below threshold.",
+            "A different, already resolved finding.",
+        )
+        why2.echelon_result["state_updates"]["finding_routes"]["findings"][0]["issue_id"] = "ISS-001"
+        issues_path.write_text(old)
+        state = store.load()
+        candidate = ctrl._banzai_issue_resolution_candidates(state)[0]
+        selection = ctrl._validate_banzai_issue_resolution_selection(
+            {"issue_id": "ISS-001", "decision": candidate["suggested_option"],
+             "rationale": candidate["evidence_basis"], "confidence": "high",
+             "evidence_backed": True}, [candidate],
+        )
+        previous = ctrl._issue_resolution_state_updates(
+            state, selection, source_phase="phase1-why2",
+        )["issue_resolution_ledger"]["ISS-001"]
+        previous["status"] = "validated"
+        if old_identity == "legacy":
+            previous.pop("issue_fingerprint", None)
+        state.update(updates)
+        state.update({"autonomy_mode": "banzai", "issue_resolution_ledger": {"ISS-001": previous}})
+        store.save(state)
+        issues_path.write_text(current)
+
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+
+        persisted = store.load()
+        assert persisted["status"] == "running"
+        assert persisted["phase"] == "phase1-what"
+        assert persisted["blocked_decision"]["status"] == "resolved"
+        assert persisted["phase1_quality_repair"]["automatic_consumed"] == 3
+        selected = persisted["issue_resolution_ledger"]["ISS-001"]
+        assert selected["status"] == "selected"
+        assert selected["issue_fingerprint"] != previous.get("issue_fingerprint")
+        assert selected["previous_resolutions"] == [previous]
+        ctrl._provider.exec_agent.assert_not_called()
+
     def test_banzai_resolves_eligible_sage_issue_before_proportional_budget(
         self,
         tmp_path: Path,
@@ -7725,6 +8139,77 @@ class TestProportionalQualityController:
             "qualitative_findings"
         ]
         assert findings[0]["type"] == "contradiction"
+
+    def test_repaired_selected_issue_with_only_numeric_debt_starts_fresh_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A completed named repair must not turn score-only debt into corruption."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues_path.write_text(
+            """# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** FAIL
+
+## Issues
+
+No issue remains for the selected repair. The certified aggregate gates still fail.
+""",
+            encoding="utf-8",
+        )
+        result.echelon_result["state_updates"]["finding_routes"] = {
+            "findings": [
+                {
+                    "issue_id": "ISS-SCORE-ONLY",
+                    "route": "spec_repair",
+                    "rationale": "Repair the certified numeric failures.",
+                }
+            ]
+        }
+        state = store.load()
+        state.update(updates)
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {
+                        "issue_id": "ISS-001",
+                        "status": "repaired",
+                    }
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase1-what",
+                },
+            }
+        )
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        persisted = store.load()
+        assert route == "phase1-what"
+        assert persisted.get("blocked_reason") is None
+        assert persisted["issue_resolution_ledger"]["ISS-001"]["status"] == (
+            "validated"
+        )
+        assert persisted.get("selected_issue_resolution") is None
+        assert persisted["quality_gate_remediation"]["kind"] == (
+            "proportional_quality"
+        )
+        assert persisted["quality_gate_remediation"]["attempt"] == 1
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
 
     def test_explicit_advisory_sage_issue_does_not_require_a_repair_route(
         self,
@@ -10950,6 +11435,58 @@ class TestProportionalQualityController:
         ]
         assert persisted["spec_quality_certificate"]["schema_version"] == 2
         assert persisted["spec_quality_certificate"]["sage_verdict"] == "PASS"
+
+    def test_new_quality_candidate_resets_only_downstream_dispatch_caps(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A new certified spec gets a fresh downstream validation epoch."""
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, _failure = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        _make_authoritative_sage_assessment_passing(ctrl)
+        state = store.load()
+        state.update(updates)
+        state["spec_quality_certificate"] = {
+            "status": "passed",
+            "source_sha256": "0" * 64,
+        }
+        state["phase_dispatch_counts"] = {
+            "phase1-what": 4,
+            "phase1-understanding": 4,
+            "phase1-why2": 4,
+            "phase1-lexicon-derive": 5,
+            "phase1-lexicon": 5,
+            "checkpoint-assess": 5,
+            "phase2-decide": 2,
+        }
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        assert next_phase == "phase1-lexicon-derive"
+        assert store.load()["phase_dispatch_counts"] == {
+            "phase1-what": 4,
+            "phase1-understanding": 4,
+            "phase1-why2": 4,
+            "phase2-decide": 2,
+        }
 
     def test_perfectionist_why2_failure_keeps_legacy_route(self, tmp_path: Path) -> None:
         ctrl, store = _controller(tmp_path)
@@ -15271,6 +15808,89 @@ THEN: The dashboard is visible
         assert persisted["convergence_detected"] is False
         assert persisted["convergence_guard_fire_count"] == 0
 
+    def test_later_phase_refreshes_stale_glossary_evidence_without_replaying_pipeline(
+        self,
+        tmp_path,
+    ):
+        from harness.spec_lexicon_gate import run_spec_lexicon_gate
+
+        ctrl, store = _controller(tmp_path)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature
+
+- **FR-001**: Render the dashboard.
+- **AC-001**: Given data, when rendering, then the dashboard is visible.
+"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            "# SOURCE: spec.md\n"
+            f"# SOURCE_SHA256: {digest}\n"
+            "ARTIFACT: SPEC\n"
+            "TITLE: Dashboard\n\n"
+            "REQ: FR-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The system SHALL render the dashboard\n"
+            "OUTPUT: The dashboard is visible\n"
+            "DEPENDS: none\n"
+            "EXAMPLE: AC-001\n\n"
+            "AC: AC-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The dashboard is visible\n",
+            encoding="utf-8",
+        )
+        glossary = spec_dir / "glossary.md"
+        glossary.write_text("", encoding="utf-8")
+        initial = run_spec_lexicon_gate(
+            project_root=tmp_path,
+            spec_dir_ref=str(spec_dir),
+            config=ctrl._lexicon_gate_config(),
+            previous_attempts=0,
+        )
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase3-tasks-lexicon",
+                "spec_dir": str(spec_dir.relative_to(tmp_path)),
+                "completed_phases": [
+                    "phase1-lexicon",
+                    "phase2-decide",
+                    "phase3-plan",
+                ],
+                "phase_dispatch_counts": {
+                    "phase1-lexicon": 1,
+                    "phase2-decide": 1,
+                    "phase3-plan": 2,
+                },
+                **initial.state_updates(),
+            }
+        )
+        store.save(state)
+        glossary.write_text("### TypeScript\n\nProject language.\n", encoding="utf-8")
+
+        guarded = ctrl._guard_spec_lexicon_evidence("phase3-tasks-lexicon")
+
+        assert guarded == "phase3-tasks-lexicon"
+        persisted = store.load()
+        assert persisted["phase"] == "phase3-tasks-lexicon"
+        assert persisted["completed_phases"] == [
+            "phase1-lexicon",
+            "phase2-decide",
+            "phase3-plan",
+        ]
+        assert persisted["phase_dispatch_counts"] == {
+            "phase1-lexicon": 1,
+            "phase2-decide": 1,
+            "phase3-plan": 2,
+        }
+        report = json.loads(Path(persisted["lexicon_report"]).read_text())
+        assert report["glossary_sha256"] == hashlib.sha256(
+            glossary.read_bytes()
+        ).hexdigest()
+
     def test_current_spec_lexicon_evidence_allows_phase1_checkpoint(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
@@ -15716,6 +16336,31 @@ THEN: The dashboard is visible
         assert result.state_updates["tasks_lexicon_action"] == "proceed"
         assert result.state_updates["tasks_lexicon_pass"] is True
         assert result.state_updates["tasks_lexicon_attempts"] == 0
+
+    def test_tasks_gate_exhaustion_retries_its_deterministic_checkpoint(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "tasks_lexicon_gate_exhausted",
+                "tasks_lexicon_gate_exhausted": True,
+                "last_dispatch": {"phase_id": "phase3-tasks-lexicon"},
+            }
+        )
+        store.save(state)
+
+        assert ctrl._resume_exhausted_lexicon_gate() is True
+
+        recovered = store.load()
+        assert recovered["status"] == "running"
+        assert recovered["phase"] == "phase3-tasks-lexicon"
+        assert recovered["blocked_reason"] is None
+        assert "tasks_lexicon_gate_exhausted" not in recovered
 
     def test_tasks_gate_materializes_run_targets_before_validation(
         self,

@@ -17,7 +17,7 @@ RENDER_MODES = {"bounded", "legacy"}
 @dataclass(frozen=True)
 class ContextSelector:
     path_ref: str
-    filters: dict[str, str]
+    filters: dict[str, str | tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -96,13 +96,19 @@ def resolve_context_render_mode(env: Mapping[str, str] | None = None) -> str:
 
 def parse_context_pack_item(item: str) -> ContextSelector:
     raw = str(item or "").strip()
-    filters: dict[str, str] = {}
+    filters: dict[str, str | tuple[str, ...]] = {}
     match = re.search(r"\[([^\]]+)\]", raw)
     if match:
         for part in match.group(1).split(","):
             key, separator, value = part.partition("=")
             if separator and key.strip() and value.strip():
-                filters[key.strip()] = value.strip()
+                name, pattern = key.strip(), value.strip()
+                previous = filters.get(name)
+                if previous is None:
+                    filters[name] = pattern
+                else:
+                    patterns = (previous,) if isinstance(previous, str) else previous
+                    filters[name] = tuple(dict.fromkeys((*patterns, pattern)))
         raw = raw[: match.start()].strip()
     path_ref = raw.split(" ")[0].split("(")[0].rstrip()
     return ContextSelector(path_ref=path_ref, filters=filters)
@@ -182,19 +188,22 @@ def _phase_matches(value: object, pattern: str) -> bool:
     return fnmatch.fnmatchcase(phase, pattern)
 
 
-def _entry_matches(entry: dict[str, Any], filters: Mapping[str, str]) -> bool:
-    requested_type = filters.get("type")
-    if requested_type == "routing_decision":
-        requested_type = "decision"
-    if requested_type and entry.get("type") != requested_type:
-        return False
-    phase = filters.get("phase")
-    if phase and not _phase_matches(entry.get("phase"), phase):
-        return False
+def _entry_matches(entry: dict[str, Any], filters: Mapping[str, str | tuple[str, ...]]) -> bool:
+    for key in ("type", "phase"):
+        requested = filters.get(key)
+        if not requested:
+            continue
+        patterns = (requested,) if isinstance(requested, str) else requested
+        if key == "type":
+            patterns = tuple("decision" if p == "routing_decision" else p for p in patterns)
+            if entry.get(key) not in patterns:
+                return False
+        elif not any(_phase_matches(entry.get(key), pattern) for pattern in patterns):
+            return False
     return True
 
 
-def render_journal(path: Path, filters: Mapping[str, str], cap_bytes: int) -> RenderedSection:
+def render_journal(path: Path, filters: Mapping[str, str | tuple[str, ...]], cap_bytes: int) -> RenderedSection:
     resolved = path.resolve()
     malformed = 0
     entries: list[dict[str, Any]] = []
@@ -350,7 +359,7 @@ def render_context_path(
     path_ref: str,
     candidate: Path,
     policy: ContextPolicy,
-    filters: Mapping[str, str],
+    filters: Mapping[str, str | tuple[str, ...]],
     state: Mapping[str, object] | None = None,
     phase_id: str = "",
 ) -> RenderedSection:

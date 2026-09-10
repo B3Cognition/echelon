@@ -132,6 +132,7 @@ def test_stale_drawers_are_omitted_from_prior_context_and_reported_as_stale(tmp_
         drawer_id="drawer-valid",
         artifact_path="specs/001-photo-album/spec.md",
         artifact_hash_value=artifact_hash(spec_file),
+        content="A" * 400 + " retained decision evidence",
     )
     rejected_drawer = Drawer(
         drawer_id="drawer-stale-hash",
@@ -150,8 +151,10 @@ def test_stale_drawers_are_omitted_from_prior_context_and_reported_as_stale(tmp_
     stale_report = (result.context_dir / "stale-memory-report.md").read_text(encoding="utf-8")
 
     assert "drawer-valid" in prior_context
+    assert "retained decision evidence" in prior_context
     assert "drawer-stale-hash" not in prior_context
     assert "drawer-stale-hash: hash_mismatch" in stale_report
+    assert result.accepted_drawer_ids == ("drawer-valid",)
 
 
 def test_build_run_context_keeps_canonical_sidecar_unchanged_and_carries_lifecycle_only_records(tmp_path: Path) -> None:

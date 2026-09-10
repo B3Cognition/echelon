@@ -7,7 +7,9 @@ from typing import Iterable
 
 from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.schema import (
+    StackCoverageObserver,
     StackDefinition,
+    StackLocalRunner,
     StackProvisioner,
     StackRunnability,
     StackTool,
@@ -35,6 +37,25 @@ class ResolvedRunnability:
     capabilities: tuple[str, ...] = ()
     required_observations: tuple[str, ...] = ()
     sources: tuple[str, ...] = ()
+    local_runner: "ResolvedLocalRunner" = field(
+        default_factory=lambda: ResolvedLocalRunner()
+    )
+
+
+@dataclass(frozen=True)
+class ResolvedLocalRunner:
+    profiles: tuple[str, ...] = ()
+    allowed_services: tuple[str, ...] = ()
+    environment_bindings: tuple[tuple[str, str], ...] = ()
+    sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResolvedCoverageObserver:
+    """One stack-owned observer and its declaring stack."""
+
+    owner_stack_id: str
+    observer: StackCoverageObserver
 
 
 @dataclass(frozen=True)
@@ -50,6 +71,7 @@ class ResolvedStacks:
     provisioners: list[ResolvedStackProvisioner] = field(default_factory=list)
     services: list[SandboxServiceSpec] = field(default_factory=list)
     runnability: ResolvedRunnability = field(default_factory=ResolvedRunnability)
+    coverage_observers: list[ResolvedCoverageObserver] = field(default_factory=list)
 
 
 def resolve_stacks(
@@ -70,6 +92,7 @@ def resolve_stacks(
             provisioners=[],
             services=[],
             runnability=ResolvedRunnability(),
+            coverage_observers=[],
         )
 
     normalized_selected = _normalize_stack_ids(selected_ids)
@@ -129,6 +152,8 @@ def resolve_stacks(
     services: list[SandboxServiceSpec] = []
     provisioners_by_id: dict[str, StackProvisioner] = {}
     runnability = ResolvedRunnability()
+    coverage_observers: list[ResolvedCoverageObserver] = []
+    required_observers_by_test_type: dict[str, ResolvedCoverageObserver] = {}
 
     for stack_id in resolved_ids:
         stack = definitions[stack_id]
@@ -152,6 +177,24 @@ def resolve_stacks(
                 value=value,
                 sources=_append_unique(existing.sources, stack_id),
             )
+
+        for observer in stack.coverage_observers:
+            resolved_observer = ResolvedCoverageObserver(
+                owner_stack_id=stack_id,
+                observer=observer,
+            )
+            if observer.required:
+                for test_type in observer.test_types:
+                    existing = required_observers_by_test_type.get(test_type)
+                    if existing is not None:
+                        raise StackConflictError(
+                            "Stack coverage observer conflict for "
+                            f"test type {test_type}: "
+                            f"{existing.owner_stack_id}/{existing.observer.id} "
+                            f"conflicts with {stack_id}/{observer.id}"
+                        )
+                    required_observers_by_test_type[test_type] = resolved_observer
+            coverage_observers.append(resolved_observer)
 
         for tool_id, tool in stack.tools.items():
             existing = tools.get(tool_id)
@@ -214,6 +257,10 @@ def resolve_stacks(
         provisioners=provisioners,
         services=services,
         runnability=runnability,
+        coverage_observers=sorted(
+            coverage_observers,
+            key=lambda item: (item.owner_stack_id, item.observer.id),
+        ),
     )
 
 
@@ -261,10 +308,47 @@ def resolved_stack_contract_sha256(resolved: ResolvedStacks) -> str:
                 resolved.runnability.required_observations
             ),
             "sources": sorted(resolved.runnability.sources),
+            "local_runner": {
+                "profiles": sorted(resolved.runnability.local_runner.profiles),
+                "allowed_services": sorted(
+                    resolved.runnability.local_runner.allowed_services
+                ),
+                "environment_bindings": sorted(
+                    resolved.runnability.local_runner.environment_bindings
+                ),
+                "sources": sorted(resolved.runnability.local_runner.sources),
+            },
         },
     }
     encoded = json.dumps(
         payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def resolved_coverage_observer_plan_sha256(resolved: ResolvedStacks) -> str:
+    """Return an order-independent digest of stack-owned observer behavior."""
+    observers = sorted(
+        (
+            {
+                "owner_stack_id": item.owner_stack_id,
+                "id": item.observer.id,
+                "test_types": sorted(item.observer.test_types),
+                "command": item.observer.command,
+                "report_path": item.observer.report_path,
+                "adapter": item.observer.adapter,
+                "mode": item.observer.mode,
+                "required": item.observer.required,
+            }
+            for item in resolved.coverage_observers
+        ),
+        key=lambda item: (str(item["owner_stack_id"]), str(item["id"])),
+    )
+    encoded = json.dumps(
+        {"coverage_observers": observers},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -300,6 +384,11 @@ def _merge_runnability(
         if "user_facing" in {current.classification, declared.classification}
         else "non_runnable"
     )
+    local_runner = _merge_local_runner(
+        current.local_runner,
+        stack_id,
+        declared.local_runner,
+    )
     return ResolvedRunnability(
         classification=classification,
         policy=policy,
@@ -314,6 +403,34 @@ def _merge_runnability(
             )
         ),
         sources=tuple(_append_unique_many(current.sources, (stack_id,))),
+        local_runner=local_runner,
+    )
+
+
+def _merge_local_runner(
+    current: ResolvedLocalRunner,
+    stack_id: str,
+    declared: StackLocalRunner,
+) -> ResolvedLocalRunner:
+    bindings = dict(current.environment_bindings)
+    for variable, source in declared.environment_bindings:
+        existing = bindings.get(variable)
+        if existing is not None and existing != source:
+            raise StackConflictError(
+                "Stack local runner environment binding conflict for "
+                f"{variable}: {existing!r} conflicts with {source!r} from {stack_id}"
+            )
+        bindings[variable] = source
+    sources = current.sources
+    if declared != StackLocalRunner():
+        sources = tuple(_append_unique_many(sources, (stack_id,)))
+    return ResolvedLocalRunner(
+        profiles=tuple(_append_unique_many(current.profiles, declared.profiles)),
+        allowed_services=tuple(
+            _append_unique_many(current.allowed_services, declared.allowed_services)
+        ),
+        environment_bindings=tuple(bindings.items()),
+        sources=sources,
     )
 
 

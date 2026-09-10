@@ -21,6 +21,7 @@ Provide IMPLEMENTATION-MAPPER with:
 - `{verify_run_dir}/codegraph-evidence-map.md`
 - `{verify_run_dir}/coverage-evidence.json`
 - `{verify_run_dir}/coverage-evidence.md`
+- `{verify_run_dir}/coverage-observation-context.json` when present
 
 ## Deterministic Pre-map
 
@@ -40,10 +41,11 @@ python -m harness write-codegraph-evidence-map \
 ```
 
 The coverage-evidence command is Python-owned reconciliation of the current
-coverage map, canonical inventory, task progress, and owner-controlled
-deferrals. If it exits non-zero, hard stop with BLOCKED. A candidate declaration
-of `strong` test evidence cannot override its deferred, escalated, missing, or
-contradictory rows.
+coverage map, canonical inventory, task progress, owner-controlled deferrals,
+and (when Ralph supplied `coverage-observation-context.json`) the immutable
+per-case observer result. If it exits non-zero, hard stop with BLOCKED. Never
+remove, replace, or hand-edit that context: it is the only allowed source of a
+strict stack's execution evidence.
 
 If `{spec_dir}/coverage-map.md` is absent, rerun the same command without the
 final coverage-map argument.
@@ -125,10 +127,12 @@ Distinguish source evidence from executable test evidence and measured
 CI/runtime artifacts. Do not rewrite assertion-gate functions or synthetic
 fixture tests as measured runtime evidence.
 
-Read `coverage-evidence.json` before assigning verified test evidence. Never
-label a requirement's evidence strong when its deterministic coverage status is
-not `automated` or `owner_deferred`. Record the contradiction in Notes so the
-judgment pre-pass can route repair.
+Read `coverage-evidence.json` before assigning verified test evidence. For a
+strict observer stack, only `observed` (or `owner_deferred`) is eligible for a
+mechanical coverage decision. `observed` proves that the tagged planned case
+ran and passed; it does not prove that the test's oracle is semantically useful.
+Record the cited source file, terminal test title, and any semantic concern in
+Notes so the judgment pre-pass can route genuine review or repair.
 
 ## Expected Output
 

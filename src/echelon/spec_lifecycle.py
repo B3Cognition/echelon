@@ -310,6 +310,53 @@ class SpecRunExecutionLock(SpecLifecycleLock):
         )
 
 
+def _active_lock_owner(lock_path: Path, *, owner_label: str) -> str | None:
+    """Return a live lease owner without acquiring or repairing the lease.
+
+    Status reporting must never briefly acquire a lifecycle lock: doing so
+    would mutate runtime state and can race an execution that is starting.
+    A remote or malformed owner is conservatively treated as active because
+    the mutating lifecycle path cannot prove it safe to reclaim either.
+    """
+    if not lock_path.exists():
+        return None
+    if not lock_path.is_dir():
+        return "unknown"
+    try:
+        owner = _read_json_object(lock_path / "owner.json", label=owner_label)
+    except SpecLifecycleRecoveryRequired:
+        return "unknown"
+
+    owner_id = str(owner.get("operation_id") or "")
+    pid = owner.get("pid")
+    hostname = owner.get("hostname")
+    if (
+        not _SAFE_OPERATION_ID.fullmatch(owner_id)
+        or isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(hostname, str)
+        or not hostname
+    ):
+        return "unknown"
+    if hostname != socket.gethostname() or _pid_alive(pid):
+        return owner_id
+    return None
+
+
+def active_spec_run_execution_owner(run_dir: Path) -> str | None:
+    """Return the live owner of a run's execution lease, if any.
+
+    This is deliberately read-only so diagnostic commands can distinguish a
+    live controller from a stale ``running`` state without competing for the
+    controller's lease.
+    """
+    return _active_lock_owner(
+        Path(run_dir).resolve() / ".echelon" / "runtime" / "execution.lock",
+        owner_label="run execution lock owner",
+    )
+
+
 class PhaseAExecutionLock(SpecLifecycleLock):
     """Atomic lease preventing a live controller from losing its checkout."""
 
@@ -321,6 +368,14 @@ class PhaseAExecutionLock(SpecLifecycleLock):
             owner_label="Phase A execution lock owner",
             controller_rank="phase_a",
         )
+
+
+def active_phase_a_execution_owner(project_root: Path) -> str | None:
+    """Return the live owner of the workspace-wide Phase A lease, if any."""
+    return _active_lock_owner(
+        _runtime_dir(project_root) / "phase-a-execution.lock",
+        owner_label="Phase A execution lock owner",
+    )
 
 
 def _project_path(project_root: Path, value: str) -> Path:

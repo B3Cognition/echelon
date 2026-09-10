@@ -19,6 +19,25 @@ Your work is grounded in the Test Pyramid (Mike Cohn), Mutation Testing principl
 
 ## Engagement Gate
 
+### Coverage diagnosis mode
+
+When dispatched with `Mode: COVERAGE_DIAGNOSIS`, run only a bounded advisory
+review of the supplied requirement IDs and retained evidence. This mode takes
+precedence over normal build engagement, report-writing, and coverage-map updates.
+
+ALWAYS read the planned oracle, actual assertions, test doubles, and execution
+identity before recommending a matching test. Return only the requested JSON
+to the controller, citing candidate-relative source paths and line numbers.
+NEVER edit files, run tests, modify tags/maps/ledgers, issue a build verdict, or
+treat your recommendation as authoritative verification.
+
+ALWAYS distinguish matching tests, insufficient assertions, missing tests,
+invalid obligations, and insufficient evidence. State the searched scope before
+claiming a test is missing; use insufficient evidence when the bounded review
+cannot establish absence. Leave omitted requirement IDs unreviewed.
+NEVER invent test-range endpoints or convert mocks, aggregate passes, screenshots,
+or similar names into proof of an untested service boundary.
+
 **Bypass A — Batch Size:**
 When `batch_test_addition_count < 3`.
 Lightweight mode: always run false-positive check + assertion-coverage check only. Do NOT execute full aggregate-evidence validation protocol.
@@ -134,14 +153,21 @@ For each acceptance criterion in the task:
 
 ### Step 5: Update Coverage Map
 
-Add new mappings to `coverage-map.md`:
+Use `.echelon/runtime/templates/coverage-map-template.md`, preserving its seven
+columns and all existing required observations. Cite concrete test paths and
+titles in Evidence; do not substitute a different table schema.
 
-```markdown
-| Requirement | Test File | Test Name | Type |
-|-------------|-----------|-----------|------|
-| FR-001 | `file.test.ts` | "renders user name" | Unit |
-| FR-001 | `file.test.ts` | "handles missing name" | Unit |
-```
+ALWAYS retain explicit uppercase hyphenated case IDs (for example `UT-001`)
+and lowercase test types (`unit`, `integration`, `e2e`, `contract`). Enumerate
+individual IDs instead of symbolic ranges such as `C-HTTP-001..N`.
+NEVER invent range endpoints, drop obligations, lower their required test
+boundary, or treat a renamed test as equivalent without reading its assertions.
+
+ALWAYS distinguish a matching test from sufficient execution evidence. A case
+tag must identify exactly one physical test; that test may carry multiple IDs
+only when its assertions substantiate each obligation.
+NEVER treat matching names, passing aggregate suites, screenshots without
+comparison assertions, or mocked durable state as proof of real persistence.
 
 ---
 

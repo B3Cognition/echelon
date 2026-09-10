@@ -7,6 +7,7 @@ Echelon normalize CLI contracts incrementally without rewriting harness logic.
 
 from __future__ import annotations
 
+import json
 import shlex
 from enum import Enum
 from pathlib import Path
@@ -53,6 +54,8 @@ delivery_app = typer.Typer(
         "  init\n"
         "  target <spec_id>\n"
         "  status [<spec_id>] [--strategy <s>]\n"
+        "  verify-local <spec_id> [--target <target-id>] [--engine auto|docker|podman]\n"
+        "  cleanup-local <local-run-id>\n"
         "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
         "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
         "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
@@ -1655,9 +1658,9 @@ def root_review(
 @app.command("codegen", hidden=True, context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 def root_codegen(
     ctx: typer.Context,
-    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Spec id to build with SOAR codegen."),
+    spec_id: Optional[str] = typer.Argument(None, metavar="SPEC_ID", help="Legacy spec id; SOAR execution is disabled."),
 ) -> None:
-    """Compatibility alias for the codegen skill command."""
+    """Retired compatibility command; SOAR execution is disabled."""
     _dispatch_compatibility_skill("codegen", ([spec_id] if spec_id else []) + _ctx_args(ctx))
 
 
@@ -2607,8 +2610,10 @@ def graph_build(
         graph = build_spec_graph(Path.cwd(), spec_selector)
         spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
         if write:
+            commit = _graph_output_commit(spec_dir, audit=False)
             write_spec_graph(graph, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="built")
@@ -2942,8 +2947,10 @@ def graph_audit(
         report = audit_spec_graph(Path.cwd(), spec_selector)
         if write:
             spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+            commit = _graph_output_commit(spec_dir, graph=False)
             write_spec_graph_audit(report, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
@@ -2973,17 +2980,31 @@ def graph_refresh(
     try:
         spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
         graph = build_spec_graph(Path.cwd(), spec_selector)
+        commit = _graph_output_commit(spec_dir) if write else None
         if write:
             write_spec_graph(graph, spec_dir)
         report = audit_spec_graph(Path.cwd(), spec_selector)
         if write:
             write_spec_graph_audit(report, spec_dir)
-    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+            commit.commit()
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="refreshed")
     _echo_spec_graph_audit(report)
     raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+def _graph_output_commit(spec_dir: Path, *, graph: bool = True, audit: bool = True):
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    names = (["spec-artifact-graph.json"] if graph else []) + (
+        ["spec-artifact-graph-audit.json"] if audit else []
+    )
+    return OwnedOutputCommit(
+        Path.cwd(), [spec_dir / name for name in names],
+        f"chore: record graph evidence for {spec_dir.name}",
+    )
 
 
 @graph_app.command("export")
@@ -3549,6 +3570,60 @@ def spec_verify(
     )
 
 
+@spec_app.command("reconcile-fulfillment")
+def spec_reconcile_fulfillment(
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Spec whose historical delivery receipts to inspect."),
+    write: bool = typer.Option(False, "--write", help="Apply only a receipt-compatible reconciliation."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable preview output."),
+) -> None:
+    """Preview or apply receipt-backed fulfillment reconciliation."""
+    from harness.fulfillment_reconciliation_discovery import reconcile_from_delivery_state
+    from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.verified_fulfillment_ledger import (
+        read_verified_ledger,
+        verified_fulfillment_ledger_path,
+        write_verified_ledger,
+    )
+
+    root = Path.cwd().resolve()
+    spec_dir = find_spec_dir(spec_id, root)
+    if spec_dir is None:
+        raise typer.BadParameter(f"spec not found: {spec_id}")
+    ledger_path = verified_fulfillment_ledger_path(spec_dir)
+    if not ledger_path.is_file():
+        typer.echo("status: reverify_required\nreason: no canonical verified-fulfillment ledger")
+        raise typer.Exit(1)
+    targets = read_targets(spec_dir)
+    if len(targets) != 1 or not (target := (root / targets[0]).resolve()).is_dir():
+        typer.echo("status: reverify_required\nreason: exactly one existing delivery target is required")
+        raise typer.Exit(1)
+    result = reconcile_from_delivery_state(
+        root=root, spec_dir=spec_dir, target=target, ledger=read_verified_ledger(ledger_path)
+    )
+    payload = {
+        "spec_id": spec_dir.name, "status": result.status, "write": write,
+        "rejected_reasons": list(result.rejected_reasons),
+        "rows": [{"requirement_id": row.requirement_id, "status": row.status,
+                  "receipt_refs": [dict(item) for item in row.receipt_refs]}
+                 for row in result.ledger.rows],
+    }
+    if as_json:
+        typer.echo(json.dumps(payload, sort_keys=True))
+    else:
+        typer.echo(f"status: {result.status}")
+        typer.echo("mode: write" if write else "mode: preview (pass --write to apply)")
+        for reason in result.rejected_reasons:
+            typer.echo(f"rejected: {reason}")
+    if write and result.status == "reconciled":
+        write_verified_ledger(ledger_path, result.ledger)
+        typer.echo(f"ledger: updated {ledger_path}")
+        return
+    if result.status != "reconciled":
+        if result.status == "no_candidates":
+            typer.echo(f"next: echelon spec verify {spec_dir.name}")
+        raise typer.Exit(1)
+
+
 def _reject_spec_verify_extra_args(ctx: typer.Context) -> None:
     if not ctx.args:
         return
@@ -3566,10 +3641,14 @@ def _run_spec_verify(
     reconcile: bool,
     dry_run: bool,
 ) -> None:
+    from echelon.prosaic_packages import install_prosaic_bundle
+    from harness.authoritative_spec_verifier import AuthoritativeSpecVerifier
     from harness.config import load_config
+    from harness.docker_provider import DockerWorktreeProvider
     from harness.fulfillment_runner import FulfillmentRunner
     from harness.llm_provider import AICodingCliProvider
     from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.verification_stack_runtime import resolve_verification_stacks
 
     if dry_run and not reconcile:
         typer.echo("spec verify: --dry-run requires --reconcile", err=True)
@@ -3591,20 +3670,54 @@ def _run_spec_verify(
         typer.echo(f"spec verify: target repo not found: {targets[0]}", err=True)
         raise typer.Exit(code=2)
 
-    provider = AICodingCliProvider(load_config(workspace, squad_only=True))
-    result = FulfillmentRunner(provider).refresh(
-        str(target),
-        spec_dir.name,
+    install_prosaic_bundle(workspace)
+    config = load_config(workspace, squad_only=True)
+    config.target_repo = str(target)
+    resolved = resolve_verification_stacks(workspace, target)
+    config.verification_services = list(resolved.services)
+    config.resolved_stacks = resolved
+    config.resolved_runnability = resolved.runnability
+    prompt_executor = AICodingCliProvider(config)
+    container_cli = getattr(config, "container_cli", "docker")
+    if container_cli not in {"docker", "podman"}:
+        container_cli = "docker"
+    sandbox_provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=container_cli,
+    )
+    from echelon.owned_output_commit import OwnedOutputCommit
+
+    output_commit = OwnedOutputCommit(
+        workspace,
+        [spec_dir / name for name in (
+            "fulfillment-report.md", "fulfillment-gaps.md",
+            "verified-fulfillment-ledger.json",
+        )] + ([spec_dir / "tasks.md"] if reconcile and not dry_run else []),
+        f"chore: record verification evidence for {spec_dir.name}",
+    )
+    result = AuthoritativeSpecVerifier(
+        target=target,
         spec_dir=spec_dir,
-        orchestration_root=workspace,
+        config=config,
+        fulfillment_runner=FulfillmentRunner(prompt_executor),
+        provider=sandbox_provider,
+        diagnostic_executor=prompt_executor,
+    ).run(
         reconcile=reconcile,
         dry_run=dry_run,
     )
+    output_commit.commit()
+    typer.echo("evidence: authoritative sandbox")
     typer.echo(f"status: {result.status}")
+    typer.echo(f"verify run: {result.verify_run_dir}")
+    if result.failure_class:
+        typer.echo(f"failure class: {result.failure_class}")
     if result.reason:
         typer.echo(f"reason: {result.reason}")
     if result.report_path:
         typer.echo(f"report: {result.report_path}")
+    if getattr(result, "diagnostic_path", None):
+        typer.echo(f"coverage diagnosis (advisory only): {result.diagnostic_path}")
     if result.verified_ledger is not None:
         ledger = " ".join(
             f"{key}={value}" for key, value in result.verified_ledger.items()
@@ -3890,6 +4003,60 @@ def delivery_status(
     command(args)
 
 
+@delivery_app.command("verify-local")
+def delivery_verify_local(
+    spec_id: str = typer.Argument(..., metavar="SPEC_ID", help="Converged spec to verify locally."),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Declared target id when the spec has multiple targets.",
+    ),
+    engine: str = typer.Option(
+        "auto",
+        "--engine",
+        help="Local macOS engine: auto, docker, or podman.",
+    ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Confirm the displayed host-local action plan.",
+    ),
+    keep_on_failure: bool = typer.Option(
+        False,
+        "--keep-on-failure",
+        help="Leave only journalled resources for explicit cleanup after a failure.",
+    ),
+) -> None:
+    """Explicit macOS verification; it never changes delivery landing authority."""
+    from echelon import cli as legacy_cli
+
+    try:
+        legacy_cli._cmd_delivery_verify_local(
+            spec_id,
+            target_id=target,
+            engine=engine,
+            assume_yes=assume_yes,
+            keep_on_failure=keep_on_failure,
+        )
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@delivery_app.command("cleanup-local")
+def delivery_cleanup_local(
+    local_run_id: str = typer.Argument(..., metavar="LOCAL_RUN_ID", help="Journal-bound run id to recover."),
+) -> None:
+    """Clean one interrupted local verification using its ownership journal."""
+    from echelon import cli as legacy_cli
+
+    try:
+        legacy_cli._cmd_delivery_cleanup_local(local_run_id)
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @delivery_app.command(
     "run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -3905,7 +4072,7 @@ def delivery_run(
     strategy: Optional[str] = typer.Option(
         None,
         "--strategy",
-        help="Build strategy, usually default or codegen.",
+        help="Build strategy (default recommended; SOAR/codegen is disabled).",
     ),
     max_outer: Optional[int] = typer.Option(
         None,

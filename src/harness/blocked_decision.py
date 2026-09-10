@@ -8,6 +8,7 @@ import re
 from typing import Any, Mapping
 
 from harness.human_input import (
+    BANZAI_DEFAULT_RECOMMENDED_ACTION,
     HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
     HUMAN_INPUT_MAX_OPTIONS,
     HUMAN_INPUT_OPTION_ID_MAX_BYTES,
@@ -568,10 +569,6 @@ def validate_blocked_decision_v3(value: object) -> dict[str, object]:
     automatic_eligible = value["automatic_eligible"]
     if type(automatic_eligible) is not bool:
         raise BlockedDecisionError("automatic_eligible must be a boolean")
-    if automatic_eligible and recommended_option_id is None and recommended_answer is None:
-        raise BlockedDecisionError(
-            "automatic_eligible requires a recommended option or answer"
-        )
     if normalized["status"] in {"pending", "resolving"} and not automatic_eligible:
         raise BlockedDecisionError(
             "pending and resolving decisions require automatic_eligible"
@@ -598,12 +595,31 @@ def validate_blocked_decision_v3(value: object) -> dict[str, object]:
     recommendation_evidence = _validate_v3_recommendation_evidence(
         value["recommendation_evidence"]
     )
+    is_banzai_default_candidate = (
+        not options
+        and recommended_answer is None
+        and recommended_option_id is None
+        and recommended_action == BANZAI_DEFAULT_RECOMMENDED_ACTION
+        and automatic_eligible is True
+        and recommendation_authority == "controller_evidence"
+        and len(recommendation_evidence) == 1
+        and recommendation_evidence[0]["kind"] == "banzai_default_candidate"
+    )
+    if (
+        automatic_eligible
+        and recommended_option_id is None
+        and recommended_answer is None
+        and not is_banzai_default_candidate
+    ):
+        raise BlockedDecisionError(
+            "automatic_eligible requires a recommended option or answer"
+        )
     if options or recommended_answer is not None:
         if not recommendation_evidence:
             raise BlockedDecisionError(
                 "prepared recommendations require recommendation_evidence"
             )
-    elif recommendation_evidence:
+    elif recommendation_evidence and not is_banzai_default_candidate:
         raise BlockedDecisionError(
             "human-only free text cannot retain recommendation_evidence"
         )

@@ -16,6 +16,7 @@ from typing import Iterable
 SCHEMA_VERSION = 1
 CONTROL_ROOTS = frozenset({".echelon", ".git"})
 CONTROL_PATHS = frozenset({".harness-build-status.json"})
+FINGERPRINT_IGNORED_PATHS = frozenset({".gitignore"})
 FINGERPRINT_IGNORED_PARTS = frozenset(
     {
         "__pycache__",
@@ -62,7 +63,8 @@ def product_evidence_fingerprint(project_root: Path) -> str:
 
 def _fingerprint_ignored(path: PurePosixPath) -> bool:
     return bool(
-        FINGERPRINT_IGNORED_PARTS.intersection(path.parts)
+        path.as_posix() in FINGERPRINT_IGNORED_PATHS
+        or FINGERPRINT_IGNORED_PARTS.intersection(path.parts)
         or path.suffix in {".pyc", ".pyo"}
     )
 

@@ -26,11 +26,13 @@ from harness.delivery_results import DeliveryRunOutcome, LandingOutcome
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
 from harness.spec_frontmatter import find_spec_dir, read_targets
+from harness.state import state_lock_owner_is_alive
 
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 _RECOVERABLE_BASELINE_REASONS = {
+    "build_blocked",
     "outer_cap",
     "checkpoint_outer_cap",
     "task_progress_incomplete",
@@ -95,7 +97,11 @@ def _resolve_run_roots(
     return harness_root, workspace_root
 
 
-def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]:
+def _fresh_delivery_baselines(
+    harness_root: Path,
+    intent: Any,
+    gitops: Any | None = None,
+) -> dict[str, str]:
     """Return checkpoint commits a new delivery budget may safely retain.
 
     A normal fresh delivery intentionally restarts from the target default branch.
@@ -133,8 +139,10 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
                 state = json.loads(state_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
+            if not isinstance(state, dict) or state.get("spec_id") != intent.spec_id:
+                continue
             status = str(state.get("status") or "")
-            if status == "running" and _state_lock_owner_is_alive(state_path):
+            if status == "running" and state_lock_owner_is_alive(state_path):
                 raise RunContextError(
                     "delivery is already active for "
                     f"{intent.spec_id}/{strategy_id} in {prior_build_id}"
@@ -157,6 +165,17 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
                     continue
                 commit = checkpoint.get("commit")
                 if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40}", commit):
+                    if _checkpoint_is_landed(gitops, commit):
+                        logger.info(
+                            "Latest checkpoint %s for %s is already contained in "
+                            "the target default branch; starting fresh",
+                            commit[:12],
+                            strategy_id,
+                        )
+                        # A newer durable checkpoint supersedes every older run.
+                        # Once it has landed, an old abandoned candidate must not
+                        # be revived merely because its state still says running.
+                        return baselines
                     baselines[strategy_id] = commit
                     break
             if strategy_id in baselines:
@@ -164,27 +183,93 @@ def _fresh_delivery_baselines(harness_root: Path, intent: Any) -> dict[str, str]
     return baselines
 
 
-def _state_lock_owner_is_alive(state_path: Path) -> bool:
-    """Return whether a delivery state lock names a currently live process."""
+def _fresh_delivery_completed_tasks(
+    harness_root: Path,
+    intent: Any,
+    baselines: Mapping[str, str],
+    gitops: Any | None = None,
+    *,
+    spec_dir: Path | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Recover Python-checkpointed task progress on each retained lineage.
+
+    Provider task results are intentionally insufficient: a process can exit
+    after writing its status marker but before Ralph commits the corresponding
+    checkpoint.  Only task IDs recorded on checkpoint commits that are
+    ancestors of the selected baseline are inherited by a fresh budget.
+    """
+    if not baselines or gitops is None:
+        return {}
+    from harness.task_progress import checkpoint_input_hash
+
+    current_input_hash = checkpoint_input_hash(spec_dir)
+    if current_input_hash is None:
+        return {}
+    ancestry = getattr(gitops, "commit_is_ancestor", None)
+    if not callable(ancestry):
+        return {}
+
+    recovered: dict[str, set[str]] = {
+        strategy_id: set() for strategy_id in baselines
+    }
+    for state_path in sorted(runs_dir(harness_root).glob("build-*/state/*.json")):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(state.get("spec_id") or "") != str(intent.spec_id):
+            continue
+        strategy_id = str(state.get("strategy_id") or state_path.stem)
+        baseline = baselines.get(strategy_id)
+        if baseline is None:
+            continue
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            continue
+        for checkpoint in checkpoints:
+            if not isinstance(checkpoint, dict):
+                continue
+            if checkpoint.get("checkpoint_input_hash") != current_input_hash:
+                continue
+            commit = checkpoint.get("commit")
+            task_ids = checkpoint.get("task_ids")
+            if (
+                not isinstance(commit, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", commit)
+                or not isinstance(task_ids, list)
+            ):
+                continue
+            try:
+                retained = ancestry(commit, baseline) is True
+            except Exception:
+                retained = False
+            if not retained:
+                continue
+            recovered[strategy_id].update(
+                task_id.strip()
+                for task_id in task_ids
+                if isinstance(task_id, str)
+                and re.fullmatch(r"T-\d+", task_id.strip())
+            )
+    return {
+        strategy_id: tuple(sorted(task_ids))
+        for strategy_id, task_ids in recovered.items()
+        if task_ids
+    }
+
+
+def _checkpoint_is_landed(gitops: Any | None, commit: str) -> bool:
+    """Return whether a prior delivery checkpoint is already on target main."""
+    if gitops is None:
+        return False
+    checker = getattr(gitops, "commit_is_ancestor_of_default", None)
+    if not callable(checker):
+        return False
     try:
-        lock_text = state_path.with_suffix(".lock").read_text(encoding="utf-8")
-    except OSError:
+        return checker(commit) is True
+    except Exception as error:  # pragma: no cover - defensive: stale recovery must remain available
+        logger.warning("Could not inspect stale checkpoint %s: %s", commit[:12], error)
         return False
-    match = re.search(r"(?m)^pid=(\d+)$", lock_text)
-    if match is None:
-        return False
-    pid = int(match.group(1))
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
@@ -834,7 +919,16 @@ def _execute_delivery_run(
     # that ID here.  A build ID therefore does not itself mean "resume"; intent
     # is the authority for whether a prior checkpoint must be retained.
     fresh_branch_bases = (
-        {} if getattr(intent, "resume", False) else _fresh_delivery_baselines(harness_root, intent)
+        {}
+        if getattr(intent, "resume", False)
+        else _fresh_delivery_baselines(harness_root, intent, gitops)
+    )
+    fresh_completed_task_ids = _fresh_delivery_completed_tasks(
+        harness_root,
+        intent,
+        fresh_branch_bases,
+        gitops,
+        spec_dir=spec_dir,
     )
     build_id = resume_build_id or make_build_id()
     rd = runs_dir(harness_root)
@@ -850,6 +944,7 @@ def _execute_delivery_run(
         build_id=build_id,
         orchestration_root=workspace_root,
         fresh_branch_bases=fresh_branch_bases,
+        fresh_completed_task_ids=fresh_completed_task_ids,
     )
     if fresh_branch_bases:
         logger.info(

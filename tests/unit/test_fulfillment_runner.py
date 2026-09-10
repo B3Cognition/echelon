@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 import pytest
 
-from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
+from harness.fulfillment_runner import (
+    FULFILLMENT_VERIFIER_VERSION,
+    FulfillmentRunner,
+    _write_verified_fulfillment_ledger,
+)
+from harness.verify_spec_run import init_verify_spec_run
 from harness.llm_provider import AICodingCliProvider
 from harness.product_inventory import product_evidence_fingerprint
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
@@ -102,8 +107,95 @@ def _write_passing_fulfillment_receipt(
 
 @pytest.mark.unit
 class TestFulfillmentRunner:
+    def test_refresh_uses_caller_owned_verify_run(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        initialized = init_verify_spec_run(
+            project_root=tmp_path,
+            spec_id=spec_dir.name,
+            spec_dir=spec_dir,
+            reconcile=True,
+            timestamp="caller-owned",
+        )
+        existing_runs = set((tmp_path / "runs").glob("verify-spec-*"))
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_result(_worktree_path: str, _prompt: str) -> int:
+            state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+            state.update(
+                {"topology_evidence": "ready", "fulfillment_artifacts": "valid"}
+            )
+            initialized.state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(spec_dir / "fulfillment-report.md")
+            return 0
+
+        provider.exec_prompt.side_effect = write_result
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                spec_dir.name,
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                reconcile=True,
+                verify_run_dir=initialized.verify_run_dir,
+            )
+
+        assert result.status == "refreshed", result.reason
+        assert json.loads(initialized.state_path.read_text())["status"] == "complete"
+        assert set((tmp_path / "runs").glob("verify-spec-*")) == existing_runs
+
+    def test_authoritative_receipt_is_written_into_v2_ledger(self, tmp_path):
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "src").mkdir()
+        (worktree / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "spec-001"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        _write_matching_report(report)
+        receipt = _write_passing_fulfillment_receipt(tmp_path, worktree)
+
+        _write_verified_fulfillment_ledger(
+            worktree,
+            spec_dir=spec_dir,
+            report=report,
+            spec_input_hash="spec-a",
+            implementation_input_hash="impl-a",
+            verification_evidence=receipt.as_mapping(),
+        )
+
+        ledger = json.loads(
+            (spec_dir / "verified-fulfillment-ledger.json").read_text(encoding="utf-8")
+        )
+        assert ledger["schema_version"] == 2
+        assert ledger["rows"][0]["candidate_content_fingerprint"] == product_evidence_fingerprint(worktree)
+        assert ledger["rows"][0]["receipt_refs"][0]["receipt_sha256"] == receipt.receipt_sha256
+
     def test_verifier_version_invalidates_pre_split_ledgers(self):
         assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v3-coverage-evidence"
+
+    def test_required_coverage_observation_blocks_before_provider_execution(self, tmp_path):
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        result = FulfillmentRunner(provider).refresh(
+            str(tmp_path),
+            "spec-001",
+            observer_required=True,
+        )
+
+        assert result.exit_code == 2
+        assert result.reason == "required coverage observation is missing or invalid"
+        provider.exec_prompt.assert_not_called()
 
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
         _write_verify_skill(tmp_path)
@@ -182,6 +274,110 @@ class TestFulfillmentRunner:
         assert result.status == "missing_skill"
         assert result.used_cache is False
         provider.exec_prompt.assert_not_called()
+
+    def test_refresh_owns_reconciled_lifecycle_after_provider_success(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def leave_reconciliation_incomplete(_worktree_path: str, _prompt: str) -> int:
+            state_path = next(tmp_path.glob("runs/**/state.json"))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.update(
+                {
+                    "topology_evidence": "ready",
+                    "fulfillment_artifacts": "valid",
+                }
+            )
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = leave_reconciliation_incomplete
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path), "spec-001", reconcile=True
+            )
+
+        assert result.status == "refreshed", result.reason
+        assert result.exit_code == 0
+        state_path = next(tmp_path.glob("runs/**/state.json"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "complete"
+        assert state["progress_reconciliation"] == "applied"
+
+    def test_refresh_finalizes_provider_omitted_topology_receipt(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        initialized = init_verify_spec_run(
+            project_root=tmp_path,
+            spec_id=spec_dir.name,
+            spec_dir=spec_dir,
+            reconcile=True,
+            timestamp="topology-finalization",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def omit_topology_receipt(_worktree_path: str, _prompt: str) -> int:
+            state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+            state.update(
+                {
+                    "fulfillment_artifacts": "valid",
+                    "status": "blocked",
+                    "blocked_reason": "verify topology evidence is not finalized",
+                    "blocked_at": "2026-09-08T00:00:00+00:00",
+                }
+            )
+            initialized.state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(spec_dir / "fulfillment-report.md")
+            return 0
+
+        provider.exec_prompt.side_effect = omit_topology_receipt
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                spec_dir.name,
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                reconcile=True,
+                verify_run_dir=initialized.verify_run_dir,
+                source_id=".",
+                source_root=tmp_path,
+            )
+
+        assert result.status == "refreshed", result.reason
+        state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "complete"
+        assert state["topology_evidence"] == "unavailable"
+        receipt = json.loads(
+            (initialized.verify_run_dir / "topology-receipt.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert receipt["source_id"] == "."
 
     def test_refresh_reports_provider_session_limit_without_using_stale_report(
         self, tmp_path
@@ -288,13 +484,15 @@ class TestFulfillmentRunner:
         assert isinstance(metadata["verify_cache_key"], str)
 
     def test_refresh_writes_verified_fulfillment_ledger_on_success(self, tmp_path):
-        _write_verify_skill(tmp_path)
+        worktree = tmp_path / "project"
+        worktree.mkdir()
+        _write_verify_skill(worktree)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         _write_spec_inputs(spec_dir)
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
-        (tmp_path / "test-results").mkdir()
-        (tmp_path / "test-results" / "runtime.json").write_text(
+        (worktree / "src").mkdir()
+        (worktree / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
+        (worktree / "test-results").mkdir()
+        (worktree / "test-results" / "runtime.json").write_text(
             '{"ok": false}\n',
             encoding="utf-8",
         )
@@ -315,9 +513,20 @@ class TestFulfillmentRunner:
 
         provider.exec_prompt.side_effect = write_report
 
+        receipt = _write_passing_fulfillment_receipt(
+            tmp_path / "evidence",
+            worktree,
+        )
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
-            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                verification_evidence=receipt.as_mapping(),
+            )
 
+        assert result.exit_code == 0, result.reason
         ledger_path = spec_dir / "verified-fulfillment-ledger.json"
         ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
         assert result.verified_ledger == {
@@ -326,9 +535,15 @@ class TestFulfillmentRunner:
             "invalidated": 0,
             "unresolved": 1,
         }
-        assert ledger["schema_version"] == 1
+        assert ledger["schema_version"] == 2
         assert [row["requirement_id"] for row in ledger["rows"]] == ["FR-001", "FR-002"]
         assert ledger["rows"][0]["artifact_hashes"]["src/a.py"]
+        assert ledger["rows"][0]["receipt_refs"] == [receipt.as_mapping()]
+        assert ledger["rows"][0]["candidate_content_fingerprint"] == (
+            product_evidence_fingerprint(worktree)
+        )
+        assert ledger["rows"][0]["requirement_set_fingerprint"]
+        assert ledger["rows"][0]["contract_hash"]
         assert ledger["rows"][1]["status"] == "UNVERIFIED"
 
     def test_refresh_assembles_no_fallback_report_without_provider_when_artifacts_exist(
@@ -1006,7 +1221,13 @@ class TestFulfillmentRunner:
             encoding="utf-8",
         )
         spec_dir = workspace / "specs" / "906-cli-output-styling"
-        _write_spec_inputs(spec_dir)
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+            ),
+        )
         _write_matching_audit(workspace, "906-cli-output-styling")
         report = spec_dir / "fulfillment-report.md"
         provider = MagicMock()
@@ -1243,6 +1464,36 @@ class TestFulfillmentRunner:
         assert second.status == "refreshed"
         assert second.used_cache is False
         assert provider.exec_prompt.call_count == 2
+
+    def test_refresh_reuses_cache_when_hidden_runner_state_changes(self, tmp_path):
+        """Playwright's private last-run journal is not measured fulfillment evidence."""
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        artifact = tmp_path / "test-results" / ".last-run.json"
+        artifact.parent.mkdir()
+        artifact.write_text('{"status": "failed"}\n', encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            artifact.write_text('{"status": "passed"}\n', encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "cached"
+        assert second.used_cache is True
+        assert provider.exec_prompt.call_count == 1
 
     def test_refresh_invalidates_cache_when_commit_changes(self, tmp_path):
         _write_verify_skill(tmp_path)

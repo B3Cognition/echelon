@@ -4208,6 +4208,7 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
             "prompt_metadata": {
                 "tool_read_roots": [str(run_root)],
                 "tool_write_paths": [str(write_path)],
+                "tool_write_scope_exclusive": True,
                 "tool_forbidden_roots": [str(forbidden_root)],
             }
         },
@@ -4247,6 +4248,7 @@ def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
     assert 'extends=":workspace"' in profile
     assert parsed_profile["network"] == {"enabled": True}
     assert f'{json.dumps(str(forbidden_root))}="deny"' in profile
+    assert f'{json.dumps(str(tmp_path.resolve()))}="read"' in profile
     assert f'{json.dumps(str(run_root))}="read"' in profile
     assert f'{json.dumps(str(write_path))}="write"' in profile
 

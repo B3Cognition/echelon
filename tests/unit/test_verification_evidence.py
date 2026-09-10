@@ -11,6 +11,7 @@ import pytest
 from harness.verification_evidence import (
     VerificationEvidenceRef,
     VerificationStage,
+    validate_equivalent_product_receipt,
     validate_verification_receipt,
     write_verification_receipt,
 )
@@ -198,3 +199,28 @@ def test_stale_candidate_is_rejected(tmp_path: Path) -> None:
 
     assert validation.valid is False
     assert "candidate" in validation.reason
+
+
+@pytest.mark.unit
+def test_equivalent_product_receipt_permits_only_a_commit_sha_change(
+    tmp_path: Path,
+) -> None:
+    ref = _write_fixture_receipt(tmp_path)
+
+    strict = validate_verification_receipt(
+        ref,
+        candidate_commit="c" * 40,
+        candidate_fingerprint="b" * 64,
+    )
+    equivalent = validate_equivalent_product_receipt(
+        ref,
+        candidate_fingerprint="b" * 64,
+    )
+    changed_product = validate_equivalent_product_receipt(
+        ref,
+        candidate_fingerprint="d" * 64,
+    )
+
+    assert strict.valid is False
+    assert equivalent.valid is True
+    assert changed_product.valid is False

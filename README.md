@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.15** — 63 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 25 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.1.0** — 61 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 23 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -27,19 +27,15 @@ source ~/.zshrc   # or restart terminal
 
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
-This is enough to author specs and run the default delivery strategy. The
-SOAR-backed codegen pipeline is opt-in:
-
-```bash
-bash ~/echelon/scripts/install.sh --with-codegen
-```
+This is enough to author specs and run the default delivery strategy.
+SOAR/codegen execution is disabled pending removal; `--with-codegen` is rejected.
 
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
 | `echelon spec` | Spec lifecycle subcommands — run, status, targets, verify, defer, plan, reopen |
-| `codegen` | Optional SOAR codegen pipeline, installed with `--with-codegen` |
+| `codegen` | Retired SOAR pipeline; execution disabled |
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
@@ -325,7 +321,7 @@ echelon spec plan 001 NFR-008
 
 # Phase B — build, verify in Docker, open PR
 echelon delivery run 001                    # echelon squad build (default)
-echelon delivery run 001 --strategy codegen # SOAR pipeline build (alternative)
+# SOAR/codegen is disabled; use the default strategy.
 
 # Polyrepo/workspace: declare implementation roots before Phase A dispatches
 echelon spec run "Build dashboards" --target sources/api --target sources/web
@@ -444,6 +440,15 @@ echelon graph audit <spec> --write
 echelon graph view <spec> --no-open
 echelon graph export <spec> --format dot --output graph.dot
 ```
+
+In an initialized Git workspace, these `--write` commands commit their durable
+graph evidence, including failed-audit diagnostics. Standalone `spec verify`
+also commits its reports and ledger (and reconciled tasks when requested).
+Only the command's output paths are committed; unrelated staged work is left
+alone. Resolve existing edits to those outputs before regenerating them.
+Workspace setup/migration similarly commit clean configuration outputs, but
+preserve overlapping pre-existing edits with a warning. Runtime locks are
+excluded locally from Git, including when switching to older branches.
 
 Every graph records hashes for its canonical input set and its MemPalace audit
 receipts. The audits distinguish three stale transitions:
@@ -753,6 +758,78 @@ substrate: it takes Echelon's Phase A output (spec.md, tasks.md, feature branch)
 and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays
 on the host; deterministic work (build, test, verify) runs inside Docker.
 
+### Structured coverage observation
+
+The browser 3D and browser WASM stacks require executable evidence for every
+non-deferred coverage-map case. Put the planned case ID in the actual Vitest or
+Playwright test title, for example:
+
+```ts
+it("restores the checkpoint [echelon:UT-CHECKPOINT-001]", async () => {
+  // assertion
+});
+```
+
+One title may carry multiple planned IDs, such as
+`[echelon:UT-001, INT-001]`. The initial browser observers accept the
+`vitest-json` adapter for `unit`, `integration`, and `contract` coverage, and
+the `playwright-json` adapter for `e2e` coverage. A coverage-map test type with
+no selected-stack observer fails before delivery starts a browser sandbox.
+
+Echelon runs the observer commands in fresh delivery sandboxes. It installs
+dependencies, browser binaries, and ephemeral verification services there; it
+does not run the observer, provision a database, or install Playwright on the
+user host. Isolated stack commands must write their JSON to
+`$ECHELON_COVERAGE_REPORT`; Echelon assigns that path outside the mounted
+candidate, reads it back from the sandbox, and retains it once under the
+delivery build's `evidence/<strategy>/coverage-observation/` directory. This
+keeps observer output out of the candidate worktree and makes the retained
+report part of immutable harness evidence. `echelon delivery status` reports
+observed requirement counts, observer result counts, and whether the product,
+coverage map, stack, observer plan, and runnability-contract fingerprints still
+match. Candidate-owned local journey commands remain a separate, explicitly
+unverified user-facing path.
+
+### Explicit macOS local verification
+
+After a browser-3D or browser-WASM delivery has converged, an operator may run
+its executable local journey on macOS:
+
+```bash
+echelon delivery verify-local <spec_id> --engine auto
+# For a multi-target spec, select one declared target explicitly:
+echelon delivery verify-local <spec_id> --target <target-id> --engine docker
+```
+
+This is deliberately opt-in. Echelon first prints the exact action plan and
+requires confirmation (use `--yes` only for a normal cleanup-on-failure run).
+It materializes the sandbox-approved candidate in an Echelon-managed detached
+worktree, runs trusted project lifecycle code with a per-run home/cache and
+Playwright browser directory, and starts only a labelled PostgreSQL container
+on a generated loopback port. Docker Desktop and Podman are the supported
+macOS engines; only public images are permitted. Pulled public image layers may
+remain in the engine cache, but the candidate worktree, generated browser cache,
+and only journalled labelled resources are removed automatically.
+
+The local check independently observes the browser, an application restart, and
+the PostgreSQL persistence marker. Its immutable redacted JSON and Markdown
+attestations are separate from sandbox delivery evidence: a pass never changes
+landing authority, and a local failure never reopens the spec or starts an
+agent repair loop. `echelon delivery status <spec_id>` shows the latest attempt
+and retains an earlier content-matching pass after a later host preflight
+failure.
+
+If an interrupted run intentionally retained its resources or cleanup fails,
+Echelon prints the exact journal-bound recovery command:
+
+```bash
+echelon delivery cleanup-local <local-run-id>
+```
+
+That command refuses unknown IDs and validates each journalled resource label
+before removal. It never performs a global Docker/Podman prune or operates in
+your source checkout.
+
 ### Container Runtime
 
 `echelon delivery` uses a Docker-compatible container CLI for sandbox creation.
@@ -908,17 +985,15 @@ Phase 1:
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
 | `default` (omit) | `echelon.build` — multi-agent squad | General use |
-| `codegen` | `echelon.codegen` — SOAR CQ-ISC pipeline | Inviolable quality gates instead of agent review |
+| `codegen` | Disabled pending removal | Not available |
 
 ```bash
 echelon delivery run 001                    # default — echelon squad build
-echelon delivery run 001 --strategy codegen # SOAR pipeline build
+# SOAR/codegen is disabled; use the default strategy.
 ```
 
-Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
-
-Build strategy is independent from Phase A spec format. The default and codegen
-strategies both consume the published Phase A artifacts under `specs/<id>-*/`.
+The default strategy uses the build → verification → feedback → commit/PR loop.
+SOAR/codegen strategies, including resume, are disabled.
 See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
 spec-format/build-strategy combinations.
 
@@ -1158,7 +1233,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
 | `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | Build phase (agent-driven) |
-| `echelon codegen <id>` | Build phase via SOAR pipeline (alternative to build) |
+| `echelon codegen <id>` | Disabled SOAR compatibility command |
 | `echelon review <id> [--pr-url <url>]` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon spec verify <id> [--reconcile] [--dry-run]` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
@@ -1255,10 +1330,12 @@ independently rather than allowing either one to hide the other.
 | `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> --strategy codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon delivery run <id> --strategy codegen` | Disabled; use the default delivery strategy |
 | `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery verify-local <id> [--target <target-id>] [--engine auto\|docker\|podman]` | Explicit macOS-only local browser verification in a managed worktree; records separate local evidence and never changes landing authority |
+| `echelon delivery cleanup-local <local-run-id>` | Safely recover only resources and the candidate worktree recorded in one interrupted local-run journal |
 | `echelon delivery checkpoint list <id>` | List delivery checkpoints and recovery commits for a spec |
 | `echelon delivery land <id> [--continue] [--prepare-only]` | Merge or prepare the target feature branch, then clean up after fulfillment gates pass |
 
@@ -1277,22 +1354,10 @@ setting after local overrides, and implied stacks. Each mutation accepts
 
 ## Codegen Pipeline
 
-SOAR-backed codegen is an optional Phase B build strategy. Install it explicitly:
-
-```bash
-bash ~/echelon/scripts/install.sh --with-codegen
-```
-
-After Phase A artifacts are ready, select it with the standard delivery command:
-
-```bash
-echelon delivery run 001 --strategy codegen
-```
-
-`echelon workspace init` establishes the project’s MemPalace wing in the
-committed `.echelon/config.yml`; do not change that identity casually. The
-pipeline uses that memory automatically. For strategy compatibility and the
-full pipeline contract, see [Echelon Pipeline Matrix](docs/pipeline-matrix.md).
+SOAR-backed execution is disabled pending removal. Installation with
+`--with-codegen`, legacy codegen execution, and SOAR delivery strategies are rejected.
+Existing source and historical runs are retained; no re-enable flag is provided.
+Shared MemPalace and graph utilities remain supported by regular Echelon flows.
 
 ## PR Review Loop
 
@@ -1537,6 +1602,18 @@ time and updates repo-root `README.md` plus Keep a Changelog-style
 `CHANGELOG.md` when the work changes user-visible behavior, public APIs,
 install/run instructions, configuration, operations, or significant performance
 characteristics. Ralph enforces this report before publish.
+
+DOCS VERIFIER independently reviews the complete first-run path after setup
+inputs change, including tool selection/version checks, dependency order,
+fail-fast command blocks, services, and authentication. Known manifest,
+lockfile, patch, script, Compose, and runnability changes trigger deterministic
+first-run rechecks even when the impact report says no docs update is needed;
+an already-correct README need not be edited. Exact Node ecosystem
+`packageManager` pins are checked against README prerequisites. Other toolchain
+constraints and command semantics remain source-backed agent review, not a
+general shell parser. Independent blocking findings cannot be bypassed by a
+no-impact decision. Documentation review never substitutes for sandbox evidence
+or the separately opted-in local-runner attestation.
 
 ## Validation
 

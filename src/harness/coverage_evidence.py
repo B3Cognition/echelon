@@ -8,6 +8,11 @@ from pathlib import Path
 import re
 from typing import Iterable
 
+from harness.coverage_contract import CoverageContractError, CoverageObligation, parse_coverage_obligations
+from harness.coverage_observation import (
+    CoverageObservationResult,
+    CoverageRequirementObservation,
+)
 from kernel.task_contract import parse_task_rows
 
 
@@ -23,10 +28,29 @@ _REQUIRED_HEADERS = (
 _DECLARED_STATUSES = frozenset(
     {"automated", "deferred-automation", "escalate"}
 )
+_OBSERVATION_STATUSES = frozenset(
+    {
+        "observed",
+        "unbound",
+        "duplicate_binding",
+        "failed",
+        "skipped",
+        "not_executed",
+        "observer_failed",
+        "observer_missing",
+        "invalid_report",
+        "provenance_mismatch",
+    }
+)
 _RANGE_RE = re.compile(
     r"^(?P<prefix>[A-Z][A-Z0-9_]*)-(?P<start>\d+)\s*[–—]\s*"
     r"(?:(?P=prefix)-)?(?P<end>\d+)$"
 )
+_TASK_BLOCK_START_RE = re.compile(r"^- \[[ xX]\]\s+(T-[0-9]+)\b")
+_NAMED_TEST_OWNERSHIP_RE = re.compile(
+    r"^\s+\*\*Named Test Ownership:\*\*\s*(.+)$"
+)
+_COVERAGE_CASE_ID_RE = re.compile(r"\b(?!T-)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b")
 
 
 @dataclass(frozen=True)
@@ -65,11 +89,34 @@ class CoverageTaskIntegrityGap:
     test_case_ids: tuple[str, ...]
 
 
+def task_owned_coverage_case_ids(tasks_path: Path) -> dict[str, set[str]]:
+    """Return the named coverage cases owned by each canonical task block."""
+    markdown = Path(tasks_path).read_text(encoding="utf-8", errors="replace")
+    result: dict[str, set[str]] = {}
+    current_task: str | None = None
+    for line in markdown.splitlines():
+        task_match = _TASK_BLOCK_START_RE.match(line)
+        if task_match is not None:
+            current_task = task_match.group(1)
+            result.setdefault(current_task, set())
+            continue
+        if current_task is None:
+            continue
+        ownership = _NAMED_TEST_OWNERSHIP_RE.match(line)
+        if ownership is not None:
+            result[current_task].update(
+                _COVERAGE_CASE_ID_RE.findall(ownership.group(1))
+            )
+    return result
+
+
 def build_coverage_evidence(
     *,
     spec_dir: Path,
     canonical_ids: Iterable[str],
     deferred_ids: set[str],
+    observation: CoverageObservationResult | None = None,
+    observer_required: bool = False,
 ) -> CoverageEvidenceResult:
     """Parse and classify the existing coverage map for canonical IDs."""
     canonical = tuple(dict.fromkeys(str(item).strip() for item in canonical_ids))
@@ -89,10 +136,20 @@ def build_coverage_evidence(
             requirement_id,
             by_id[requirement_id],
             owner_deferred=requirement_id in deferred_ids,
+            observation=(
+                observation.requirements.get(requirement_id)
+                if observation is not None
+                else None
+            ),
+            observer_required=observer_required,
         )
         for requirement_id in by_id
     }
-    task_gaps = _task_integrity_gaps(Path(spec_dir), classified)
+    task_gaps = _task_integrity_gaps(
+        Path(spec_dir),
+        classified,
+        observer_required=observer_required,
+    )
     return CoverageEvidenceResult(
         by_requirement=classified,
         rows=rows,
@@ -106,18 +163,26 @@ def write_coverage_evidence(
     verify_run_dir: Path,
     canonical_ids: Iterable[str],
     deferred_ids: set[str],
+    observation: CoverageObservationResult | None = None,
+    observer_required: bool = False,
 ) -> CoverageEvidenceResult:
     result = build_coverage_evidence(
         spec_dir=spec_dir,
         canonical_ids=canonical_ids,
         deferred_ids=deferred_ids,
+        observation=observation,
+        observer_required=observer_required,
     )
     root = Path(verify_run_dir)
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "coverage-evidence.json"
     markdown_path = root / "coverage-evidence.md"
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "observer_required": observer_required,
+        "observation": (
+            observation.ref.as_mapping() if observation is not None else None
+        ),
         "requirements": {
             item_id: asdict(row)
             for item_id, row in sorted(result.by_requirement.items())
@@ -144,10 +209,38 @@ def _parse_rows(
     path: Path,
     canonical_ids: set[str],
 ) -> tuple[CoverageEvidenceRow, ...]:
+    return tuple(
+        CoverageEvidenceRow(
+            requirement_ids=tuple(
+                dict.fromkeys(item.requirement_id for item in obligations)
+            ),
+            test_case_ids=tuple(
+                dict.fromkeys(item.test_case_id for item in obligations)
+            ),
+            test_type=(
+                obligations[0].test_type
+                if len({item.test_type for item in obligations}) == 1
+                else "multiple"
+            ),
+            automation_status=obligations[0].automation_status,
+            coverage_type=obligations[0].coverage_status,
+            evidence=obligations[0].evidence,
+            gap_action=obligations[0].gap_action,
+        )
+        for obligations in parse_coverage_map_obligations(path, canonical_ids)
+    )
+
+
+def parse_coverage_map_obligations(
+    path: Path,
+    canonical_ids: Iterable[str],
+) -> tuple[tuple[CoverageObligation, ...], ...]:
+    """Read typed planning obligations without inferring a delivery result."""
+    canonical_set = {str(item).strip() for item in canonical_ids if str(item).strip()}
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    rows: list[CoverageEvidenceRow] = []
+    rows: list[tuple[CoverageObligation, ...]] = []
     active = False
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         cells = _table_cells(line)
         if cells == list(_REQUIRED_HEADERS):
             active = True
@@ -162,21 +255,42 @@ def _parse_rows(
         if len(cells) != len(_REQUIRED_HEADERS):
             active = False
             continue
-        requirement_ids = _requirement_ids(cells[0], canonical_ids)
-        if not requirement_ids:
-            continue
-        rows.append(
-            CoverageEvidenceRow(
-                requirement_ids=requirement_ids,
-                test_case_ids=_test_case_ids(cells[1]),
-                test_type=cells[2].strip().lower(),
-                automation_status=cells[3].strip().lower(),
-                coverage_type=cells[4].strip().lower(),
-                evidence=cells[5].strip(),
-                gap_action=cells[6].strip(),
+        try:
+            obligations = parse_coverage_obligations(
+                cells[0], cells[1], cells[2], cells[3], cells[4], cells[5], cells[6],
+                canonical_set,
             )
-        )
+        except CoverageContractError as exc:
+            raise CoverageContractError(
+                f"line {line_number} ({cells[0]}): {exc}. "
+                "Use one test case and its test type per row, repeating the requirement ID as needed."
+            ) from exc
+        if not obligations:
+            continue
+        rows.append(obligations)
     return tuple(rows)
+
+
+def active_unmapped_coverage_requirement_ids(
+    *,
+    canonical_ids: Iterable[str],
+    obligations: Iterable[CoverageObligation],
+    deferred_ids: Iterable[str],
+) -> tuple[str, ...]:
+    """Return active canonical requirements with no coverage-map obligation.
+
+    Strict observation must never treat a missing map row as an owner deferral.
+    The deferral ledger is the sole authority for removing a requirement from
+    the current-spec coverage obligation set.
+    """
+    canonical = {str(item).strip() for item in canonical_ids if str(item).strip()}
+    deferred = {str(item).strip() for item in deferred_ids if str(item).strip()}
+    mapped = {
+        item.requirement_id.strip()
+        for item in obligations
+        if item.requirement_id.strip()
+    }
+    return tuple(sorted(canonical - deferred - mapped))
 
 
 def _table_cells(line: str) -> list[str]:
@@ -188,7 +302,7 @@ def _table_cells(line: str) -> list[str]:
 
 def _requirement_ids(value: str, canonical_ids: set[str]) -> tuple[str, ...]:
     selected: list[str] = []
-    for raw in re.split(r"\s*,\s*", value.strip()):
+    for raw in re.split(r"\s*(?:,|/)\s*", value.strip()):
         token = raw.strip()
         match = _RANGE_RE.fullmatch(token)
         if match is None:
@@ -226,6 +340,8 @@ def _classify_requirement(
     rows: list[CoverageEvidenceRow],
     *,
     owner_deferred: bool,
+    observation: CoverageRequirementObservation | None,
+    observer_required: bool,
 ) -> RequirementCoverageEvidence:
     test_ids = tuple(
         dict.fromkeys(test_id for row in rows for test_id in row.test_case_ids)
@@ -237,6 +353,40 @@ def _classify_requirement(
             test_case_ids=test_ids,
             reason="active owner-controlled deferred scope",
         )
+    declared = _classify_declared_requirement(requirement_id, rows, test_ids)
+    if not observer_required:
+        return declared
+    if declared.status in {"missing", "contradictory", "escalated"}:
+        return declared
+    if observation is None:
+        return RequirementCoverageEvidence(
+            requirement_id=requirement_id,
+            status="observer_missing",
+            test_case_ids=test_ids,
+            reason="selected stack requires a validated coverage observation",
+        )
+    observation_status = observation.status.strip()
+    observation_reason = observation.reason.strip()
+    if observation_status not in _OBSERVATION_STATUSES:
+        return RequirementCoverageEvidence(
+            requirement_id=requirement_id,
+            status="invalid_report",
+            test_case_ids=test_ids,
+            reason="coverage observation has an unsupported requirement status",
+        )
+    return RequirementCoverageEvidence(
+        requirement_id=requirement_id,
+        status=observation_status,
+        test_case_ids=test_ids,
+        reason=observation_reason or observation_status,
+    )
+
+
+def _classify_declared_requirement(
+    requirement_id: str,
+    rows: list[CoverageEvidenceRow],
+    test_ids: tuple[str, ...],
+) -> RequirementCoverageEvidence:
     if not rows:
         return RequirementCoverageEvidence(
             requirement_id=requirement_id,
@@ -275,11 +425,18 @@ def _classify_requirement(
 def _task_integrity_gaps(
     spec_dir: Path,
     by_requirement: dict[str, RequirementCoverageEvidence],
+    *,
+    observer_required: bool,
 ) -> tuple[CoverageTaskIntegrityGap, ...]:
     tasks_path = spec_dir / "tasks.md"
     if not tasks_path.is_file():
         return ()
     gaps: list[CoverageTaskIntegrityGap] = []
+    acceptable_statuses = (
+        {"observed", "owner_deferred"}
+        if observer_required
+        else {"automated", "owner_deferred"}
+    )
     tasks = parse_task_rows(
         tasks_path.read_text(encoding="utf-8", errors="replace")
     )
@@ -291,7 +448,7 @@ def _task_integrity_gaps(
             for requirement_id in task.requirements
             if requirement_id in by_requirement
             and by_requirement[requirement_id].status
-            not in {"automated", "owner_deferred"}
+            not in acceptable_statuses
         )
         if not requirement_ids:
             continue

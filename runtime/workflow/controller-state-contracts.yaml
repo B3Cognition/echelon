@@ -254,6 +254,8 @@ contracts:
         type: object
         additionalProperties: false
         properties:
+          why2_repair_phase:
+            enum: [phase1-discover, phase1-what]
           spec_quality_certificate:
             type: object
             additionalProperties: false

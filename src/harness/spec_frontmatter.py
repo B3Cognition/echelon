@@ -17,6 +17,35 @@ _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 TARGETS_FILENAME = "targets.yml"
 
 
+def spec_content_ignoring_status(
+    text: str,
+) -> tuple[Dict[str, Any], str] | None:
+    """Return semantic spec content with only lifecycle status removed."""
+    match = _FRONTMATTER_RE.match(text)
+    body = text
+    metadata: Dict[str, Any] = {}
+    if match:
+        try:
+            loaded = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            return None
+        if loaded is None:
+            loaded = {}
+        if not isinstance(loaded, dict):
+            return None
+        metadata = dict(loaded)
+        metadata.pop("status", None)
+        body = text[match.end() :]
+    body = re.sub(
+        r"^\*\*Status\*\*:\s*.*(?:\n|$)",
+        "",
+        body,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    return metadata, body
+
+
 def write_text_atomic(path: Path, content: str) -> None:
     """Durably replace one canonical text file without exposing partial data."""
     path.parent.mkdir(parents=True, exist_ok=True)

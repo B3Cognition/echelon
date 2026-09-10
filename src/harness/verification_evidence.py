@@ -212,6 +212,36 @@ def validate_verification_receipt(
     candidate_fingerprint: str,
 ) -> VerificationReceiptValidation:
     """Validate authority, digests, latest selection, pass, and candidate."""
+    return _validate_verification_receipt(
+        ref,
+        candidate_commit=candidate_commit,
+        candidate_fingerprint=candidate_fingerprint,
+    )
+
+
+def validate_equivalent_product_receipt(
+    ref: VerificationEvidenceRef,
+    *,
+    candidate_fingerprint: str,
+) -> VerificationReceiptValidation:
+    """Validate a passed receipt while allowing only a commit-SHA difference.
+
+    This is intentionally opt-in for landing and evidence carry-forward. Legacy
+    callers retain exact commit validation through ``validate_verification_receipt``.
+    """
+    return _validate_verification_receipt(
+        ref,
+        candidate_commit=None,
+        candidate_fingerprint=candidate_fingerprint,
+    )
+
+
+def _validate_verification_receipt(
+    ref: VerificationEvidenceRef,
+    *,
+    candidate_commit: str | None,
+    candidate_fingerprint: str,
+) -> VerificationReceiptValidation:
     try:
         path = ref.path
         if not path.is_absolute() or path.is_symlink():
@@ -262,11 +292,14 @@ def validate_verification_receipt(
         if payload.get("status") != "passed" or ref.passed is not True:
             return _invalid("receipt is not passing")
         if (
-            str(payload.get("candidate_commit") or "") != candidate_commit
-            or ref.candidate_commit != candidate_commit
-            or str(payload.get("candidate_fingerprint") or "")
+            str(payload.get("candidate_fingerprint") or "")
             != candidate_fingerprint
             or ref.candidate_fingerprint != candidate_fingerprint
+        ):
+            return _invalid("receipt candidate identity mismatch")
+        if candidate_commit is not None and (
+            str(payload.get("candidate_commit") or "") != candidate_commit
+            or ref.candidate_commit != candidate_commit
         ):
             return _invalid("receipt candidate identity mismatch")
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, RuntimeError):

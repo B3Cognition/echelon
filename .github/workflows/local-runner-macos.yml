@@ -1,0 +1,39 @@
+name: local-runner-macos
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+jobs:
+  acceptance:
+    name: macOS local runner (${{ matrix.engine }})
+    runs-on: [self-hosted, macos, echelon-local-runner]
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, podman]
+    concurrency:
+      group: local-runner-macos-${{ github.ref }}-${{ matrix.engine }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: uv sync --extra dev
+      - run: uv run --extra dev pytest tests/integration/test_local_runner_macos.py -q
+        env:
+          ECHELON_RUN_LOCAL_ENGINE: "1"
+          ECHELON_LOCAL_ENGINE: ${{ matrix.engine }}
+          ECHELON_LOCAL_RUN_ARTIFACT_ROOT: ${{ runner.temp }}/local-runner-evidence
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-runner-evidence-${{ github.sha }}-${{ matrix.engine }}
+          path: ${{ runner.temp }}/local-runner-evidence
+          if-no-files-found: warn

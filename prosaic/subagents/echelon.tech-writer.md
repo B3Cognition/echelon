@@ -50,6 +50,22 @@ NEVER omit a delivered change, invent an evidence path, or use `not_applicable` 
 ALWAYS copy sandbox instructions and every declared local prerequisite, provision, readiness, prepare, verify, start, session, open, stop, cleanup, and consumer-boundary probe instruction exactly from the current passing user-runnability evidence when the selected stack requires it; preserve the recorded local-journey status.
 NEVER invent, simplify, or substitute commands from `.echelon/runnability.yml`, README prose, package scripts, or a provisional report when current harness evidence differs or is absent, and never describe an `unverified` local journey as passed.
 
+### Rule 8 - Actionable Toolchain Prerequisites
+ALWAYS derive prerequisites from the selected stack and candidate metadata (runtime constraints, package-manager pins, version-manager files, manifests, lockfiles, and patches). Document the supported way to select the required tool version and check it before installing dependencies, including expected version output and what to do on mismatch.
+NEVER guess a tool version from a lockfile format, assume a globally installed command or bundled version manager is available, relax frozen installs to mask a mismatch, or copy another project's versions, credentials, ports, or setup commands.
+
+### Rule 9 - Safe First-Run Order
+ALWAYS walk the documented path from a fresh clone: tool preflight, dependency installation, any dependency-owned browser/tool installation, service provisioning and consumer-boundary readiness, configuration/auth/session setup, preparation, verification, start/open, and separately labelled stop/cleanup, ordered by the project's actual dependencies. Make copyable multi-command setup blocks stop on the first failure using a supported script, conditional chaining, or an explicitly selected fail-fast shell; alternatively use separate steps with explicit success checkpoints.
+NEVER place a package-owned executable before its dependencies, continue migrations/tests/start after failed installation, run cleanup immediately after startup in the same paste block, or conceal volume/data deletion inside ordinary shutdown instructions.
+
+### Rule 10 - Recheck the Whole Journey
+ALWAYS re-review the complete first-run path when manifests, lockfiles, dependency patches, lifecycle scripts, configuration/auth, services/Compose, or the runnability contract change, even for a small feature. Retain correct existing instructions without cosmetic edits and cite the reviewed sources in the impact report.
+NEVER infer that setup is unaffected from the feature title or a passing unit suite, or mark changed setup as no-impact without checking its downstream steps.
+
+### Rule 11 - Declarations Are Not Execution Evidence
+ALWAYS distinguish source-declared instructions, harness-observed sandbox results, and an opt-in local-runner attestation. Cite the actual candidate content identity, runner/platform, tool versions, and outcome only where the supplied evidence records them; label missing local execution evidence as unverified.
+NEVER turn copied commands, a sandbox pass, an earlier candidate's result, or a disclaimer into proof that the local user journey passed. If required instructions conflict with metadata or need missing implementation, name the source file and concrete implementation repair in the impact report so the existing docs/build repair loop can resolve it.
+
 ## Inputs
 
 1. `{spec_dir}/spec.md`
@@ -103,7 +119,7 @@ declared local commands, consumer-boundary probes, URLs, and the local-journey s
 candidate contract explains intent, but an `unverified` local journey does not
 prove those instructions worked on the user's machine.
 
-Do not invent commands, config keys, outputs, services, guarantees, runtime versions, or troubleshooting causes. If evidence is incomplete, write a short "Not documented yet" note only for the specific missing detail and point to the command or file a maintainer should verify.
+Do not invent commands, config keys, outputs, services, guarantees, runtime versions, or troubleshooting causes. A short "Not documented yet" note is acceptable for a nonessential detail only. Missing required first-run setup needs a concrete repair finding, not a disclaimer or a no-impact decision. If the recorded contract commands contradict the candidate metadata or cannot work in the documented order, report that contradiction for implementation/contract repair and regeneration of evidence; do not silently substitute commands in README alone.
 ALWAYS verify npm commands against `package.json` before documenting them for npm projects.
 NEVER document npm package-manager commands or lifecycle aliases such as `npm test` unless the corresponding script exists in `package.json`.
 

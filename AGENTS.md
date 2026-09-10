@@ -33,8 +33,8 @@ bash scripts/bash/dry-run.sh
 # Reinstall the core CLIs into ~/.echelon/venv after editing src/ — needed
 # because the CLIs run from an installed venv on PATH, not from this checkout.
 bash scripts/install.sh
-# Include the optional SOAR/codegen launcher when that pipeline is needed.
-bash scripts/install.sh --with-codegen
+# SOAR execution and its legacy tests are disabled pending removal.
+# Do not install or invoke SOAR; shared codegen memory/graph utilities remain active.
 ```
 
 There is no lint config — don't add one unless asked.
@@ -51,7 +51,7 @@ When debugging, first determine whether the failure is bundle installation, Pros
 ## Phase A / Phase B split
 
 - **Phase A — spec authoring.** `echelon spec run` / `echelon spec bugfix` / `echelon spec change`. The squad publishes under `specs/{NNN-slug}/`; durable controller state stays under `runs/spec-*`. The Echelon constitution is `.echelon/constitution.md`.
-- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. Strategies include the default squad delivery loop and optional SOAR/codegen flow. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
+- **Phase B — build + verify + PR.** `echelon delivery run <id>`. Lives under `src/harness/`. LLM build steps run on the host; verification runs in the configured sandbox. Strategies include the default squad delivery loop only; SOAR/codegen execution is disabled. The review loop is controlled by `harness.review_loop.*` in `.echelon/config.yml`.
 
 `echelon land <id>` and `echelon spec target …` are pure-Python (no LLM); `_cmd_init`, `_cmd_land`, `_cmd_harness_init`, `_cmd_harness_run` in `src/echelon/cli.py` are the dispatch points.
 

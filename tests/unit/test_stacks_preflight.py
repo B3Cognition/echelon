@@ -6,12 +6,20 @@ from pathlib import Path
 import pytest
 
 from harness.stacks.preflight import (
+    coverage_test_types_from_spec,
+    required_coverage_observers_for_types,
     render_preflight_markdown,
     run_stack_preflight,
 )
 from harness.stacks.resolver import resolve_stacks
-from harness.stacks.resolver import ResolvedStackProvisioner, ResolvedStacks
+from harness.stacks.resolver import (
+    ResolvedCoverageObserver,
+    ResolvedRunnability,
+    ResolvedStackProvisioner,
+    ResolvedStacks,
+)
 from harness.stacks.schema import (
+    StackCoverageObserver,
     StackDefinition,
     StackProvisioner,
     StackProvisionerSatisfier,
@@ -79,6 +87,64 @@ def _resolved_postgres() -> ResolvedStacks:
     )
 
 
+def _resolved_browser_coverage() -> ResolvedStacks:
+    return ResolvedStacks(
+        selected_ids=["browser-3d-game"],
+        resolved_ids=["browser-3d-game"],
+        implied_by={},
+        capabilities={},
+        tools={},
+        required_commands=[],
+        required_registries=[],
+        context_files=[],
+        coverage_observers=[
+            ResolvedCoverageObserver(
+                owner_stack_id="browser-3d-game",
+                observer=StackCoverageObserver(
+                    id="playwright-e2e",
+                    test_types=("e2e",),
+                    command="pnpm exec playwright test --reporter=json",
+                    report_path=".echelon/coverage-reports/playwright.json",
+                    adapter="playwright-json",
+                    mode="isolated",
+                    required=True,
+                ),
+            ),
+            ResolvedCoverageObserver(
+                owner_stack_id="browser-3d-game",
+                observer=StackCoverageObserver(
+                    id="vitest-core",
+                    test_types=("unit", "integration", "contract"),
+                    command="pnpm exec vitest run --reporter=json",
+                    report_path=".echelon/coverage-reports/vitest.json",
+                    adapter="vitest-json",
+                    mode="isolated",
+                    required=True,
+                ),
+            ),
+        ],
+    )
+
+
+def _resolved_ios_coverage() -> ResolvedStacks:
+    return ResolvedStacks(
+        selected_ids=["ios-ar-game"],
+        resolved_ids=["ios-ar-game"],
+        implied_by={},
+        capabilities={},
+        tools={},
+        required_commands=[],
+        required_registries=[],
+        context_files=[],
+        runnability=ResolvedRunnability(
+            classification="user_facing",
+            policy="advisory",
+            runner="macos_simulator",
+            sources=("ios-ar-game",),
+        ),
+    )
+
+
 @pytest.mark.unit
 def test_missing_required_command_fails_preflight() -> None:
     resolved = resolve_stacks(
@@ -105,6 +171,108 @@ def test_available_required_command_passes_preflight() -> None:
 
     assert result.status == "pass"
     assert not result.has_errors
+
+
+@pytest.mark.unit
+def test_preflight_rejects_coverage_type_without_a_required_observer() -> None:
+    result = run_stack_preflight(
+        _resolved_browser_coverage(),
+        coverage_test_types=("rust-unit",),
+        command_locator=lambda command: f"/bin/{command}",
+    )
+
+    finding = next(
+        finding
+        for finding in result.findings
+        if finding.code == "coverage_observer_unavailable"
+    )
+    assert finding.severity == "error"
+    assert "rust-unit" in finding.message
+    assert "browser-3d-game" in finding.message
+
+
+@pytest.mark.unit
+def test_preflight_accepts_unit_and_e2e_when_browser_observers_cover_them() -> None:
+    result = run_stack_preflight(
+        _resolved_browser_coverage(),
+        coverage_test_types=("unit", "e2e"),
+        command_locator=lambda command: f"/bin/{command}",
+    )
+
+    assert not any(
+        finding.code == "coverage_observer_unavailable" for finding in result.findings
+    )
+    assert result.status == "pass"
+    selected = required_coverage_observers_for_types(
+        _resolved_browser_coverage(), coverage_test_types=("unit",)
+    )
+    assert [item.observer.id for item in selected] == ["vitest-core"]
+
+
+@pytest.mark.unit
+def test_preflight_names_macos_simulator_requirement_for_ios_stack() -> None:
+    result = run_stack_preflight(
+        _resolved_ios_coverage(),
+        coverage_test_types=("unit",),
+        command_locator=lambda command: f"/bin/{command}",
+    )
+
+    finding = next(
+        finding
+        for finding in result.findings
+        if finding.code == "coverage_observer_unavailable"
+    )
+    assert "macos_simulator_required" in finding.message
+    assert "ios-ar-game" in finding.message
+
+
+@pytest.mark.unit
+def test_coverage_test_types_from_spec_uses_the_canonical_coverage_parser(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "spec.md").write_text("# Requirement FR-001\n", encoding="utf-8")
+    (tmp_path / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | UT-001 / E2E-001 | unit / e2e | deferred-automation | deferred-automation | planned | repair |\n",
+        encoding="utf-8",
+    )
+
+    assert coverage_test_types_from_spec(tmp_path) == ("e2e", "unit")
+
+
+@pytest.mark.unit
+def test_coverage_test_types_from_spec_ignores_owner_deferred_requirements(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "spec.md").write_text("# Requirement FR-001\n", encoding="utf-8")
+    (tmp_path / "coverage-map.md").write_text(
+        "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | RUST-001 | rust-unit | deferred-automation | deferred-automation | planned | repair |\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "deferred-scope.json").write_text(
+        """{
+  "schema_version": 1,
+  "entries": [
+    {
+      "entry_id": "defer-001",
+      "status": "deferred",
+      "selected_ids": ["FR-001"],
+      "derived_task_ids": [],
+      "prior_task_statuses": {},
+      "reason": "owner-controlled deferral",
+      "deferred_at": "2026-09-05T00:00:00+00:00",
+      "planned_at": null
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+
+    assert coverage_test_types_from_spec(tmp_path) == ()
 
 
 @pytest.mark.unit

@@ -4,7 +4,9 @@ from dataclasses import replace
 
 import pytest
 
+from harness.blocked_decision import build_blocked_decision_v2
 from harness.human_input import (
+    AutonomousDefaultCandidate,
     HumanInputOption,
     HumanInputPolicy,
     HumanInputPolicyError,
@@ -13,7 +15,9 @@ from harness.human_input import (
     RecommendationEvidence,
     controller_safeguard_policies,
     prepare_controller_proportional_quality_decision,
+    prepare_banzai_default_candidate_request,
     select_initial_decision_status,
+    v2_automatic_decision_is_registered,
 )
 
 
@@ -33,6 +37,138 @@ def _provider_policy(*, reason_code: str = "human_clarification_required") -> Hu
         context_paths=("{staging_dir}/user-intent.md",),
         options=(),
     )
+
+
+def test_banzai_default_candidate_is_bounded_and_has_a_stable_fingerprint() -> None:
+    payload = {
+        "issue_id": "ISS-001",
+        "authority_capability": "banzai_default",
+        "question": (
+            "What inclusive interaction boundary must the local and server "
+            "collection guards use?"
+        ),
+        "affected_requirements": ["FR-003", "FR-014"],
+        "alternatives": [
+            "Use an inclusive radial distance of 6 world units.",
+            "Use an inclusive radial distance of 10 world units.",
+        ],
+        "constraints": [
+            "The local guard and server authority must use one exact contract.",
+        ],
+        "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+    }
+
+    candidate = AutonomousDefaultCandidate.from_provider_payload(payload)
+
+    assert candidate.authority_capability == "banzai_default"
+    assert candidate.question == payload["question"]
+    assert candidate.fingerprint == AutonomousDefaultCandidate.from_provider_payload(
+        payload
+    ).fingerprint
+
+
+@pytest.mark.parametrize(
+    "overrides, match",
+    [
+        ({"authority_capability": "super_banzai"}, "authority_capability"),
+        ({"issue_id": ""}, "issue_id"),
+        (
+            {
+                "issue_id": "ISS-001",
+                "authority_capability": "banzai_default",
+                "question": "Choose a value.",
+                "affected_requirements": ["FR-001"],
+                "alternatives": ["Only option."],
+                "constraints": ["One contract."],
+                "source_references": ["spec.md#FR-001"],
+            },
+            "alternatives",
+        ),
+    ],
+)
+def test_banzai_default_candidate_rejects_unrecognized_or_unbounded_authority(
+    overrides: dict[str, object],
+    match: str,
+) -> None:
+    payload: dict[str, object] = {
+        "issue_id": "ISS-001",
+        "authority_capability": "banzai_default",
+        "question": "Choose a value.",
+        "affected_requirements": ["FR-001"],
+        "alternatives": ["First option.", "Second option."],
+        "constraints": ["One contract."],
+        "source_references": ["spec.md#FR-001"],
+    }
+    payload.update(overrides)
+    with pytest.raises(HumanInputPolicyError, match=match):
+        AutonomousDefaultCandidate.from_provider_payload(payload)
+
+
+def test_banzai_default_candidate_bounds_reference_cardinality() -> None:
+    payload = {
+        "issue_id": "ISS-001",
+        "authority_capability": "banzai_default",
+        "question": "Choose a value.",
+        "affected_requirements": ["FR-001"],
+        "alternatives": ["First option.", "Second option."],
+        "constraints": ["One contract."],
+        "source_references": [
+            f"spec.md#FR-{index:03d}" for index in range(1, 18)
+        ],
+    }
+
+    with pytest.raises(HumanInputPolicyError, match="source_references"):
+        AutonomousDefaultCandidate.from_provider_payload(payload)
+
+
+def test_banzai_default_candidate_bounds_combined_evidence_reference() -> None:
+    payload = {
+        "issue_id": "ISS-001",
+        "authority_capability": "banzai_default",
+        "question": "Choose a value.",
+        "affected_requirements": ["FR-001"],
+        "alternatives": ["First option.", "Second option."],
+        "constraints": ["One contract."],
+        "source_references": ["a" * 3_000, "b" * 3_000],
+    }
+
+    with pytest.raises(HumanInputPolicyError, match="combined source_references"):
+        AutonomousDefaultCandidate.from_provider_payload(payload)
+
+
+def test_banzai_default_candidate_prepares_one_controller_owned_resolution() -> None:
+    policy = _provider_policy()
+    registry = HumanInputPolicyRegistry((policy,))
+    ordinary_request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which inclusive interaction radius should apply?",
+        source_state_revision=8,
+    )
+    candidate = AutonomousDefaultCandidate.from_provider_payload(
+        {
+            "issue_id": "ISS-001",
+            "authority_capability": "banzai_default",
+            "question": "Which inclusive interaction radius should apply?",
+            "affected_requirements": ["FR-003", "FR-014"],
+            "alternatives": ["Use radius 6.", "Use radius 10."],
+            "constraints": ["One client/server contract is required."],
+            "source_references": ["spec.md#FR-003", "issues.md#ISS-001"],
+        }
+    )
+
+    prepared = prepare_banzai_default_candidate_request(
+        ordinary_request,
+        candidate,
+    )
+
+    assert prepared.automatic_eligible is True
+    assert prepared.recommended_answer is None
+    assert prepared.recommendation_authority == "controller_evidence"
+    assert prepared.autonomous_default_candidate == candidate
+    assert prepared.recommendation_evidence[0].digest == candidate.fingerprint
 
 
 def _gate_policy(*, options: tuple[HumanInputOption, ...] | None = None) -> HumanInputPolicy:
@@ -459,6 +595,50 @@ def test_material_banzai_free_text_recommendation_is_intrinsically_eligible() ->
     )
 
     assert request.automatic_eligible
+
+
+def test_medium_risk_material_default_is_banzai_only() -> None:
+    policy = _provider_policy()
+    registry = HumanInputPolicyRegistry((policy,))
+    request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Which scope should the investigation use?",
+        recommended_answer="Use the existing product boundary.",
+        risk_level="medium",
+        source_state_revision=7,
+    )
+
+    assert request.automatic_eligible
+    assert select_initial_decision_status("banzai", policy, request) == "pending"
+    assert (
+        select_initial_decision_status("semi", policy, request)
+        == "awaiting_human"
+    )
+
+
+def test_legacy_v2_material_medium_risk_recommendation_is_eligible() -> None:
+    policy = _provider_policy()
+    decision = build_blocked_decision_v2(
+        decision_id="dec-medium-material-default",
+        status="awaiting_human",
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        source_phase="phase1-investigate",
+        reason_code=policy.reason_code,
+        classification=policy.classification,
+        question="Which scope should the investigation use?",
+        options=[],
+        recommended_answer="Use the existing product boundary.",
+        risk_level="medium",
+        resolution_handler=policy.resolution_handler,
+        autonomy_mode="banzai",
+        source_state_revision=7,
+    )
+
+    assert v2_automatic_decision_is_registered(decision, policy)
 
 
 def test_general_preparation_rejects_controller_option_injection() -> None:

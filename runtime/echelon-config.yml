@@ -9,7 +9,7 @@
 
 ca_overlays:
   soar:
-    chunking_enabled: true
+    chunking_enabled: false # Retired; the SOAR overlay is disabled regardless of this value.
 
 # =============================================================================
 # EXECUTION — Full parallel, opus everywhere, long-running agent allowance
