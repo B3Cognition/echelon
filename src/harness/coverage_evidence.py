@@ -47,8 +47,8 @@ _RANGE_RE = re.compile(
     r"(?:(?P=prefix)-)?(?P<end>\d+)$"
 )
 _TASK_BLOCK_START_RE = re.compile(r"^- \[[ xX]\]\s+(T-[0-9]+)\b")
-_NAMED_TEST_OWNERSHIP_RE = re.compile(
-    r"^\s+\*\*Named Test Ownership:\*\*\s*(.+)$"
+_TASK_COVERAGE_OWNERSHIP_RE = re.compile(
+    r"^\s+\*\*(?:Named Test Ownership|Test Case IDs Owned):\*\*\s*(.+)$"
 )
 _COVERAGE_CASE_ID_RE = re.compile(r"\b(?!T-)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b")
 
@@ -102,7 +102,7 @@ def task_owned_coverage_case_ids(tasks_path: Path) -> dict[str, set[str]]:
             continue
         if current_task is None:
             continue
-        ownership = _NAMED_TEST_OWNERSHIP_RE.match(line)
+        ownership = _TASK_COVERAGE_OWNERSHIP_RE.match(line)
         if ownership is not None:
             result[current_task].update(
                 _COVERAGE_CASE_ID_RE.findall(ownership.group(1))

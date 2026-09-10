@@ -830,6 +830,27 @@ def test_partial_delivery_coverage_uses_only_completed_task_ownership(
     }
 
 
+def test_partial_delivery_coverage_accepts_existing_ownership_label(
+    tmp_path: Path,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-012 depends=none\n"
+        "  **Status:** DONE\n"
+        "  **Test Case IDs Owned:** `UT-NAV-004`, `UT-NAV-005`, `UT-NAV-006`.\n\n"
+        "- [ ] T-002 complexity=standard phase=feature req=FR-013 depends=T-001\n"
+        "  **Test Case IDs Owned:** `IT-FUTURE-001`.\n",
+        encoding="utf-8",
+    )
+
+    assert _completed_task_coverage_case_ids(tasks) == {
+        "UT-NAV-004",
+        "UT-NAV-005",
+        "UT-NAV-006",
+    }
+
+
 def test_completed_delivery_coverage_uses_full_map(tmp_path: Path) -> None:
     tasks = tmp_path / "tasks.md"
     tasks.write_text(

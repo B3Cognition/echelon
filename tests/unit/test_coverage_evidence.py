@@ -9,6 +9,7 @@ import pytest
 
 from harness.coverage_evidence import (
     build_coverage_evidence,
+    task_owned_coverage_case_ids,
     write_coverage_evidence,
 )
 from harness.coverage_observation import (
@@ -28,6 +29,23 @@ def _write_map(spec_dir: Path, rows: str) -> None:
         + rows,
         encoding="utf-8",
     )
+
+
+@pytest.mark.unit
+def test_task_coverage_parser_accepts_existing_test_case_ids_owned_label(
+    tmp_path: Path,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-012 depends=none\n"
+        "  **Test Case IDs Owned:** `UT-NAV-004`, `UT-NAV-005`, `UT-NAV-006`.\n",
+        encoding="utf-8",
+    )
+
+    assert task_owned_coverage_case_ids(tasks) == {
+        "T-001": {"UT-NAV-004", "UT-NAV-005", "UT-NAV-006"}
+    }
 
 
 def _observation(*, requirement_status: str, case_status: str) -> CoverageObservationResult:
