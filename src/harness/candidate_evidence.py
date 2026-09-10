@@ -53,6 +53,50 @@ from harness.stacks.resolver import (
 )
 from harness.verify_detection import detect_verify_command
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+
+_FAILURE_CONTEXT_MARKERS = (
+    "error:",
+    "failed",
+    "failure",
+    "timeout",
+    "exception",
+    "assert",
+    "expected",
+    "received",
+    "[chromium]",
+)
+
+
+def _failure_excerpt(stdout: str, stderr: str, *, limit: int = 4_000) -> str:
+    """Retain an early failure cause and final logs for a repair prompt.
+
+    Test runners commonly print the decisive failure before a long warning or
+    cleanup stream. A tail-only excerpt hides the actionable cause and prompts
+    a repair agent to fix unrelated warnings. This formatter is presentation
+    only; immutable verification receipts still preserve their own evidence.
+    """
+    output = f"{stdout}\n{stderr}".strip()
+    if len(output) <= limit:
+        return output
+    lines = output.splitlines()
+    selected: list[str] = []
+    seen: set[int] = set()
+    for index, line in enumerate(lines):
+        if not any(marker in line.lower() for marker in _FAILURE_CONTEXT_MARKERS):
+            continue
+        for context_index in range(max(0, index - 1), min(len(lines), index + 2)):
+            if context_index not in seen:
+                selected.append(lines[context_index])
+                seen.add(context_index)
+    context = "\n".join(selected)
+    # The decisive section comes first; preserve the output tail too because it
+    # often contains a stack trace, artifact path, or process-level error.
+    tail_limit = max(500, limit - min(len(context), limit - 500) - 80)
+    tail = output[-tail_limit:]
+    if len(context) > limit - len(tail) - 80:
+        context = context[: limit - len(tail) - 80]
+    return f"[failure context]\n{context}\n[final output]\n{tail}"
 from harness.verification_evidence import (
     VerificationEvidenceRef,
     VerificationStage,
@@ -151,7 +195,7 @@ class CandidateEvidenceRunner:
                         FailureEntry(
                             category=FailureCategory.BUILD,
                             id="sandbox-bootstrap",
-                            error=(result.stdout + result.stderr)[-2000:],
+                            error=_failure_excerpt(result.stdout, result.stderr),
                         )
                     ]
                     return self._attach_receipt(
@@ -207,7 +251,7 @@ class CandidateEvidenceRunner:
                             FailureEntry(
                                 category=FailureCategory.TEST,
                                 id="verify-command",
-                                error=(result.stdout + result.stderr)[-2000:],
+                                error=_failure_excerpt(result.stdout, result.stderr),
                             )
                         ],
                         duration_s=result.duration_ms / 1000.0,
@@ -230,7 +274,7 @@ class CandidateEvidenceRunner:
                         if ambiguous_browser_failure
                         else "transient-browser-runtime"
                     ),
-                    error=(result.stdout + result.stderr)[-2000:],
+                    error=_failure_excerpt(result.stdout, result.stderr),
                 )
                 recorded = self._attach_receipt(
                     candidate=candidate,
@@ -292,10 +336,10 @@ class CandidateEvidenceRunner:
                                     FailureEntry(
                                         category=FailureCategory.BUILD,
                                         id="sandbox-bootstrap",
-                                        error=(
-                                            bootstrap_result.stdout
-                                            + bootstrap_result.stderr
-                                        )[-2000:],
+                                        error=_failure_excerpt(
+                                            bootstrap_result.stdout,
+                                            bootstrap_result.stderr,
+                                        ),
                                     )
                                 ],
                                 duration_s=bootstrap_result.duration_ms / 1000.0,
@@ -344,7 +388,7 @@ class CandidateEvidenceRunner:
                             if transient_after_retry
                             else "verify-command"
                         ),
-                        error=(result.stdout + result.stderr)[-2000:],
+                        error=_failure_excerpt(result.stdout, result.stderr),
                     )
                 )
             return self._attach_receipt(
