@@ -11498,6 +11498,9 @@ def _cmd_rewind(
                             state,
                             checkpoint.phase,
                             spec_dir_ref,
+                            boundary_completion_id=(
+                                checkpoint.boundary_completion_id
+                            ),
                             preserve_resolved_coverage_map_repair=True,
                         )
                     result = prepare_rewind(
