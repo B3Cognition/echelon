@@ -737,6 +737,23 @@ class ParentAuthorityBundleV3:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewedParentAuthorityBundleV3(ParentAuthorityBundleV3):
+    """Explicit Reviewed parent subtype preserving the validated L3 debt identity."""
+
+    residual_debt_acceptance_id: str | None
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        *ParentAuthorityBundleV3.FIELDS, "residual_debt_acceptance_id",
+    )
+
+    def __post_init__(self) -> None:
+        super(ReviewedParentAuthorityBundleV3, self).__post_init__()
+        if self.residual_debt_acceptance_id is not None:
+            _schema(digest_value, self.residual_debt_acceptance_id,
+                "ReviewedParentAuthorityBundleV3.residual_debt_acceptance_id")
+
+
+@dataclass(frozen=True, slots=True)
 class L4ClosureParentBundleV1:
     schema_version: int
     selection_id: str
@@ -989,6 +1006,7 @@ __all__ = (
     "L3TargetProjectionCatalogV1",
     "L4ClosureParentBundleV1",
     "ParentAuthorityBundleV3",
+    "ReviewedParentAuthorityBundleV3",
     "Protocol28AuthorityError",
     "ValidatedL3ParentV1",
     "ValidatedL3ParentV2",

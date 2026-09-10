@@ -32,9 +32,56 @@ SOURCE_CATEGORIES = (
     "source-negative-space",
 )
 
+_DEPTH_CATEGORIES = {
+    "quick": {
+        "domain": frozenset({
+            "public-surfaces",
+            "boundaries-integrations-protocols-dependencies",
+            "configuration-controls-security-permissions",
+        }),
+        "source": frozenset({
+            "source-composition",
+            "cross-domain-boundaries",
+            "source-configuration-security",
+        }),
+    },
+    "standard": {
+        "domain": frozenset(DOMAIN_CATEGORIES[:-1]),
+        "source": frozenset(SOURCE_CATEGORIES[:-1]),
+    },
+    "deep": {
+        "domain": frozenset(DOMAIN_CATEGORIES),
+        "source": frozenset(SOURCE_CATEGORIES),
+    },
+}
+
 
 class Protocol28PolicyError(Protocol22SchemaError):
     """Raised when an exhaustive policy departs from the reviewed contract."""
+
+
+def categories_for_depth(depth: str, target_kind: str) -> frozenset[str]:
+    """Return the canonical protocol-2.8 category set for one requested depth."""
+    if depth not in _DEPTH_CATEGORIES or target_kind not in {"domain", "source"}:
+        raise Protocol28PolicyError("invalid protocol-2.8 depth/category target")
+    return _DEPTH_CATEGORIES[depth][target_kind]
+
+
+def category_depth_applicability() -> dict[str, dict[str, dict[str, list[str]]]]:
+    """Serialize the canonical matrix for authenticated authorial contexts."""
+    return {
+        depth: {
+            target_kind: {
+                "required": sorted(categories_for_depth(depth, target_kind)),
+                "outside_requested_depth": sorted(
+                    set(SOURCE_CATEGORIES if target_kind == "source" else DOMAIN_CATEGORIES)
+                    - categories_for_depth(depth, target_kind)
+                ),
+            }
+            for target_kind in ("domain", "source")
+        }
+        for depth in ("quick", "standard", "deep")
+    }
 
 
 def _schema(function, *args):  # type: ignore[no-untyped-def]

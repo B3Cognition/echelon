@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.re_v2.canonical import canonical_json_bytes
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_discovery import DiscoveryBoundary, DiscoveryError
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.run_store import ReV2Paths
@@ -26,7 +26,7 @@ def _request(boundary, binding, objects, paths=("worker.py",)):
     }))
 
 
-def _phase_setup(tmp_path, files=None, fault=None):
+def _phase_setup(tmp_path, files=None, fault=None, *, schema_version=2):
     _, _, _, _, args = _setup(tmp_path, files)
     paths = ReV2Paths.for_run(tmp_path / "re-test")
     paths.root.mkdir(parents=True)
@@ -34,10 +34,130 @@ def _phase_setup(tmp_path, files=None, fault=None):
     boundary = DiscoveryBoundary(*args[:5], objects, args[6])
     from harness.re_v2.knowledge_evidence import EvidenceSelectorV1
     record = next(r for r in args[1].sources[0].files if r.source_relative_path == "app.py")
-    binding = boundary.prepare((EvidenceSelectorV1("api", "app.py", 0, record.byte_count),))
+    binding = boundary.prepare(
+        (EvidenceSelectorV1("api", "app.py", 0, record.byte_count),),
+        schema_version=schema_version,
+    )
     cls = importlib.import_module("harness.re_v2.knowledge_acquisition").DiscoveryAcquisition
     phase = cls(paths, boundary, binding, fault_hook=fault)
     return phase, paths, boundary, binding, objects, cls
+
+
+def _use_historical_schema_1_expansion_defaults(monkeypatch, boundary):
+    prepare = boundary.prepare
+    verify_selection = boundary.verify_selection
+
+    def historical_prepare(selectors, *, schema_version=1):
+        return prepare(selectors, schema_version=1)
+
+    def historical_verify(selectors, *, schema_version=1):
+        return verify_selection(selectors, schema_version=1)
+
+    monkeypatch.setattr(boundary, "prepare", historical_prepare)
+    monkeypatch.setattr(boundary, "verify_selection", historical_verify)
+    return prepare, verify_selection
+
+
+@pytest.mark.unit
+def test_reopen_preserves_a_committed_historical_schema_1_expansion(
+    tmp_path, monkeypatch
+):
+    """Replaying a committed v1 revision must not reconstruct the v2 default."""
+    phase, paths, boundary, binding, objects, cls = _phase_setup(
+        tmp_path, schema_version=1
+    )
+    prepare, verify_selection = _use_historical_schema_1_expansion_defaults(
+        monkeypatch, boundary
+    )
+    batch = _request(boundary, binding, objects)
+    committed = phase.resolve(binding, batch)
+    binding_bytes = objects.read_blob(committed.binding_id)
+    binding_value = json.loads(binding_bytes)
+    context_bytes = objects.read_blob(binding_value["context_id"])
+    revision_bytes = objects.read_blob(committed.revision_id)
+    ledger_bytes = phase.ledger.path.read_bytes()
+    before = {
+        path: path.read_bytes()
+        for path in objects.root.rglob("*")
+        if path.is_file()
+    }
+    assert binding_value["schema_version"] == 1
+    monkeypatch.setattr(boundary, "prepare", prepare)
+    monkeypatch.setattr(boundary, "verify_selection", verify_selection)
+
+    reopened = cls(paths, boundary, binding)
+
+    assert reopened.status() == committed
+    assert reopened.provider_bytes() == phase.provider_bytes()
+    assert objects.read_blob(committed.binding_id) == binding_bytes
+    assert objects.read_blob(binding_value["context_id"]) == context_bytes
+    assert objects.read_blob(committed.revision_id) == revision_bytes
+    assert reopened.ledger.path.read_bytes() == ledger_bytes
+    assert {
+        path: path.read_bytes()
+        for path in objects.root.rglob("*")
+        if path.is_file()
+    } == before
+
+
+@pytest.mark.unit
+def test_recover_preserves_a_staged_historical_schema_1_expansion(
+    tmp_path, monkeypatch
+):
+    """An unfinished v1 revision must commit its staged v1 binding, not upgrade."""
+    def crash(name):
+        if name == "context_staged":
+            raise SimulatedCrash(name)
+
+    phase, paths, boundary, binding, objects, cls = _phase_setup(
+        tmp_path, fault=crash, schema_version=1
+    )
+    prepare, verify_selection = _use_historical_schema_1_expansion_defaults(
+        monkeypatch, boundary
+    )
+    batch = _request(boundary, binding, objects)
+    with pytest.raises(SimulatedCrash, match="context_staged"):
+        phase.resolve(binding, batch)
+    staged = []
+    for path in objects.root.rglob("*"):
+        if not path.is_file():
+            continue
+        payload = path.read_bytes()
+        try:
+            value = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if (isinstance(value, dict)
+                and value.get("kind") == "private_discovery_binding"
+                and value.get("schema_version") == 1
+                and len(value.get("selectors", [])) == 2):
+            staged.append((payload, value))
+    assert len(staged) == 1
+    expected_binding, expected_binding_value = staged[0]
+    expected_binding_id = content_digest(expected_binding)
+    expected_context_id = expected_binding_value["context_id"]
+    expected_context = objects.read_blob(expected_context_id)
+    assert objects.read_blob(expected_binding_id) == expected_binding
+    assert objects.read_blob(expected_context_id) == expected_context
+    before = {
+        path: path.read_bytes()
+        for path in objects.root.rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(boundary, "prepare", prepare)
+    monkeypatch.setattr(boundary, "verify_selection", verify_selection)
+
+    recovered = cls(paths, boundary, binding).recover()
+
+    assert recovered.binding_id == expected_binding_id
+    assert json.loads(objects.read_blob(recovered.binding_id))["schema_version"] == 1
+    assert objects.read_blob(expected_binding_id) == expected_binding
+    assert objects.read_blob(expected_context_id) == expected_context
+    assert {
+        path: path.read_bytes()
+        for path in objects.root.rglob("*")
+        if path.is_file()
+    } == before
 
 
 @pytest.mark.unit

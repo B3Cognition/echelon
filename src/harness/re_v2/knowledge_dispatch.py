@@ -1,8 +1,9 @@
-"""Single-step discovery execution owned by the existing RE controller lock.
+"""Single-step versioned discovery execution under the existing RE controller lock.
 
 The backend seam is intentionally not installed routing. A production backend
 must enforce a tools-free, bounded, non-logging request before it can be enabled.
-Only screened bytes cross the seam; provider output has no ledger authority.
+Only screened bytes cross the seam; schema-2 category proposals remain passive
+and provider output has no ledger or plan-activation authority.
 """
 from __future__ import annotations
 
@@ -25,14 +26,15 @@ from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
 class ProviderReply:
     output: bytes
     usage: NormalizedUsageV1
+    reason_code: str | None = None
 
 
 class DiscoveryBackend(Protocol):
-    """Bounded transport only: no ordinary logs, artifacts, tools or retries.
+    """Accounted transport only: no ordinary logs, artifacts, tools or retries.
 
     Implementations must count the entire request (including wrappers) against
-    initial_input_tokens and enforce both dispatch ceilings. The controller
-    cannot make an unbounded backend safe by passing a reservation value.
+    initial_input_tokens and honor the capture/deadline controls. Billable token
+    reservations are charged observations, not a hard native in-flight ceiling.
     """
 
     contract_id: str
@@ -49,7 +51,7 @@ class DiscoveryStep:
 
 def _capture_dispatch(account, screen_output, backend, agent_bytes, context,
                       reservation, dispatch_id):
-    """Invoke one already-reserved offline dispatch and durably capture it."""
+    """Invoke one already-reserved dispatch and durably capture its outcome."""
     usage = NormalizedUsageV1("unavailable", None, {})
     output_id, reason = None, None
     active_ms, active_status = None, "unavailable"
@@ -64,19 +66,25 @@ def _capture_dispatch(account, screen_output, backend, agent_bytes, context,
         active_ms = max(0, (time.monotonic_ns() - started + 999_999) // 1_000_000)
         active_status = "trusted_exact"
         if (not isinstance(reply, ProviderReply) or not isinstance(reply.usage, NormalizedUsageV1)
-                or not isinstance(reply.output, bytes)):
+                or not isinstance(reply.output, bytes)
+                or reply.reason_code not in {
+                    None, "provider-failed", "unsafe-provider-output",
+                    "invalid-provider-result",
+                }):
             reason = "invalid-provider-result"
             active_ms, active_status = None, "unavailable"
         else:
             usage = reply.usage
-            try:
-                output = screen_output(reply.output)
-            except KnowledgeEvidenceError as exc:
-                if str(exc) == "unsafe-quarantine-store":
-                    raise
-                reason = "unsafe-provider-output"
-            else:
-                output_id = account.objects.put_blob(output)
+            reason = reply.reason_code
+            if reason is None:
+                try:
+                    output = screen_output(reply.output)
+                except KnowledgeEvidenceError as exc:
+                    if str(exc) == "unsafe-quarantine-store":
+                        raise
+                    reason = "unsafe-provider-output"
+                else:
+                    output_id = account.objects.put_blob(output)
     account._record("dispatch_captured", {
         "dispatch_id": dispatch_id, "output_id": output_id, "reason_code": reason,
         "usage": _load(canonical_normalized_usage_bytes(usage)),
@@ -203,8 +211,9 @@ class DiscoveryController:
             if receipt_id is not None:
                 receipt = _load(self.account.objects.read_blob(receipt_id))
                 if receipt["state"] == "proposal_validated":
-                    # Proposal is staged only. Semantic review and orphan
-                    # reconciliation are mandatory before a plan is publishable.
+                    # Every proposal version is staged only. Schema 2 adds
+                    # category-aware input for independent review; it does not
+                    # add plan-activation authority at this boundary.
                     result_state = "proposal_ready"
                 else:
                     try:

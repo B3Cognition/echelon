@@ -10,27 +10,48 @@ Supply only the committed `untrusted_discovery_context` bytes authenticated by
 `DiscoveryAcquisition`: selected source/depth, originating obligation, screened
 inventory and evidence, required source/domain categories, and recorded evidence
 outcomes. Never supply a checkout path, raw inventory mapping or private receipt.
+Schema-2 context includes the exact `category_depth_applicability` object generated
+from the controller's canonical protocol-2.8 policy. Its `quick`, `standard` and
+`deep` entries each contain `domain` and `source` objects with exact `required` and
+`outside_requested_depth` category arrays. Select only the entry named by `depth`;
+do not reconstruct a second matrix in prose or provider logic. Historical schema-1
+contexts retain their original field set and canonical identity.
 
 Freeze this phase contract together with the rendered neutral role as the
 controller's `agent_bytes`. Freeze the provider/model/execution contract in the
-run-wide account. Reserve before invoking a bounded, tools-free backend. Its full
-request, including transport wrappers, must fit the input reservation. It must not
-log unscreened responses, perform result-repair calls or allocate another budget.
+run-wide account. Reserve before invoking the backend. It must not log unscreened
+responses, perform result-repair calls or allocate another budget.
 The backend screens the complete response (including the transport envelope)
 before returning authorial JSON bytes and normalized usage to the controller.
 
-The production backend is not enabled by this increment. Offline scripted backends
-exercise the controller seam; proving production tool isolation, ceilings and
-pre-log screening is still required before live routing.
-The opt-in Codex adapter `run_prompt_screened` is a capture prerequisite: it
-bounds and screens Echelon's stdout/stderr capture without streaming it or using
-a last-message file. Its trusted screening callback can use the existing RE
-quarantine. This does not prove native Codex storage safety, tools-free execution,
-full-request token bounds or independent invocation; do not connect it to live RE
-until those gates are verified. Ordinary adapter execution is unchanged.
-The current stored contract accepts only `offline-scripted` execution and
-`utf8-byte-upper-bound` input accounting. The controller's byte check is a necessary
-lower bound, not validation of an exact-token or fully framed production request.
+The opt-in `KnowledgeLLMBackend` uses Echelon's existing `AICodingCliProvider`
+facade and its `run_constrained_prompt_result` operation, not a concrete Codex
+backend. Normal configuration and environment overrides select the provider;
+the bridge freezes the resolved execution configuration and provider/model.
+Native transport, tool restrictions, screened capture and usage handling remain
+behind the provider boundary. Unsupported required capabilities produce an
+actionable pre-dispatch error, never silent provider substitution. Ordinary
+provider execution and installed RE routing remain unchanged.
+
+The current backend capability implementation is Codex; this does not change
+the configured provider or imply that the other native adapters implement the
+same safeguards. Their ordinary Echelon execution remains available. An adapter
+without this optional capability cannot execute this new discovery path yet.
+
+The `configured-provider-accounted` contract reserves before invocation and
+charges observed usage afterward. Missing/untrusted usage consumes the conservative reservation
+or a larger observed amount. An observed reservation breach blocks all further
+dispatches on this account, including review and other sources. An in-flight
+native invocation can overshoot: these are admission/accounting limits, not a
+hard native token cutoff. The complete Echelon-rendered prompt is byte-bounded;
+the native provider's internal framing is not included in that byte count.
+Process timeouts cannot guarantee cancellation of remote spend. Never report exact wire-token
+enforcement for this mode. Existing `offline-scripted` contract identities and
+accounting remain unchanged.
+
+Scripted-process tests can verify wiring, not native tool/storage isolation or
+semantic quality. Those require separate validation before ordinary live routing.
+The independent real-model evaluation and release gates still apply.
 Pin the requested source selection independently of the full declared catalog.
 
 ## Authorial response contract
@@ -38,20 +59,34 @@ Pin the requested source selection independently of the full declared catalog.
 Return one UTF-8 JSON object, without extra fields. All evidence references are
 IDs from the supplied context; selector offsets are original-file byte offsets.
 
-Common fields: `schema_version: 1`, `source_id` exactly as supplied, and `kind`.
-
 For `kind: discovery_proposal`, also include:
+
+- `schema_version: 2` and `source_id` exactly as supplied.
 
 - `domains`: objects with `key`, `description`, `evidence_ids` (at most 256).
 - `subjects`: objects with `key`, `target` (domain key or `source`), `description`,
-  `evidence_ids` (at most 1,024). Each proposed domain needs a subject.
+  `category_ids`, and `evidence_ids` (at most 1,024). Each proposed domain needs
+  an evidence-supported subject. Category IDs must belong to that target kind.
 - `inventory`: exactly one object per inventory path: `path`, `owner` (subject key
   or null), `reason`. Unassigned paths remain visible for reconciliation.
-- `obligations`: `target`, `category` objects: all supplied source categories for
-  `source` and all supplied domain categories for each domain. No verdict fields.
+- `obligations`: exactly one object for every supplied source category at `source`
+  and every supplied domain category at each proposed domain. Each object has
+  exactly `target`, `category`, `disposition`, `subject_keys`, `rationale`, and
+  `evidence_ids`. Disposition is `analyze`, `not-applicable`, `unknown`, or
+  `outside-requested-depth`. `subject_keys` is the exact sorted set of subjects at
+  that target carrying the category. `analyze` requires at least one such subject
+  and visible supporting evidence. `not-applicable` requires visible scoped
+  evidence, except that the authenticated wholly empty inventory is itself the
+  scope evidence. `unknown` cites target-local supplied evidence (including an
+  authenticated source-local withheld boundary), or uses an empty citation only
+  for exact authenticated empty-source authority; it never means absence.
+  `outside-requested-depth` is limited to the selected matrix complement and is
+  forbidden for deep. Its evidence may be empty only for authenticated empty-source
+  authority; nonempty-source rows keep the ordinary visible target-local rule.
 - `questions`: `target`, `question`, `evidence_ids` objects (at most 256).
 
-For `kind: evidence_requests`, also include `requests` (1–16 objects), each with:
+For `kind: evidence_requests`, use `schema_version: 1`, the exact supplied
+`source_id`, and `requests` (1–16 objects), each with:
 
 - `obligation_id`: the supplied originating obligation ID.
 - `reason_class`: `missing-behavior`, `ownership` or `relationship`.
@@ -61,6 +96,9 @@ For `kind: evidence_requests`, also include `requests` (1–16 objects), each wi
 The transport ends with `echelon_result: {verdict: DONE, state_updates: {}}` as
 specified by the neutral role. This is not a semantic approval. A backend returns
 only screened authorial JSON to admission; no envelope fields become run state.
+The normalized schema-2 proposal and its receipt are independently bounded at
+262,144 bytes before any authorial capture or ordinary object is published; exactly
+262,144 bytes is admissible and the next byte fails without persistence.
 
 ## Controller outputs and routing
 
@@ -78,3 +116,6 @@ dispatch or a terminal invalid/no-progress response never invokes a provider aga
 
 Provider/resource failures and incomplete artifacts are not acceptable debt.
 Analysis, source and workspace synthesis/publication remain later workflow stages.
+Schema-1 proposal and review objects remain readable historical records and retain
+their canonical identities. They are not category-aware activation authority; this
+phase never upgrades them or activates schema-2 planning.

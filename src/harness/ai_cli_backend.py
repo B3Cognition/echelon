@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from harness.config import HarnessConfig
 
@@ -35,6 +35,24 @@ class AICodingCliBackend(Protocol):
         ...
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
+        ...
+
+
+@runtime_checkable
+class ConstrainedPromptBackend(Protocol):
+    """Optional native operation for one screened, explicitly bounded prompt."""
+
+    constrained_execution_contract_id: str
+
+    def run_constrained_prompt(
+        self,
+        request: CliRunRequest,
+        *,
+        model: str,
+        screen_output: Callable[[bytes], bytes],
+        max_input_bytes: int,
+        max_capture_bytes: int,
+    ) -> CliRunResult:
         ...
 
 

@@ -62,13 +62,23 @@ class _ContextPassingBackend:
         entry = payload["plan_entry"]
         spec = payload["slice_spec"]
         if role == "producer":
+            safe = any(item.get('kind') == 'untrusted_safe_snapshot_evidence' for item in payload['snapshot_evidence'])
             evidence_by_id = {
-                _identity(item): item
+                (item['raw_evidence_id'] if safe else _identity(item)): item
                 for item in payload["snapshot_evidence"]
             }
+            permitted = {row['anchor']['evidence_id']: row for row in payload.get('permitted_evidence_anchors', ())}
             anchors = []
             for evidence_id in entry["primary_snapshot_evidence_ids"]:
                 item = evidence_by_id[evidence_id]
+                if safe:
+                    # Safe payloads identify raw authority explicitly; redacted
+                    # metadata is not the raw object's content-addressed identity.
+                    assert item['kind'] == 'untrusted_safe_snapshot_evidence'
+                    anchor = EvidenceAnchorV1.from_json_dict(permitted[evidence_id]['anchor'])
+                    assert anchor.identity == permitted[evidence_id]['anchor_id']
+                    anchors.append(anchor)
+                    continue
                 anchors.append(
                     EvidenceAnchorV1(
                         1,

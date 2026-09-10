@@ -14,6 +14,7 @@ from harness.re_v2.knowledge_discovery import (
     DiscoveryBoundary,
     DiscoveryError,
     DiscoveryStorageError,
+    category_depth_applicability,
     _load,
     _obj,
     _rows,
@@ -33,6 +34,7 @@ _REVIEW_FIELDS = (
     "schema_version", "kind", "proposal_id", "verdict", "domains",
     "subjects", "inventory", "overlaps", "findings",
 )
+_REVIEW_V2_FIELDS = (*_REVIEW_FIELDS[:-1], "obligations", "findings")
 _RECEIPT_FIELDS = (
     "schema_version", "state", "binding_id", "proposal_receipt_id",
     "proposal_id", "review_id", "authorial_response_id", "reviewer_context_id",
@@ -190,6 +192,22 @@ class DiscoveryReviewBoundary:
 
     @_admission_errors
     def _normalize(self, value, review_context):
+        if (not isinstance(value, dict)
+                or type(value.get("schema_version")) is not int
+                or not isinstance(review_context, dict)
+                or not isinstance(review_context.get("candidate"), dict)
+                or type(review_context["candidate"].get("schema_version")) is not int):
+            raise DiscoveryReviewAdmissionError("invalid-discovery-review-response")
+        version = value["schema_version"]
+        if version != review_context["candidate"]["schema_version"]:
+            raise DiscoveryReviewAdmissionError("discovery-review-schema-mismatch")
+        if version == 1:
+            return self._normalize_v1(value, review_context)
+        if version == 2:
+            return self._normalize_v2(value, review_context)
+        raise DiscoveryReviewAdmissionError("invalid-discovery-review-response")
+
+    def _normalize_v1(self, value, review_context):
         review = _review_obj(value, _REVIEW_FIELDS)
         candidate = review_context["candidate"]
         proposal_id = review_context["candidate_id"]
@@ -416,6 +434,198 @@ class DiscoveryReviewBoundary:
             "inventory": [inventory[path] for path in sorted(inventory)],
             "overlaps": [overlaps[pair] for pair in sorted(overlaps)],
             "findings": [findings[item] for item in sorted(findings)],
+        }
+
+    def _normalize_v2(self, value, review_context):
+        review = _review_obj(value, _REVIEW_V2_FIELDS)
+        candidate = review_context["candidate"]
+        proposal_id = review_context["candidate_id"]
+        if (review["schema_version"] != 2
+                or candidate.get("schema_version") != 2
+                or review["kind"] != "discovery_review"
+                or review["proposal_id"] != proposal_id
+                or review["verdict"] not in {"ready", "revise"}):
+            raise DiscoveryReviewAdmissionError("invalid-discovery-review-response")
+
+        legacy_shape = {
+            key: (1 if key == "schema_version" else review[key])
+            for key in _REVIEW_FIELDS
+        }
+        common = self._normalize_v1(legacy_shape, review_context)
+
+        evidence_rows = review_context["safe_discovery_context"]["evidence"]
+        projections = {
+            row["projection_id"]: row["projection"] for row in evidence_rows
+        }
+        supplied = set(projections)
+        visible = {
+            projection_id for projection_id, projection in projections.items()
+            if projection["disposition"] != "withheld"
+            and projection["text"].strip("*\n\r\t ")
+        }
+        safe_context = review_context["safe_discovery_context"]
+        if (safe_context.get("schema_version") != 2
+                or safe_context.get("category_depth_applicability")
+                != category_depth_applicability()):
+            raise DiscoveryReviewAdmissionError(
+                "invalid-discovery-review-depth-authority"
+            )
+
+        def refs(value):
+            rows = _review_rows(value, 64)
+            if (any(not isinstance(item, str) or item not in supplied for item in rows)
+                    or len(set(rows)) != len(rows)):
+                raise DiscoveryReviewAdmissionError("invalid-discovery-review-evidence")
+            return sorted(rows)
+
+        candidate_obligations = {
+            (row["target"], row["category"]): row
+            for row in candidate["obligations"]
+        }
+        candidate_subjects = {row["key"]: row for row in candidate["subjects"]}
+        empty_source = (
+            not review_context["safe_discovery_context"]["inventory"]
+            or all(
+                row["byte_count"] == 0
+                for row in review_context["safe_discovery_context"]["inventory"]
+            )
+        )
+
+        def target_evidence(target, *, visible_only=False):
+            allowed = visible if visible_only else supplied
+            if target == "source":
+                return set(allowed)
+            target_paths = {
+                projections[item]["path"]
+                for item in (
+                    set(next(
+                        domain["evidence_ids"] for domain in candidate["domains"]
+                        if domain["key"] == target
+                    ))
+                    | set().union(*(
+                        set(subject["evidence_ids"])
+                        for subject in candidate["subjects"]
+                        if subject["target"] == target
+                    ))
+                )
+            }
+            return {
+                item for item in allowed if projections[item]["path"] in target_paths
+            }
+
+        obligations = {}
+        obligation_revision = False
+        for raw in _review_rows(review["obligations"]):
+            row = _review_obj(raw, (
+                "target", "category", "disposition", "subject_keys", "verdict",
+                "rationale", "evidence_ids",
+            ))
+            pair = (row["target"], row["category"])
+            if pair not in candidate_obligations or pair in obligations:
+                raise DiscoveryReviewAdmissionError("invalid-discovery-review-obligation")
+            candidate_row = candidate_obligations[pair]
+            subject_keys = row["subject_keys"]
+            if (not isinstance(subject_keys, list)
+                    or any(not isinstance(key, str) for key in subject_keys)
+                    or len(set(subject_keys)) != len(subject_keys)
+                    or sorted(subject_keys) != candidate_row["subject_keys"]
+                    or row["disposition"] != candidate_row["disposition"]):
+                raise DiscoveryReviewAdmissionError(
+                    "altered-discovery-review-obligation"
+                )
+            verdict = row["verdict"]
+            if verdict not in {"supported", "revise"}:
+                raise DiscoveryReviewAdmissionError(
+                    "invalid-discovery-review-verdict"
+                )
+            evidence_ids = refs(row["evidence_ids"])
+            if verdict == "supported":
+                disposition = candidate_row["disposition"]
+                candidate_evidence = set(candidate_row["evidence_ids"])
+                cited = set(evidence_ids)
+                local = target_evidence(candidate_row["target"])
+                local_visible = target_evidence(
+                    candidate_row["target"], visible_only=True
+                )
+                if disposition == "analyze":
+                    supported = (
+                        cited.issubset(local_visible)
+                        and bool(cited.intersection(candidate_evidence).intersection(visible))
+                        and all(
+                            bool(cited.intersection(candidate_subjects[key]["evidence_ids"]))
+                            for key in candidate_row["subject_keys"]
+                        )
+                    )
+                elif disposition == "not-applicable":
+                    supported = (
+                        cited.issubset(local_visible)
+                        and bool(cited.intersection(candidate_evidence).intersection(visible))
+                    ) or (
+                        candidate_row["target"] == "source"
+                        and empty_source
+                        and not cited
+                    )
+                elif disposition == "unknown":
+                    supported = (
+                        bool(cited)
+                        and cited.issubset(local)
+                        and bool(cited.intersection(candidate_evidence))
+                    ) or (
+                        candidate_row["target"] == "source"
+                        and empty_source
+                        and not cited
+                        and not candidate_evidence
+                    )
+                else:
+                    supported = (
+                        cited.issubset(local_visible)
+                        and bool(cited.intersection(candidate_evidence).intersection(visible))
+                    ) or (
+                        candidate_row["target"] == "source"
+                        and empty_source
+                        and not cited
+                        and not candidate_evidence
+                    )
+                if not supported:
+                    raise DiscoveryReviewAdmissionError(
+                        "unsupported-discovery-review-obligation"
+                    )
+            else:
+                obligation_revision = True
+
+            base = {
+                "obligation_id": candidate_row["obligation_id"],
+                "target": candidate_row["target"],
+                "category": candidate_row["category"],
+                "disposition": candidate_row["disposition"],
+                "subject_keys": candidate_row["subject_keys"],
+                "verdict": verdict,
+                "rationale": _review_text(row["rationale"]),
+                "evidence_ids": evidence_ids,
+            }
+            obligations[pair] = {
+                **base,
+                "row_id": _row_identity(proposal_id, "obligation", base),
+            }
+        if set(obligations) != set(candidate_obligations):
+            raise DiscoveryReviewAdmissionError(
+                "incomplete-discovery-review-obligations"
+            )
+        if review["verdict"] == "ready" and obligation_revision:
+            raise DiscoveryReviewAdmissionError("false-ready-discovery-review")
+
+        safe_context_id = content_digest(
+            canonical_json_bytes(review_context["safe_discovery_context"])
+        )
+        return {
+            **common,
+            "schema_version": 2,
+            "safe_context_id": safe_context_id,
+            "obligations": [obligations[pair] for pair in sorted(obligations)],
+            "unknown_obligation_ids": sorted(
+                row["obligation_id"] for row in candidate_obligations.values()
+                if row["disposition"] == "unknown"
+            ),
         }
 
     def _receipt(

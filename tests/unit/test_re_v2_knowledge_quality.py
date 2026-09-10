@@ -271,6 +271,7 @@ def test_input_boundary_rechecks_parent_obligations(tmp_path: Path, defect: str)
     from harness.re_v2.protocol_28.inputs import (
         Protocol28InputError, ValidatedProtocol28Inputs, _validate_bindings,
     )
+    from harness.re_v2.protocol_28.model import ExhaustiveRequestV1, ExhaustiveRunManifestV7
 
     legacy, plan, subjects, policy = _prepared_complete_plan(tmp_path)
     evidence, parent = legacy.snapshot_evidence_catalog, legacy.parent_authority_bundle
@@ -295,6 +296,15 @@ def test_input_boundary_rechecks_parent_obligations(tmp_path: Path, defect: str)
                                    parent_authority_bundle_id=parent.identity,
                                    snapshot_evidence_catalog_id=evidence.identity),
     )
+    # This test exercises the historical boundary independently of the Safe subtype.
+    # Preparation now emits Safe manifests; do not wrap one in a legacy input type.
+    request = ExhaustiveRequestV1(**{
+        field: getattr(manifest.exhaustive_request, field) for field in ExhaustiveRequestV1.FIELDS
+    })
+    manifest = ExhaustiveRunManifestV7(**{
+        field: request if field == "exhaustive_request" else getattr(manifest, field)
+        for field in ExhaustiveRunManifestV7.FIELDS
+    })
     inputs = ValidatedProtocol28Inputs(
         manifest, parent, legacy.l3_projection_catalog, evidence, subjects,
         policy, legacy.executor_catalog, plan, legacy.authority_objects,

@@ -218,7 +218,10 @@ def _expanded_binding(boundary, binding_id, outcomes, *, persist=True):
             row = outcome["selector"]
             selectors[canonical_json_bytes(row)] = row
     prepare = boundary.prepare if persist else boundary.verify_selection
-    return prepare(tuple(_selector(selectors[key]) for key in sorted(selectors)))
+    return prepare(
+        tuple(_selector(selectors[key]) for key in sorted(selectors)),
+        schema_version=binding["schema_version"],
+    )
 
 
 class DiscoveryAcquisition:

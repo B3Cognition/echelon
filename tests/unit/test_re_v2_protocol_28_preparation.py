@@ -77,7 +77,7 @@ def _preparation_fixture(
     extra_source_files: dict[str, str | bytes] | None = None,
 ):  # type: ignore[no-untyped-def]
     handler = (
-        "x = '" + ("a" * 220_000) + "'\n"
+        "x = '" + ("a" * 260_000) + "'\n"
         if large_source
         else "def handle():\n    return 'ok'\n"
     )
@@ -685,7 +685,7 @@ def test_preparation_splits_on_exact_serialized_context_size(tmp_path: Path) -> 
     inputs = prepare_protocol_28_request(workspace, intent, parent, options)
 
     assert any(
-        len(target.entries) > 1
+        len(target.entries) > len({entry.category_id for entry in target.entries})
         for target in inputs.exhaustive_plan.target_plans
     )
     assert all(
@@ -696,11 +696,19 @@ def test_preparation_splits_on_exact_serialized_context_size(tmp_path: Path) -> 
     split_target = next(
         target
         for target in inputs.exhaustive_plan.target_plans
-        if len(target.entries) > 1
+        if len(target.entries) > len({entry.category_id for entry in target.entries})
     )
-    assert split_target.entries[0].primary_subject_ids
+    split_category = next(
+        category
+        for category in {entry.category_id for entry in split_target.entries}
+        if sum(entry.category_id == category for entry in split_target.entries) > 1
+    )
+    split_entries = tuple(
+        entry for entry in split_target.entries if entry.category_id == split_category
+    )
+    assert split_entries[0].primary_subject_ids
     assert all(
         entry.supporting_subject_ids
-        for entry in split_target.entries[1:]
+        for entry in split_entries[1:]
         if entry.primary_snapshot_evidence_ids
     )

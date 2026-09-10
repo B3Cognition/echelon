@@ -109,14 +109,52 @@ class SafeEvidenceProjectionV1:
         return self._provider_bytes
 
 
-def _excluded(path: str) -> bool:
+@dataclass(frozen=True, slots=True)
+class ScreenedSourceBytesV1:
+    """A pure, byte-offset-preserving screening result for one source file."""
+
+    disposition: str
+    safe_bytes: bytes | None = field(repr=False)
+    withheld_ranges: tuple[tuple[int, int, str], ...]
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.disposition not in {"available", "redacted", "withheld"}:
+            raise KnowledgeEvidenceError("invalid-screened-source")
+        if self.disposition == "withheld":
+            if self.safe_bytes is not None or self.reason_code is None:
+                raise KnowledgeEvidenceError("invalid-screened-source")
+        elif not isinstance(self.safe_bytes, bytes) or self.reason_code is not None:
+            raise KnowledgeEvidenceError("invalid-screened-source")
+
+
+def source_path_is_excluded(path: str) -> bool:
+    """Apply the versioned credential/key-path exclusion policy."""
     parts = tuple(part.lower() for part in PurePosixPath(path).parts)
     return any(part in _EXCLUDED_NAMES or part == ".env" or part.startswith(".env.")
                or part.endswith(_EXCLUDED_SUFFIXES) for part in parts)
 
 
-def _screen_source(raw: bytes) -> tuple[bytes, tuple[tuple[int, int, str], ...]]:
-    text = raw.decode("utf-8")
+def _excluded(path: str) -> bool:
+    return source_path_is_excluded(path)
+
+
+def screen_source_bytes(raw: bytes) -> ScreenedSourceBytesV1:
+    """Screen complete source bytes before any range is selected or serialized."""
+    if not isinstance(raw, bytes):
+        raise KnowledgeEvidenceError("invalid-source-bytes")
+    if len(raw) > _MAX_SCREEN_BYTES:
+        return ScreenedSourceBytesV1(
+            "withheld", None, ((0, len(raw), "local-screening-bound"),),
+            "local-screening-bound",
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return ScreenedSourceBytesV1(
+            "withheld", None, ((0, len(raw), "non-text-evidence"),),
+            "non-text-evidence",
+        )
     spans = _secret_spans(text)
     # Convert character offsets once, in order; do not rescan long prefixes for
     # every match. Ranges address original bytes even after multibyte redaction.
@@ -128,10 +166,19 @@ def _screen_source(raw: bytes) -> tuple[bytes, tuple[tuple[int, int, str], ...]]
         byte_offsets[position] = byte_offset
         previous = position
     ranges = tuple((byte_offsets[start], byte_offsets[end], reason) for start, end, reason in spans)
+    if any(reason == "private-key" for _start, _end, reason in ranges):
+        return ScreenedSourceBytesV1(
+            "withheld", None, ((0, len(raw), "private-key-material"),),
+            "private-key-material",
+        )
     safe = bytearray(raw)
     for start, end, _ in ranges:
         safe[start:end] = b"*" * (end - start)
-    return bytes(safe), ranges
+    return ScreenedSourceBytesV1(
+        "redacted" if ranges else "available",
+        bytes(safe),
+        ranges,
+    )
 
 
 class SafeEvidenceBoundary:
@@ -158,6 +205,42 @@ class SafeEvidenceBoundary:
         self._partition_id = partition.identity
         self._objects = objects
 
+    @classmethod
+    def from_catalog(cls, catalog, partition, selection, selected_sources, objects):
+        """Read-only replay over authenticated complete raw L4 evidence.
+
+        This retains the ordinary projection algorithm and never reads a live
+        checkout. The raw catalogue is verified against partition file hashes
+        before its bytes can stand in for the pinned snapshot reader.
+        """
+        from harness.re_v2.protocol_28.evidence import validate_snapshot_evidence_closure
+        validate_snapshot_evidence_closure(catalog, partition, selection)
+        if (not selected_sources or len(set(selected_sources)) != len(selected_sources)
+                or not set(selected_sources).issubset(s.source_id for s in partition.sources)):
+            raise KnowledgeEvidenceError("invalid-evidence-selection")
+        payloads = {}
+        for shard in sorted(catalog.shards, key=lambda row: (row.source_id, row.source_relative_path, row.byte_start)):
+            key = (shard.source_id, shard.source_relative_path)
+            payloads[key] = payloads.get(key, b"") + shard.raw_bytes
+        for row in catalog.empty_receipts:
+            payloads[(row.source_id, row.source_relative_path)] = b""
+
+        class CatalogReader:
+            def read_file(self, source, path, record):
+                payload = payloads.get((source, path))
+                if payload is None or content_digest(payload) != record.content_hash:
+                    raise KnowledgeEvidenceError("unavailable-evidence")
+                return payload
+
+        result = cls.__new__(cls)
+        result._reader = CatalogReader()
+        result._records = {(source.source_id, record.source_relative_path): record
+                           for source in partition.sources if source.source_id in selected_sources
+                           for record in source.files}
+        result._snapshot_id, result._partition_id = catalog.source_snapshot_id, partition.identity
+        result._objects = objects
+        return result
+
     def _projection_bytes(self, selector: EvidenceSelectorV1) -> tuple[bytes, bytes]:
         if not isinstance(selector, EvidenceSelectorV1):
             raise KnowledgeEvidenceError("invalid-evidence-selector")
@@ -182,13 +265,14 @@ class SafeEvidenceBoundary:
                 # credentials into ASCII and could conceal an invalid selector.
                 raw[:selector.byte_start].decode("utf-8")
                 raw[selector.byte_start:selector.byte_end].decode("utf-8")
-                if any(r.rule_id == "private-key" and r.pattern.search(raw.decode("utf-8")) for r in RULES):
-                    reason = "private-key-material"
+                screened = screen_source_bytes(raw)
+                if screened.disposition == "withheld":
+                    reason = screened.reason_code
                 else:
-                    safe, full_ranges = _screen_source(raw)
-                    text = safe[selector.byte_start:selector.byte_end].decode("utf-8")
+                    assert screened.safe_bytes is not None
+                    text = screened.safe_bytes[selector.byte_start:selector.byte_end].decode("utf-8")
                     ranges = tuple((max(start, selector.byte_start), min(end, selector.byte_end), rule)
-                                   for start, end, rule in full_ranges
+                                   for start, end, rule in screened.withheld_ranges
                                    if start < selector.byte_end and end > selector.byte_start)
             except (Protocol22EvidenceError, OSError, UnicodeError):
                 raise KnowledgeEvidenceError("unsafe-evidence-projection") from None

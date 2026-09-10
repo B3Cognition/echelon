@@ -14,7 +14,7 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.budget import MAX_ACCOUNTING_VALUE, conservative_charge
 from harness.re_v2.protocol_22.provider import DispatchReservationV1
 from harness.re_v2.protocol_22.schema import digest_value, safe_id
-from harness.re_v2.protocol_28.model import ExhaustiveBudgetPolicyV1
+from harness.re_v2.protocol_28.model import ExhaustiveBudgetPolicyV1, KnowledgeAccountTransferV1
 
 
 Role = Literal["producer", "verifier"]
@@ -258,6 +258,7 @@ ResourceRecordV1 = (
     | VerifierReleaseV1
     | BudgetAuthorizationV1
     | AdoptionAccountingV1
+    | KnowledgeAccountTransferV1
 )
 
 
@@ -324,6 +325,7 @@ class L4ResourceLedger:
             VerifierReleaseV1,
             BudgetAuthorizationV1,
             AdoptionAccountingV1,
+            KnowledgeAccountTransferV1,
         )
         copied = tuple(records)
         if any(not isinstance(record, allowed) for record in copied):
@@ -339,6 +341,17 @@ class L4ResourceLedger:
     @property
     def records(self) -> tuple[ResourceRecordV1, ...]:
         return tuple(self._records)
+
+    def import_knowledge_account(self, receipt: KnowledgeAccountTransferV1):
+        """Import one sealed account; never overlap generated resource records."""
+        if type(receipt) is not KnowledgeAccountTransferV1:
+            raise Protocol28BudgetError('invalid knowledge account transfer')
+        if self._records and self._records[0] == receipt:
+            return receipt
+        if self._records:
+            raise Protocol28BudgetError('knowledge account transfer conflicts with resource history')
+        self._records.append(receipt)
+        return receipt
 
     @property
     def prefix_id(self) -> str:
@@ -811,6 +824,9 @@ class L4ResourceStore(L4ResourceLedger):
     def record_adoption(self, slice_spec_id: str, **kwargs):  # type: ignore[no-untyped-def]
         return self._mutation(super().record_adoption, slice_spec_id, **kwargs)
 
+    def import_knowledge_account(self, receipt):
+        return self._mutation(super().import_knowledge_account, receipt)
+
     def _read_records(self) -> tuple[ResourceRecordV1, ...]:
         if self.path.is_symlink() or not self.path.is_file():
             raise Protocol28BudgetError("resource store path is unsafe")
@@ -858,6 +874,8 @@ def _decode_reservation(value: object) -> DispatchReservationV1:
 def _decode_resource_record(value: object) -> ResourceRecordV1:
     if not isinstance(value, dict):
         raise Protocol28BudgetError("resource record must be an object")
+    if 'account_prefix_id' in value:
+        return KnowledgeAccountTransferV1.from_json_dict(value)
     kind = value.get("type")
     if kind is None and "pair_work_id" in value:
         kind = "paired_reservation"
@@ -919,8 +937,17 @@ def _evaluate(
 ) -> L4ResourceDecisionV1:
     token_limit = policy.token_limit
     active_limit = policy.active_ms_limit
+    transfers = tuple(record for record in records if isinstance(record, KnowledgeAccountTransferV1))
+    if transfers and (len(transfers) != 1 or records[0] != transfers[0]):
+        raise Protocol28BudgetError('duplicate or reordered knowledge account transfer')
+    transfer = transfers[0] if transfers else None
+    if transfer is not None:
+        token_limit = min(token_limit or transfer.token_limit, transfer.token_limit)
+        active_limit = min(active_limit or transfer.active_ms_limit, transfer.active_ms_limit)
     for record in records:
         if isinstance(record, BudgetAuthorizationV1):
+            if transfer is not None:
+                raise Protocol28BudgetError('knowledge workflow cannot raise its frozen aggregate account')
             current = token_limit if record.dimension == "tokens" else active_limit
             if current != record.old_value or record.new_value <= record.old_value:
                 raise Protocol28BudgetError("authorization chain is invalid")
@@ -945,8 +972,8 @@ def _evaluate(
         for record in records
         if isinstance(record, VerifierReleaseV1)
     }
-    charged_tokens = 0
-    charged_active = 0
+    charged_tokens = transfer.charged_tokens if transfer is not None else 0
+    charged_active = transfer.charged_active_ms if transfer is not None else 0
     trusted_tokens = 0
     trusted_active = 0
     open_tokens = 0

@@ -123,6 +123,17 @@ class Protocol28Controller:
     def record_materialization(self, root_id: str) -> EventRecord:
         return self.append_once("materialization_completed", {"root_id": root_id})
 
+    def record_knowledge_root(self, root):
+        from harness.re_v2.protocol_28.reconciliation import knowledge_root_event_payload
+        try:
+            payload = knowledge_root_event_payload(root)
+        except ValueError as exc:
+            raise Protocol28ControllerError('invalid reviewed knowledge root') from exc
+        if self.object_store.put_blob(canonical_json_bytes(root.to_json_dict())) != root.identity:
+            raise Protocol28ControllerError('reviewed root identity changed')
+        self._fault('after_knowledge_root_object')
+        return self.append_once('knowledge_root_recorded', payload)
+
     def block_run(
         self,
         blocker_kind: Literal["resource", "execution", "closure_integrity"],

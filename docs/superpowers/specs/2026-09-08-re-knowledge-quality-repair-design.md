@@ -1,6 +1,6 @@
 # General-purpose RE knowledge-quality repair
 
-Status: M1 containment implemented; M2 safe evidence, discovery admission, durable pre-analysis acquisition, offline bounded discovery/review dispatch with shared accounting and passive discovery-review admission implemented. An opt-in bounded Codex response-capture path screens Echelon-side output; native provider storage/tool isolation and complete-wire resource enforcement remain unverified. Real independent reviewer execution/certification, production provider integration, target/source semantic reconciliation and analysis revision/invalidation remain pending. Not release-ready.
+Status: M1 containment and M2 bounded knowledge acquisition are implemented and independently accepted. M2 includes Safe evidence projection, schema-aware category discovery/review, Reviewed protocol-2.8 activation, durable revision/reconciliation/debt authority, conservative configured-provider accounting, and replay-safe restart behavior. The configured-provider bridge remains opt-in; unsupported backends are refused rather than replaced, and installed routing remains unchanged. M3 source/workspace synthesis, publication and consumer integration, refresh, two-action CLI, native-provider isolation, live evaluation, and release readiness remain pending. Not release-ready.
 Date: 2026-09-08
 Decision owner: Echelon maintainer.
 
@@ -16,6 +16,14 @@ Retain the existing provider abstraction, neutral Prosaic roles, immutable
 snapshots, controller-owned state, bounded retries, budgets, and publication
 transaction. Repair the knowledge path incrementally; do not replace the whole
 engine or add another user-facing protocol selector.
+
+RE must select its LLM through Echelon's existing effective configuration and
+provider facade, including normal environment overrides. Do not bind the RE loop
+directly to Codex or introduce a separate RE provider default. Backend-specific
+transport, screening and usage normalization belong behind that shared boundary.
+Freeze the resolved provider/model in run authority. If a selected backend cannot
+meet the required execution contract, explain the missing capability before
+dispatch; never silently substitute Codex or another provider.
 
 This contract covers quick, standard and deep RE through the same product path.
 Every depth produces repository knowledge and workspace synthesis. Depth changes
@@ -220,6 +228,32 @@ An internal child cannot reset that budget. Obligation splits/merges retain thei
 origin IDs and inherited attempt/expansion counters, preventing counter resets by
 renaming work. A source checkout update is a new snapshot refresh request, not
 an evidence expansion in an old snapshot.
+
+### Codex CLI resource accounting (approved September 8)
+
+Reuse the existing Codex provider with reservation-and-observed-usage accounting:
+reserve from the aggregate run budget before each invocation, then charge its
+reported usage. Missing or untrusted usage consumes the conservative reservation
+or the larger observed amount. An observed reservation breach blocks further
+dispatches and remains visible on recovery; it never raises the authorization,
+resets the account or disappears through a retry.
+
+These are admission and accounting limits, not a guaranteed native per-call token
+cutoff. An in-flight Codex invocation can exceed its reserved allowance, including
+the remaining logical-run allowance. A process deadline and bounded output capture
+limit local execution, but cannot guarantee cancellation of remote token spend.
+The controller bounds its rendered prompt, including its own framing; that byte
+bound is not an exact count of Codex's internally assembled wire request.
+
+Freeze this distinction in a new accounted-Codex execution contract. Preserve
+existing offline/API contract identities and stricter guarantees where supported.
+The existing normalizer requires complete disjoint usage classes for exact
+charging. A native total with an incomplete breakdown remains an untrusted
+observation: charge the greater of the reservation and observed total, without
+inventing missing usage classes as zero.
+This approval changes token-enforcement semantics only: it does not relax source
+selection, evidence screening, tool restrictions, reviewer independence, run
+ceiling authorization, or the requirement to approve live evaluation separately.
 
 ### Evidence security contract
 

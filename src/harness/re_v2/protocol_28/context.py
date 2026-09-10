@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Callable, TypeAlias
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.knowledge_evidence import screen_source_bytes
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_28.budget import L4ResourceStore
 from harness.re_v2.protocol_28.controller import Protocol28Controller
 from harness.re_v2.protocol_28.events import PROTOCOL_28_EVENTS
 from harness.re_v2.protocol_28.inputs import (
+    Protocol28InputError, _validate_input_subtype, _validated_objects,
+    Protocol28CreationInputs,
+    _PreliminarySafeProtocol28Inputs,
+    SafeProtocol28CreationInputs,
     ValidatedProtocol28ClosureInputs,
     ValidatedProtocol28Inputs,
+    ValidatedSafeProtocol28Inputs,
+    ReviewedProtocol28CreationInputs, ValidatedReviewedProtocol28Inputs,
     load_protocol_28_inputs,
     residual_debt_acceptance_from_objects,
 )
@@ -42,6 +50,113 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _validate_safe_free_text(value: object) -> None:
+    """Fail closed on unscreened free text outside authenticated projections."""
+    if isinstance(value, str):
+        if screen_source_bytes(value.encode("utf-8")).disposition != "available":
+            raise Protocol28ContextError("safe provider context failed screening")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key not in {"snapshot_evidence", "lower_authority_objects"}:
+                _validate_safe_free_text(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_safe_free_text(item)
+
+
+@dataclass(frozen=True, slots=True)
+class _Protocol28SizingInputs:
+    """Private manifest-free input for deterministic preactivation sizing only."""
+    l3_projection_catalog: object
+    snapshot_evidence_catalog: object
+    exhaustive_subject_catalog: object
+    exhaustive_policy: object
+    authority_objects: object
+    reviewed_discoveries: tuple | None = None
+
+
+def _public_creation_type(inputs):
+    creation_types = {
+        Protocol28CreationInputs: Protocol28CreationInputs,
+        ValidatedProtocol28Inputs: Protocol28CreationInputs,
+        SafeProtocol28CreationInputs: SafeProtocol28CreationInputs,
+        ValidatedSafeProtocol28Inputs: SafeProtocol28CreationInputs,
+        ReviewedProtocol28CreationInputs: ReviewedProtocol28CreationInputs,
+        ValidatedReviewedProtocol28Inputs: ReviewedProtocol28CreationInputs,
+    }
+    creation = creation_types.get(type(inputs))
+    if creation is None:
+        raise Protocol28ContextError('provider context requires exact validated public inputs')
+    return creation
+
+
+def _validated_public_inputs(inputs):
+    """Reauthenticate exact public authority, with no sizing/preliminary cases."""
+    creation = _public_creation_type(inputs)
+    try:
+        _validate_input_subtype(inputs)
+        return creation(**{item.name: getattr(inputs, item.name) for item in fields(creation)})
+    except (Protocol28InputError, AttributeError, ValueError) as exc:
+        raise Protocol28ContextError('provider context requires authenticated public manifest subtype') from exc
+
+
+def _initialize_context_indexes(context, inputs, safe_evidence, safe_lower_authority, reviewed):
+    evidence = inputs.snapshot_evidence_catalog
+    values = {
+        '_reviewed_discoveries': reviewed,
+        '_l3_projection_by_id': {item.identity: item for item in inputs.l3_projection_catalog.projections},
+        '_evidence_projection_by_id': {item.identity: item for item in evidence.projections},
+        '_evidence_object_by_id': {item.identity: item for item in
+            (*evidence.shards, *evidence.empty_receipts, *evidence.nontext_dispositions)},
+        '_safe_evidence_object_by_raw_id': {item.raw_evidence_id: item for item in safe_evidence.objects} if safe_evidence is not None else {},
+        '_uses_safe_evidence': safe_evidence is not None,
+        '_safe_lower_authority_by_raw_id': {item.raw_authority_id: item for item in safe_lower_authority.objects} if safe_lower_authority is not None else {},
+        '_uses_safe_lower_authority': safe_lower_authority is not None,
+        '_subject_by_id': {item.identity: item for item in inputs.exhaustive_subject_catalog.subjects},
+        '_encoded_lower_authority_by_id': {},
+    }
+    for name, value in values.items():
+        object.__setattr__(context, name, value)
+
+
+class _Protocol28SizingContext:
+    """Authenticated preactivation material, never a public provider context."""
+    def __init__(self, inputs, plan, safe_evidence=None, safe_lower_authority=None):
+        from harness.re_v2.knowledge_activation import (
+            load_reviewed_discovery, build_reviewed_discovery_catalog, validate_reviewed_discovery_catalog,
+        )
+        from harness.re_v2.protocol_28.safe_evidence import (
+            validate_safe_snapshot_evidence_catalog, validate_safe_lower_authority_catalog,
+        )
+        if type(inputs) is not _Protocol28SizingInputs:
+            raise Protocol28ContextError('invalid internal sizing material')
+        reviewed = inputs.reviewed_discoveries
+        if ((safe_evidence is None) != (safe_lower_authority is None)
+                or reviewed is not None and safe_evidence is None):
+            raise Protocol28ContextError('reviewed sizing requires both authenticated safe catalogues')
+        try:
+            objects = _validated_objects(inputs.authority_objects)
+            if reviewed is not None:
+                checked = tuple(load_reviewed_discovery(bundle.authority, bundle.objects,
+                    inputs.l3_projection_catalog, inputs.snapshot_evidence_catalog) for bundle in reviewed)
+                catalog = build_reviewed_discovery_catalog(checked)
+                reviewed = validate_reviewed_discovery_catalog(catalog,
+                    {key: payload for bundle in checked for key, payload in bundle.objects.items()},
+                    inputs.l3_projection_catalog, inputs.snapshot_evidence_catalog, inputs.exhaustive_subject_catalog)
+            if safe_evidence is not None:
+                validate_safe_snapshot_evidence_catalog(safe_evidence, inputs.snapshot_evidence_catalog)
+                required = {key for target in plan.target_plans for entry in target.entries for key in entry.required_lower_authority_ids}
+                validate_safe_lower_authority_catalog(safe_lower_authority, objects, tuple(sorted(required)))
+        except (Protocol28InputError, ValueError, KeyError, AttributeError, TypeError) as exc:
+            raise Protocol28ContextError('invalid authenticated reviewed/safe sizing material') from exc
+        self.inputs = replace(inputs, authority_objects=objects, reviewed_discoveries=reviewed)
+        _initialize_context_indexes(self, self.inputs, safe_evidence, safe_lower_authority, reviewed)
+        for key in {key for target in plan.target_plans for entry in target.entries for key in entry.required_lower_authority_ids}:
+            self._encoded_lower_authority_by_id[key] = _encode_lower_authority(self, key)
+
+
 @dataclass(frozen=True, slots=True)
 class Protocol28RunContext:
     paths: ReV2Paths
@@ -51,6 +166,12 @@ class Protocol28RunContext:
     ledger: Protocol28Ledger
     resources: L4ResourceStore
     controller: Protocol28Controller
+    safe_evidence_catalog_override: object | None = field(
+        default=None, repr=False, compare=False
+    )
+    safe_lower_authority_catalog_override: object | None = field(
+        default=None, repr=False, compare=False
+    )
     _l3_projection_by_id: dict[str, object] = field(
         init=False, repr=False, compare=False
     )
@@ -60,47 +181,56 @@ class Protocol28RunContext:
     _evidence_object_by_id: dict[str, object] = field(
         init=False, repr=False, compare=False
     )
+    _safe_evidence_object_by_raw_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+    _uses_safe_evidence: bool = field(init=False, repr=False, compare=False)
+    _safe_lower_authority_by_raw_id: dict[str, object] = field(
+        init=False, repr=False, compare=False
+    )
+    _uses_safe_lower_authority: bool = field(init=False, repr=False, compare=False)
     _subject_by_id: dict[str, object] = field(
         init=False, repr=False, compare=False
     )
-    _encoded_lower_authority_by_id: dict[str, dict[str, str]] = field(
+    _encoded_lower_authority_by_id: dict[str, dict[str, object]] = field(
         init=False, repr=False, compare=False
     )
+    _reviewed_discoveries: tuple | None = field(init=False, repr=False, compare=False)
+    _authenticated_inputs: object = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         inputs = self.inputs
+        if isinstance(inputs, _PreliminarySafeProtocol28Inputs):
+            raise Protocol28ContextError(
+                "preliminary Safe authority cannot enter a provider context"
+            )
+        inputs = _validated_public_inputs(inputs)
+        if self.safe_evidence_catalog_override is not None or self.safe_lower_authority_catalog_override is not None:
+            raise Protocol28ContextError('public provider contexts forbid sizing overrides')
         evidence = inputs.snapshot_evidence_catalog
-        object.__setattr__(
-            self,
-            "_l3_projection_by_id",
-            {item.identity: item for item in inputs.l3_projection_catalog.projections},
+        reviewed = None
+        if isinstance(inputs, (ReviewedProtocol28CreationInputs, ValidatedReviewedProtocol28Inputs)):
+            from harness.re_v2.knowledge_activation import validate_reviewed_discovery_catalog
+            reviewed = validate_reviewed_discovery_catalog(inputs.reviewed_discovery_catalog,
+                inputs.authority_objects, inputs.l3_projection_catalog, evidence, inputs.exhaustive_subject_catalog)
+        safe_evidence = (
+            inputs.safe_snapshot_evidence_catalog
+            if isinstance(
+                inputs,
+                (SafeProtocol28CreationInputs, ValidatedSafeProtocol28Inputs),
+            )
+            else None
         )
-        object.__setattr__(
-            self,
-            "_evidence_projection_by_id",
-            {item.identity: item for item in evidence.projections},
+        safe_lower_authority = (
+            inputs.safe_lower_authority_catalog
+            if isinstance(
+                inputs,
+                (SafeProtocol28CreationInputs, ValidatedSafeProtocol28Inputs),
+            )
+            else None
         )
-        object.__setattr__(
-            self,
-            "_evidence_object_by_id",
-            {
-                item.identity: item
-                for item in (
-                    *evidence.shards,
-                    *evidence.empty_receipts,
-                    *evidence.nontext_dispositions,
-                )
-            },
-        )
-        object.__setattr__(
-            self,
-            "_subject_by_id",
-            {
-                item.identity: item
-                for item in inputs.exhaustive_subject_catalog.subjects
-            },
-        )
-        object.__setattr__(self, "_encoded_lower_authority_by_id", {})
+        _initialize_context_indexes(self, inputs, safe_evidence, safe_lower_authority, reviewed)
+        object.__setattr__(self, '_authenticated_inputs', self.inputs)
 
     @property
     def run_dir(self) -> Path:
@@ -140,8 +270,53 @@ def build_protocol_28_slice_context(
     _enforce_bound: bool = True,
 ) -> bytes:
     """Build one role-local context solely from the published child store."""
-    if not isinstance(context, Protocol28RunContext):
-        raise Protocol28ContextError("slice context requires an exhaustive run")
+    if type(context) is not Protocol28RunContext:
+        raise Protocol28ContextError('slice context requires an exact public exhaustive run')
+    # Only the exact immutable input instance authenticated by the public
+    # constructor may use its indexes. Sizing/preliminary material has no route.
+    if context.inputs is not getattr(context, '_authenticated_inputs', None):
+        raise Protocol28ContextError('public context input is not its authenticated authority')
+    _public_creation_type(context.inputs)
+    try:
+        _validate_input_subtype(context.inputs)
+    except (Protocol28InputError, AttributeError) as exc:
+        raise Protocol28ContextError('public renderer requires a validated input subtype') from exc
+    for key in plan_entry.required_lower_authority_ids:
+        if key not in context._encoded_lower_authority_by_id:
+            context._encoded_lower_authority_by_id[key] = _encode_lower_authority(context, key)
+    encoded = _serialize_protocol_28_slice_context(context, target_plan, plan_entry, slice_spec,
+        role=role, candidate=candidate, repair_diagnostic_ids=repair_diagnostic_ids,
+        repair_diagnostics=repair_diagnostics, producer_contract_failure_codes=producer_contract_failure_codes,
+        producer_attempt_number=producer_attempt_number, verifier_attempt_number=verifier_attempt_number,
+        _enforce_bound=_enforce_bound)
+    if context.events is not None and any(e.type in {'knowledge_workflow_activated', 'knowledge_revision_activated'}
+            for e in context.events.replay()):
+        from harness.re_v2.knowledge_revision import load_knowledge_revision
+        from harness.re_v2.protocol_28.debt import knowledge_slice_debt
+        active = load_knowledge_revision(context)
+        inherited = knowledge_slice_debt(context, active, plan_entry.identity)
+        if inherited:
+            payload = json.loads(encoded)
+            payload['inherited_knowledge_debt'] = inherited
+            payload['input_quality'] = 'partial'
+            _validate_safe_free_text(payload)
+            encoded = canonical_json_bytes(payload)
+            maximum = context.inputs.exhaustive_policy.max_context_bytes + (
+                context.inputs.exhaustive_policy.max_candidate_output_bytes if role == 'verifier' else 0)
+            if _enforce_bound and len(encoded) > maximum:
+                raise Protocol28ContextError('inherited debt exceeds frozen slice context bound')
+    return encoded
+
+
+def _serialize_protocol_28_slice_context(
+    context, target_plan, plan_entry, slice_spec, *, role,
+    candidate=None, repair_diagnostic_ids=(), repair_diagnostics=(),
+    producer_contract_failure_codes=(), producer_attempt_number=1,
+    verifier_attempt_number=None, _enforce_bound=True,
+) -> bytes:
+    """Pure canonical encoding shared by authenticated sizing and public paths."""
+    if type(context) not in (Protocol28RunContext, _Protocol28SizingContext):
+        raise Protocol28ContextError('canonical encoding requires authenticated context material')
     if role not in {"producer", "verifier"}:
         raise Protocol28ContextError("slice context role must be producer or verifier")
     if (
@@ -228,6 +403,21 @@ def build_protocol_28_slice_context(
     )
     if {item.identity for item in evidence_objects} != evidence_ids:
         raise Protocol28ContextError("slice evidence authority is incomplete")
+    if context._uses_safe_evidence:
+        provider_evidence_objects = tuple(
+            sorted(
+                (
+                    context._safe_evidence_object_by_raw_id[item_id]
+                    for item_id in evidence_ids
+                    if item_id in context._safe_evidence_object_by_raw_id
+                ),
+                key=lambda item: item.identity,
+            )
+        )
+        if {item.raw_evidence_id for item in provider_evidence_objects} != evidence_ids:
+            raise Protocol28ContextError("slice safe evidence authority is incomplete")
+    else:
+        provider_evidence_objects = evidence_objects
     permitted_anchors = tuple(
         sorted(
             (
@@ -252,22 +442,11 @@ def build_protocol_28_slice_context(
     )
     if {item.identity for item in subjects} != subject_ids:
         raise Protocol28ContextError("slice subject authority is incomplete")
-    lower_objects: list[dict[str, str]] = []
+    lower_objects: list[dict[str, object]] = []
     for object_id in plan_entry.required_lower_authority_ids:
         encoded_authority = context._encoded_lower_authority_by_id.get(object_id)
-        if encoded_authority is not None:
-            lower_objects.append(encoded_authority)
-            continue
-        payload = inputs.authority_objects.get(object_id)
-        if payload is None:
-            raise Protocol28ContextError(
-                f"slice lower authority is unavailable: {object_id}"
-            )
-        encoded_authority = {
-            "object_id": object_id,
-            "bytes_base64": base64.b64encode(payload).decode("ascii"),
-        }
-        context._encoded_lower_authority_by_id[object_id] = encoded_authority
+        if encoded_authority is None:
+            raise Protocol28ContextError('slice requires authenticated encoded lower authority')
         lower_objects.append(encoded_authority)
     residual_debt = residual_debt_acceptance_from_objects(
         inputs.authority_objects
@@ -287,7 +466,9 @@ def build_protocol_28_slice_context(
             evidence_ids,
         ),
         "subjects": [item.to_json_dict() for item in subjects],
-        "snapshot_evidence": [item.to_json_dict() for item in evidence_objects],
+        "snapshot_evidence": [
+            item.to_json_dict() for item in provider_evidence_objects
+        ],
         "permitted_evidence_anchors": [
             {"anchor_id": item.identity, "anchor": item.to_json_dict()}
             for item in permitted_anchors
@@ -321,6 +502,21 @@ def build_protocol_28_slice_context(
         "candidate_id": None if candidate is None else candidate.identity,
         "candidate": None if candidate is None else candidate.to_json_dict(),
     }
+    if context._reviewed_discoveries is not None:
+        bundle = next(b for b in context._reviewed_discoveries if b.authority.source_id == plan_entry.source_id)
+        payload['reviewed_obligations'] = {
+            'depth': bundle.authority.depth,
+            'analysis_certified': False,
+            'categories': [
+                {'category_id': row.category_id, 'disposition': row.disposition,
+                 'assessment_id': row.identity, 'subject_ids': list(row.subject_ids)}
+                for row in bundle.category_assessments
+                if (row.target_kind, row.target_id) == (plan_entry.target_kind, plan_entry.target_id)
+            ],
+            'limits': 'Reviewed planning inputs only; analysis and reconciliation remain required.',
+        }
+    if context._uses_safe_evidence:
+        _validate_safe_free_text(payload)
     encoded = canonical_json_bytes(payload)
     maximum = inputs.exhaustive_policy.max_context_bytes
     if role == "verifier":
@@ -333,6 +529,18 @@ def build_protocol_28_slice_context(
             f"actual={len(encoded)} maximum={maximum}"
         )
     return encoded
+
+
+def _encode_lower_authority(context, object_id):
+    payload = context.inputs.authority_objects.get(object_id)
+    if payload is None:
+        raise Protocol28ContextError(f'slice lower authority is unavailable: {object_id}')
+    if context._uses_safe_lower_authority:
+        safe_authority = context._safe_lower_authority_by_raw_id.get(object_id)
+        if safe_authority is None:
+            raise Protocol28ContextError('slice safe lower authority is incomplete')
+        return safe_authority.to_provider_json_dict()
+    return {'object_id': object_id, 'bytes_base64': base64.b64encode(payload).decode('ascii')}
 
 
 def _slice_evidence_projection(
@@ -391,9 +599,15 @@ def load_protocol_28_run_context(
         resources = L4ResourceStore(
             paths.root / "resources.jsonl", inputs.manifest.budget_policy
         )
-        return Protocol28RunContext(
+        context = Protocol28RunContext(
             paths, inputs, objects, events, ledger, resources, controller
         )
+        from harness.re_v2.knowledge_revision import load_knowledge_revision, load_revision_inputs
+        active = load_knowledge_revision(context)
+        if active is not None:
+            context = Protocol28RunContext(paths, load_revision_inputs(objects, active.manifest.inputs_id),
+                objects, events, ledger, resources, controller)
+        return context
     return Protocol28ClosureRunContext(
         paths, inputs, objects, events, ledger, controller
     )
@@ -402,6 +616,13 @@ def load_protocol_28_run_context(
 def initialize_protocol_28_run(context: Protocol28Context) -> None:
     """Publish the exact initial event prefix once after manifest publication."""
     manifest = context.inputs.manifest
+    if isinstance(context, Protocol28RunContext):
+        from harness.re_v2.protocol_28.events import replay_protocol_28
+        if replay_protocol_28(context.events.replay()).knowledge_authorization_id is not None:
+            # Revision manifests supersede inputs, never the historical creation prefix.
+            from harness.re_v2.knowledge_revision import load_knowledge_revision
+            load_knowledge_revision(context)
+            return
     controller = context.controller
     controller.append_once(
         "l4_run_created", {"run_manifest_id": manifest.run_manifest_id}

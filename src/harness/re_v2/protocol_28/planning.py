@@ -213,11 +213,34 @@ class CategoryVacancyReceiptV1:
 
     @classmethod
     def from_json_dict(cls, value: object) -> "CategoryVacancyReceiptV1":
+        if cls is CategoryVacancyReceiptV1 and isinstance(value, dict) and 'reviewed_disposition_id' in value:
+            return ReviewedCategoryVacancyReceiptV1.from_json_dict(value)
         fields = frozenset(
             {"schema_version", "target_kind", "source_id", "target_id", "category_id", "coverage_ledger_seed_id"}
         )
         raw = _schema(exact_object, value, fields, cls.__name__)
         return cls(**{field: raw[field] for field in fields})
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedCategoryVacancyReceiptV1(CategoryVacancyReceiptV1):
+    """Only this explicit vacancy subtype can omit reviewed category work."""
+    reviewed_disposition_id: str
+
+    def __post_init__(self):
+        super(ReviewedCategoryVacancyReceiptV1, self).__post_init__()
+        _schema(digest_value, self.reviewed_disposition_id, 'reviewed_disposition_id')
+
+    def to_json_dict(self):
+        return {**super(ReviewedCategoryVacancyReceiptV1, self).to_json_dict(),
+                'reviewed_disposition_id': self.reviewed_disposition_id}
+
+    @classmethod
+    def from_json_dict(cls, value):
+        names = {'schema_version', 'target_kind', 'source_id', 'target_id', 'category_id',
+                 'coverage_ledger_seed_id', 'reviewed_disposition_id'}
+        raw = _schema(exact_object, value, frozenset(names), cls.__name__)
+        return cls(**raw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -646,6 +669,9 @@ def _target_plan(
     composition_dependency_root_ids: tuple[str, ...] = (),
     required_finding_ids: tuple[str, ...] = (),
     global_lower_authority_ids: tuple[str, ...] = (),
+    reviewed_categories=None,
+    disposed_evidence_ids=frozenset(),
+    reviewed_owners=None,
 ) -> ExhaustiveTargetPlanV1:
     categories = policy.domain_categories if target.target_kind == "domain" else policy.source_categories
     allowed = set(categories)
@@ -653,7 +679,7 @@ def _target_plan(
         if not set(subject.category_ids).issubset(allowed):
             raise Protocol28PlanningError("subject category is not applicable to target kind")
 
-    permitted = set(_all_evidence_ids(evidence_projection))
+    permitted = set(_all_evidence_ids(evidence_projection)) - set(disposed_evidence_ids)
     supporting = set(
         evidence_projection.supporting_shard_ids
         + evidence_projection.supporting_empty_receipt_ids
@@ -673,7 +699,9 @@ def _target_plan(
 
     repaired = isinstance(policy, ExhaustivePolicyV2)
     if repaired:
-        unassessed = sorted(category for category, items in subject_categories.items() if not items)
+        unassessed = sorted(category for category, items in subject_categories.items() if not items
+                            and (reviewed_categories is None or category not in reviewed_categories
+                                 or reviewed_categories[category].disposition not in {'not-applicable', 'outside-requested-depth'}))
         if unassessed:
             raise Protocol28PlanningError(
                 "unassessed categories require reviewed discovery before activation: "
@@ -684,8 +712,14 @@ def _target_plan(
 
     evidence_category: dict[str, str] = {}
     for evidence_id in sorted(permitted):
+        candidates_for_evidence = subjects
+        if reviewed_owners is not None:
+            owner = reviewed_owners.get(evidence_id)
+            if owner is None or owner not in subjects or evidence_id not in owner.evidence_ids:
+                raise Protocol28PlanningError('reviewed primary evidence owner is absent from target')
+            candidates_for_evidence = (owner,)
         candidates = sorted(
-            category for subject in subjects if evidence_id in subject.evidence_ids
+            category for subject in candidates_for_evidence if evidence_id in subject.evidence_ids
             for category in subject.category_ids
         )
         evidence_category[evidence_id] = candidates[0] if candidates else categories[-1]
@@ -717,7 +751,26 @@ def _target_plan(
     })
     for category in categories:
         category_subjects = tuple(sorted(subject_categories[category], key=lambda item: item.identity))
+        assessment = reviewed_categories.get(category) if reviewed_categories is not None else None
+        if assessment is not None and assessment.disposition != 'analyze':
+            if category_subjects or assessment.disposition not in {'not-applicable', 'outside-requested-depth'}:
+                raise Protocol28PlanningError('unknown or inconsistent reviewed category blocks planning')
+            vacancies.append(ReviewedCategoryVacancyReceiptV1(1, target.target_kind, target.source_id,
+                target.target_id, category, coverage_seed, assessment.identity))
+            continue
         primary_evidence = tuple(sorted(item for item, assigned in evidence_category.items() if assigned == category))
+
+        def supporting_for(primary_subjects, evidence_ids):
+            # Overflow may repeat an owner as support, but no other citing
+            # subject can replace the owner of primary work in this slice.
+            required = {reviewed_owners[item].identity: reviewed_owners[item]
+                        for item in evidence_ids if reviewed_owners is not None and item in primary_evidence}
+            for subject in primary_subjects:
+                required.pop(subject.identity, None)
+            extra = _supporting_subjects_for_evidence(category_subjects,
+                (*primary_subjects, *required.values()), evidence_ids)
+            required.update((subject.identity, subject) for subject in extra)
+            return tuple(required[key] for key in sorted(required))
         primary_records = tuple(sorted(item for item, assigned in record_category.items() if assigned == category))
         findings = tuple(sorted(item for item, assigned in finding_category.items() if assigned == category))
         if not category_subjects and not primary_evidence and not primary_records and not findings:
@@ -776,8 +829,8 @@ def _target_plan(
             adds_record = record_id in unassigned_records
 
             def exceeds_bound() -> bool:
-                support = _supporting_subjects_for_evidence(
-                    category_subjects, tuple(current["subjects"]),  # type: ignore[arg-type]
+                support = supporting_for(
+                    tuple(current["subjects"]),  # type: ignore[arg-type]
                     tuple((*current_evidence, evidence_id)),
                 ) if repaired else ()
                 support_bytes = sum(len(canonical_json_bytes(item.to_json_dict())) for item in support)
@@ -820,8 +873,8 @@ def _target_plan(
             assert isinstance(packed_subjects, list)
             assert isinstance(packed_evidence, list)
             assert isinstance(packed_records, list)
-            bound_support = _supporting_subjects_for_evidence(
-                category_subjects, tuple(packed_subjects), tuple(packed_evidence),
+            bound_support = supporting_for(
+                tuple(packed_subjects), tuple(packed_evidence),
             ) if repaired else ()
             owned_evidence = tuple(item for item in packed_evidence if item in primary_evidence)
             support_evidence = tuple(item for item in packed_evidence if item not in primary_evidence)
@@ -907,6 +960,43 @@ def _target_plan(
     )
 
 
+def _reviewed_plan_rows(reviewed, subjects, evidence):
+    if reviewed is None:
+        return {}, set(), None
+    from harness.re_v2.knowledge_activation import load_reviewed_discovery
+    import json
+    if not isinstance(reviewed, tuple) or not reviewed:
+        raise Protocol28PlanningError('reviewed planning authority is required')
+    checked = []
+    for bundle in reviewed:
+        l3 = L3TargetProjectionCatalogV1.from_json_dict(json.loads(
+            bundle.objects[bundle.subject_catalog.l3_projection_catalog_id]))
+        checked.append(load_reviewed_discovery(bundle.authority, bundle.objects, l3, evidence))
+    if (len({b.authority.source_id for b in checked}) != len(checked)
+            or {b.authority.source_id for b in checked} != {p.source_id for p in evidence.projections}
+            or tuple(sorted((s for b in checked for s in b.subject_catalog.subjects), key=lambda s: s.sort_key)) != subjects.subjects):
+        raise Protocol28PlanningError('reviewed source or subject closure differs')
+    rows = {}
+    for bundle in checked:
+        for row in bundle.category_assessments:
+            if row.disposition == 'unknown':
+                raise Protocol28PlanningError('unknown reviewed obligation blocks planning')
+            key = (row.source_id, row.target_kind, row.target_id)
+            rows.setdefault(key, {})[row.category_id] = row
+    disposed = {i for b in checked for r in b.inventory_assessments
+                if r.disposition in {'excluded', 'non-behavioral'} for i in r.raw_evidence_ids}
+    by_subject = {subject.identity: subject for subject in subjects.subjects}
+    owners = {}
+    for bundle in checked:
+        for row in bundle.inventory_assessments:
+            if row.disposition == 'owned':
+                for raw_id in row.raw_evidence_ids:
+                    if raw_id in owners or raw_id in disposed:
+                        raise Protocol28PlanningError('duplicate reviewed primary evidence ownership')
+                    owners[raw_id] = by_subject[row.subject_id]
+    return rows, disposed, owners
+
+
 def build_exhaustive_plan(
     parent: ParentAuthorityBundleV3,
     l3: L3TargetProjectionCatalogV1,
@@ -914,6 +1004,7 @@ def build_exhaustive_plan(
     subjects: ExhaustiveSubjectCatalogV1,
     policy: ExhaustivePolicyV1,
     selection: SelectionScopeV1,
+    *, reviewed=None,
 ) -> ExhaustivePlanV1:
     """Build a deterministic, exact-coverage L4 plan or reject preactivation."""
     if not all((
@@ -977,12 +1068,15 @@ def build_exhaustive_plan(
             )
         )
     ) if subjects.subjects else ()
+    reviewed_categories, disposed, owners = _reviewed_plan_rows(reviewed, subjects, evidence)
     domain_plans = tuple(
         _target_plan(
             l3_by_target[key], evidence_by_target[key],
             tuple(subjects_by_target[key]), policy, evidence,
             required_finding_ids=findings_by_target[key],
             global_lower_authority_ids=common_lower_authority_ids,
+            reviewed_categories=reviewed_categories.get(key), disposed_evidence_ids=disposed,
+            reviewed_owners=owners,
         )
         for key in sorted(l3_by_target)
         if key[1] == "domain"
@@ -996,6 +1090,8 @@ def build_exhaustive_plan(
             )),
             findings_by_target[key],
             common_lower_authority_ids,
+            reviewed_categories=reviewed_categories.get(key), disposed_evidence_ids=disposed,
+            reviewed_owners=owners,
         )
         for key in sorted(l3_by_target)
         if key[1] == "source"
@@ -1008,7 +1104,7 @@ def build_exhaustive_plan(
         parent.identity, l3.identity, evidence.identity, subjects.identity, policy.identity,
         "all-scope" if selection.all_sources else "selected-scope", plans,
     )
-    validate_exhaustive_plan_coverage(plan, subjects, evidence, policy)
+    validate_exhaustive_plan_coverage(plan, subjects, evidence, policy, reviewed=reviewed)
     return plan
 
 
@@ -1017,10 +1113,19 @@ def validate_exhaustive_plan_coverage(
     subjects: ExhaustiveSubjectCatalogV1,
     evidence: SnapshotEvidenceCatalogV1,
     policy: ExhaustivePolicyV1,
+    *, reviewed=None,
 ) -> None:
     """Reject structural false completeness under the pinned repaired contract."""
     if not isinstance(policy, ExhaustivePolicyV2):
+        if reviewed is not None:
+            raise Protocol28PlanningError('reviewed planning requires repaired policy')
         return
+    reviewed_categories, disposed, owners = _reviewed_plan_rows(reviewed, subjects, evidence)
+    if owners is not None:
+        primary = [raw_id for target in plan.target_plans for entry in target.entries
+                   for raw_id in entry.primary_snapshot_evidence_ids]
+        if sorted(primary) != sorted(owners):
+            raise Protocol28PlanningError('reviewed primary ownership requires exactly one work assignment')
     projections = {
         (item.source_id, item.target_kind, item.target_id): item for item in evidence.projections
     }
@@ -1032,7 +1137,19 @@ def validate_exhaustive_plan_coverage(
         raise Protocol28PlanningError("repaired plan exceeds run entry cap")
     for target in plan.target_plans:
         categories = set(policy.domain_categories if target.target_kind == "domain" else policy.source_categories)
-        if target.vacancy_receipts or {entry.category_id for entry in target.entries} != categories:
+        assessed = reviewed_categories.get(target.sort_key)
+        vacant = {r.category_id for r in target.vacancy_receipts}
+        if assessed is not None:
+            expected_vacant = {c for c, row in assessed.items() if row.disposition != 'analyze'}
+            if vacant != expected_vacant or len(vacant) != len(target.vacancy_receipts):
+                raise Protocol28PlanningError('reviewed category vacancy closure differs')
+            for receipt in target.vacancy_receipts:
+                if (not isinstance(receipt, ReviewedCategoryVacancyReceiptV1)
+                        or receipt.reviewed_disposition_id != assessed[receipt.category_id].identity
+                        or (receipt.source_id, receipt.target_kind, receipt.target_id) != target.sort_key):
+                    raise Protocol28PlanningError('unauthenticated reviewed vacancy')
+        if ((assessed is None and target.vacancy_receipts)
+                or {entry.category_id for entry in target.entries} != categories - vacant):
             raise Protocol28PlanningError("unassessed categories cannot certify repaired coverage")
         projection = projections[target.sort_key]
         if target.evidence_projection_id != projection.identity:
@@ -1041,7 +1158,7 @@ def validate_exhaustive_plan_coverage(
             item for item in subjects.subjects
             if (item.source_id, item.target_kind, item.target_id) == target.sort_key
         )
-        permitted = set(_all_evidence_ids(projection))
+        permitted = set(_all_evidence_ids(projection)) - disposed
         available = permitted | set(
             projection.supporting_shard_ids + projection.supporting_empty_receipt_ids
             + projection.supporting_nontext_disposition_ids
@@ -1092,6 +1209,12 @@ def validate_exhaustive_plan_coverage(
             ):
                 raise Protocol28PlanningError("repaired slice differs from its frozen target contract")
             attached = entry.primary_subject_ids + entry.supporting_subject_ids
+            if owners is not None:
+                for raw_id in entry.primary_snapshot_evidence_ids:
+                    owner = owners[raw_id]
+                    if (owner.identity not in attached or entry.category_id not in owner.category_ids
+                            or (owner.source_id, owner.target_kind, owner.target_id) != target.sort_key):
+                        raise Protocol28PlanningError('primary work differs from authenticated reviewed owner')
             if not attached or len(attached) != len(set(attached)):
                 raise Protocol28PlanningError("repaired slice requires distinct relevant subjects")
             bound = []

@@ -38,7 +38,7 @@ class KnowledgeDispatchPolicy:
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeProviderContract:
-    """Stored offline adapter authority. Not a claim of production isolation."""
+    """Stored adapter/accounting authority, not a native isolation claim."""
     provider_id: str
     model_id: str
     adapter_digest: str
@@ -49,9 +49,13 @@ class KnowledgeProviderContract:
         safe_id(self.provider_id, "provider")
         safe_id(self.model_id, "model")
         digest_value(self.adapter_digest, "adapter")
-        if self.execution_mode != "offline-scripted":
+        allowed = {
+            "offline-scripted": "utf8-byte-upper-bound",
+            "configured-provider-accounted": "rendered-prompt-utf8-bytes",
+        }
+        if self.execution_mode not in allowed:
             raise DiscoveryError("production-discovery-backend-not-enabled")
-        if self.input_accounting != "utf8-byte-upper-bound":
+        if self.input_accounting != allowed[self.execution_mode]:
             raise DiscoveryError("unsupported-discovery-input-accounting")
 
     @property
@@ -86,7 +90,7 @@ class _DispatchProtocol:
 
     def canonical_payload(self, kind, payload):
         if kind not in {"account_opened", "dispatch_reserved", "review_reserved",
-                        "dispatch_captured", "discovery_applied", "review_applied"}:
+                        "dispatch_captured", "discovery_applied", "review_applied", "account_transferred"}:
             raise DiscoveryError("invalid-knowledge-dispatch-event")
         _obj(payload, ("receipt_id",))
         digest_value(payload["receipt_id"], "receipt")
@@ -101,6 +105,7 @@ class _DispatchState:
         self.opening, self.opened = opening, False
         self.dispatches, self.captures, self.applied, self.sources = {}, {}, {}, {}
         self.dispatch_kinds, self.discovery_sources, self.review_sources = {}, {}, {}
+        self.transfer_id = None
 
     def view(self):
         return self
@@ -134,6 +139,8 @@ class _DispatchState:
                 or conservative_charge(capture["active_ms"], capture["active_status"], reserve["active_ms"]) > reserve["active_ms"])
 
     def _resource_refusal(self, request):
+        if self.transfer_id is not None:
+            return 'knowledge-account-transferred'
         usage, policy = self.usage(), self.opening["policy"]
         if usage.reservation_breached:
             return "reservation-exceeded"
@@ -185,6 +192,25 @@ class _DispatchState:
 
     def consume(self, record, objects):
         row = _load(objects.read_blob(record.payload["receipt_id"]))
+        if record.type == 'account_transferred':
+            from harness.re_v2.protocol_28.model import KnowledgeAccountTransferV1
+            transfer = KnowledgeAccountTransferV1.from_json_dict(row)
+            usage = self.usage()
+            if (not self.opened or self.transfer_id is not None
+                    or transfer.account_id != content_digest(self.opening)
+                    or transfer.logical_run_id != self.opening['logical_run_id']
+                    or transfer.account_tail_id != record.previous_record_hash
+                    or transfer.settled_dispatch_ids != tuple(sorted(self.dispatches))
+                    or set(self.dispatches) != set(self.captures)
+                    or usage.open_tokens or usage.open_active_ms or usage.reservation_breached
+                    or (transfer.charged_tokens, transfer.charged_active_ms) != (usage.charged_tokens, usage.charged_active_ms)
+                    or (transfer.token_limit, transfer.active_ms_limit) != (
+                        self.opening['policy']['token_limit'], self.opening['policy']['active_ms_limit'])):
+                raise DiscoveryError('invalid-knowledge-account-transfer')
+            self.transfer_id = transfer.identity
+            return
+        if self.transfer_id is not None:
+            raise DiscoveryError('knowledge-account-transferred')
         if record.type == "account_opened":
             if self.opened or row != self.opening:
                 raise DiscoveryError("knowledge-account-mismatch")

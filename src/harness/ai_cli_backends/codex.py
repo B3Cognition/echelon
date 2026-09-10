@@ -16,6 +16,10 @@ from harness.ai_cli_backends.codex_capture import (
     CodexCaptureError,
     capture_codex_pipes,
 )
+from harness.ai_cli_backends.codex_constrained import (
+    ConstrainedRequestError,
+    prepare_constrained_request,
+)
 from harness.ai_cli_backends.claude import (
     _sandbox_exec_path,
     _workspace_sandbox_profile,
@@ -35,6 +39,7 @@ _PRODUCT_PLANE_PERMISSION_PROFILE = "echelon_product_plane"
 
 class CodexCliBackend:
     name = "codex"
+    constrained_execution_contract_id = "codex-constrained-prompt-v1"
 
     def __init__(self, config: HarnessConfig) -> None:
         self._config = config
@@ -70,6 +75,51 @@ class CodexCliBackend:
             use_final_message=False,
             screen_output=screen_output,
             max_capture_bytes=max_capture_bytes,
+        )
+
+    def run_constrained_prompt(
+        self,
+        request: CliRunRequest,
+        *,
+        model: str,
+        screen_output: Callable[[bytes], bytes],
+        max_input_bytes: int,
+        max_capture_bytes: int,
+    ) -> CliRunResult:
+        """Run one opt-in bounded request through native Codex stdin."""
+        try:
+            prepared = prepare_constrained_request(
+                self._bin,
+                request,
+                model=model,
+                screen_output=screen_output,
+                max_input_bytes=max_input_bytes,
+                max_capture_bytes=max_capture_bytes,
+                tool_policy=self._config.llm.tool_policy,
+            )
+        except ConstrainedRequestError as exc:
+            return _screened_failure(exc.reason)
+
+        try:
+            proc = subprocess.Popen(
+                list(prepared.command),
+                cwd=request.cwd,
+                env=prepared.env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except Exception:
+            return _screened_failure("process_start_error")
+
+        return _run_screened_process(
+            proc,
+            screen_output=screen_output,
+            max_capture_bytes=max_capture_bytes,
+            timeout_s=float(request.timeout_s),
+            request_model=model,
+            isolated_user_config=True,
+            input_bytes=prepared.prompt_bytes,
         )
 
     def _run_codex(
@@ -318,13 +368,25 @@ class CodexCliBackend:
 _SCREENED_FAILURE_TEXT = "screened Codex capture failed"
 
 
-def _screened_failure(reason: str, *, timed_out: bool = False) -> CliRunResult:
+def _screened_failure(
+    reason: str,
+    *,
+    timed_out: bool = False,
+    token_usage: int | None = None,
+    token_usage_details: Mapping[str, int] | None = None,
+    token_usage_status: str | None = None,
+) -> CliRunResult:
+    metadata: dict[str, object] = {"failure_reason": reason}
+    if token_usage_details:
+        metadata["token_usage_details"] = dict(token_usage_details)
+        metadata["token_usage_status"] = token_usage_status or "untrusted"
     return CliRunResult(
         exit_code=124 if timed_out else 125,
         stdout="",
         stderr=_SCREENED_FAILURE_TEXT,
+        token_usage=token_usage,
         timed_out=timed_out,
-        metadata={"failure_reason": reason},
+        metadata=metadata,
     )
 
 
@@ -409,62 +471,71 @@ def _run_screened_process(
     timeout_s: float,
     request_model: str | None,
     isolated_user_config: bool,
+    input_bytes: bytes | None = None,
 ) -> CliRunResult:
     try:
         captured = capture_codex_pipes(
             proc,
             max_capture_bytes=max_capture_bytes,
             timeout_s=timeout_s,
+            input_bytes=input_bytes,
         )
     except CodexCaptureError as exc:
         return _screened_failure(exc.reason, timed_out=exc.timed_out)
 
     stdout = captured.stdout
     stderr = captured.stderr
+    failure_reason: str | None = None
     if not _screen_identical(screen_output, stdout):
-        return _screened_failure("screen_rejected")
+        failure_reason = "screen_rejected"
     if not _screen_identical(screen_output, stderr):
-        return _screened_failure("screen_rejected")
-
-    try:
-        text = stdout.decode("utf-8", errors="strict")
-        stderr.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        return _screened_failure("malformed_capture")
+        failure_reason = failure_reason or "screen_rejected"
 
     final_text: str | None = None
     pending_modern_answer: str | None = None
     modern_turn_unfinished = False
-    token_usage: int | None = None
-    token_usage_details: dict[str, int] = {}
+    usage = _ScreenedUsage()
+    try:
+        stderr.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        failure_reason = failure_reason or "malformed_capture"
     for raw_record in stdout.splitlines():
         if not raw_record.strip():
             continue
         if not _screen_identical(screen_output, raw_record):
-            return _screened_failure("screen_rejected")
+            failure_reason = failure_reason or "screen_rejected"
+            usage.mark_untrusted()
+            continue
         event, parse_failure = _screened_json_event(raw_record, screen_output)
         if parse_failure is not None:
-            return _screened_failure(parse_failure)
+            failure_reason = failure_reason or parse_failure
+            usage.mark_untrusted()
+            continue
         assert event is not None
         if not _screened_event_is_inspectable(event):
-            return _screened_failure("malformed_capture")
+            failure_reason = failure_reason or "malformed_capture"
+            usage.mark_untrusted()
+            continue
 
         event_type = event.get("type")
         item = event.get("item")
         if event_type in {"error", "turn.failed"} or (
             isinstance(item, dict) and item.get("type") == "error"
         ):
-            return _screened_failure("provider_event_failure")
+            failure_reason = failure_reason or "provider_event_failure"
+            usage.fail_modern()
         if isinstance(item, dict) and item.get("type") in {
             "command_execution",
             "file_change",
             "mcp_tool_call",
             "web_search",
         }:
-            return _screened_failure("tool_event")
+            failure_reason = failure_reason or "tool_event"
         if event_type == "turn.started":
+            final_text = None
             pending_modern_answer = None
             modern_turn_unfinished = True
+            usage.start_modern()
         if event_type == "item.completed" and isinstance(item, dict):
             if item.get("type") == "agent_message":
                 candidate = item.get("text")
@@ -476,9 +547,9 @@ def _run_screened_process(
         payload_type = payload.get("type") if isinstance(payload, dict) else None
         if event_type == "event_msg" and isinstance(payload_type, str):
             if _legacy_tool_event(payload_type):
-                return _screened_failure("tool_event")
+                failure_reason = failure_reason or "tool_event"
             if _legacy_failure_event(payload_type):
-                return _screened_failure("provider_event_failure")
+                failure_reason = failure_reason or "provider_event_failure"
             if payload_type == "task_complete":
                 candidate = payload.get("last_agent_message")
                 if isinstance(candidate, str):
@@ -490,23 +561,50 @@ def _run_screened_process(
             final_text = pending_modern_answer
             pending_modern_answer = None
             modern_turn_unfinished = False
-            token_usage_details = _extract_token_usage_details(event.get("usage"))
-            token_usage = token_usage_details.get("total_tokens")
+            usage.add_modern(event.get("usage"))
         elif event_type == "event_msg" and payload_type == "token_count":
             assert isinstance(payload, dict)
-            token_usage_details = _extract_token_usage_details(payload.get("info"))
-            token_usage = token_usage_details.get("total_tokens")
+            usage.set_legacy(payload.get("info"))
+
+    token_usage, token_usage_details, token_usage_status = usage.result()
+    if failure_reason is not None:
+        return _screened_failure(
+            failure_reason,
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            token_usage_status=token_usage_status,
+        )
 
     if captured.returncode != 0:
-        return _screened_failure("provider_exit")
+        return _screened_failure(
+            "provider_exit",
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            token_usage_status=token_usage_status,
+        )
     if final_text is None or modern_turn_unfinished:
-        return _screened_failure("missing_final_answer")
+        return _screened_failure(
+            "missing_final_answer",
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            token_usage_status=token_usage_status,
+        )
     try:
         final_bytes = final_text.encode("utf-8")
     except UnicodeEncodeError:
-        return _screened_failure("malformed_capture")
+        return _screened_failure(
+            "malformed_capture",
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            token_usage_status=token_usage_status,
+        )
     if not _screen_identical(screen_output, final_bytes):
-        return _screened_failure("screen_rejected")
+        return _screened_failure(
+            "screen_rejected",
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            token_usage_status=token_usage_status,
+        )
 
     metadata: dict[str, object] = {
         "task_complete": True,
@@ -515,6 +613,7 @@ def _run_screened_process(
     }
     if token_usage_details:
         metadata["token_usage_details"] = token_usage_details
+        metadata["token_usage_status"] = token_usage_status
     return CliRunResult(
         exit_code=0,
         stdout=final_text,
@@ -522,6 +621,199 @@ def _run_screened_process(
         token_usage=token_usage,
         metadata=metadata,
     )
+
+
+class _ScreenedUsage:
+    """Aggregate modern turn observations without double-counting legacy snapshots."""
+
+    def __init__(self) -> None:
+        self._modern_count = 0
+        self._modern_complete = True
+        self._modern_totals_complete = True
+        self._stream_complete = True
+        self._modern_pending = False
+        self._modern_failed = False
+        self._known_modern_total = 0
+        self._has_known_modern_total = False
+        self._modern_details: dict[str, int] = {}
+        self._legacy: tuple[int | None, dict[str, int], str] | None = None
+        # Mixed formats may overlap. Preserve bounds before incomplete or
+        # inconsistent later observations lose their component evidence.
+        self._modern_lower_bound: int | None = None
+        self._legacy_lower_bound: tuple[int, dict[str, int]] | None = None
+
+    def mark_untrusted(self) -> None:
+        self._stream_complete = False
+
+    def start_modern(self) -> None:
+        self._modern_pending = True
+
+    def fail_modern(self) -> None:
+        self._modern_pending = False
+        self._modern_failed = True
+
+    def add_modern(self, raw: object) -> None:
+        self._modern_pending = False
+        self._modern_count += 1
+        total, details, status = _screened_usage_observation(raw)
+        lower_bound = _screened_usage_lower_bound(total, details)
+        if lower_bound is not None:
+            # Modern completed turns are disjoint; total and components within
+            # one turn are alternative bounds, not additional spend.
+            self._modern_lower_bound = (self._modern_lower_bound or 0) + lower_bound
+        if total is None:
+            self._modern_complete = False
+            self._modern_totals_complete = False
+        else:
+            self._known_modern_total += total
+            self._has_known_modern_total = True
+        if status != "trusted_exact":
+            self._modern_complete = False
+        for key, value in details.items():
+            self._modern_details[key] = self._modern_details.get(key, 0) + value
+
+    def set_legacy(self, raw: object) -> None:
+        observed = _screened_usage_observation(raw)
+        total, details, _ = observed
+        lower_bound = _screened_usage_lower_bound(total, details)
+        if lower_bound is not None and (
+            self._legacy_lower_bound is None or lower_bound > self._legacy_lower_bound[0]
+        ):
+            # Legacy snapshots are cumulative, so retain a maximum, never a sum
+            # or a synthetic combination of components from different snapshots.
+            self._legacy_lower_bound = (lower_bound, dict(details))
+        if self._legacy is None:
+            self._legacy = observed
+            return
+        previous_total, previous_details, previous_status = self._legacy
+        total, details, status = observed
+        if total is None:
+            self._legacy = (
+                previous_total,
+                previous_details or details,
+                "untrusted" if previous_total is not None or details else previous_status,
+            )
+            return
+        if previous_total is None or total > previous_total:
+            self._legacy = (total, details, status)
+            return
+        if total == previous_total and status == "trusted_exact":
+            self._legacy = observed
+            return
+        # Legacy token_count events are cumulative snapshots. A lower or
+        # incomplete later snapshot cannot refund the greatest known spend.
+        self._legacy = (previous_total, previous_details, "untrusted")
+
+    def result(self) -> tuple[int | None, dict[str, int], str]:
+        if self._modern_count:
+            details = dict(self._modern_details)
+            if self._modern_totals_complete:
+                total = details.get("total_tokens")
+            else:
+                details.pop("total_tokens", None)
+                # A later incomplete turn must not erase a complete earlier
+                # observation. This is a lower bound only, so it remains
+                # explicitly untrusted downstream.
+                total = (
+                    self._known_modern_total
+                    if self._has_known_modern_total
+                    else None
+                )
+            if self._legacy is not None:
+                total = self._modern_lower_bound
+                # Both formats can describe overlapping spend. Retain the
+                # larger observed lower bound with its observed breakdown,
+                # never sum the representations or let a partial turn refund it.
+                if self._legacy_lower_bound is not None:
+                    legacy_total, legacy_details = self._legacy_lower_bound
+                    if total is None or legacy_total > total:
+                        return legacy_total, dict(legacy_details), "untrusted"
+                return total, details, "untrusted"
+            if not details:
+                return None, {}, "unavailable"
+            status = (
+                "trusted_exact"
+                if (
+                    total is not None
+                    and self._modern_complete
+                    and self._stream_complete
+                    and not self._modern_pending
+                    and not self._modern_failed
+                    and self._legacy is None
+                )
+                else "untrusted"
+            )
+            return total, details, status
+        if self._legacy is not None:
+            total, details, status = self._legacy
+            if details and not self._stream_complete:
+                status = "untrusted"
+            return total, details, status
+        return None, {}, "unavailable"
+
+
+def _screened_usage_lower_bound(total: int | None, details: Mapping[str, int]) -> int | None:
+    """Compare already-screened billable counts without recounting subcomponents."""
+    if total is None and "input_tokens" not in details and "output_tokens" not in details:
+        return None
+    return max(total or 0, details.get("input_tokens", 0) + details.get("output_tokens", 0))
+
+
+def _screened_usage_observation(
+    raw: object,
+) -> tuple[int | None, dict[str, int], str]:
+    source = raw.get("total_token_usage") if isinstance(raw, dict) else None
+    values = source if isinstance(source, dict) else raw
+    if not isinstance(values, dict):
+        return None, {}, "unavailable"
+
+    details: dict[str, int] = {}
+    for key in (
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    ):
+        value = values.get(key)
+        if type(value) is int and value >= 0:
+            details[key] = value
+    if (
+        "total_tokens" not in details
+        and "input_tokens" in details
+        and "output_tokens" in details
+    ):
+        details["total_tokens"] = (
+            details["input_tokens"] + details["output_tokens"]
+        )
+
+    total = details.get("total_tokens")
+    if not details:
+        return None, {}, "unavailable"
+
+    required = (
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "reasoning_output_tokens",
+    )
+    exact = total is not None and all(key in details for key in required)
+    if "total_tokens" in values:
+        explicit_total = values.get("total_tokens")
+        exact = (
+            exact
+            and type(explicit_total) is int
+            and explicit_total >= 0
+            and explicit_total
+            == details["input_tokens"] + details["output_tokens"]
+        )
+    if exact:
+        exact = (
+            details["cached_input_tokens"] <= details["input_tokens"]
+            and details["reasoning_output_tokens"] <= details["output_tokens"]
+        )
+    return total, details, "trusted_exact" if exact else "untrusted"
 
 
 def _screened_event_is_inspectable(event: dict[object, object]) -> bool:

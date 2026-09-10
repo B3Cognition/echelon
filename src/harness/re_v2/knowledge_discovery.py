@@ -19,8 +19,29 @@ from harness.re_v2.knowledge_evidence import (
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
 from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
 from harness.re_v2.protocol_22.schema import digest_value, safe_id
-from harness.re_v2.protocol_28.policies import DOMAIN_CATEGORIES, SOURCE_CATEGORIES
+from harness.re_v2.protocol_28.policies import (
+    DOMAIN_CATEGORIES,
+    SOURCE_CATEGORIES,
+    Protocol28PolicyError,
+    categories_for_depth as _protocol_28_categories_for_depth,
+    category_depth_applicability,
+)
 from harness.re_v2.snapshot import CapturedSnapshot
+
+
+_AUTHORIAL_BYTE_LIMIT = 262_144
+
+
+def categories_for_depth(depth: str, target_kind: str) -> frozenset[str]:
+    """Canonical protocol-2.8 depth/category applicability for discovery.
+
+    Task 3 activation consumes this same policy rather than deriving a second
+    interpretation from model-authored dispositions.
+    """
+    try:
+        return _protocol_28_categories_for_depth(depth, target_kind)
+    except Protocol28PolicyError:
+        raise DiscoveryError("invalid-discovery-depth-category") from None
 
 
 class DiscoveryError(ValueError):
@@ -133,13 +154,39 @@ class DiscoveryBoundary:
         self._objects, self._quarantine = objects, quarantine
         self._files = next(source.files for source in partition.sources if source.source_id == source_id)
         self._source_ids = tuple(source.source_id for source in partition.sources)
+        self._partition = partition
 
     def run_authority(self):
         """Frozen snapshot/partition and declared sources; account may select a subset."""
         return {"snapshot_id": self._snapshot_id, "partition_id": self._partition_id,
                 "security_policy_id": security_policy_id(), "source_ids": list(self._source_ids)}
 
-    def _context(self, selectors, *, persist=True):
+    @classmethod
+    def from_catalog(cls, catalog, partition, selection, source_id, depth, origin, objects):
+        """Reconstruct the public admission boundary for read-only L4 replay."""
+        safe_id(source_id, "source")
+        digest_value(origin, "origin")
+        if depth not in {"quick", "standard", "deep"}:
+            raise DiscoveryError("invalid-discovery-depth")
+        result = cls.__new__(cls)
+        result._evidence = SafeEvidenceBoundary.from_catalog(
+            catalog, partition, selection, (source_id,), objects)
+        result._snapshot_id, result._partition_id = catalog.source_snapshot_id, partition.identity
+        result._source_id, result._depth, result._origin = source_id, depth, origin
+        result._objects, result._quarantine = objects, None
+        result._files = next(source.files for source in partition.sources if source.source_id == source_id)
+        result._source_ids = tuple(source.source_id for source in partition.sources)
+        result._partition = partition
+        return result
+
+    @property
+    def partition_authority(self):
+        """Frozen local inventory authority; never serialize into provider input."""
+        return self._partition
+
+    def _context(self, selectors, *, persist=True, schema_version=2):
+        if type(schema_version) is not int or schema_version not in {1, 2}:
+            raise DiscoveryError("invalid-discovery-context-version")
         if not isinstance(selectors, tuple) or len(selectors) > 64:
             raise DiscoveryError("discovery-evidence-bound")
         normalized = []
@@ -163,17 +210,20 @@ class DiscoveryBoundary:
             evidence.append({"projection_id": projection.projection_id,
                              "projection": _load(projection.provider_bytes())})
             mappings.append(projection.mapping_receipt_id)
-        context = canonical_json_bytes({
-            "schema_version": 1, "kind": "untrusted_discovery_context", "source_id": self._source_id,
+        context_value = {
+            "schema_version": schema_version, "kind": "untrusted_discovery_context", "source_id": self._source_id,
             "depth": self._depth, "origin_obligation_id": self._origin,
             "security_policy_id": security_policy_id(),
             "inventory": sorted(inventory, key=lambda r: r["path"]), "evidence": evidence,
             "required_categories": {"source": list(SOURCE_CATEGORIES), "domain": list(DOMAIN_CATEGORIES)},
-        })
+        }
+        if schema_version == 2:
+            context_value["category_depth_applicability"] = category_depth_applicability()
+        context = canonical_json_bytes(context_value)
         if len(context) > 262_144:
             raise DiscoveryError("discovery-context-bound")
         binding = canonical_json_bytes({
-            "schema_version": 1, "kind": "private_discovery_binding", "context_id": content_digest(context),
+            "schema_version": schema_version, "kind": "private_discovery_binding", "context_id": content_digest(context),
             "snapshot_id": self._snapshot_id, "partition_id": self._partition_id,
             "source_id": self._source_id, "depth": self._depth, "origin_obligation_id": self._origin,
             "security_policy_id": security_policy_id(), "selectors": normalized, "mapping_ids": mappings,
@@ -181,14 +231,20 @@ class DiscoveryBoundary:
         return context, binding
 
     @_closed_errors
-    def prepare(self, selectors: tuple[EvidenceSelectorV1, ...]) -> str:
-        context, binding = self._context(selectors)
+    def prepare(
+        self, selectors: tuple[EvidenceSelectorV1, ...], *, schema_version: int = 2
+    ) -> str:
+        context, binding = self._context(selectors, schema_version=schema_version)
         self._objects.put_blob(context)
         return self._objects.put_blob(binding)
 
     @_closed_errors
-    def verify_selection(self, selectors: tuple[EvidenceSelectorV1, ...]) -> str:
-        context, binding = self._context(selectors, persist=False)
+    def verify_selection(
+        self, selectors: tuple[EvidenceSelectorV1, ...], *, schema_version: int = 2
+    ) -> str:
+        context, binding = self._context(
+            selectors, persist=False, schema_version=schema_version
+        )
         if (self._objects.read_blob(content_digest(context)) != context
                 or self._objects.read_blob(content_digest(binding)) != binding):
             raise DiscoveryError("discovery-context-mismatch")
@@ -201,7 +257,10 @@ class DiscoveryBoundary:
         # Replay from the real pinned reader, not caller-constructed projection
         # handles or a content-addressed but unauthenticated replacement context.
         expected_context, expected_binding = self._context(
-            tuple(_selector(row) for row in _rows(binding["selectors"], 64)), persist=False)
+            tuple(_selector(row) for row in _rows(binding["selectors"], 64)),
+            persist=False,
+            schema_version=binding.get("schema_version"),
+        )
         if expected_binding != binding_bytes:
             raise DiscoveryError("discovery-binding-mismatch")
         context = self._objects.read_blob(binding["context_id"])
@@ -273,7 +332,17 @@ class DiscoveryBoundary:
         proposal = _load(proposal_source)
         if receipt["binding_id"] != binding_id:
             raise DiscoveryError("proposal-receipt-mismatch")
-        normalized = self._normalize_proposal(proposal, context)
+        proposal_for_normalization = proposal
+        if (receipt.get("schema_version") == 1
+                and proposal.get("schema_version") == 2):
+            proposal_for_normalization = {
+                **proposal,
+                "obligations": [
+                    {key: value for key, value in row.items() if key != "obligation_id"}
+                    for row in _rows(proposal["obligations"])
+                ],
+            }
+        normalized = self._normalize_proposal(proposal_for_normalization, context)
         proposal_bytes = canonical_json_bytes(normalized)
         stored_proposal = self._objects.read_blob(receipt["proposal_id"])
         _validate_replay_bytes(stored_proposal)
@@ -357,12 +426,25 @@ class DiscoveryBoundary:
         normalized = self._normalize_proposal(proposal, context)
         proposal_bytes = canonical_json_bytes(normalized)
         result = self._proposal_receipt(binding_id, normalized, response_id)
+        if len(proposal_bytes) > _AUTHORIAL_BYTE_LIMIT:
+            raise DiscoveryError("discovery-normalized-bound")
+        if len(result) > _AUTHORIAL_BYTE_LIMIT:
+            raise DiscoveryError("discovery-receipt-bound")
         if capture_bound:
             self._objects.put_blob(safe_output)
         self._objects.put_blob(proposal_bytes)
         return self._objects.put_blob(result)
 
     def _normalize_proposal(self, proposal, context):
+        if not isinstance(proposal, dict) or type(proposal.get("schema_version")) is not int:
+            raise DiscoveryError("invalid-discovery-response")
+        if proposal["schema_version"] == 1:
+            return self._normalize_proposal_v1(proposal, context)
+        if proposal["schema_version"] == 2:
+            return self._normalize_proposal_v2(proposal, context)
+        raise DiscoveryError("invalid-discovery-response")
+
+    def _normalize_proposal_v1(self, proposal, context):
         _obj(proposal, ("schema_version", "kind", "source_id", "domains", "subjects", "inventory", "obligations", "questions"))
         if (type(proposal["schema_version"]) is not int or proposal["schema_version"] != 1
                 or proposal["kind"] != "discovery_proposal" or proposal["source_id"] != self._source_id):
@@ -431,6 +513,247 @@ class DiscoveryBoundary:
                       "obligations": [{"target": target, "category": category} for target, category in sorted(obligations)],
                       "questions": sorted(questions, key=canonical_json_bytes)}
         return normalized
+
+    def _normalize_proposal_v2(self, proposal, context):
+        _obj(proposal, (
+            "schema_version", "kind", "source_id", "domains", "subjects",
+            "inventory", "obligations", "questions",
+        ))
+        if (proposal["schema_version"] != 2
+                or proposal["kind"] != "discovery_proposal"
+                or proposal["source_id"] != self._source_id):
+            raise DiscoveryError("invalid-discovery-response")
+
+        projections = {
+            row["projection_id"]: row["projection"] for row in context["evidence"]
+        }
+        supplied = set(projections)
+        visible = {
+            projection_id for projection_id, projection in projections.items()
+            if projection["disposition"] != "withheld"
+            and projection["text"].strip("*\n\r\t ")
+        }
+
+        def refs(value, *, visible_only=False, required=False):
+            rows = _rows(value, 64)
+            allowed = visible if visible_only else supplied
+            if ((required and not rows)
+                    or any(not isinstance(item, str) or item not in allowed for item in rows)
+                    or len(set(rows)) != len(rows)):
+                raise DiscoveryError("invalid-discovery-evidence")
+            return sorted(rows)
+
+        domains = {}
+        for raw in _rows(proposal["domains"], 256):
+            row = _obj(raw, ("key", "description", "evidence_ids"))
+            key = safe_id(row["key"], "key")
+            if key == "source" or key in domains:
+                raise DiscoveryError("duplicate-discovery-domain")
+            domains[key] = {
+                "key": key,
+                "description": _text(row["description"]),
+                "evidence_ids": refs(row["evidence_ids"], visible_only=True, required=True),
+            }
+
+        targets = {"source", *domains}
+        subjects = {}
+        for raw in _rows(proposal["subjects"], 1024):
+            row = _obj(raw, (
+                "key", "target", "description", "category_ids", "evidence_ids",
+            ))
+            key = safe_id(row["key"], "key")
+            target = row["target"]
+            if key in subjects or target not in targets:
+                raise DiscoveryError("invalid-discovery-subject")
+            target_kind = "source" if target == "source" else "domain"
+            allowed_categories = (
+                frozenset(SOURCE_CATEGORIES)
+                if target_kind == "source" else frozenset(DOMAIN_CATEGORIES)
+            )
+            category_ids = _rows(row["category_ids"], 16)
+            if (not category_ids
+                    or any(not isinstance(category, str) or category not in allowed_categories
+                           for category in category_ids)
+                    or len(set(category_ids)) != len(category_ids)
+                    or not set(category_ids).issubset(
+                        categories_for_depth(self._depth, target_kind)
+                    )):
+                raise DiscoveryError("invalid-discovery-subject-category")
+            subjects[key] = {
+                "key": key,
+                "target": target,
+                "description": _text(row["description"]),
+                "category_ids": sorted(category_ids),
+                "evidence_ids": refs(row["evidence_ids"], visible_only=True, required=True),
+            }
+        if any(not any(subject["target"] == key for subject in subjects.values())
+               for key in domains):
+            raise DiscoveryError("subjectless-discovery-domain")
+
+        inventory = {}
+        inventory_context = {row["path"]: row for row in context["inventory"]}
+        for raw in _rows(proposal["inventory"]):
+            row = _obj(raw, ("path", "owner", "reason"))
+            path = row["path"]
+            if (path not in inventory_context or path in inventory
+                    or (row["owner"] is not None and row["owner"] not in subjects)):
+                raise DiscoveryError("invalid-discovery-ownership")
+            inventory[path] = {
+                "path": path,
+                "owner": row["owner"],
+                "reason": _text(row["reason"]),
+            }
+        if set(inventory) != set(inventory_context):
+            raise DiscoveryError("incomplete-discovery-inventory")
+
+        subject_membership = {}
+        for target in targets:
+            categories = SOURCE_CATEGORIES if target == "source" else DOMAIN_CATEGORIES
+            for category in categories:
+                subject_membership[(target, category)] = sorted(
+                    key for key, subject in subjects.items()
+                    if subject["target"] == target
+                    and category in subject["category_ids"]
+                )
+
+        obligations = {}
+        dispositions = {
+            "analyze", "not-applicable", "unknown", "outside-requested-depth",
+        }
+        empty_source = bool(inventory_context) and all(
+            record["byte_count"] == 0 for record in inventory_context.values()
+        )
+        empty_source = empty_source or not inventory_context
+
+        def scoped_evidence(target, *, visible_only=False):
+            if target == "source":
+                return set(visible if visible_only else supplied)
+            target_paths = {
+                projections[item]["path"]
+                for item in (
+                    set(domains[target]["evidence_ids"])
+                    | set().union(*(
+                        set(subject["evidence_ids"])
+                        for subject in subjects.values() if subject["target"] == target
+                    ))
+                )
+            }
+            allowed = visible if visible_only else supplied
+            return {
+                item for item in allowed if projections[item]["path"] in target_paths
+            }
+
+        for raw in _rows(proposal["obligations"]):
+            row = _obj(raw, (
+                "target", "category", "disposition", "subject_keys",
+                "rationale", "evidence_ids",
+            ))
+            target, category = row["target"], row["category"]
+            pair = (target, category)
+            categories = (
+                SOURCE_CATEGORIES if target == "source"
+                else DOMAIN_CATEGORIES if target in domains else ()
+            )
+            if category not in categories or pair in obligations:
+                raise DiscoveryError("invalid-discovery-obligation")
+            disposition = row["disposition"]
+            if disposition not in dispositions:
+                raise DiscoveryError("invalid-discovery-disposition")
+            target_kind = "source" if target == "source" else "domain"
+            applicable = category in categories_for_depth(self._depth, target_kind)
+            if (disposition == "outside-requested-depth") == applicable:
+                raise DiscoveryError("invalid-outside-depth-obligation")
+            subject_keys = _rows(row["subject_keys"], 1024)
+            if (any(not isinstance(key, str) or key not in subjects for key in subject_keys)
+                    or len(set(subject_keys)) != len(subject_keys)):
+                raise DiscoveryError("invalid-discovery-obligation-subject")
+            subject_keys = sorted(subject_keys)
+            if subject_keys != subject_membership[pair]:
+                raise DiscoveryError("invalid-discovery-obligation-membership")
+            evidence_ids = refs(row["evidence_ids"])
+            if disposition == "analyze":
+                subject_evidence = set().union(*(
+                    set(subjects[key]["evidence_ids"]) for key in subject_keys
+                ))
+                if (not subject_keys or not evidence_ids
+                        or any(item not in visible for item in evidence_ids)
+                        or not set(evidence_ids).issubset(subject_evidence)
+                        or any(not set(evidence_ids).intersection(subjects[key]["evidence_ids"])
+                               for key in subject_keys)):
+                    raise DiscoveryError("unsupported-discovery-obligation")
+            elif subject_keys:
+                raise DiscoveryError("invalid-discovery-obligation-membership")
+            elif disposition == "not-applicable":
+                target_evidence = scoped_evidence(target, visible_only=True)
+                supported = (
+                    set(evidence_ids).issubset(target_evidence)
+                    and bool(set(evidence_ids).intersection(target_evidence).intersection(visible))
+                )
+                if not supported and not (target == "source" and empty_source):
+                    raise DiscoveryError("unsupported-not-applicable-obligation")
+            elif disposition == "unknown":
+                target_evidence = scoped_evidence(target)
+                supported = (
+                    bool(evidence_ids)
+                    and set(evidence_ids).issubset(target_evidence)
+                ) or (
+                    target == "source" and empty_source and not evidence_ids
+                )
+                if not supported:
+                    raise DiscoveryError("unattempted-discovery-obligation")
+            else:
+                target_evidence = scoped_evidence(target, visible_only=True)
+                if (target == "source" and empty_source and not evidence_ids):
+                    pass
+                elif (not evidence_ids
+                        or not set(evidence_ids).issubset(target_evidence)
+                        or any(item not in visible for item in evidence_ids)):
+                    raise DiscoveryError("invalid-discovery-evidence")
+
+            base = {
+                "target": target,
+                "category": category,
+                "disposition": disposition,
+                "subject_keys": subject_keys,
+                "rationale": _text(row["rationale"]),
+                "evidence_ids": sorted(evidence_ids),
+            }
+            obligations[pair] = {
+                **base,
+                "obligation_id": content_digest({
+                    "schema_version": 2,
+                    "kind": "discovery_category_obligation",
+                    "source_id": self._source_id,
+                    **base,
+                }),
+            }
+
+        expected = {("source", category) for category in SOURCE_CATEGORIES}
+        expected.update((key, category) for key in domains for category in DOMAIN_CATEGORIES)
+        if set(obligations) != expected:
+            raise DiscoveryError("incomplete-discovery-obligations")
+
+        questions = []
+        for raw in _rows(proposal["questions"], 256):
+            row = _obj(raw, ("target", "question", "evidence_ids"))
+            if row["target"] not in targets:
+                raise DiscoveryError("invalid-discovery-question")
+            questions.append({
+                "target": row["target"],
+                "question": _text(row["question"]),
+                "evidence_ids": refs(row["evidence_ids"]),
+            })
+
+        return {
+            "schema_version": 2,
+            "kind": "discovery_proposal",
+            "source_id": self._source_id,
+            "domains": [domains[key] for key in sorted(domains)],
+            "subjects": [subjects[key] for key in sorted(subjects)],
+            "inventory": [inventory[key] for key in sorted(inventory)],
+            "obligations": [obligations[key] for key in sorted(obligations)],
+            "questions": sorted(questions, key=canonical_json_bytes),
+        }
 
     def _proposal_receipt(self, binding_id, normalized, response_id):
         proposal_bytes = canonical_json_bytes(normalized)

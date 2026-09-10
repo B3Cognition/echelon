@@ -31,8 +31,9 @@ def capture_codex_pipes(
     *,
     max_capture_bytes: int,
     timeout_s: float,
+    input_bytes: bytes | None = None,
 ) -> CapturedCodexPipes:
-    """Drain both owned pipes without exposing bytes or exceeding the deadline."""
+    """Drain owned pipes and optionally feed stdin under one shared deadline."""
     deadline = time.monotonic() + timeout_s
     termination_reserve = min(0.25, timeout_s / 5)
     read_deadline = deadline - termination_reserve
@@ -41,6 +42,10 @@ def capture_codex_pipes(
         stderr = proc.stderr
         if stdout is None or stderr is None:
             raise CodexCaptureError("capture_error")
+        if input_bytes is not None and proc.stdin is None:
+            raise CodexCaptureError("capture_error")
+        if input_bytes is not None and type(input_bytes) is not bytes:
+            raise CodexCaptureError("capture_error")
         stdout.fileno()
         stderr.fileno()
         return _capture_os_pipes(
@@ -48,6 +53,7 @@ def capture_codex_pipes(
             max_capture_bytes=max_capture_bytes,
             read_deadline=read_deadline,
             deadline=deadline,
+            input_bytes=input_bytes,
         )
     except CodexCaptureError:
         _terminate_and_reap(proc, deadline)
@@ -63,6 +69,7 @@ def _capture_os_pipes(
     max_capture_bytes: int,
     read_deadline: float,
     deadline: float,
+    input_bytes: bytes | None,
 ) -> CapturedCodexPipes:
     selector = selectors.DefaultSelector()
     chunks = {"stdout": bytearray(), "stderr": bytearray()}
@@ -71,6 +78,17 @@ def _capture_os_pipes(
             assert pipe is not None
             os.set_blocking(pipe.fileno(), False)
             selector.register(pipe, selectors.EVENT_READ, data=name)
+
+        input_offset = 0
+        input_view = memoryview(input_bytes) if input_bytes is not None else None
+        if input_bytes is not None:
+            stdin = proc.stdin
+            assert stdin is not None
+            if input_bytes:
+                os.set_blocking(stdin.fileno(), False)
+                selector.register(stdin, selectors.EVENT_WRITE, data="stdin")
+            else:
+                _close_stdin(proc)
 
         total = 0
         while selector.get_map():
@@ -81,6 +99,23 @@ def _capture_os_pipes(
             if not ready:
                 raise CodexCaptureError("timeout", timed_out=True)
             for key, _mask in ready:
+                if key.data == "stdin":
+                    assert input_bytes is not None and input_view is not None
+                    try:
+                        written = os.write(key.fd, input_view[input_offset:])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        selector.unregister(key.fileobj)
+                        _close_stdin(proc)
+                        continue
+                    if written <= 0:
+                        raise CodexCaptureError("capture_error")
+                    input_offset += written
+                    if input_offset == len(input_bytes):
+                        selector.unregister(key.fileobj)
+                        _close_stdin(proc)
+                    continue
                 read_size = min(_READ_CHUNK_BYTES, max_capture_bytes - total + 1)
                 try:
                     chunk = os.read(key.fd, max(1, read_size))
@@ -114,6 +149,18 @@ def _capture_os_pipes(
         raise CodexCaptureError("capture_error") from exc
     finally:
         selector.close()
+        if input_bytes is not None:
+            _close_stdin(proc)
+
+
+def _close_stdin(proc: subprocess.Popen) -> None:
+    stdin = getattr(proc, "stdin", None)
+    if stdin is None:
+        return
+    try:
+        stdin.close()
+    except OSError:
+        pass
 
 
 def _terminate_and_reap(proc: subprocess.Popen, deadline: float) -> None:

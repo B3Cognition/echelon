@@ -1,0 +1,32 @@
+{
+  "artifacts": [],
+  "authority": "visual-sandbox-verifier",
+  "build_id": "unscoped",
+  "candidate_commit": "",
+  "candidate_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "evidence_sha256": "4aee21fddabafbe5f6a0325cfa3636085b40c50c2cc459db7b08d180270c2d16",
+  "failure_id": "visual_artifacts_missing",
+  "playwright": {
+    "failed": 0,
+    "passed": 1,
+    "skipped": 0,
+    "tests": [
+      {
+        "error": "",
+        "file": "tests/journey.spec.ts",
+        "id": "tests/journey.spec.ts::persistent journey::chromium::0",
+        "project": "chromium",
+        "status": "passed",
+        "title": "persistent journey"
+      }
+    ],
+    "total": 1
+  },
+  "receipt_sha256": "955d9e723581ff3a16cab0c82f26b862acc00616b30b9a2d63ca16d36c35173f",
+  "required_artifacts": true,
+  "schema_version": 1,
+  "screenshot_dir": "playwright-report",
+  "spec_id": "001",
+  "status": "failed",
+  "strategy_id": "default"
+}

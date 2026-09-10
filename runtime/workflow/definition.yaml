@@ -45,6 +45,14 @@ re_knowledge_discovery_review:
   admission: harness.re_v2.knowledge_discovery_review.DiscoveryReviewBoundary
   resource_account: same_logical_run
 
+# Explicit reviewed-authority work items; installed routing remains disabled.
+re_knowledge_reconciliation:
+  enabled: false
+  agent: echelon.re-knowledge-reconciler
+  phase_contract: phases/re-knowledge-reconciliation.md
+  controller: harness.re_v2.protocol_28.lifecycle.run_protocol_28_exhaustive
+  resource_account: same_logical_run
+
 # =============================================================================
 # GLOSSARY
 # Ambiguous terms used across agents. prompt_lint.py uses this to detect

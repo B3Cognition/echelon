@@ -10,6 +10,11 @@ import tempfile
 
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.knowledge_activation import (
+    ReviewedDiscoveryBundle, ReviewedSubjectCatalogV1,
+    build_reviewed_discovery_catalog, load_reviewed_discovery,
+)
+import json
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2.protocol_22.partition import (
     PartitionAuthoritiesV1,
@@ -34,6 +39,8 @@ from harness.re_v2.protocol_28.executors import (
 )
 from harness.re_v2.protocol_28.inputs import (
     Protocol28CreationInputs,
+    SafeProtocol28CreationInputs,
+    ReviewedProtocol28CreationInputs,
     protocol_28_required_authority_ids,
 )
 from harness.re_v2.protocol_28.context import (
@@ -43,8 +50,15 @@ from harness.re_v2.protocol_28.context import (
 )
 from harness.re_v2.protocol_28.model import (
     ExhaustiveBudgetPolicyV1,
-    ExhaustiveRequestV1,
-    ExhaustiveRunManifestV7,
+    SafeExhaustiveRequestV1,
+    SafeExhaustiveRunManifestV7,
+    ReviewedExhaustiveRequestV1, ReviewedExhaustiveRunManifestV7,
+)
+from harness.re_v2.protocol_28.safe_evidence import (
+    SafeLowerAuthorityCatalogV1,
+    SafeSnapshotEvidenceCatalogV1,
+    build_safe_lower_authority_catalog,
+    build_safe_snapshot_evidence_catalog,
 )
 from harness.re_v2.protocol_28.orchestration import DeepenOrchestrationRequestV1
 from harness.re_v2.protocol_28.planning import (
@@ -121,6 +135,12 @@ class Protocol28PreparationOptions:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ReviewedProtocol28PreparationOptions(Protocol28PreparationOptions):
+    """Explicit opt-in to captured and independently reviewed planning authority."""
+    reviewed_discoveries: tuple[ReviewedDiscoveryBundle, ...]
+
+
 def load_protocol_28_role_bytes(workspace_root: Path) -> tuple[bytes, bytes]:
     """Load the two neutral Prosaic role contracts through the shared loader."""
     loader = ProsaicPromptLoader(Path(workspace_root).resolve())
@@ -141,7 +161,7 @@ def prepare_protocol_28_request(
     intent: DeepenOrchestrationRequestV1,
     eligible_l3: ValidatedL3ParentV1 | ValidatedL3ParentV2,
     options: Protocol28PreparationOptions,
-) -> Protocol28CreationInputs:
+) -> SafeProtocol28CreationInputs:
     """Assemble a complete immutable L4 child input set without publishing it."""
     root = Path(workspace_root).resolve()
     if not isinstance(intent, DeepenOrchestrationRequestV1):
@@ -208,27 +228,72 @@ def prepare_protocol_28_request(
     selection = intent.selection
     l3 = build_l3_target_projections(eligible_l3, selection)
     parent = build_parent_authority_bundle_v3(eligible_l3, l3)
+    if isinstance(options, ReviewedProtocol28PreparationOptions):
+        from harness.re_v2.protocol_28.authority import ReviewedParentAuthorityBundleV3
+        # Freeze the receipt identity from validated L3 authority, never from the
+        # caller's available blobs. Its hash binds finding/source/review lineage.
+        parent = ReviewedParentAuthorityBundleV3(**parent.to_json_dict(),
+            residual_debt_acceptance_id=residual_debt_hash)
+    reviewed = None
+    reviewed_catalog = None
+    reviewed_objects = {}
+    if isinstance(options, ReviewedProtocol28PreparationOptions):
+        if not isinstance(policy, ExhaustivePolicyV2) or not options.reviewed_discoveries:
+            raise Protocol28PreparationError('reviewed preparation requires repaired policy and authority')
+        reviewed = []
+        for bundle in options.reviewed_discoveries:
+            local_catalog = ReviewedSubjectCatalogV1.from_json_dict(json.loads(bundle.objects[bundle.authority.subject_catalog_id]))
+            raw = SnapshotEvidenceCatalogV1.from_json_dict(json.loads(bundle.objects[local_catalog.raw_evidence_catalog_id]))
+            verified = load_reviewed_discovery(bundle.authority, bundle.objects, l3, raw)
+            if reviewed and raw != reviewed_evidence:
+                raise Protocol28PreparationError('reviewed sources bind different raw evidence catalogues')
+            reviewed_evidence = raw
+            reviewed.append(verified)
+            reviewed_objects.update(verified.objects)
+        reviewed = tuple(reviewed)
+        reviewed_catalog = build_reviewed_discovery_catalog(reviewed)
     shard_byte_limit = policy.raw_shard_byte_limit
     while True:
         evidence_policy = EvidenceStagingPolicyV1(
             1, shard_byte_limit, _NON_BEHAVIORAL_SUFFIXES
         )
-        with tempfile.TemporaryDirectory(prefix="echelon-l4-evidence-") as temporary:
-            evidence = stage_snapshot_evidence(
-                options.snapshot,
-                partition,
-                selection,
-                evidence_policy,
-                ObjectStore(Path(temporary) / "objects"),
+        if reviewed is not None:
+            evidence = reviewed_evidence
+            evidence_policy = EvidenceStagingPolicyV1.from_json_dict(json.loads(reviewed_objects[evidence.policy_id]))
+        else:
+            with tempfile.TemporaryDirectory(prefix="echelon-l4-evidence-") as temporary:
+                evidence = stage_snapshot_evidence(
+                    options.snapshot,
+                    partition,
+                    selection,
+                    evidence_policy,
+                    ObjectStore(Path(temporary) / "objects"),
+                )
+        safe_evidence = build_safe_snapshot_evidence_catalog(evidence)
+        if reviewed is not None:
+            subjects = build_exhaustive_subject_catalog(
+                parent.source_snapshot_id, parent.partition_manifest_id, l3.identity,
+                tuple(s for bundle in reviewed for s in bundle.subject_catalog.subjects),
             )
-        subjects = _build_evidence_subjects(
-            parent,
-            l3,
-            evidence,
-            residual_debt_hash=residual_debt_hash,
-            max_subject_bytes=max(policy.max_context_bytes // 32, 1_024),
+        else:
+            subjects = _build_evidence_subjects(
+                parent,
+                l3,
+                evidence,
+                residual_debt_hash=residual_debt_hash,
+                max_subject_bytes=max(policy.max_context_bytes // 32, 1_024),
+            )
+        plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection, reviewed=reviewed)
+        if reviewed is not None and residual_debt_hash is not None:
+            # Preserve accepted L3 debt without altering authenticated discovery subjects.
+            plan = replace(plan, target_plans=_rebind_composition_dependencies(tuple(
+                replace(target, entries=tuple(replace(entry, required_lower_authority_ids=tuple(sorted({
+                    *entry.required_lower_authority_ids, residual_debt_hash}))) for entry in target.entries))
+                for target in plan.target_plans)))
+        safe_lower_authority = build_safe_lower_authority_catalog(
+            options.authority_objects,
+            _required_lower_authority_ids(plan),
         )
-        plan = build_exhaustive_plan(parent, l3, evidence, subjects, policy, selection)
         try:
             plan = _bind_exact_context_sizes(
                 plan,
@@ -237,10 +302,14 @@ def prepare_protocol_28_request(
                 subjects,
                 policy,
                 options.authority_objects,
+                safe_evidence,
+                safe_lower_authority,
+                reviewed=reviewed,
             )
         except Protocol28PreparationError as exc:
             if (
-                "one evidence shard requires" not in str(exc)
+                reviewed is not None
+                or "one evidence shard requires" not in str(exc)
                 or shard_byte_limit <= 1_024
             ):
                 raise
@@ -249,7 +318,8 @@ def prepare_protocol_28_request(
         break
     _validate_initial_reservation(plan, producer_agent, verifier_agent, options)
 
-    request = ExhaustiveRequestV1(
+    request_type = ReviewedExhaustiveRequestV1 if reviewed is not None else SafeExhaustiveRequestV1
+    request = request_type(
         1,
         selection.identity,
         parent.identity,
@@ -260,8 +330,12 @@ def prepare_protocol_28_request(
         parent.source_snapshot_id,
         parent.partition_manifest_id,
         plan.identity,
+        safe_evidence.identity,
+        safe_lower_authority.identity,
+        **({'reviewed_discovery_catalog_id': reviewed_catalog.identity} if reviewed is not None else {}),
     )
-    manifest = ExhaustiveRunManifestV7(
+    manifest_type = ReviewedExhaustiveRunManifestV7 if reviewed is not None else SafeExhaustiveRunManifestV7
+    manifest = manifest_type(
         7,
         "re-v2",
         "2.8",
@@ -300,8 +374,12 @@ def prepare_protocol_28_request(
             0,
             1,
         ),
+        safe_evidence.identity,
+        safe_lower_authority.identity,
+        **({'reviewed_discovery_catalog_id': reviewed_catalog.identity} if reviewed is not None else {}),
     )
     candidates = dict(options.authority_objects)
+    candidates.update(reviewed_objects)
     _add_authority(candidates, canonical_json_bytes(partition.to_json_dict()))
     _add_authority(candidates, canonical_json_bytes(evidence_policy.to_json_dict()))
     partition_manifest_bytes = _partition_manifest_authority_bytes(options.snapshot)
@@ -321,14 +399,15 @@ def prepare_protocol_28_request(
         _add_authority(candidates, payload)
     _add_evidence_opaque_authority(candidates, partition, evidence)
     required = protocol_28_required_authority_ids(
-        manifest, parent, l3, evidence, subjects, executors
+        manifest, parent, l3, evidence, subjects, executors, reviewed_discovery=reviewed_catalog,
     )
     missing = required - set(candidates)
     if missing:
         raise Protocol28PreparationError(
             "L4 parent authority closure is incomplete: " + ",".join(sorted(missing))
         )
-    created = Protocol28CreationInputs(
+    creation_type = ReviewedProtocol28CreationInputs if reviewed is not None else SafeProtocol28CreationInputs
+    created = creation_type(
         manifest,
         parent,
         l3,
@@ -338,6 +417,9 @@ def prepare_protocol_28_request(
         executors,
         plan,
         {object_id: candidates[object_id] for object_id in sorted(required)},
+        safe_evidence,
+        safe_lower_authority,
+        **({'reviewed_discovery_catalog': reviewed_catalog} if reviewed is not None else {}),
     )
     _validate_provider_context_bounds(created)
     return created
@@ -377,6 +459,20 @@ def _validate_provider_context_bounds(inputs: Protocol28CreationInputs) -> None:
         ) from exc
 
 
+def _required_lower_authority_ids(plan) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
+    """Return the exact inherited authority set that any plan slice can expose."""
+    return tuple(
+        sorted(
+            {
+                object_id
+                for target in plan.target_plans
+                for entry in target.entries
+                for object_id in entry.required_lower_authority_ids
+            }
+        )
+    )
+
+
 def _bind_exact_context_sizes(
     plan,  # type: ignore[no-untyped-def]
     l3,  # type: ignore[no-untyped-def]
@@ -384,24 +480,21 @@ def _bind_exact_context_sizes(
     subjects,  # type: ignore[no-untyped-def]
     policy,  # type: ignore[no-untyped-def]
     authority_objects: Mapping[str, bytes],
+    safe_evidence: SafeSnapshotEvidenceCatalogV1 | None = None,
+    safe_lower_authority: SafeLowerAuthorityCatalogV1 | None = None,
+    *, reviewed=None,
 ):  # type: ignore[no-untyped-def]
     """Bind plan accounting to the byte-identical producer payload."""
-    sizing_inputs = SimpleNamespace(
+    from harness.re_v2.protocol_28.context import _Protocol28SizingInputs, _Protocol28SizingContext
+    sizing_inputs = _Protocol28SizingInputs(
         l3_projection_catalog=l3,
         snapshot_evidence_catalog=evidence,
         exhaustive_subject_catalog=subjects,
         exhaustive_policy=policy,
         authority_objects=authority_objects,
+        reviewed_discoveries=reviewed,
     )
-    sizing_context = Protocol28RunContext(  # type: ignore[arg-type]
-        None,
-        sizing_inputs,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+    sizing_context = _Protocol28SizingContext(sizing_inputs, plan, safe_evidence, safe_lower_authority)
     current = _split_oversized_context_entries(
         plan,
         evidence,
@@ -432,7 +525,7 @@ def _bind_exact_context_sizes(
             target_plans=_rebind_composition_dependencies(tuple(target_plans)),
         )
         if updated == current:
-            validate_exhaustive_plan_coverage(updated, subjects, evidence, policy)
+            validate_exhaustive_plan_coverage(updated, subjects, evidence, policy, reviewed=reviewed)
             return updated
         current = updated
     raise Protocol28PreparationError("exact provider context sizing did not converge")
@@ -444,9 +537,13 @@ def _measure_context_entry(
     entry,  # type: ignore[no-untyped-def]
 ):  # type: ignore[no-untyped-def]
     """Return the fixed-point entry and exact serialized producer byte count."""
+    from harness.re_v2.protocol_28.context import _serialize_protocol_28_slice_context
     current = entry
     for _iteration in range(8):
-        isolated_target = replace(target_plan, entries=(current,))
+        # Stable entries use their real target authority so measured bytes,
+        # not just their length, match eventual public rendering. Transient
+        # split/fixed-point candidates do not yet belong to that target.
+        sizing_target = target_plan if current in target_plan.entries else replace(target_plan, entries=(current,))
         spec = realize_slice(
             current,
             {
@@ -454,9 +551,9 @@ def _measure_context_entry(
                 for dependency_id in current.planned_dependency_root_ids
             },
         )
-        encoded = build_protocol_28_slice_context(
+        encoded = _serialize_protocol_28_slice_context(
             sizing_context,
-            isolated_target,
+            sizing_target,
             current,
             spec,
             role="producer",
@@ -480,6 +577,10 @@ def _split_oversized_context_entries(
     sizing_context: Protocol28RunContext,
 ):  # type: ignore[no-untyped-def]
     """Split evidence bins until each byte-identical producer payload fits."""
+    reviewed = getattr(sizing_context, '_reviewed_discoveries', None)
+    reviewed_owner_ids = ({raw_id: row.subject_id for bundle in reviewed
+        for row in bundle.inventory_assessments if row.disposition == 'owned'
+        for raw_id in row.raw_evidence_ids} if reviewed is not None else None)
     record_for = {
         **{item.shard_id: item.file_record_hash for item in evidence.shards},
         **{item.receipt_id: item.file_record_hash for item in evidence.empty_receipts},
@@ -553,6 +654,7 @@ def _split_oversized_context_entries(
                     ordinal=entry.ordinal + len(chunks),
                     subjects=subjects,
                     record_for=record_for,
+                    reviewed_owner_ids=reviewed_owner_ids,
                 )
                 _candidate, candidate_size = _measure_context_entry(
                     sizing_context,
@@ -577,6 +679,7 @@ def _split_oversized_context_entries(
                     ordinal=entry.ordinal + len(chunks),
                     subjects=subjects,
                     record_for=record_for,
+                    reviewed_owner_ids=reviewed_owner_ids,
                 )
                 _candidate, candidate_size = _measure_context_entry(
                     sizing_context,
@@ -598,6 +701,7 @@ def _split_oversized_context_entries(
                     ordinal=entry.ordinal + index,
                     subjects=subjects,
                     record_for=record_for,
+                    reviewed_owner_ids=reviewed_owner_ids,
                 )
                 measured, _size = _measure_context_entry(
                     sizing_context,
@@ -657,6 +761,7 @@ def _entry_for_evidence_chunk(
     ordinal: int,
     subjects: ExhaustiveSubjectCatalogV1 | None = None,
     record_for: Mapping[str, str] | None = None,
+    reviewed_owner_ids: Mapping[str, str] | None = None,
 ):  # type: ignore[no-untyped-def]
     evidence_set = set(evidence_ids)
     records = tuple(
@@ -695,9 +800,15 @@ def _entry_for_evidence_chunk(
     primary_subjects = tuple(
         subject for subject in available_subjects if subject.identity in chunk.primary_subject_ids
     )
-    supporting_subjects = _supporting_subjects_for_evidence(
-        available_subjects, primary_subjects, evidence_ids,
-    )
+    required_owner_ids = {reviewed_owner_ids[item] for item in evidence_ids
+        if reviewed_owner_ids is not None and item in entry.primary_snapshot_evidence_ids}
+    if not required_owner_ids.issubset(attached):
+        raise Protocol28PreparationError('exact evidence split lost reviewed primary owner')
+    required_owners = tuple(subject for subject in available_subjects
+        if subject.identity in required_owner_ids and subject not in primary_subjects)
+    supporting_subjects = tuple(sorted((*required_owners, *_supporting_subjects_for_evidence(
+        available_subjects, (*primary_subjects, *required_owners), evidence_ids,
+    )), key=lambda subject: subject.identity))
     return replace(
         chunk,
         supporting_subject_ids=tuple(subject.identity for subject in supporting_subjects),

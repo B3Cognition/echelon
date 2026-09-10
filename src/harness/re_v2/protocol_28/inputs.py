@@ -11,6 +11,9 @@ from typing import Mapping
 
 from echelon.atomic_install import atomic_rename_no_replace
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.knowledge_activation import (
+    ReviewedDiscoveryCatalogV1, validate_reviewed_discovery_catalog,
+)
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError, TREE_OBJECT_MAGIC
 from harness.re_v2.protocol_22.inputs import (
     FaultHook,
@@ -30,6 +33,7 @@ from harness.re_v2.protocol_28.authority import (
     L3TargetProjectionCatalogV1,
     L4ClosureParentBundleV1,
     ParentAuthorityBundleV3,
+    ReviewedParentAuthorityBundleV3,
 )
 from harness.re_v2.protocol_28.evidence import (
     SnapshotEvidenceCatalogV1,
@@ -43,8 +47,18 @@ from harness.re_v2.protocol_28.graph import (
     L4TargetRootV1,
 )
 from harness.re_v2.protocol_28.model import (
+    ExhaustiveRequestV1, SafeExhaustiveRequestV1, ReviewedExhaustiveRequestV1,
     ExhaustiveRunManifestV7,
     L4ClosureRunManifestV7,
+    SafeExhaustiveRunManifestV7,
+    ReviewedExhaustiveRunManifestV7,
+)
+from harness.re_v2.protocol_28.safe_evidence import (
+    Protocol28SafeEvidenceError,
+    SafeLowerAuthorityCatalogV1,
+    SafeSnapshotEvidenceCatalogV1,
+    validate_safe_lower_authority_catalog,
+    validate_safe_snapshot_evidence_catalog,
 )
 from harness.re_v2.protocol_28.planning import (
     ExhaustivePlanV1,
@@ -65,6 +79,9 @@ _INPUT_FILES = {
     "parent_authority_bundle": "parent-authority-bundle.json",
     "l3_projection_catalog": "l3-target-projections.json",
     "snapshot_evidence_catalog": "snapshot-evidence-catalog.json",
+    "safe_snapshot_evidence_catalog": "safe-snapshot-evidence-catalog.json",
+    "safe_lower_authority_catalog": "safe-lower-authority-catalog.json",
+    "reviewed_discovery_catalog": "reviewed-discovery-catalog.json",
     "exhaustive_subject_catalog": "exhaustive-subject-catalog.json",
     "exhaustive_policy": "exhaustive-policy.json",
     "executor_catalog": "l4-executor-catalog.json",
@@ -155,9 +172,136 @@ class ValidatedProtocol28Inputs:
     authority_objects: Mapping[str, bytes]
 
     def __post_init__(self) -> None:
+        _validate_input_subtype(self)
         object.__setattr__(
             self, "authority_objects", MappingProxyType(dict(sorted(self.authority_objects.items())))
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SafeProtocol28CreationInputs(Protocol28CreationInputs):
+    """Creation-input subtype that requires an authenticated safe evidence view."""
+
+    safe_snapshot_evidence_catalog: SafeSnapshotEvidenceCatalogV1
+    safe_lower_authority_catalog: SafeLowerAuthorityCatalogV1
+
+    def __post_init__(self) -> None:
+        super(SafeProtocol28CreationInputs, self).__post_init__()
+        if not isinstance(self.manifest, SafeExhaustiveRunManifestV7):
+            raise Protocol28InputError("safe creation manifest has invalid type")
+        try:
+            validate_safe_snapshot_evidence_catalog(
+                self.safe_snapshot_evidence_catalog,
+                self.snapshot_evidence_catalog,
+            )
+        except Protocol28SafeEvidenceError as exc:
+            raise Protocol28InputError(f"invalid safe snapshot evidence: {exc}") from exc
+        if (
+            self.manifest.safe_snapshot_evidence_catalog_id
+            != self.safe_snapshot_evidence_catalog.identity
+            or self.manifest.safe_lower_authority_catalog_id
+            != self.safe_lower_authority_catalog.identity
+        ):
+            raise Protocol28InputError("safe authority manifest binding does not match")
+        try:
+            validate_safe_lower_authority_catalog(
+                self.safe_lower_authority_catalog,
+                self.authority_objects,
+                _slice_lower_authority_ids(self.exhaustive_plan),
+            )
+        except Protocol28SafeEvidenceError as exc:
+            raise Protocol28InputError(f"invalid safe lower authority: {exc}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedSafeProtocol28Inputs(ValidatedProtocol28Inputs):
+    """Loaded, self-contained safe protocol-2.8 exhaustive inputs."""
+
+    safe_snapshot_evidence_catalog: SafeSnapshotEvidenceCatalogV1
+    safe_lower_authority_catalog: SafeLowerAuthorityCatalogV1
+
+    def __post_init__(self) -> None:
+        super(ValidatedSafeProtocol28Inputs, self).__post_init__()
+        if not isinstance(self.manifest, SafeExhaustiveRunManifestV7):
+            raise Protocol28InputError("safe loaded manifest has invalid type")
+        try:
+            validate_safe_snapshot_evidence_catalog(
+                self.safe_snapshot_evidence_catalog,
+                self.snapshot_evidence_catalog,
+            )
+        except Protocol28SafeEvidenceError as exc:
+            raise Protocol28InputError(f"invalid safe snapshot evidence: {exc}") from exc
+        if (
+            self.manifest.safe_snapshot_evidence_catalog_id
+            != self.safe_snapshot_evidence_catalog.identity
+            or self.manifest.safe_lower_authority_catalog_id
+            != self.safe_lower_authority_catalog.identity
+        ):
+            raise Protocol28InputError("safe authority manifest binding does not match")
+        try:
+            validate_safe_lower_authority_catalog(
+                self.safe_lower_authority_catalog,
+                self.authority_objects,
+                _slice_lower_authority_ids(self.exhaustive_plan),
+            )
+        except Protocol28SafeEvidenceError as exc:
+            raise Protocol28InputError(
+                f"invalid safe lower authority: {exc}"
+            ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class _PreliminarySafeProtocol28Inputs:
+    """Parsed Safe authority used only before the opaque closure is loaded."""
+
+    manifest: SafeExhaustiveRunManifestV7
+    parent_authority_bundle: ParentAuthorityBundleV3
+    l3_projection_catalog: L3TargetProjectionCatalogV1
+    snapshot_evidence_catalog: SnapshotEvidenceCatalogV1
+    exhaustive_subject_catalog: ExhaustiveSubjectCatalogV1
+    exhaustive_policy: ExhaustivePolicyV1
+    executor_catalog: L4ExecutorCatalogV1
+    exhaustive_plan: ExhaustivePlanV1
+    safe_snapshot_evidence_catalog: SafeSnapshotEvidenceCatalogV1
+    safe_lower_authority_catalog: SafeLowerAuthorityCatalogV1
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedProtocol28CreationInputs(SafeProtocol28CreationInputs):
+    reviewed_discovery_catalog: ReviewedDiscoveryCatalogV1
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedReviewedProtocol28Inputs(ValidatedSafeProtocol28Inputs):
+    reviewed_discovery_catalog: ReviewedDiscoveryCatalogV1
+
+    def __post_init__(self):
+        super(ValidatedReviewedProtocol28Inputs, self).__post_init__()
+        _validate_bindings(self)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreliminaryReviewedProtocol28Inputs(_PreliminarySafeProtocol28Inputs):
+    reviewed_discovery_catalog: ReviewedDiscoveryCatalogV1
+    authority_objects: Mapping[str, bytes]
+
+
+def _validate_input_subtype(inputs):
+    """Manifest and request authority cannot be downgraded through a parent class."""
+    compatible = {
+        Protocol28CreationInputs: (ExhaustiveRunManifestV7, ExhaustiveRequestV1),
+        ValidatedProtocol28Inputs: (ExhaustiveRunManifestV7, ExhaustiveRequestV1),
+        SafeProtocol28CreationInputs: (SafeExhaustiveRunManifestV7, SafeExhaustiveRequestV1),
+        ValidatedSafeProtocol28Inputs: (SafeExhaustiveRunManifestV7, SafeExhaustiveRequestV1),
+        _PreliminarySafeProtocol28Inputs: (SafeExhaustiveRunManifestV7, SafeExhaustiveRequestV1),
+        ReviewedProtocol28CreationInputs: (ReviewedExhaustiveRunManifestV7, ReviewedExhaustiveRequestV1),
+        ValidatedReviewedProtocol28Inputs: (ReviewedExhaustiveRunManifestV7, ReviewedExhaustiveRequestV1),
+        _PreliminaryReviewedProtocol28Inputs: (ReviewedExhaustiveRunManifestV7, ReviewedExhaustiveRequestV1),
+    }
+    expected = compatible.get(type(inputs))
+    if (expected is None or type(inputs.manifest) is not expected[0]
+            or type(inputs.manifest.exhaustive_request) is not expected[1]):
+        raise Protocol28InputError('input subtype does not match manifest/request authority')
 
 
 def residual_debt_acceptance_from_objects(
@@ -199,10 +343,25 @@ def protocol_28_residual_debt_acceptance(
     if not isinstance(inputs, (Protocol28CreationInputs, ValidatedProtocol28Inputs)):
         raise Protocol28InputError("protocol-2.8 debt authority input is invalid")
     acceptance = residual_debt_acceptance_from_objects(inputs.authority_objects)
+    parent = inputs.parent_authority_bundle
+    selected_unresolved = {
+        finding_id
+        for projection in inputs.l3_projection_catalog.projections
+        for finding_id in projection.unresolved_finding_ids
+    }
+    reviewed = isinstance(inputs.manifest, ReviewedExhaustiveRunManifestV7)
+    if reviewed:
+        required_id = _reviewed_residual_debt_id(parent, inputs.l3_projection_catalog)
+        if required_id != (acceptance.identity if acceptance else None):
+            raise Protocol28InputError("residual-debt acceptance differs from authenticated Reviewed parent")
+        deeper = set(parent.unresolved_deeper_finding_ids)
+        accepted = set(acceptance.unresolved_finding_ids) & selected_unresolved if acceptance else set()
+        if deeper & accepted or deeper | accepted != selected_unresolved:
+            raise Protocol28InputError("Reviewed parent unresolved findings lack exact debt or deeper-work authority")
+        selected_unresolved = accepted
     if acceptance is None:
         return None
     acceptance_hash = acceptance.identity
-    parent = inputs.parent_authority_bundle
     if (
         acceptance.run_manifest_hash != parent.l3_manifest_hash
         or acceptance.terminal_event_hash != parent.l3_terminal_event_hash
@@ -210,13 +369,6 @@ def protocol_28_residual_debt_acceptance(
         or acceptance.source_snapshot_id != parent.source_snapshot_id
     ):
         raise Protocol28InputError("residual-debt acceptance does not bind the L3 parent")
-    selected_unresolved = tuple(
-        sorted(
-            finding_id
-            for projection in inputs.l3_projection_catalog.projections
-            for finding_id in projection.unresolved_finding_ids
-        )
-    )
     if not selected_unresolved or not set(selected_unresolved).issubset(
         acceptance.unresolved_finding_ids
     ):
@@ -232,6 +384,7 @@ def protocol_28_residual_debt_acceptance(
         debt_sources.get(finding_id) != projection.source_id
         for projection in inputs.l3_projection_catalog.projections
         for finding_id in projection.unresolved_finding_ids
+        if finding_id in selected_unresolved
     ):
         raise Protocol28InputError(
             "residual-debt acceptance source ownership differs from L3 projections"
@@ -335,7 +488,14 @@ def _validate_closure_bindings(
         raise Protocol28InputError("protocol-2.8 closure input authority bindings do not match")
 
 
-def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs) -> None:
+def _validate_bindings(
+    inputs: (
+        Protocol28CreationInputs
+        | ValidatedProtocol28Inputs
+        | _PreliminarySafeProtocol28Inputs
+    ),
+) -> None:
+    _validate_input_subtype(inputs)
     manifest = inputs.manifest
     parent = inputs.parent_authority_bundle
     l3 = inputs.l3_projection_catalog
@@ -344,6 +504,21 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
     policy = inputs.exhaustive_policy
     executors = inputs.executor_catalog
     plan = inputs.exhaustive_plan
+    reviewed_inputs = isinstance(inputs, (ReviewedProtocol28CreationInputs,
+        ValidatedReviewedProtocol28Inputs, _PreliminaryReviewedProtocol28Inputs))
+    if reviewed_inputs != isinstance(manifest, ReviewedExhaustiveRunManifestV7):
+        raise Protocol28InputError('reviewed input subtype does not match manifest')
+    reviewed = None
+    if reviewed_inputs:
+        if (inputs.reviewed_discovery_catalog.identity != manifest.reviewed_discovery_catalog_id
+                or manifest.exhaustive_request.reviewed_discovery_catalog_id != manifest.reviewed_discovery_catalog_id):
+            raise Protocol28InputError('reviewed authority binding mismatch')
+        if not isinstance(inputs, _PreliminaryReviewedProtocol28Inputs):
+            try:
+                reviewed = validate_reviewed_discovery_catalog(inputs.reviewed_discovery_catalog,
+                    inputs.authority_objects, l3, evidence, subjects)
+            except ValueError as exc:
+                raise Protocol28InputError('invalid reviewed discovery closure') from exc
     expected = (
         (manifest.source_snapshot_id, parent.source_snapshot_id),
         (manifest.partition_manifest_id, parent.partition_manifest_id),
@@ -372,6 +547,39 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
     )
     if any(left != right for left, right in expected):
         raise Protocol28InputError("protocol-2.8 input authority bindings do not match")
+    safe_inputs = isinstance(
+        inputs,
+        (
+            SafeProtocol28CreationInputs,
+            ValidatedSafeProtocol28Inputs,
+            _PreliminarySafeProtocol28Inputs,
+        ),
+    )
+    safe_manifest = isinstance(manifest, SafeExhaustiveRunManifestV7)
+    if safe_inputs != safe_manifest:
+        raise Protocol28InputError("protocol-2.8 safe input subtype does not match manifest")
+    if safe_inputs:
+        safe_catalog = inputs.safe_snapshot_evidence_catalog
+        safe_lower_catalog = inputs.safe_lower_authority_catalog
+        if (
+            manifest.safe_snapshot_evidence_catalog_id != safe_catalog.identity
+            or manifest.exhaustive_request.safe_snapshot_evidence_catalog_id
+            != safe_catalog.identity
+            or manifest.safe_lower_authority_catalog_id
+            != safe_lower_catalog.identity
+            or manifest.exhaustive_request.safe_lower_authority_catalog_id
+            != safe_lower_catalog.identity
+        ):
+            raise Protocol28InputError("protocol-2.8 safe authority bindings do not match")
+        required_lower = _slice_lower_authority_ids(plan)
+        if safe_lower_catalog.raw_authority_ids != required_lower:
+            raise Protocol28InputError(
+                "required lower authority does not match the safe catalogue"
+            )
+        if set(required_lower) - _required_opaque_ids(inputs):
+            raise Protocol28InputError(
+                "required lower authority is outside the authenticated opaque closure"
+            )
     request = manifest.exhaustive_request
     if (
         request.parent_authority_bundle_id != parent.identity
@@ -387,7 +595,8 @@ def _validate_bindings(inputs: Protocol28CreationInputs | ValidatedProtocol28Inp
     ):
         raise Protocol28InputError("exhaustive request does not authenticate staged inputs")
     try:
-        validate_exhaustive_plan_coverage(plan, subjects, evidence, policy)
+        if not isinstance(inputs, _PreliminaryReviewedProtocol28Inputs):
+            validate_exhaustive_plan_coverage(plan, subjects, evidence, policy, reviewed=reviewed)
     except Protocol28PlanningError as exc:
         raise Protocol28InputError(f"invalid repaired coverage: {exc}") from exc
     if isinstance(policy, ExhaustivePolicyV2):
@@ -432,7 +641,11 @@ def _validate_repaired_parent_obligations(
 
 
 def _required_opaque_ids(
-    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+    inputs: (
+        Protocol28CreationInputs
+        | ValidatedProtocol28Inputs
+        | _PreliminarySafeProtocol28Inputs
+    ),
 ) -> set[str]:
     return set(
         protocol_28_required_authority_ids(
@@ -442,6 +655,32 @@ def _required_opaque_ids(
             inputs.snapshot_evidence_catalog,
             inputs.exhaustive_subject_catalog,
             inputs.executor_catalog,
+            reviewed_discovery=getattr(inputs, 'reviewed_discovery_catalog', None),
+        )
+    )
+
+
+def _reviewed_residual_debt_id(parent, l3) -> str | None:
+    """Derive required debt from the immutable parent before reading its blobs."""
+    if type(parent) is not ReviewedParentAuthorityBundleV3:
+        raise Protocol28InputError("Reviewed inputs require explicit Reviewed parent authority")
+    selected = {key for projection in l3.projections for key in projection.unresolved_finding_ids}
+    deeper = set(parent.unresolved_deeper_finding_ids)
+    if not deeper.issubset(selected) or (parent.residual_debt_acceptance_id is None and deeper != selected):
+        raise Protocol28InputError("Reviewed parent unresolved findings require inherited debt authority")
+    return parent.residual_debt_acceptance_id
+
+
+def _slice_lower_authority_ids(plan: ExhaustivePlanV1) -> tuple[str, ...]:
+    """Return the exact lower-authority closure serialized by any plan slice."""
+    return tuple(
+        sorted(
+            {
+                object_id
+                for target in plan.target_plans
+                for entry in target.entries
+                for object_id in entry.required_lower_authority_ids
+            }
         )
     )
 
@@ -453,6 +692,8 @@ def protocol_28_required_authority_ids(
     evidence: SnapshotEvidenceCatalogV1,
     subjects: ExhaustiveSubjectCatalogV1,
     executors: L4ExecutorCatalogV1,
+    *, reviewed_discovery: ReviewedDiscoveryCatalogV1 | None = None,
+    reviewed_residual_debt_id: str | None = None,
 ) -> frozenset[str]:
     """Return the exact opaque object closure before constructing input authority."""
     required = {
@@ -506,6 +747,17 @@ def protocol_28_required_authority_ids(
         for subject in subjects.subjects
         for lower_id in subject.lower_authority_ids
     )
+    if isinstance(manifest, ReviewedExhaustiveRunManifestV7):
+        if reviewed_discovery is None or reviewed_discovery.identity != manifest.reviewed_discovery_catalog_id:
+            raise Protocol28InputError('reviewed authority catalogue is required')
+        required.update(reviewed_discovery.object_ids)
+        residual_id = _reviewed_residual_debt_id(parent, l3)
+        if reviewed_residual_debt_id is not None and reviewed_residual_debt_id != residual_id:
+            raise Protocol28InputError('caller residual debt differs from authenticated Reviewed parent')
+        if residual_id is not None:
+            required.add(residual_id)
+    elif reviewed_discovery is not None:
+        raise Protocol28InputError('unexpected reviewed authority catalogue')
     return frozenset(required)
 
 
@@ -519,7 +771,11 @@ def required_protocol_28_authority_ids(
 
 
 def _canonical_authorities(
-    inputs: Protocol28CreationInputs | ValidatedProtocol28Inputs,
+    inputs: (
+        Protocol28CreationInputs
+        | ValidatedProtocol28Inputs
+        | _PreliminarySafeProtocol28Inputs
+    ),
 ) -> tuple[tuple[str, object], ...]:
     result: list[tuple[str, object]] = [
         (inputs.parent_authority_bundle.identity, inputs.parent_authority_bundle),
@@ -540,7 +796,37 @@ def _canonical_authorities(
     result.extend((item.identity, item) for item in inputs.snapshot_evidence_catalog.empty_receipts)
     result.extend((item.identity, item) for item in inputs.snapshot_evidence_catalog.nontext_dispositions)
     result.extend((item.identity, item) for item in inputs.snapshot_evidence_catalog.projections)
+    if isinstance(
+        inputs,
+        (
+            SafeProtocol28CreationInputs,
+            ValidatedSafeProtocol28Inputs,
+            _PreliminarySafeProtocol28Inputs,
+        ),
+    ):
+        result.append(
+            (
+                inputs.safe_snapshot_evidence_catalog.identity,
+                inputs.safe_snapshot_evidence_catalog,
+            )
+        )
+        result.extend(
+            (item.identity, item)
+            for item in inputs.safe_snapshot_evidence_catalog.objects
+        )
+        result.append(
+            (
+                inputs.safe_lower_authority_catalog.identity,
+                inputs.safe_lower_authority_catalog,
+            )
+        )
+        result.extend(
+            (item.identity, item)
+            for item in inputs.safe_lower_authority_catalog.objects
+        )
     result.extend((item.identity, item) for item in inputs.exhaustive_subject_catalog.subjects)
+    if isinstance(inputs, (ReviewedProtocol28CreationInputs, ValidatedReviewedProtocol28Inputs, _PreliminaryReviewedProtocol28Inputs)):
+        result.append((inputs.reviewed_discovery_catalog.identity, inputs.reviewed_discovery_catalog))
     for target in inputs.exhaustive_plan.target_plans:
         result.append((target.identity, target))
         result.append((target.coverage_ledger.identity, target.coverage_ledger))
@@ -594,6 +880,15 @@ def stage_exhaustive_inputs(
             "exhaustive_plan": inputs.exhaustive_plan,
             "exhaustive_request": inputs.manifest.exhaustive_request,
         }
+        if isinstance(inputs, SafeProtocol28CreationInputs):
+            input_values["safe_snapshot_evidence_catalog"] = (
+                inputs.safe_snapshot_evidence_catalog
+            )
+            input_values["safe_lower_authority_catalog"] = (
+                inputs.safe_lower_authority_catalog
+            )
+        if isinstance(inputs, ReviewedProtocol28CreationInputs):
+            input_values['reviewed_discovery_catalog'] = inputs.reviewed_discovery_catalog
         for label, value in input_values.items():
             _write_new_file(
                 paths.inputs / _INPUT_FILES[label],
@@ -758,10 +1053,32 @@ def _load_staged(
         raise Protocol28InputError("protocol-2.8 input directory is unsafe or missing")
     if paths.objects.is_symlink() or not paths.objects.is_dir():
         raise Protocol28InputError("protocol-2.8 object directory is unsafe or missing")
-    parent = _read_input(paths, "parent_authority_bundle", ParentAuthorityBundleV3.from_json_dict)
+    parent_type = ReviewedParentAuthorityBundleV3 if isinstance(
+        manifest, ReviewedExhaustiveRunManifestV7) else ParentAuthorityBundleV3
+    parent = _read_input(paths, "parent_authority_bundle", parent_type.from_json_dict)
     l3 = _read_input(paths, "l3_projection_catalog", L3TargetProjectionCatalogV1.from_json_dict)
     evidence = _read_input(paths, "snapshot_evidence_catalog", SnapshotEvidenceCatalogV1.from_json_dict)
+    safe_evidence = (
+        _read_input(
+            paths,
+            "safe_snapshot_evidence_catalog",
+            SafeSnapshotEvidenceCatalogV1.from_json_dict,
+        )
+        if isinstance(manifest, SafeExhaustiveRunManifestV7)
+        else None
+    )
+    safe_lower_authority = (
+        _read_input(
+            paths,
+            "safe_lower_authority_catalog",
+            SafeLowerAuthorityCatalogV1.from_json_dict,
+        )
+        if isinstance(manifest, SafeExhaustiveRunManifestV7)
+        else None
+    )
     subjects = _read_input(paths, "exhaustive_subject_catalog", ExhaustiveSubjectCatalogV1.from_json_dict)
+    reviewed_catalog = (_read_input(paths, 'reviewed_discovery_catalog', ReviewedDiscoveryCatalogV1.from_json_dict)
+                        if isinstance(manifest, ReviewedExhaustiveRunManifestV7) else None)
     policy = _read_input(paths, "exhaustive_policy", ExhaustivePolicyV1.from_json_dict)
     executors = _read_input(
         paths, "executor_catalog", L4ExecutorCatalogV1.from_json_dict
@@ -771,9 +1088,27 @@ def _load_staged(
     if request != manifest.exhaustive_request:
         raise Protocol28InputError("staged exhaustive request differs from manifest")
     store = ObjectStore(paths.objects)
-    preliminary = ValidatedProtocol28Inputs(
-        manifest, parent, l3, evidence, subjects, policy, executors, plan, {}
-    )
+    if safe_evidence is None:
+        preliminary: ValidatedProtocol28Inputs = ValidatedProtocol28Inputs(
+            manifest, parent, l3, evidence, subjects, policy, executors, plan, {}
+        )
+    else:
+        preliminary_type = _PreliminaryReviewedProtocol28Inputs if reviewed_catalog is not None else _PreliminarySafeProtocol28Inputs
+        preliminary = preliminary_type(
+            manifest,
+            parent,
+            l3,
+            evidence,
+            subjects,
+            policy,
+            executors,
+            plan,
+            safe_evidence,
+            safe_lower_authority,
+            **({'reviewed_discovery_catalog': reviewed_catalog,
+                'authority_objects': {key: store.read_blob(key) for key in safe_lower_authority.raw_authority_ids}}
+                if reviewed_catalog is not None else {}),
+        )
     for object_hash, _authority in _canonical_authorities(preliminary):
         try:
             store.verify(object_hash)
@@ -792,9 +1127,26 @@ def _load_staged(
             read_staged_shard_bytes(store, shard)
         except (ReV2LedgerError, Protocol22SchemaError) as exc:
             raise Protocol28InputError(f"invalid snapshot evidence object: {exc}") from exc
-    loaded = ValidatedProtocol28Inputs(
-        manifest, parent, l3, evidence, subjects, policy, executors, plan, opaque
-    )
+    if safe_evidence is None:
+        loaded: ValidatedProtocol28Inputs = ValidatedProtocol28Inputs(
+            manifest, parent, l3, evidence, subjects, policy, executors, plan, opaque
+        )
+    else:
+        loaded_type = ValidatedReviewedProtocol28Inputs if reviewed_catalog is not None else ValidatedSafeProtocol28Inputs
+        loaded = loaded_type(
+            manifest,
+            parent,
+            l3,
+            evidence,
+            subjects,
+            policy,
+            executors,
+            plan,
+            opaque,
+            safe_evidence,
+            safe_lower_authority,
+            **({'reviewed_discovery_catalog': reviewed_catalog} if reviewed_catalog is not None else {}),
+        )
     protocol_28_residual_debt_acceptance(loaded)
     return loaded
 
@@ -869,8 +1221,10 @@ __all__ = (
     "Protocol28ClosureInputs",
     "Protocol28CreationInputs",
     "Protocol28InputError",
+    "SafeProtocol28CreationInputs",
     "ValidatedProtocol28ClosureInputs",
     "ValidatedProtocol28Inputs",
+    "ValidatedSafeProtocol28Inputs",
     "load_protocol_28_inputs",
     "protocol_28_input_quality",
     "protocol_28_residual_debt_acceptance",

@@ -39,10 +39,31 @@ revision findings, grounded in the permitted evidence or explicit evidence gaps.
 NEVER return ready while required ownership is unknown, a conflict remains, or a
 domain or subject requires revision. Do not repair the candidate yourself.
 
-ALWAYS preserve the candidate's questions, depth and pending category obligations
-for subsequent analysis and independent assessment.
-NEVER mark analysis complete, decide category non-applicability, accept debt,
-publish artifacts or write controller state from discovery review.
+ALWAYS assess every candidate target/category row exactly once while preserving its
+disposition and complete subject membership verbatim.
+NEVER add, remove, reassign or reinterpret a category-bearing subject while reviewing
+the candidate. Request revision instead of repairing the row.
+
+ALWAYS read the exact `category_depth_applicability` object nested in the authenticated
+safe discovery context and independently apply its row selected by `depth`.
+NEVER guess, derive or replace the quick, standard or deep category matrix.
+
+ALWAYS independently ground `analyze` and `not-applicable` in visible target-local
+evidence, and ground `unknown` in target-local supplied evidence or exact authenticated
+empty-source authority for later debt handling.
+NEVER accept unsupported absence, cross-target evidence, missing row evidence or
+unattempted work as ready.
+
+ALWAYS enforce the frozen depth/category contract for every
+`outside-requested-depth` row and reject that disposition at deep depth; accept an
+empty citation only when authenticated empty-source authority proves the scope.
+NEVER let row count, syntactic validity or producer confidence substitute for this
+independent category assessment, or waive ordinary evidence for a nonempty source.
+
+ALWAYS preserve the candidate's questions and the authenticated candidate and safe
+context roots for subsequent controller validation.
+NEVER mark analysis complete, accept debt, activate a plan, publish artifacts or
+write controller state from discovery review.
 
 ## Protocol
 
@@ -50,9 +71,10 @@ publish artifacts or write controller state from discovery review.
    proposed boundaries. Identify observed behavior, missing evidence and limits.
 2. Assess domains and subjects for supported responsibility and meaningful scope.
    Challenge invented APIs, overly broad domains and omitted principal behavior.
-3. Reconcile all inventory and overlap obligations under the supplied contract.
-   Explain each disposition; identify needed evidence or revised assignments.
-4. Return the exact authorial JSON review required by the phase, then the minimal
+3. Reconcile all inventory, overlap and target/category obligations under the
+   supplied contract. Explain each disposition; identify needed evidence or revised
+   assignments without editing the candidate.
+4. Return the exact schema-2 authorial JSON review required by the phase, then the minimal
    transport envelope below. A controller must validate and certify the actual
    independent invocation before using this review to activate any analysis plan.
 

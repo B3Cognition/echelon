@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -304,12 +305,27 @@ def test_install_prosaic_bundle_retains_live_lifecycle_state_across_refresh(
 
 def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
     echelon_root = Path(__file__).resolve().parents[2]
+    build_root = tmp_path / 'source'
+    def checkout_files():
+        roots = [echelon_root / name for name in ('src', 'prosaic', 'runtime', 'build')]
+        paths = [p for root in roots for p in root.rglob('*') if p.is_file()]
+        paths.extend(p for p in echelon_root.iterdir() if p.is_file())
+        return {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in paths}
+    before = checkout_files()
+    build_root.mkdir()
+    for name in ('pyproject.toml', 'setup.py', 'MANIFEST.in', 'README.md', 'LICENSE'):
+        shutil.copy2(echelon_root / name, build_root / name)
+    for name in ('src', 'prosaic', 'runtime'):
+        shutil.copytree(echelon_root / name, build_root / name,
+            ignore=shutil.ignore_patterns('*.egg-info', '__pycache__', '*.pyc', '.DS_Store'))
     wheel_dir = tmp_path / "wheel"
     installed = tmp_path / "installed"
     workspace = tmp_path / "workspace"
     wheel_dir.mkdir()
     workspace.mkdir()
 
+    # Refuse before invoking a build backend that could refresh live egg-info.
+    assert not build_root.is_relative_to(echelon_root), 'build intermediates must not touch the checkout'
     subprocess.run(
         [
             sys.executable,
@@ -318,12 +334,13 @@ def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
             "--outdir",
             str(wheel_dir),
         ],
-        cwd=echelon_root,
+        cwd=build_root,
         check=True,
         capture_output=True,
         text=True,
     )
     wheel = next(wheel_dir.glob("echelon-*.whl"))
+    assert checkout_files() == before
     source_distribution = next(wheel_dir.glob("echelon-*.tar.gz"))
     with tarfile.open(source_distribution) as archive:
         members = {member.name for member in archive.getmembers()}

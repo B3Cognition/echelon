@@ -602,16 +602,30 @@ class DurableLedger(Generic[LedgerViewT]):
     def _read_replay(
         self,
     ) -> tuple[tuple[LedgerRecord, ...], LedgerReplayState[LedgerViewT]]:
+        records = self._read_records()
+        state = self.protocol.new_state()
+        for record in records:
+            try:
+                state.consume(record, self.object_store)
+            except ReV2LedgerError as exc:
+                raise ReV2LedgerError(f"ledger record {record.seq} is invalid: {exc}") from exc
+        return records, state
+
+    def _read_records(self) -> tuple[LedgerRecord, ...]:
+        """Read canonical envelopes only; callers must authenticate nested authority.
+
+        The reviewed revision verifier uses this to establish committed ancestors
+        before replaying their dependent receipts, without a recursive weaker reader.
+        """
         if not self.path.exists() and not self.path.is_symlink():
-            return (), self.protocol.new_state()
+            return ()
         payload = _read_regular_file(self.path, "ledger")
         if not payload:
-            return (), self.protocol.new_state()
+            return ()
         if not payload.endswith(b"\n"):
             raise ReV2LedgerError("partial final ledger record")
 
         records: list[LedgerRecord] = []
-        state = self.protocol.new_state()
         previous: str | None = None
         if b"\r" in payload:
             raise ReV2LedgerError("ledger record framing rejects carriage returns")
@@ -642,15 +656,9 @@ class DurableLedger(Generic[LedgerViewT]):
                 raise ReV2LedgerError(
                     f"ledger record {index} has wrong previous record hash"
                 )
-            try:
-                state.consume(record, self.object_store)
-            except ReV2LedgerError as exc:
-                raise ReV2LedgerError(
-                    f"ledger record {index} is invalid: {exc}"
-                ) from exc
             records.append(record)
             previous = record.record_hash
-        return tuple(records), state
+        return tuple(records)
 
     def _validate_parent(self) -> None:
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():

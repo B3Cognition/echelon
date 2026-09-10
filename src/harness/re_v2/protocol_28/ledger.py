@@ -58,6 +58,10 @@ class Protocol28LedgerView:
     certifications: Mapping[str, L4CertificationReceiptV1]
     acceptances: Mapping[str, L4AcceptanceReceiptV1]
     accepted_slices: Mapping[str, AcceptedExhaustiveSliceV1]
+    knowledge_work: Mapping[str, object]
+    knowledge_artifacts: Mapping[str, object]
+    knowledge_roots: Mapping[str, object]
+    knowledge_run_roots: Mapping[str, object]
 
 
 @dataclass(slots=True)
@@ -69,10 +73,15 @@ class _Protocol28LedgerState:
     certifications: dict[str, L4CertificationReceiptV1]
     acceptances: dict[str, L4AcceptanceReceiptV1]
     accepted_slices: dict[str, AcceptedExhaustiveSliceV1]
+    knowledge_work: dict[str, object]
+    knowledge_artifacts: dict[str, object]
+    knowledge_roots: dict[str, object]
+    knowledge_run_roots: dict[str, object]
+    knowledge_authorities: dict[str, object]
 
     @classmethod
     def empty(cls) -> "_Protocol28LedgerState":
-        return cls({}, {}, {}, {}, {}, {}, {})
+        return cls({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})
 
     def consume(self, record: LedgerRecord, object_store: ObjectStore) -> None:
         try:
@@ -98,6 +107,8 @@ class _Protocol28LedgerState:
                 self._consume_accepted_slice(
                     AcceptedExhaustiveSliceV1.from_json_dict(record.payload), object_store
                 )
+            elif record.type.startswith('knowledge_'):
+                self._consume_knowledge(record, object_store)
             else:
                 raise ReV2LedgerError(
                     f"unknown protocol-2.8 ledger record type: {record.type!r}"
@@ -106,6 +117,16 @@ class _Protocol28LedgerState:
             raise
         except (Protocol22SchemaError, Protocol28ExecutionError, TypeError, ValueError) as exc:
             raise ReV2LedgerError(f"invalid {record.type} authority: {exc}") from exc
+
+    def _consume_knowledge(self, record, objects):
+        from harness.re_v2.protocol_28.reconciliation import authenticate_knowledge_record
+        model = _decode_receipt(record.type, record.payload)
+        _verify_exact_object(objects, model)
+        authenticate_knowledge_record(objects, model, self)
+        mapping = getattr(self, {'knowledge_work': 'knowledge_work',
+            'knowledge_artifact': 'knowledge_artifacts', 'knowledge_root': 'knowledge_roots',
+            'knowledge_run_root': 'knowledge_run_roots'}[record.type])
+        mapping[model.identity] = model
 
     def _consume_capture(self, record: LedgerRecord, object_store: ObjectStore) -> None:
         raw = exact_object(
@@ -355,6 +376,8 @@ class _Protocol28LedgerState:
             # safe dispatch key in this hash-only envelope at this stage.
             return capture_hash, None
         model = _decode_receipt(record_type, payload)
+        if record_type.startswith('knowledge_'):
+            return model.identity, None  # Exact replay was handled above; consume validates semantic uniqueness.
         if isinstance(model, L4CandidateReceiptV1):
             return model.candidate_hash, self.candidate_receipts.get(model.candidate_hash)
         if isinstance(model, L4VerificationReceiptV1):
@@ -376,6 +399,10 @@ class _Protocol28LedgerState:
             certifications=MappingProxyType(dict(self.certifications)),
             acceptances=MappingProxyType(dict(self.acceptances)),
             accepted_slices=MappingProxyType(dict(self.accepted_slices)),
+            knowledge_work=MappingProxyType(dict(self.knowledge_work)),
+            knowledge_artifacts=MappingProxyType(dict(self.knowledge_artifacts)),
+            knowledge_roots=MappingProxyType(dict(self.knowledge_roots)),
+            knowledge_run_roots=MappingProxyType(dict(self.knowledge_run_roots)),
         )
 
 
@@ -445,6 +472,33 @@ class Protocol28Ledger(DurableLedger[Protocol28LedgerView]):
     def record_accepted_slice(self, accepted: AcceptedExhaustiveSliceV1) -> LedgerRecord:
         return self._typed_append("l4_accepted_slice", accepted, AcceptedExhaustiveSliceV1)
 
+    def record_knowledge_work(self, work):
+        from harness.re_v2.protocol_28.reconciliation import KnowledgeReconciliationWorkItemV1
+        return self._typed_append('knowledge_work', work, KnowledgeReconciliationWorkItemV1)
+
+    def read_snapshot(self):
+        """Authenticate one captured byte stream without creating a lock file.
+
+        Explicit reviewed reads never repair/create state. A concurrent partial
+        append fails closed through the same existing canonical ledger parser.
+        Mutations continue to use the original locked append path.
+        """
+        self._validate_parent()
+        history, state = self._read_replay()
+        return history, state.view()
+
+    def record_knowledge_artifact(self, receipt):
+        from harness.re_v2.protocol_28.reconciliation import KnowledgeReconciliationExecutionReceiptV1
+        return self._typed_append('knowledge_artifact', receipt, KnowledgeReconciliationExecutionReceiptV1)
+
+    def record_knowledge_root(self, root):
+        from harness.re_v2.protocol_28.reconciliation import KnowledgeReconciliationRootV1
+        return self._typed_append('knowledge_root', root, KnowledgeReconciliationRootV1)
+
+    def record_knowledge_run_root(self, root):
+        from harness.re_v2.protocol_28.reconciliation import ReviewedKnowledgeRunRootV1
+        return self._typed_append('knowledge_run_root', root, ReviewedKnowledgeRunRootV1)
+
     def _typed_append(self, record_type: str, value: object, expected: type) -> LedgerRecord:
         if not isinstance(value, expected):
             raise ReV2LedgerError(f"{record_type} requires {expected.__name__}")
@@ -452,6 +506,14 @@ class Protocol28Ledger(DurableLedger[Protocol28LedgerView]):
 
 
 def _decode_receipt(record_type: str, value: object):  # type: ignore[no-untyped-def]
+    if record_type.startswith('knowledge_'):
+        from harness.re_v2.protocol_28 import reconciliation as r
+        cls = {'knowledge_work': r.KnowledgeReconciliationWorkItemV1,
+            'knowledge_artifact': r.KnowledgeReconciliationExecutionReceiptV1,
+            'knowledge_root': r.KnowledgeReconciliationRootV1,
+            'knowledge_run_root': r.ReviewedKnowledgeRunRootV1}.get(record_type)
+        if cls is not None:
+            return cls.from_json_dict(value)
     decoder = _RECEIPT_DECODERS.get(record_type)
     if decoder is None:
         raise ReV2LedgerError(f"unknown protocol-2.8 ledger record type: {record_type!r}")

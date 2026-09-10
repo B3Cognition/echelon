@@ -32,9 +32,31 @@ relationship question, using the supplied originating obligation ID.
 NEVER rename the obligation, request another repository or repeat evidence already
 reported unavailable or withheld. Carry an unresolved question instead.
 
-ALWAYS include the declared source categories and every declared category for each
-proposed domain, leaving applicability for independent semantic assessment.
-NEVER mark a category absent, not-applicable or complete because input is missing.
+ALWAYS emit exactly one assessment for every declared source category and every
+declared category of each proposed domain, with exact target-local subject membership.
+NEVER omit, duplicate, fabricate or move a target/category assessment across targets.
+
+ALWAYS read the exact `category_depth_applicability` object supplied in the
+authenticated context and apply the row selected by the supplied `depth`.
+NEVER guess, derive or replace the quick, standard or deep category matrix.
+
+ALWAYS give every subject its evidence-supported protocol category IDs and cite
+visible target-local evidence for every `analyze` disposition.
+NEVER attach a category to an unsupported subject or use a subject owned by another
+target to make category coverage appear complete.
+
+ALWAYS use `not-applicable` only for a scoped evidence-backed absence that the
+independent reviewer can assess, and use `unknown` only with target-local supplied
+evidence or exact authenticated empty-source authority.
+NEVER convert missing evidence, unattempted work or an unresolved dynamic behavior
+into absence, or cite another target to authorize an unknown. Preserve the evidence
+boundary and rationale for every unknown.
+
+ALWAYS use `outside-requested-depth` only where the supplied quick or standard
+depth/category contract permits it; authenticated empty-source authority needs no
+ordinary evidence ID for these complement rows.
+NEVER use `outside-requested-depth` for deep discovery or for a category required
+at the frozen requested depth, and never waive evidence for a nonempty source.
 
 ALWAYS make uncertainty explicit and preserve source scope and requested depth.
 NEVER certify coverage, waive debt, publish a plan or write controller state.
@@ -45,8 +67,9 @@ NEVER certify coverage, waive debt, publish a plan or write controller state.
    recorded evidence-request outcomes. Identify supported behavior and gaps.
 2. If a material gap can be answered by a new bounded range, return one request
    batch. Do not request all files indiscriminately or repeat known unknowns.
-3. Otherwise propose domains, subjects, an ownership decision for every inventory
-   path, the complete pending category obligations and unresolved questions.
+3. Otherwise propose domains, category-bearing subjects, an ownership decision for
+   every inventory path, the complete category assessment table and unresolved
+   questions under response schema 2.
 4. Return the authorial JSON payload, followed by the transport-only result below.
    The backend must screen the entire response before extracting the JSON payload;
    the controller alone validates and persists its own receipts.

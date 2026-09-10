@@ -23,6 +23,7 @@ LifecycleStateV1 = Literal[
     "evidence_complete",
     "closure_integrity_blocked",
     "complete",
+    "running", "needs-attention", "complete-with-limitations",
 ]
 Validator = Callable[[object, str], None]
 
@@ -83,6 +84,24 @@ _ROOT_KIND = _choice("target", "source", "run")
 _BLOCKER_KIND = _choice("resource", "execution", "closure_integrity")
 
 _PAYLOAD_SCHEMAS: dict[str, dict[str, Validator]] = {
+    'knowledge_resource_settled': {'dispatch_id': _safe_id, 'resource_prefix_id': _digest,
+        'charged_tokens': _nonnegative, 'charged_active_ms': _nonnegative},
+    'knowledge_work_realized': {'work_item_id': _digest},
+    'knowledge_artifact_recorded': {'dispatch_id': _safe_id, 'role': _ROLE, 'work_item_id': _digest, 'artifact_id': _digest},
+    'knowledge_feedback_recorded': {'work_item_id': _digest, 'feedback_id': _digest, 'fingerprint_id': _digest},
+    'knowledge_root_recorded': {'root_id': _digest, 'root_kind': _ROOT_KIND, 'revision_id': _digest,
+        'required_accepted_slice_ids': _digest_array, 'required_root_ids': _digest_array, 'debt_ids': _digest_array},
+    'knowledge_run_completed': {'run_root_id': _digest, 'revision_id': _digest, 'debt_ids': _digest_array},
+    'knowledge_workflow_requested': {'intent_id': _digest},
+    'knowledge_revision_requested': {'cause_id': _digest, 'intent_id': _digest},
+    'knowledge_workflow_activated': {
+        'authorization_id': _digest, 'pointer_id': _digest, 'revision_id': _digest,
+        'planned_entry_ids': _digest_array, 'invalidated_result_ids': _digest_array,
+    },
+    'knowledge_revision_activated': {
+        'authorization_id': _digest, 'pointer_id': _digest, 'revision_id': _digest,
+        'planned_entry_ids': _digest_array, 'invalidated_result_ids': _digest_array,
+    },
     "l4_run_created": {"run_manifest_id": _digest},
     "l4_closure_inputs_staged": {
         "closure_parent_bundle_id": _digest,
@@ -300,9 +319,22 @@ class Protocol28ReplayState(EventReplayState):
     closure_root_id: str | None = None
     blocker_kind: str | None = None
     terminal: bool = False
+    knowledge_activation_intent_id: str | None = None
+    knowledge_authorization_id: str | None = None
+    knowledge_pointer_id: str | None = None
+    knowledge_revision_id: str | None = None
+    knowledge_revision_intent_id: str | None = None
+    knowledge_work_ids: set[str] = field(default_factory=set)
+    knowledge_debt_ids: tuple[str, ...] = ()
 
     @property
     def lifecycle_state(self) -> LifecycleStateV1:
+        if self.knowledge_authorization_id is not None:
+            if self.knowledge_revision_intent_id is not None:
+                return 'needs-attention'
+            if self.terminal:
+                return 'complete-with-limitations' if self.knowledge_debt_ids else 'complete'
+            return 'needs-attention' if self.blocker_kind else 'running'
         if self.terminal:
             return "complete"
         if self.blocker_kind == "closure_integrity":
@@ -318,7 +350,13 @@ class Protocol28ReplayState(EventReplayState):
         return "planned"
 
     def consume(self, event: EventRecord) -> None:
-        if self.terminal:
+        if self.knowledge_revision_intent_id is not None and event.type != 'knowledge_revision_activated':
+            raise ReV2EventError('knowledge revision is incomplete')
+        if (self.knowledge_activation_intent_id is not None and self.knowledge_authorization_id is None
+                and event.type != 'knowledge_workflow_activated'):
+            raise ReV2EventError('knowledge activation is incomplete')
+        if self.terminal and not (self.knowledge_authorization_id is not None and
+                event.type in {'knowledge_revision_requested', 'knowledge_revision_activated'}):
             raise ReV2EventError("event appears after terminal protocol-2.8 state")
         payload = event.payload
         handler = getattr(self, f"_on_{event.type}", None)
@@ -330,6 +368,91 @@ class Protocol28ReplayState(EventReplayState):
         if self.run_manifest_id is not None:
             raise ReV2EventError("protocol-2.8 run was created twice")
         self.run_manifest_id = str(payload["run_manifest_id"])
+
+    def _on_knowledge_workflow_requested(self, payload):
+        self._require_active('knowledge workflow intent')
+        if self.knowledge_authorization_id is not None or self.dispatches or self.accepted_slices or self.run_root_id:
+            raise ReV2EventError('knowledge workflow requires an explicitly new execution path')
+        self.knowledge_activation_intent_id = str(payload['intent_id'])
+
+    def _on_knowledge_workflow_activated(self, payload):
+        self._require_active('knowledge workflow activation')
+        if (self.knowledge_activation_intent_id is None or self.knowledge_authorization_id is not None
+                or self.dispatches or self.accepted_slices or self.run_root_id):
+            raise ReV2EventError('knowledge workflow requires an explicitly new execution path')
+        if tuple(payload['planned_entry_ids']) != self.planned_entry_ids or payload['invalidated_result_ids']:
+            raise ReV2EventError('knowledge workflow plan mismatch')
+        self.knowledge_authorization_id = str(payload['authorization_id'])
+        self.knowledge_pointer_id = str(payload['pointer_id'])
+        self.knowledge_revision_id = str(payload['revision_id'])
+
+    def _on_knowledge_work_realized(self, payload):
+        self._require_active('knowledge reconciliation')
+        if self.knowledge_authorization_id is None:
+            raise ReV2EventError('knowledge work requires explicit authorization')
+        self.knowledge_work_ids.add(str(payload['work_item_id']))
+
+    def _on_knowledge_resource_settled(self, payload):
+        if self.knowledge_authorization_id is None or payload['dispatch_id'] not in self.dispatches:
+            raise ReV2EventError('knowledge settlement requires a reserved dispatch')
+
+    def _on_knowledge_artifact_recorded(self, payload):
+        dispatch = self._dispatch(payload, 'captured')
+        if payload['work_item_id'] not in self.knowledge_work_ids or dispatch.output_artifact_key_id != payload['work_item_id']:
+            raise ReV2EventError('knowledge artifact does not match realized work')
+        dispatch.stage = 'knowledge_artifact'
+
+    def _on_knowledge_feedback_recorded(self, payload):
+        if payload['work_item_id'] not in self.knowledge_work_ids:
+            raise ReV2EventError('knowledge feedback requires realized work')
+
+    def _on_knowledge_root_recorded(self, payload):
+        if self.knowledge_authorization_id is None or payload['revision_id'] != self.knowledge_revision_id:
+            raise ReV2EventError('knowledge root requires active reviewed authority')
+        self._on_root_recorded({key: payload[key] for key in
+            ('root_id', 'root_kind', 'required_accepted_slice_ids', 'required_root_ids')})
+        if payload['root_kind'] == 'run':
+            self.knowledge_debt_ids = tuple(payload['debt_ids'])
+
+    def _on_knowledge_run_completed(self, payload):
+        if (self.knowledge_authorization_id is None or payload['revision_id'] != self.knowledge_revision_id
+                or self.run_root_id != payload['run_root_id'] or tuple(payload['debt_ids']) != self.knowledge_debt_ids):
+            raise ReV2EventError('knowledge completion requires exact reviewed root')
+        self.terminal = True
+        self.blocker_kind = None
+
+    def _on_knowledge_revision_requested(self, payload):
+        self._require_active('knowledge revision intent')
+        if self.knowledge_authorization_id is None:
+            raise ReV2EventError('knowledge revision requires explicit workflow authority')
+        self.knowledge_revision_intent_id = str(payload['intent_id'])
+
+    def _on_knowledge_revision_activated(self, payload):
+        self._require_active('knowledge revision activation')
+        if self.knowledge_authorization_id != payload['authorization_id'] or any(
+                d.stage in {'reserved', 'leased', 'started', 'captured'} for d in self.dispatches.values()):
+            raise ReV2EventError('knowledge revision requires same authority and settled dispatches')
+        invalidated = set(payload['invalidated_result_ids'])
+        outputs = {k for k, v in self.accepted_slices.items() if v in invalidated}
+        for mapping in (self.certifications, self.acceptances, self.accepted_slices):
+            for key in outputs:
+                mapping.pop(key, None)
+        self.planned_entry_ids = tuple(payload['planned_entry_ids'])
+        self.realized_by_entry = {k: v for k, v in self.realized_by_entry.items()
+            if k in self.planned_entry_ids and v[1] not in outputs}
+        self.failed_output_ids.clear()
+        self.target_root_ids -= invalidated
+        self.source_root_ids -= invalidated
+        self.root_requirements = {k: v for k, v in self.root_requirements.items() if k not in invalidated}
+        if self.run_root_id in invalidated:
+            self.run_root_id = None
+        self.blocker_kind = None
+        self.terminal = False
+        self.knowledge_work_ids.clear()
+        self.knowledge_debt_ids = ()
+        self.knowledge_pointer_id = str(payload['pointer_id'])
+        self.knowledge_revision_intent_id = None
+        self.knowledge_revision_id = str(payload['revision_id'])
 
     def _on_l4_inputs_staged(self, payload: Mapping[str, object]) -> None:
         self._require_created("input staging")
@@ -417,7 +540,7 @@ class Protocol28ReplayState(EventReplayState):
         output_id = str(payload["output_artifact_key_id"])
         if output_id in self.accepted_slices:
             raise ReV2EventError("accepted slice cannot be reopened as failed")
-        if output_id not in {item[1] for item in self.realized_by_entry.values()}:
+        if output_id not in {item[1] for item in self.realized_by_entry.values()} | self.knowledge_work_ids:
             raise ReV2EventError("failed slice is outside realized work")
         self.failed_output_ids.add(output_id)
 

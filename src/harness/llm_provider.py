@@ -5,10 +5,17 @@ import json
 import os
 import shutil
 import sys
+import hashlib
+from dataclasses import asdict
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
-from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
+from harness.ai_cli_backend import (
+    CliRunRequest,
+    CliRunResult,
+    ConstrainedPromptBackend,
+    create_ai_cli_backend,
+)
 from harness.ai_cli_backends.claude import (
     host_workspace_synthesis_boundary_available,
 )
@@ -43,6 +50,7 @@ class AICodingCliProvider:
         self._config_dir = effective_config.llm.config_dir
         self._bin = shutil.which(self._cli) or self._cli
         self._backend = create_ai_cli_backend(effective_config)
+        self._constrained_execution_configuration_id: str | None = None
         if _debug_llm_enabled():
             print(
                 "[llm] "
@@ -66,6 +74,35 @@ class AICodingCliProvider:
     @property
     def cli(self) -> str:
         return self._cli
+
+    @property
+    def provider_id(self) -> str:
+        """Frozen effective provider identifier selected for this facade."""
+        return self._cli
+
+    @property
+    def constrained_execution_contract_id(self) -> str | None:
+        """Return the selected backend's optional constrained capability ID."""
+        if not isinstance(self._backend, ConstrainedPromptBackend):
+            return None
+        value = self._backend.constrained_execution_contract_id
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def constrained_execution_configuration_id(self) -> str:
+        """Safe digest of the effective LLM execution configuration."""
+        if self._constrained_execution_configuration_id is None:
+            payload = json.dumps(
+                asdict(self._config.llm),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+            self._constrained_execution_configuration_id = (
+                "sha256:" + hashlib.sha256(payload).hexdigest()
+            )
+        return self._constrained_execution_configuration_id
 
     @property
     def capabilities(self) -> frozenset[ProviderCapability]:
@@ -189,6 +226,56 @@ class AICodingCliProvider:
                 metadata=metadata,
             )
         )
+        self._record_result(result, metadata)
+        return result
+
+    def run_constrained_prompt_result(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        model: str,
+        screen_output: Callable[[bytes], bytes],
+        max_input_bytes: int,
+        max_capture_bytes: int,
+        timeout_ms: int | None = None,
+    ) -> CliRunResult:
+        """Run the selected backend's optional constrained operation only."""
+        self.last_stdout = ""
+        self.last_stderr = ""
+        self.last_token_usage = 0
+        metadata: dict[str, object] = {}
+        if not isinstance(self._backend, ConstrainedPromptBackend):
+            result = CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr=(
+                    f"configured provider '{self._cli}' lacks "
+                    "constrained-execution capability"
+                ),
+                metadata={
+                    "failure_reason": "constrained-execution-unsupported",
+                    "provider": self._cli,
+                },
+            )
+        else:
+            result = self._backend.run_constrained_prompt(
+                CliRunRequest(
+                    cwd=worktree_path,
+                    prompt=prompt,
+                    env=self._build_env(),
+                    timeout_s=(
+                        min(timeout_ms / 1000.0, self._timeout_s)
+                        if timeout_ms is not None
+                        else self._timeout_s
+                    ),
+                    metadata=metadata,
+                ),
+                model=model,
+                screen_output=screen_output,
+                max_input_bytes=max_input_bytes,
+                max_capture_bytes=max_capture_bytes,
+            )
         self._record_result(result, metadata)
         return result
 

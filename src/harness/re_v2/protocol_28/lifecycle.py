@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import os
@@ -410,15 +410,50 @@ def run_protocol_28_exhaustive(
         raise Protocol28LifecycleError(
             "exhaustive execution requires exhaustive-depth mode"
         )
+    if replay_protocol_28(context.events.replay()).knowledge_authorization_id is not None:
+        from harness.re_v2.protocol_22.recovery import protocol_22_run_lock
+        with protocol_22_run_lock(context.paths):
+            context = load_protocol_28_run_context(Path(run_dir))
+            try:
+                return _run_protocol_28_context(context, provider_factory)
+            except Protocol28LifecycleError:
+                state = replay_protocol_28(context.events.replay())
+                if state.blocker_kind is None:
+                    raise
+                reason = next(e.payload['reason_code'] for e in reversed(context.events.replay()) if e.type == 'run_blocked')
+                return _result(context, 'needs-attention', None, reason)
+    return _run_protocol_28_context(context, provider_factory)
+
+
+def _run_protocol_28_context(context, provider_factory):
+    from harness.re_v2.knowledge_revision import load_knowledge_revision
+    from harness.re_v2.protocol_28.reconciliation import (build_reconciliation_work, execute_reconciliation,
+        build_reviewed_run_root, knowledge_completion_event_payload)
+    reviewed = load_knowledge_revision(context)
+    state = replay_protocol_28(context.events.replay())
+    if reviewed is None and state.knowledge_activation_intent_id is not None:
+        raise Protocol28LifecycleError('knowledge activation is incomplete; retry explicit activation')
+    if state.knowledge_revision_intent_id is not None:
+        raise Protocol28LifecycleError('knowledge revision is incomplete; retry explicit revision')
+    if reviewed is not None and (state.terminal or state.blocker_kind is not None):
+        # Authenticated terminal/status replay never repairs projections or exports caches.
+        reason = next((e.payload['reason_code'] for e in reversed(context.events.replay()) if e.type == 'run_blocked'), None) if state.blocker_kind else None
+        return _result(context, state.lifecycle_state, state.run_root_id, reason)
     initialize_protocol_28_run(context)
     _catch_up_ledger_events(context)
     state = replay_protocol_28(context.events.replay())
     if state.run_root_id is not None:
+        if reviewed is not None:
+            root = context.ledger.replay().knowledge_run_roots[state.run_root_id]
+            context.controller.append_once('knowledge_run_completed', knowledge_completion_event_payload(root))
+            state = replay_protocol_28(context.events.replay())
         return _result(context, state.lifecycle_state, state.run_root_id, None)
     provider_or_backend = provider_factory()
     if hasattr(provider_or_backend, "execute"):
         backend = provider_or_backend
     elif hasattr(provider_or_backend, "exec_agent"):
+        if reviewed is not None:
+            raise Protocol28LifecycleError('reviewed knowledge requires an explicit screened execution backend')
         from harness.re_v2.protocol_28.cli_provider import (
             SquadCliProtocol28Backend,
         )
@@ -427,8 +462,13 @@ def run_protocol_28_exhaustive(
     else:
         raise Protocol28LifecycleError("protocol-2.8 provider backend is invalid")
 
-    target_roots = _load_recorded_target_roots(context, state.target_root_ids)
-    root_by_plan = {item.target_plan_id: item for item in target_roots}
+    if reviewed is not None:
+        view = context.ledger.replay()
+        target_roots = tuple(view.knowledge_roots[i] for i in state.target_root_ids)
+        root_by_plan = {item.plan_id: item for item in target_roots}
+    else:
+        target_roots = _load_recorded_target_roots(context, state.target_root_ids)
+        root_by_plan = {item.target_plan_id: item for item in target_roots}
     ordered_plans = tuple(
         sorted(
             context.inputs.exhaustive_plan.target_plans,
@@ -453,7 +493,11 @@ def run_protocol_28_exhaustive(
         }
         accepted_for_target = []
         for entry in target_plan.entries:
-            slice_spec = realize_slice(
+            realize = realize_slice
+            if reviewed is not None:
+                from harness.re_v2.knowledge_revision import realize_knowledge_slice
+                realize = lambda selected, roots: realize_knowledge_slice(context, reviewed, selected, roots)
+            slice_spec = realize(
                 entry,
                 {
                     dependency: dependency_roots[dependency]
@@ -485,9 +529,33 @@ def run_protocol_28_exhaustive(
                     )
                 accepted = outcome
             accepted_for_target.append(accepted)
-        root = build_target_root(target_plan, tuple(accepted_for_target))
-        context.controller.record_root(root, root_kind="target")
+        if reviewed is not None:
+            work = build_reconciliation_work(context, target_plan, scope='target', input_results=tuple(accepted_for_target))
+            root = execute_reconciliation(context, backend, work)
+            if isinstance(root, str):
+                return _result(context, 'needs-attention', None, root)
+        else:
+            root = build_target_root(target_plan, tuple(accepted_for_target))
+            context.controller.record_root(root, root_kind="target")
         root_by_plan[target_plan.identity] = root
+
+    if reviewed is not None:
+        target_roots = tuple(sorted(root_by_plan.values(), key=lambda r: r.identity))
+        sources = []
+        for source_id in sorted({r.source_id for r in target_roots}):
+            source_plan = next(t for t in ordered_plans if t.source_id == source_id and t.target_kind == 'source')
+            work = build_reconciliation_work(context, source_plan, scope='source',
+                input_results=tuple(r for r in target_roots if r.source_id == source_id))
+            root = execute_reconciliation(context, backend, work)
+            if isinstance(root, str):
+                return _result(context, 'needs-attention', None, root)
+            sources.append(root)
+        run_root = build_reviewed_run_root(context, target_roots, tuple(sources))
+        context.objects.put_blob(canonical_json_bytes(run_root.to_json_dict()))
+        context.ledger.record_knowledge_run_root(run_root)
+        context.controller.record_knowledge_root(run_root)
+        context.controller.append_once('knowledge_run_completed', knowledge_completion_event_payload(run_root))
+        return _result(context, 'complete-with-limitations' if run_root.debt_ids else 'complete', run_root.identity, None)
 
     target_roots = tuple(
         sorted(root_by_plan.values(), key=lambda item: item.sort_key)
@@ -587,6 +655,12 @@ def _execute_slice(
         and item.slice_spec_id == slice_spec.identity
     )
     start_attempt = len(prior_pairs) + 1
+    from harness.re_v2.knowledge_revision import load_knowledge_revision, inherited_attempts
+    active = load_knowledge_revision(context)
+    if active is not None:
+        obligations = tuple(r.obligation_id for r in active.dependencies.obligations if entry.identity in r.entry_ids)
+        start_attempt = max(inherited_attempts(active, obligations, 'slice'),
+            max((p.producer_attempt_number for p in prior_pairs), default=0)) + 1
     if start_attempt > policy.producer_attempt_limit:
         reason = _attempts_exhausted_reason(context, slice_spec, "producer", "producer_result_contract_attempts_exhausted")
         _fail_slice(context, slice_spec, reason)
@@ -614,7 +688,7 @@ def _execute_slice(
             verifier_agent,
             verifier_schema,
             extra_input_bytes=(
-                entry.canonical_context_bytes
+                max(entry.canonical_context_bytes, len(producer_context))
                 + policy.max_candidate_output_bytes
             ),
         )
@@ -940,6 +1014,10 @@ def _catch_up_ledger_events(context: Protocol28RunContext) -> None:
     """Project durable capture/receipt authority before scheduling new work."""
     view = context.ledger.replay()
     state = replay_protocol_28(context.events.replay())
+    if state.knowledge_authorization_id is not None:
+        active_outputs = {row[1] for row in state.realized_by_entry.values()}
+    else:
+        active_outputs = None
     for dispatch_id, capture in sorted(view.execution_captures.items()):
         dispatch = state.dispatches.get(dispatch_id)
         if dispatch is not None and dispatch.stage == "started":
@@ -954,6 +1032,25 @@ def _catch_up_ledger_events(context: Protocol28RunContext) -> None:
                 },
             )
             state = replay_protocol_28(context.events.replay())
+    if state.knowledge_authorization_id is not None:
+        from harness.re_v2.protocol_28.budget import ResourceObservationV1, ResourceAbandonmentV1
+        observed = {r.dispatch_id for r in context.resources.records if isinstance(r, (ResourceObservationV1, ResourceAbandonmentV1))}
+        settled = {e.payload['dispatch_id'] for e in context.events.replay() if e.type == 'knowledge_resource_settled'}
+        for dispatch_id in view.execution_captures:
+            if dispatch_id not in observed:
+                # The response is durable but usage was interrupted: retain its
+                # exact reservation once; never invent or re-charge a provider call.
+                context.resources.observe(dispatch_id, token_status='unavailable', billable_tokens=None,
+                    active_status='unavailable', active_ms=None)
+            if dispatch_id not in settled:
+                _record_knowledge_resource_settlement(context, dispatch_id)
+        for receipt in view.knowledge_artifacts.values():
+            dispatch_id = _dispatch_for_capture(view, receipt.execution_capture_id)
+            dispatch = replay_protocol_28(context.events.replay()).dispatches[dispatch_id]
+            if dispatch.stage == 'captured':
+                context.controller.append_once('knowledge_artifact_recorded', {'dispatch_id': dispatch_id,
+                    'role': receipt.role, 'work_item_id': receipt.work_item_id, 'artifact_id': receipt.artifact_id})
+        state = replay_protocol_28(context.events.replay())
     for candidate_id, receipt in sorted(view.candidate_receipts.items()):
         dispatch_id = _dispatch_for_capture(view, receipt.producer_execution_capture_hash)
         dispatch = state.dispatches.get(dispatch_id)
@@ -986,6 +1083,8 @@ def _catch_up_ledger_events(context: Protocol28RunContext) -> None:
             )
             state = replay_protocol_28(context.events.replay())
     for receipt in sorted(view.certifications.values(), key=lambda item: item.identity):
+        if active_outputs is not None and receipt.output_artifact_key_id not in active_outputs:
+            continue
         if receipt.output_artifact_key_id not in state.certifications:
             context.controller.append_once(
                 "certification_recorded",
@@ -997,6 +1096,8 @@ def _catch_up_ledger_events(context: Protocol28RunContext) -> None:
             )
             state = replay_protocol_28(context.events.replay())
     for receipt in sorted(view.acceptances.values(), key=lambda item: item.identity):
+        if active_outputs is not None and receipt.output_artifact_key_id not in active_outputs:
+            continue
         if receipt.output_artifact_key_id not in state.acceptances:
             context.controller.append_once(
                 "acceptance_recorded",
@@ -1009,6 +1110,8 @@ def _catch_up_ledger_events(context: Protocol28RunContext) -> None:
             )
             state = replay_protocol_28(context.events.replay())
     for accepted in sorted(view.accepted_slices.values(), key=lambda item: item.identity):
+        if active_outputs is not None and accepted.output_artifact_key_id not in active_outputs:
+            continue
         if accepted.output_artifact_key_id not in state.accepted_slices:
             context.controller.append_once(
                 "accepted_slice_recorded",
@@ -1113,7 +1216,7 @@ def _resume_existing_candidate(
     view = context.ledger.replay()
     candidates = []
     for candidate_id, receipt in view.candidate_receipts.items():
-        if receipt.plan_entry_id != entry.identity:
+        if receipt.plan_entry_id != entry.identity or receipt.slice_spec_id != slice_spec.identity:
             continue
         dispatch_id = _dispatch_for_capture(
             view, receipt.producer_execution_capture_hash
@@ -1306,6 +1409,10 @@ def _call_provider(
     *,
     candidate_id: str | None,
 ) -> PersistedL4ExecutionV1:
+    # Retained debt is provider-visible authority, not just a rendered hint.
+    # Store its Safe slice context before capture so replay can reject omission.
+    if 'inherited_knowledge_debt' in json.loads(context_bytes):
+        context.objects.put_blob(context_bytes)
     lease_id = content_digest(
         {"dispatch_id": dispatch_id, "owner_id": "protocol-28-controller"}
     )
@@ -1359,6 +1466,8 @@ def _call_provider(
             },
         )
         context.controller.block_run("execution", "provider_execution_error")
+        if replay_protocol_28(context.events.replay()).knowledge_authorization_id is not None:
+            raise Protocol28LifecycleError('reviewed provider execution failed') from None
         raise Protocol28LifecycleError("protocol-2.8 provider execution failed") from exc
     if not isinstance(result, L4DispatchResultV1):
         context.resources.abandon(dispatch_id)
@@ -1374,6 +1483,17 @@ def _call_provider(
         raise Protocol28LifecycleError(
             "protocol-2.8 backend returned an invalid result"
         )
+    unsafe_output = False
+    if replay_protocol_28(context.events.replay()).knowledge_authorization_id is not None:
+        from harness.re_v2.knowledge_evidence import screen_provider_output, KnowledgeEvidenceError
+        from harness.re_v2.ledger import ObjectStore
+        try:
+            screen_provider_output(result.raw_result, ObjectStore(context.paths.root / 'knowledge-quarantine'))
+        except KnowledgeEvidenceError:
+            # Preserve the charge and a sanitized failure capture, never unsafe bytes.
+            result = replace(result, raw_result=canonical_json_bytes({'failure': 'unsafe-or-uninspectable-provider-output'}),
+                result_kind='provider_failure')
+            unsafe_output = True
     persisted = persist_provider_result(
         context.objects,
         envelope,
@@ -1402,7 +1522,20 @@ def _call_provider(
         active_status=result.active_status,
         active_ms=result.active_ms,
     )
+    if replay_protocol_28(context.events.replay()).knowledge_authorization_id is not None:
+        _record_knowledge_resource_settlement(context, dispatch_id)
+    if unsafe_output:
+        context.controller.block_run('execution', 'unsafe_provider_output')
+        raise Protocol28LifecycleError('reviewed provider output was refused')
     return persisted
+
+
+def _record_knowledge_resource_settlement(context, dispatch_id):
+    prefix_id = context.objects.put_blob(canonical_json_bytes([r.to_json_dict() for r in context.resources.records]))
+    decision = context.resources.decision
+    context.controller.append_once('knowledge_resource_settled', {'dispatch_id': dispatch_id,
+        'resource_prefix_id': prefix_id, 'charged_tokens': decision.charged_tokens - decision.open_token_reservations,
+        'charged_active_ms': decision.charged_active_ms - decision.open_active_ms_reservations})
 
 
 def _reservation(
@@ -1582,14 +1715,20 @@ def _result(
     run_root_id: str | None,
     reason: str | None,
 ) -> Protocol28RunResult:
-    export_protocol_28_checkpoints(context)
-    view = context.ledger.replay()
+    current = replay_protocol_28(context.events.replay())
+    if current.knowledge_authorization_id is None:
+        export_protocol_28_checkpoints(context)
+    view = context.ledger.read_snapshot()[1] if current.knowledge_authorization_id is not None else context.ledger.replay()
+    if current.knowledge_authorization_id is not None:
+        if run_root_id is not None and run_root_id not in view.knowledge_run_roots:
+            raise Protocol28LifecycleError('completion requires an authenticated reviewed run root')
+        state = current.lifecycle_state
     return Protocol28RunResult(
         context.inputs.manifest.run_id,
         state,
         run_root_id,
         reason,
-        len(view.accepted_slices),
+        len(current.accepted_slices) if current.knowledge_authorization_id else len(view.accepted_slices),
         sum(
             len(item.entries)
             for item in context.inputs.exhaustive_plan.target_plans

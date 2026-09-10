@@ -1,4 +1,8 @@
-"""Recoverable offline dispatch of one review for a committed proposal."""
+"""Recoverable separate dispatch of one passive review for a committed proposal.
+
+The reviewer sees the authenticated candidate/safe-context payload only, never
+producer reasoning. Schema-2 category review still cannot activate analysis.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -81,6 +85,13 @@ class DiscoveryReviewController:
                         applied["receipt_id"],
                     )
                 return self._result(applied)
+
+            # A breach is run-wide and must refuse every later native turn,
+            # even when the breached producer did not yield an admissible
+            # proposal. Already captured reviews above still recover without
+            # spending or discarding their paid result.
+            if state.usage().reservation_breached:
+                return DiscoveryStep("blocked", reason_code="reservation-exceeded")
 
             producers = state.discovery_sources.get(source, [])
             if not producers:
@@ -194,6 +205,8 @@ class DiscoveryReviewController:
                 receipt = self.boundary.read_review(
                     request["binding_id"], request["proposal_receipt_id"], receipt_id,
                 )
+                # `review_ready` is dispatch completion, not analysis
+                # certification; both schema branches retain the passive receipt.
                 result_state = ("review_ready" if receipt["outcome"] == "ready_for_planning"
                                 else "revision_required")
         applied = {

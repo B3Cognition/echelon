@@ -32,6 +32,10 @@ def protocol_28_status_document(
         manifest = context.inputs.manifest
         events = context.events.replay()
         state = replay_protocol_28(events)
+        if state.knowledge_authorization_id is not None:
+            return _reviewed_document(context, state, events)
+        if state.knowledge_activation_intent_id is not None:
+            return _pending_knowledge_document(context, state, events)
         orchestration = _orchestration_document(context.run_dir, intent)
         blocker = (
             next(
@@ -109,6 +113,93 @@ def protocol_28_status_document(
         raise Protocol28StatusError(
             f"cannot replay protocol-2.8 status for {Path(run_dir).name}: {exc}"
         ) from exc
+
+
+def _pending_knowledge_document(context, state, events):
+    """A staged account handoff is never historical execution authority."""
+    from harness.re_v2.knowledge_revision import KnowledgeWorkflowActivationIntentV1, _read
+    intent = _read(context.objects, state.knowledge_activation_intent_id, KnowledgeWorkflowActivationIntentV1)
+    manifest = context.inputs.manifest
+    if (intent.run_manifest_id != manifest.identity
+            or intent.reviewed_catalog_id != context.inputs.reviewed_discovery_catalog.identity):
+        raise Protocol28StatusError('knowledge activation intent is rebound')
+    context.objects.read_blob(intent.reconciler_contract_id)
+    context.objects.read_blob(intent.reconciliation_schema_id)
+    return {'run_id': manifest.run_id, 'engine': manifest.engine, 'engine_protocol_version': '2.8',
+        'run_mode': manifest.run_mode, 'status': 'needs-attention', 'source_snapshot_id': manifest.source_snapshot_id,
+        'partition_manifest_id': manifest.partition_manifest_id,
+        'selection': {'scope': context.inputs.exhaustive_plan.completion_scope, 'all_sources': manifest.selection.all_sources,
+            'source_ids': list(manifest.selection.source_ids), 'domain_keys': list(manifest.selection.domain_keys)},
+        'orchestration': None, 'blocker': {'kind': 'activation', 'reason_code': 'knowledge-activation-incomplete'},
+        'reason_code': 'knowledge-activation-incomplete', **_exhaustive_document(context, state, events),
+        **_inherited_debt_status(context),
+        'post_l4': {'synthesis': 'not run', 'publication': 'not run'},
+        'next_action': 'Retry the explicit knowledge activation with its original account and authorization.',
+        'banner': 'NEEDS ATTENTION — the explicit knowledge activation has not committed.'}
+
+
+def _reviewed_document(context, state, events):
+    from harness.re_v2.knowledge_revision import load_knowledge_revision, _read
+    from harness.re_v2.protocol_28.debt import (KnowledgeDebtItemV1, KnowledgeDebtCandidateV1,
+        derive_knowledge_debt_lineage, accepted_debt_ids)
+    active = load_knowledge_revision(context)
+    view = context.ledger.read_snapshot()[1]
+    root = view.knowledge_run_roots.get(state.run_root_id)
+    if state.run_root_id is not None and (root is None or root.revision_id != active.manifest.revision_id
+            or root.revision_manifest_id != active.manifest.identity or root.authorization_id != active.authorization.identity):
+        raise Protocol28StatusError('reviewed completion root is missing or stale')
+    inherited = _inherited_debt_status(context)
+    inherited_finding_ids = {i for row in inherited['limitations'] for i in row['finding_ids']}
+    limitations = list(inherited['limitations'])
+    pending = derive_knowledge_debt_lineage(context.objects, active.manifest.revision_id, active.dependencies, view)
+    debt_ids = root.debt_ids if root else tuple(sorted({i for row in pending.rows
+        for i in accepted_debt_ids(context, row.acceptance_id, row.source_id)}))
+    for debt_id in debt_ids:
+        if debt_id in inherited_finding_ids:
+            continue
+        item = _read(context.objects, debt_id, KnowledgeDebtItemV1)
+        candidate = _read(context.objects, item.candidate_id, KnowledgeDebtCandidateV1)
+        limitations.append({'debt_id': debt_id, 'candidate_id': candidate.identity, 'review_id': item.review_id,
+            'authorization_id': item.authorization_id, 'obligation_ids': list(item.obligation_ids),
+            'limitation': candidate.limitation})
+    blocker = next(({'kind': e.payload['blocker_kind'], 'reason_code': e.payload['reason_code']}
+        for e in reversed(events) if e.type == 'run_blocked'), None) if state.blocker_kind else None
+    if state.knowledge_revision_intent_id is not None:
+        blocker = {'kind': 'revision', 'reason_code': 'knowledge-revision-incomplete'}
+    banners = {'running': 'RUNNING — reviewed knowledge work is in progress.',
+        'needs-attention': 'NEEDS ATTENTION — required reviewed knowledge work is incomplete.',
+        'complete': 'COMPLETE — all selected knowledge obligations and reconciliations are reviewed.',
+        'complete-with-limitations': 'COMPLETE WITH LIMITATIONS — accepted inherited or independently reviewed dependency debt is retained.'}
+    manifest = context.inputs.manifest
+    return {'run_id': manifest.run_id, 'engine': manifest.engine, 'engine_protocol_version': '2.8',
+        'run_mode': manifest.run_mode, 'status': state.lifecycle_state, 'source_snapshot_id': manifest.source_snapshot_id,
+        'partition_manifest_id': manifest.partition_manifest_id, 'revision_id': active.manifest.revision_id,
+        'authorization_id': active.authorization.identity, 'account_transfer_id': active.manifest.account_transfer_id,
+        'selection': {'scope': context.inputs.exhaustive_plan.completion_scope, 'all_sources': manifest.selection.all_sources,
+            'source_ids': list(manifest.selection.source_ids), 'domain_keys': list(manifest.selection.domain_keys)},
+        'orchestration': None, 'blocker': blocker, 'reason_code': blocker['reason_code'] if blocker else None,
+        **_exhaustive_document(context, state, events), **inherited, 'limitations': limitations,
+        'input_quality': 'partial' if limitations else inherited['input_quality'],
+        'post_l4': {'synthesis': 'not run', 'publication': 'not run'},
+        'next_action': 'Review the exact blocker.' if blocker else ('Continue reviewed work.' if not state.terminal else 'Review the completed analysis.'),
+        'banner': banners[state.lifecycle_state]}
+
+
+def _inherited_debt_status(context):
+    from harness.re_v2.protocol_28.inputs import protocol_28_residual_debt_acceptance
+    from harness.re_v2.protocol_28.debt import inherited_residual_debt
+    acceptance = protocol_28_residual_debt_acceptance(context.inputs)
+    limitations = []
+    for source_id in sorted({p.source_id for p in context.inputs.l3_projection_catalog.projections}):
+        inherited = inherited_residual_debt(context, source_id)
+        if inherited:
+            limitations.append({**inherited.to_json_dict(),
+                'limitation': 'Accepted inherited L3 findings remain unresolved; L4 evidence does not close them.'})
+    result = {'limitations': limitations, 'input_quality': 'partial' if acceptance else 'complete',
+        'residual_debt_acceptance_hash': acceptance.identity if acceptance else None}
+    if acceptance:
+        result['l3_finding_closure'] = 'Accepted residual debt preserved; L4 evidence does not close it.'
+    return result
 
 
 def render_protocol_28_status(
@@ -242,13 +333,14 @@ def render_protocol_28_orchestration_status(
 
 
 def _exhaustive_document(context, state, events):  # type: ignore[no-untyped-def]
-    ledger = context.ledger.replay()
+    ledger = context.ledger.read_snapshot()[1] if state.knowledge_activation_intent_id is not None else context.ledger.replay()
     plan = context.inputs.exhaustive_plan
     entries = tuple(
         entry for target in plan.target_plans for entry in target.entries
     )
     accepted_entry_ids = {
         item.plan_entry_id for item in ledger.accepted_slices.values()
+        if state.knowledge_authorization_id is None or item.identity in state.accepted_slices.values()
     }
     adopted_output_ids = {
         str(event.payload["output_artifact_key_id"])
@@ -260,7 +352,7 @@ def _exhaustive_document(context, state, events):  # type: ignore[no-untyped-def
         for event in events
         if event.type == "repair_packet_recorded"
     }
-    accepted_output_ids = set(ledger.accepted_slices)
+    accepted_output_ids = set(state.accepted_slices) if state.knowledge_authorization_id else set(ledger.accepted_slices)
     targets = []
     for target in plan.target_plans:
         planned_ids = {entry.identity for entry in target.entries}
@@ -274,9 +366,9 @@ def _exhaustive_document(context, state, events):  # type: ignore[no-untyped-def
             }
         )
     decision = context.resources.decision
-    accepted = len(ledger.accepted_slices)
+    accepted = len(accepted_output_ids)
     planned = len(entries)
-    failures = len(state.failed_output_ids)
+    failures = len(state.failed_output_ids - state.knowledge_work_ids)
     unresolved = context.inputs.parent_authority_bundle.unresolved_deeper_finding_ids
     return {
         "selected_counts": {

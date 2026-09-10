@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar, Literal, TypeAlias
+from dataclasses import asdict, dataclass, fields
+from functools import lru_cache
+from types import UnionType
+from typing import ClassVar, Literal, TypeAlias, get_args, get_origin, get_type_hints
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.schema import (
@@ -21,6 +23,121 @@ from harness.re_v2.protocol_24.model import ParentLineageV1, SelectionScopeV1
 
 class Protocol28SchemaError(Protocol22SchemaError):
     """Raised when protocol-2.8 authority violates its closed schema."""
+
+
+class KnowledgeValueV1:
+    """Exact immutable schemas for the opt-in reviewed knowledge contract only."""
+
+    def __post_init__(self):
+        hints = _knowledge_hints(type(self))
+        for field in fields(self):
+            _knowledge_value(getattr(self, field.name), hints[field.name], field.name)
+        if self.schema_version != 1:
+            raise Protocol28SchemaError('invalid knowledge authority version')
+
+    @property
+    def identity(self):
+        return content_digest(canonical_json_bytes(self.to_json_dict()))
+
+    def to_json_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_json_dict(cls, value):
+        raw = _schema(exact_object, value, frozenset(f.name for f in fields(cls)), cls.__name__)
+        hints = _knowledge_hints(cls)
+        return cls(**{key: _knowledge_decode(item, hints[key]) for key, item in raw.items()})
+
+
+@lru_cache(maxsize=None)
+def _knowledge_hints(cls):
+    return get_type_hints(cls)
+
+
+def _knowledge_decode(value, annotation):
+    if get_origin(annotation) is tuple:
+        if not isinstance(value, (list, tuple)):
+            raise Protocol28SchemaError('knowledge authority requires an array')
+        return tuple(_knowledge_decode(item, get_args(annotation)[0]) for item in value)
+    if isinstance(annotation, type) and issubclass(annotation, KnowledgeValueV1):
+        return annotation.from_json_dict(value)
+    return value
+
+
+def _knowledge_value(value, annotation, name):
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Literal:
+        if value not in args or type(value) is not type(args[0]):
+            raise Protocol28SchemaError('invalid knowledge authority choice')
+    elif origin is UnionType:
+        if value is None and type(None) in args:
+            return
+        _knowledge_value(value, next(a for a in args if a is not type(None)), name)
+    elif origin is tuple:
+        if type(value) is not tuple:
+            raise Protocol28SchemaError('knowledge authority arrays must be immutable')
+        for item in value:
+            _knowledge_value(item, args[0], name.removesuffix('s'))
+        keys = tuple(item.identity if isinstance(item, KnowledgeValueV1) else item for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise Protocol28SchemaError('knowledge authority arrays must be sorted and unique')
+    elif annotation is int:
+        if type(value) is not int or not 0 <= value < 2**63:
+            raise Protocol28SchemaError('invalid knowledge authority counter')
+    elif annotation is bool:
+        if type(value) is not bool:
+            raise Protocol28SchemaError('invalid knowledge authority boolean')
+    elif annotation is str:
+        if name.endswith('_id') and name not in {'logical_run_id', 'source_id', 'target_id', 'run_id'}:
+            _schema(digest_value, value, name)
+        elif name in {'logical_run_id', 'source_id', 'target_id', 'run_id', 'category', 'reason_code'}:
+            _schema(safe_id, value, name)
+        elif not isinstance(value, str) or not value or len(value.encode()) > 262_144:
+            raise Protocol28SchemaError('invalid knowledge authority text')
+    elif type(value) is not annotation:
+        raise Protocol28SchemaError('invalid knowledge authority type')
+
+
+@dataclass(frozen=True, slots=True)
+class SimpleKnowledgeWorkflowAuthorizationV1(KnowledgeValueV1):
+    schema_version: int
+    logical_run_id: str
+    run_manifest_id: str
+    snapshot_id: str
+    reviewed_catalog_id: str
+    account_transfer_id: str
+    account_seal_id: str
+    activation_intent_id: str
+    reconciler_contract_id: str
+    reconciliation_schema_id: str
+    allow_debt: bool
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeAccountTransferV1(KnowledgeValueV1):
+    schema_version: int
+    logical_run_id: str
+    run_manifest_id: str
+    resource_store_id: str
+    reviewed_catalog_id: str
+    account_id: str
+    account_prefix_id: str
+    account_tail_id: str
+    account_object_ids: tuple[str, ...]
+    settled_dispatch_ids: tuple[str, ...]
+    charged_tokens: int
+    charged_active_ms: int
+    token_limit: int
+    active_ms_limit: int
+
+    def __post_init__(self):
+        super(KnowledgeAccountTransferV1, self).__post_init__()
+        if self.resource_store_id != knowledge_resource_store_identity(self.run_manifest_id):
+            raise Protocol28SchemaError('knowledge resource store identity is rebound')
+
+
+def knowledge_resource_store_identity(run_manifest_id):
+    return content_digest({'run_manifest_id': run_manifest_id, 'store_kind': 'protocol-2.8-resources-v1'})
 
 
 def _schema(function, *args):  # type: ignore[no-untyped-def]
@@ -165,6 +282,55 @@ class ExhaustiveRequestV1:
                 else {"exhaustive_plan_id": None}
             ),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SafeExhaustiveRequestV1(ExhaustiveRequestV1):
+    """Creation request subtype that authenticates provider-safe evidence."""
+
+    safe_snapshot_evidence_catalog_id: str = ""
+    safe_lower_authority_catalog_id: str = ""
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        *ExhaustiveRequestV1.FIELDS,
+        "safe_snapshot_evidence_catalog_id",
+        "safe_lower_authority_catalog_id",
+    )
+
+    def __post_init__(self) -> None:
+        label = type(self).__name__
+        _schema(literal, self.schema_version, 1, f"{label}.schema_version")
+        for field in (
+            "selection_id",
+            "parent_authority_bundle_id",
+            "l3_target_projection_catalog_id",
+            "snapshot_evidence_catalog_id",
+            "safe_snapshot_evidence_catalog_id",
+            "safe_lower_authority_catalog_id",
+            "exhaustive_policy_catalog_id",
+            "executor_catalog_id",
+            "source_snapshot_id",
+            "partition_manifest_id",
+        ):
+            _schema(digest_value, getattr(self, field), f"{label}.{field}")
+        if self.exhaustive_plan_id is not None:
+            _schema(digest_value, self.exhaustive_plan_id, f"{label}.exhaustive_plan_id")
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SafeExhaustiveRequestV1":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS})
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedExhaustiveRequestV1(SafeExhaustiveRequestV1):
+    """Explicit Safe+Reviewed request; historical identities are unchanged."""
+    reviewed_discovery_catalog_id: str = ""
+    FIELDS: ClassVar[tuple[str, ...]] = (*SafeExhaustiveRequestV1.FIELDS, 'reviewed_discovery_catalog_id')
+
+    def __post_init__(self):
+        super(ReviewedExhaustiveRequestV1, self).__post_init__()
+        _schema(digest_value, self.reviewed_discovery_catalog_id, 'reviewed_discovery_catalog_id')
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,6 +634,86 @@ class ExhaustiveRunManifestV7:
 
 
 @dataclass(frozen=True, slots=True)
+class SafeExhaustiveRunManifestV7(ExhaustiveRunManifestV7):
+    """Schema-7 exhaustive manifest subtype with explicit safe evidence binding."""
+
+    safe_snapshot_evidence_catalog_id: str
+    safe_lower_authority_catalog_id: str
+
+    FIELDS: ClassVar[tuple[str, ...]] = (
+        *ExhaustiveRunManifestV7.FIELDS,
+        "safe_snapshot_evidence_catalog_id",
+        "safe_lower_authority_catalog_id",
+    )
+
+    def __post_init__(self) -> None:
+        super(SafeExhaustiveRunManifestV7, self).__post_init__()
+        label = type(self).__name__
+        _schema(
+            digest_value,
+            self.safe_snapshot_evidence_catalog_id,
+            f"{label}.safe_snapshot_evidence_catalog_id",
+        )
+        _schema(
+            digest_value,
+            self.safe_lower_authority_catalog_id,
+            f"{label}.safe_lower_authority_catalog_id",
+        )
+        if not isinstance(self.exhaustive_request, SafeExhaustiveRequestV1):
+            raise Protocol28SchemaError(f"{label}.exhaustive_request is invalid")
+        if (
+            self.exhaustive_request.safe_snapshot_evidence_catalog_id
+            != self.safe_snapshot_evidence_catalog_id
+            or self.exhaustive_request.safe_lower_authority_catalog_id
+            != self.safe_lower_authority_catalog_id
+        ):
+            raise Protocol28SchemaError(
+                "SafeExhaustiveRunManifestV7 safe authority request does not match manifest"
+            )
+
+    @classmethod
+    def from_json_dict(cls, value: object) -> "SafeExhaustiveRunManifestV7":
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(
+            **{
+                field: raw[field]
+                for field in cls.FIELDS
+                if field not in {"selection", "lineage", "exhaustive_request", "budget_policy"}
+            },
+            selection=SelectionScopeV1.from_json_dict(raw["selection"]),
+            lineage=ParentLineageV1.from_json_dict(raw["lineage"]),
+            exhaustive_request=SafeExhaustiveRequestV1.from_json_dict(
+                raw["exhaustive_request"]
+            ),
+            budget_policy=ExhaustiveBudgetPolicyV1.from_json_dict(raw["budget_policy"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedExhaustiveRunManifestV7(SafeExhaustiveRunManifestV7):
+    """Safe+Reviewed is an explicit schema-7 subtype, never a policy inference."""
+    reviewed_discovery_catalog_id: str
+    FIELDS: ClassVar[tuple[str, ...]] = (*SafeExhaustiveRunManifestV7.FIELDS, 'reviewed_discovery_catalog_id')
+
+    def __post_init__(self):
+        super(ReviewedExhaustiveRunManifestV7, self).__post_init__()
+        _schema(digest_value, self.reviewed_discovery_catalog_id, 'reviewed_discovery_catalog_id')
+        if (not isinstance(self.exhaustive_request, ReviewedExhaustiveRequestV1)
+                or self.exhaustive_request.reviewed_discovery_catalog_id != self.reviewed_discovery_catalog_id):
+            raise Protocol28SchemaError('reviewed request does not match manifest')
+
+    @classmethod
+    def from_json_dict(cls, value):
+        raw = _schema(exact_object, value, frozenset(cls.FIELDS), cls.__name__)
+        return cls(**{field: raw[field] for field in cls.FIELDS
+                      if field not in {'selection', 'lineage', 'exhaustive_request', 'budget_policy'}},
+            selection=SelectionScopeV1.from_json_dict(raw['selection']),
+            lineage=ParentLineageV1.from_json_dict(raw['lineage']),
+            exhaustive_request=ReviewedExhaustiveRequestV1.from_json_dict(raw['exhaustive_request']),
+            budget_policy=ExhaustiveBudgetPolicyV1.from_json_dict(raw['budget_policy']))
+
+
+@dataclass(frozen=True, slots=True)
 class L4ClosureRunManifestV7:
     schema_version: int
     engine: Literal["re-v2"]
@@ -561,7 +807,9 @@ class L4ClosureRunManifestV7:
         )
 
 
-RunManifestV7: TypeAlias = ExhaustiveRunManifestV7 | L4ClosureRunManifestV7
+RunManifestV7: TypeAlias = (
+    ExhaustiveRunManifestV7 | SafeExhaustiveRunManifestV7 | L4ClosureRunManifestV7
+)
 
 
 def decode_run_manifest_v7(value: object) -> RunManifestV7:
@@ -569,6 +817,10 @@ def decode_run_manifest_v7(value: object) -> RunManifestV7:
         raise Protocol28SchemaError("RunManifestV7 must be an object")
     mode = value.get("run_mode")
     if mode == "exhaustive-depth":
+        if 'reviewed_discovery_catalog_id' in value:
+            return ReviewedExhaustiveRunManifestV7.from_json_dict(value)
+        if "safe_snapshot_evidence_catalog_id" in value:
+            return SafeExhaustiveRunManifestV7.from_json_dict(value)
         return ExhaustiveRunManifestV7.from_json_dict(value)
     if mode == "l4-closure-successor":
         return L4ClosureRunManifestV7.from_json_dict(value)
@@ -579,6 +831,8 @@ __all__ = (
     "ExhaustiveBudgetPolicyV1",
     "ExhaustiveRequestV1",
     "ExhaustiveRunManifestV7",
+    "SafeExhaustiveRequestV1",
+    "SafeExhaustiveRunManifestV7",
     "L4ClosureLineageV1",
     "L4ClosureRequestV1",
     "L4ClosureRunManifestV7",
