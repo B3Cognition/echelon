@@ -26,6 +26,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Delivery command setup** — LLM delivery requires a valid canonical build
+  command and uses role-neutral framing, removing the extra COMMANDER assignment.
+  Missing or malformed command resources block recoverably without dispatching
+  a bare prompt. Build resources load only when execution or repair needs them;
+  downstream setup failures retain usage, pending repairs, and verification
+  evidence. Continue/resume accepts the setup blocker after resources are fixed.
+  Review sequencing remains unchanged in this first migration phase.
+
 - **Typed delivery status boundary** — `echelon delivery status` now passes
   Typer-validated `spec_id`, strategy, and JSON values directly to its status
   service. The redundant argv reconstruction, legacy parser, and duplicate

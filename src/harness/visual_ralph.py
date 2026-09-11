@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 from harness.config import HarnessConfig
 from harness.exec_result import ExecResult
 from harness.delivery_results import VisualResult
+from harness.delivery_prompt import DeliveryPromptError
 from harness.playwright_evidence import PlaywrightEvidenceError, parse_playwright_json
 from harness.product_inventory import product_evidence_fingerprint
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -182,7 +183,11 @@ class VisualRalphController:
                     )
                     return VisualResult(
                         status="blocked",
-                        termination_reason="visual_feedback_failed",
+                        termination_reason=(
+                            "delivery_prompt_invalid"
+                            if fix_result.get("build_status") == "delivery_prompt_invalid"
+                            else "visual_feedback_failed"
+                        ),
                         iterations=iteration + 1,
                         tokens_used=tokens_used,
                         final_verify=verify_result,
@@ -585,6 +590,16 @@ class VisualRalphController:
                         screenshots,
                     )
                 )
+            except DeliveryPromptError as exc:
+                # Return through normal accounting so evidence and usage survive.
+                return {
+                    "exit_code": 1,
+                    "passed": False,
+                    "duration_s": 0.0,
+                    "tokens": 0,
+                    "build_status": "delivery_prompt_invalid",
+                    "build_reason": str(exc),
+                }
             except Exception as exc:
                 return {
                     "exit_code": 1,

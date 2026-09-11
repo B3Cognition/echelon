@@ -98,7 +98,10 @@ class ProsaicPromptLoader:
 
     @staticmethod
     def render_command(
-        artifact: ProsaicCommandArtifact, arguments: str
+        artifact: ProsaicCommandArtifact,
+        arguments: str,
+        *,
+        preamble: str = COMMANDER_PREAMBLE,
     ) -> RenderedProsaicCommand:
         """Render neutral arguments into the provider prompt format."""
         body = artifact.body
@@ -107,7 +110,7 @@ class ProsaicPromptLoader:
         else:
             content = f"{body}\n\n## Arguments\n{arguments}"
         return RenderedProsaicCommand(
-            prompt=COMMANDER_PREAMBLE + content,
+            prompt=preamble + content,
             frontmatter=artifact.frontmatter,
         )
 

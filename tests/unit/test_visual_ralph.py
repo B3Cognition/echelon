@@ -99,6 +99,50 @@ PLAYWRIGHT_FAIL_JSON = json.dumps({
 })
 
 
+def test_visual_setup_block_retains_usage_and_verification_evidence(tmp_path: Path):
+    from harness.delivery_prompt import DeliveryPromptError
+    from harness.visual_evidence import validate_visual_receipt
+    from harness.visual_ralph import VisualRalphController
+
+    def invalid_setup(*args):
+        raise DeliveryPromptError("canonical build command is missing")
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "app.ts").write_text("export const ready = true;\n", encoding="utf-8")
+    screenshot = tmp_path / "source.png"
+    screenshot.write_bytes(b"visual-proof")
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="visual", session_id="attempt-1")
+    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
+    controller = VisualRalphController(
+        provider=provider, config=_make_config(max_iterations=1), spec_id="001",
+        strategy_id="default", feedback_runner=invalid_setup, base_dir=str(tmp_path),
+        build_id="build-1",
+    )
+
+    with patch.object(controller, "_retrieve_screenshots", return_value=[str(screenshot)]):
+        result = controller.run_loop(worktree_path=str(worktree))
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "delivery_prompt_invalid"
+    assert result.iterations == 1
+    assert result.tokens_used > 0
+    assert result.final_verify is not None
+    assert result.tokens_used == result.final_verify.token_usage
+    assert any("canonical build command" in f.error for f in result.final_verify.failures)
+    assert result.evidence is not None
+    assert result.evidence.artifact_count == 1
+    validation = validate_visual_receipt(
+        result.evidence, candidate_fingerprint=result.evidence.candidate_fingerprint,
+    )
+    assert validation.reason == "receipt is not passing"
+    assert result.evidence.path.is_file()
+    receipt = json.loads(result.evidence.path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "failed"
+    provider.destroy.assert_called_once()
+
+
 def test_exec_visual_verify_pass():
     """Passing playwright JSON → VerifyResult.passed = True, no failures."""
     from harness.visual_ralph import VisualRalphController

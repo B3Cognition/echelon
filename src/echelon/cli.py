@@ -3042,6 +3042,7 @@ def _cmd_harness_resume(
     recoverable_reasons = {"build_incomplete", "publish_failed"}
     continuation_reasons = {
         "blocker_escalation",
+        "delivery_prompt_invalid",
         "checkpoint_outer_cap",
         "docker_unavailable",
         "convergence_stalled",
