@@ -23,6 +23,7 @@ from harness.runtime_surface import (
     DELIVERY_TEMPLATE_FILES,
     is_delivery_workflow_phase_path,
 )
+from tests.support.temp_storage import copy_package_build_tree
 
 
 def _make_gitops(tmp_path, *, llm_cli: str = "codex"):
@@ -933,7 +934,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
     """Canonical bundles retain the delivery runtime/prose ownership boundary."""
     repo_root = Path(__file__).resolve().parents[2]
     source = tmp_path / ".echelon" / "runtime"
-    copytree(repo_root / "runtime", source)
+    copy_package_build_tree(repo_root / "runtime", source)
     copytree(
         repo_root / "prosaic",
         tmp_path / ".echelon" / "prosaic",

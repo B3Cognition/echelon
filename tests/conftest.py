@@ -13,6 +13,8 @@ from typing import Optional
 
 import pytest
 
+from tests.support.temp_storage import restore_owner_write_permissions
+
 REPO_ROOT = Path(__file__).parent.parent
 
 # Retired execution tests are not imported: collection-time fixtures must never
@@ -22,6 +24,14 @@ collect_ignore = [
     "unit/test_pipeline_engine_wing.py",
     "unit/test_codegen_cli_wing.py",
 ]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _restore_session_temp_permissions(tmp_path_factory: pytest.TempPathFactory):
+    """Leave every pytest-owned immutable tree removable after the session."""
+    session_temp_root = tmp_path_factory.getbasetemp()
+    yield
+    restore_owner_write_permissions(session_temp_root)
 
 
 def pytest_pycollect_makeitem(collector, name, obj):

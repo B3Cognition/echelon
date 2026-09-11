@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.temp_storage import copy_package_build_tree, package_checkout_files
+
 
 def _write_bundle_source(root: Path) -> None:
     (root / "prosaic" / "commands").mkdir(parents=True)
@@ -119,6 +121,49 @@ def test_install_prosaic_bundle_deploys_staged_content_with_prosaic(
         encoding="utf-8"
     ) == "phases: []\n"
     assert not (workspace / ".echelon/packages").exists()
+
+
+def test_install_prosaic_bundle_excludes_checkout_only_dependency_trees(
+    tmp_path: Path,
+) -> None:
+    from echelon.prosaic_packages import install_prosaic_bundle
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+    ignored_dependency = (
+        echelon_root
+        / "runtime"
+        / "scripts"
+        / "node"
+        / "codegraph"
+        / "node_modules"
+        / "large.bin"
+    )
+    ignored_dependency.parent.mkdir(parents=True)
+    ignored_dependency.write_bytes(b"checkout-only dependency")
+
+    def deploy(command: list[str], *, cwd: Path, check: bool) -> None:
+        assert check is True
+        package_id = command[-1]
+        source = cwd / ".echelon" / "packages" / package_id
+        destination = cwd / ".echelon" / (
+            "prosaic" if package_id == "echelon-prose" else "runtime"
+        )
+        shutil.copytree(source, destination)
+
+    install_prosaic_bundle(workspace, echelon_root=echelon_root, run=deploy)
+
+    assert not (
+        workspace
+        / ".echelon"
+        / "runtime"
+        / "scripts"
+        / "node"
+        / "codegraph"
+        / "node_modules"
+    ).exists()
 
 
 def test_install_prosaic_bundle_refreshes_legacy_destinations_without_manifest(
@@ -308,16 +353,32 @@ def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
     build_root = tmp_path / 'source'
     def checkout_files():
         roots = [echelon_root / name for name in ('src', 'prosaic', 'runtime', 'build')]
-        paths = [p for root in roots for p in root.rglob('*') if p.is_file()]
-        paths.extend(p for p in echelon_root.iterdir() if p.is_file())
-        return {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in paths}
+        files = package_checkout_files(*roots)
+        files.update(
+            {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in echelon_root.iterdir()
+                if path.is_file()
+            }
+        )
+        return files
     before = checkout_files()
     build_root.mkdir()
     for name in ('pyproject.toml', 'setup.py', 'MANIFEST.in', 'README.md', 'LICENSE'):
         shutil.copy2(echelon_root / name, build_root / name)
     for name in ('src', 'prosaic', 'runtime'):
-        shutil.copytree(echelon_root / name, build_root / name,
-            ignore=shutil.ignore_patterns('*.egg-info', '__pycache__', '*.pyc', '.DS_Store'))
+        copy_package_build_tree(echelon_root / name, build_root / name)
+    checkout_only_dependency = (
+        build_root
+        / "runtime"
+        / "scripts"
+        / "node"
+        / "codegraph"
+        / "node_modules"
+        / "checkout-only.txt"
+    )
+    checkout_only_dependency.parent.mkdir(parents=True)
+    checkout_only_dependency.write_text("not package data\n", encoding="utf-8")
     wheel_dir = tmp_path / "wheel"
     installed = tmp_path / "installed"
     workspace = tmp_path / "workspace"
@@ -346,12 +407,14 @@ def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
         members = {member.name for member in archive.getmembers()}
     assert any(name.endswith("/prosaic/commands/echelon.run.md") for name in members)
     assert any(name.endswith("/runtime/workflow/definition.yaml") for name in members)
+    assert not any("/node_modules/" in name for name in members)
 
     with zipfile.ZipFile(wheel) as archive:
         wheel_members = set(archive.namelist())
         assert "echelon/bundles/prosaic/commands/echelon.run.md" in wheel_members
         assert "echelon/bundles/runtime/workflow/definition.yaml" in wheel_members
         assert not any("__pycache__" in name or name.endswith(".pyc") for name in wheel_members)
+        assert not any("/node_modules/" in name for name in wheel_members)
         archive.extractall(installed)
 
     script = """

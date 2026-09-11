@@ -15,6 +15,15 @@ from harness.banzai_protocol import (
 
 
 _CONFIG_FILENAMES = ("prosaic.config.yaml", "prosaic.config.yml", ".prosaic.yaml")
+_BUNDLE_COPY_EXCLUDED_NAMES = (
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "*.egg-info",
+    "*.pyc",
+    ".DS_Store",
+    "node_modules",
+)
 
 
 class ProsaicBundleInstallError(RuntimeError):
@@ -137,7 +146,12 @@ def _replace_managed_tree(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = destination.with_name(f".{destination.name}.staging")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(source, staging, copy_function=shutil.copy2)
+    shutil.copytree(
+        source,
+        staging,
+        copy_function=shutil.copy2,
+        ignore=shutil.ignore_patterns(*_BUNDLE_COPY_EXCLUDED_NAMES),
+    )
     shutil.rmtree(destination, ignore_errors=True)
     staging.replace(destination)
 

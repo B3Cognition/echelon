@@ -25,6 +25,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from tests.support.temp_storage import copy_package_build_tree
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
@@ -10196,7 +10198,7 @@ No issue remains for the selected repair. The certified aggregate gates still fa
             check=True,
             capture_output=True,
         )
-        shutil.copytree(
+        copy_package_build_tree(
             EXT_ROOT / "runtime",
             tmp_path / ".echelon/runtime",
             dirs_exist_ok=True,
