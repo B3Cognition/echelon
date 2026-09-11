@@ -66,6 +66,7 @@ class BuildResult:
     task_ids: list[str] | None = None
     provider_invocation: dict[str, object] | None = None
     blocker_kind: Optional[str] = None
+    partial_progress: bool = False
 
     def __post_init__(self) -> None:
         self.status = _normalize_status(self.status)
@@ -162,6 +163,8 @@ class BuildResult:
         duration_ms: int,
     ) -> "BuildResult":
         verdict = str(data.get("verdict") or "").strip().upper()
+        raw_status = str(data.get("status", "unknown"))
+        normalized_raw_status = raw_status.strip().lower().replace("-", "_")
         state_updates = data.get("state_updates")
         if not isinstance(state_updates, dict):
             state_updates = {}
@@ -175,11 +178,15 @@ class BuildResult:
             )
         return cls(
             exit_code=exit_code,
-            status="blocked" if verdict == "BLOCKED" else str(data.get("status", "unknown")),
+            status="blocked" if verdict == "BLOCKED" else raw_status,
             impasse_file=data.get("impasse_file"),
             reason=str(reason) if reason is not None else None,
             task_ids=_task_ids(data),
             blocker_kind=_blocker_kind(data),
+            partial_progress=(
+                verdict != "BLOCKED"
+                and normalized_raw_status in {"partial", "progress"}
+            ),
             stdout=stdout,
             stderr=stderr,
             duration_ms=duration_ms,

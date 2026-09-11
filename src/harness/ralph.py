@@ -2093,6 +2093,8 @@ class RalphController:
             "impasse": result.is_impasse,
             "impasse_file": result.impasse_file,
             "task_ids": result.task_ids or [],
+            "completion_metadata_recovery": True,
+            "partial_progress": result.partial_progress,
             "stdout": result.stdout,
             "stderr": result.stderr,
         }
@@ -3058,6 +3060,11 @@ class RalphController:
         if not build_result.get("passed", True):
             return
         if (build_result.get("build_status") or "unknown") != "done":
+            return
+        if (
+            build_result.get("completion_metadata_recovery") is True
+            and build_result.get("partial_progress") is True
+        ):
             return
         task_ids = build_result.get("task_ids")
         if isinstance(task_ids, list) and any(str(task_id).strip() for task_id in task_ids):

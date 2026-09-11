@@ -5918,6 +5918,44 @@ class TestOuterLoopConvergence:
         assert build_result["passed"] is False
         assert build_result["build_status"] == "missing_task_ids"
 
+    def test_allows_explicit_partial_progress_from_metadata_recovery(
+        self, tmp_path: Path
+    ) -> None:
+        """A recovery may checkpoint useful work without falsely completing a task."""
+        build_result = {
+            "passed": True,
+            "build_status": "done",
+            "task_ids": [],
+            "completion_metadata_recovery": True,
+            "partial_progress": True,
+        }
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"], cwd=worktree, check=True
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        (worktree / "app.py").write_text("print('partial')\n", encoding="utf-8")
+
+        controller._enforce_completed_task_ids(build_result, str(worktree))
+
+        assert build_result["passed"] is True
+        assert build_result["build_status"] == "done"
+
     def test_accepts_empty_completed_task_ids_for_terminal_task_finalization(
         self, tmp_path: Path
     ) -> None:

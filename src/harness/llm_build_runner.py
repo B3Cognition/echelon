@@ -250,9 +250,12 @@ def _missing_task_ids_recovery_prompt(status_file: Path) -> str:
         "only enough to identify which tasks the immediately preceding invocation "
         "actually completed. Then write exactly one JSON object to "
         f"{status_file}: use status `done` with only exact canonical "
-        "completed_task_ids that were actually completed, otherwise use status "
-        "`blocked` with a concrete reason. Do not infer completion from intent or mark "
-        "unfinished tasks complete. This status-file write is the only permitted change."
+        "completed_task_ids that were actually completed; if useful partial work exists "
+        "but no canonical task is complete, use status `progress`, an empty "
+        "completed_task_ids list, and a concrete reason; use status `blocked` only for "
+        "a genuine external or owner-decision blocker. Do not infer completion from "
+        "intent or mark unfinished tasks complete. This status-file write is the only "
+        "permitted change."
     )
 
 
