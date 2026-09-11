@@ -30,6 +30,15 @@ for t in tests/unit/*.sh; do bash "$t"; done
 # Validate the extension wiring without running any agents
 bash scripts/bash/dry-run.sh
 
+# Plan verification from the changed Git surface. Unknown/shared changes keep
+# the conservative full-unit suite; the curated CLI surface uses focused tests.
+python scripts/merge_verification.py plan --base origin/main
+python scripts/merge_verification.py run --base origin/main
+
+# After a fast-forward merge, reuse the shown receipt only when HEAD still has
+# the exact tested commit and tree. This replaces a duplicate identical suite.
+python scripts/merge_verification.py confirm-fast-forward --receipt tests/reports/merge-verification/<receipt>.json
+
 # Reinstall the core CLIs into ~/.echelon/venv after editing src/ — needed
 # because the CLIs run from an installed venv on PATH, not from this checkout.
 bash scripts/install.sh

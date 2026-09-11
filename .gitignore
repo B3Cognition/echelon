@@ -39,6 +39,7 @@ config-belief-graph.json
 .specify/
 .pytest_cache/
 tests/benchmarks/reports/
+tests/reports/merge-verification/
 
 # Provider-specific agent and command projections generated from the canonical
 # Prosaic bundle during workspace initialization.
