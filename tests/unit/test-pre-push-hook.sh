@@ -27,14 +27,24 @@ make_sandbox() {
   local tmpdir
   tmpdir="$(mktemp -d)"
 
-  mkdir -p "$tmpdir/.githooks" "$tmpdir/tests"
+  mkdir -p "$tmpdir/.githooks" "$tmpdir/tests" "$tmpdir/scripts"
   cp "$HOOK" "$tmpdir/.githooks/pre-push"
   chmod +x "$tmpdir/.githooks/pre-push"
+  : > "$tmpdir/scripts/merge_verification.py"
 
   (
     cd "$tmpdir" || exit 1
-    git init -q
+    git init -q -b main
+    git config user.email test@example.test
+    git config user.name test
     git config core.hooksPath .githooks
+    printf 'base\n' > base.txt
+    git add base.txt
+    git commit -qm base
+    printf 'candidate\n' > candidate.txt
+    git add candidate.txt
+    git commit -qm candidate
+    printf 'bin/\ntests/reports/\nrunner.log\npython.log\n' > .gitignore
     printf '%s\n' "$exit_code" > runner-exit
     cat > tests/run-all.sh <<'SCRIPT'
 #!/usr/bin/env bash
@@ -42,6 +52,8 @@ printf 'runner invoked\n' > runner.log
 exit "$(cat runner-exit)"
 SCRIPT
     chmod +x tests/run-all.sh
+    git add .githooks tests scripts runner-exit .gitignore
+    git commit -qm hook-fixture
   )
 
   printf '%s\n' "$tmpdir"
@@ -50,10 +62,34 @@ SCRIPT
 run_hook() {
   local tmpdir="$1"
   local remote="$2"
+  local refs="${3:-}"
   (
     cd "$tmpdir" || exit 1
-    .githooks/pre-push "$remote" "git@example.com:org/repo.git" </dev/null
+    printf '%s\n' "$refs" | .githooks/pre-push "$remote" "git@example.com:org/repo.git"
   )
+}
+
+install_fake_python() {
+  local tmpdir="$1"
+  mkdir -p "$tmpdir/bin"
+  cat > "$tmpdir/bin/python3" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PWD/python.log"
+case " $* " in
+  *" confirm-fast-forward "*) exit "${CONFIRM_EXIT:-1}" ;;
+  *" run "*) exit "${RUN_EXIT:-0}" ;;
+  *) exit 64 ;;
+esac
+SCRIPT
+  chmod +x "$tmpdir/bin/python3"
+}
+
+main_push_refs() {
+  local tmpdir="$1"
+  local base head
+  base="$(git -C "$tmpdir" rev-parse HEAD~1)"
+  head="$(git -C "$tmpdir" rev-parse HEAD)"
+  printf 'refs/heads/main %s refs/heads/main %s' "$head" "$base"
 }
 
 assert "pre-push hook exists" "$(
@@ -98,6 +134,47 @@ if [[ -f "$HOOK" ]]; then
       && ok_result || fail_result "rc=$skip_rc output=$skip_output"
   )"
   rm -rf "$tmp_skip"
+
+  tmp_receipt="$(make_sandbox 7)"
+  install_fake_python "$tmp_receipt"
+  mkdir -p "$tmp_receipt/tests/reports/merge-verification"
+  : > "$tmp_receipt/tests/reports/merge-verification/receipt.json"
+  set +e
+  receipt_output="$(PATH="$tmp_receipt/bin:$PATH" CONFIRM_EXIT=0 run_hook "$tmp_receipt" origin "$(main_push_refs "$tmp_receipt")" 2>&1)"
+  receipt_rc=$?
+  set -e
+  assert "matching receipt skips the full test runner" "$(
+    [[ "$receipt_rc" -eq 0 && ! -f "$tmp_receipt/runner.log" && -f "$tmp_receipt/python.log" ]] \
+      && grep -q 'confirm-fast-forward' "$tmp_receipt/python.log" \
+      && ok_result || fail_result "rc=$receipt_rc output=$receipt_output"
+  )"
+  rm -rf "$tmp_receipt"
+
+  tmp_selected="$(make_sandbox 7)"
+  install_fake_python "$tmp_selected"
+  set +e
+  selected_output="$(PATH="$tmp_selected/bin:$PATH" RUN_EXIT=0 run_hook "$tmp_selected" origin "$(main_push_refs "$tmp_selected")" 2>&1)"
+  selected_rc=$?
+  set -e
+  assert "clean main fast-forward runs selected verification" "$(
+    [[ "$selected_rc" -eq 0 && ! -f "$tmp_selected/runner.log" && -f "$tmp_selected/python.log" ]] \
+      && grep -q ' run --repo ' "$tmp_selected/python.log" \
+      && grep -q ' --base ' "$tmp_selected/python.log" \
+      && ok_result || fail_result "rc=$selected_rc output=$selected_output"
+  )"
+  rm -rf "$tmp_selected"
+
+  tmp_helper_error="$(make_sandbox 0)"
+  install_fake_python "$tmp_helper_error"
+  set +e
+  helper_output="$(PATH="$tmp_helper_error/bin:$PATH" RUN_EXIT=2 run_hook "$tmp_helper_error" origin "$(main_push_refs "$tmp_helper_error")" 2>&1)"
+  helper_rc=$?
+  set -e
+  assert "selector errors retain the full test fallback" "$(
+    [[ "$helper_rc" -eq 0 && -f "$tmp_helper_error/runner.log" ]] \
+      && ok_result || fail_result "rc=$helper_rc output=$helper_output"
+  )"
+  rm -rf "$tmp_helper_error"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"

@@ -72,7 +72,10 @@ Enable the tracked hooks in each checkout:
 git config core.hooksPath .githooks
 ```
 
-The pre-push hook runs `bash tests/run-all.sh` before pushes to `origin` and
+For a clean, single-ref fast-forward push to `main`, the pre-push hook reuses a
+matching merge-verification receipt when available, otherwise runs selected
+verification. All other pushes to `origin` run `bash tests/run-all.sh`, and CI
+still runs the comprehensive suite remotely.
 blocks the push when any suite is red.
 
 ### Local merge verification

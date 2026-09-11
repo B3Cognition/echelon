@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Block pushes to origin unless the full local test runner is green.
+# Keep origin pushes verified locally.  A clean, single-ref fast-forward push to
+# main may reuse an exact merge-verification receipt or run the selector; every
+# other shape retains the comprehensive test runner.
 set -euo pipefail
 
 remote="${1:-}"
@@ -12,14 +14,94 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 runner="$repo_root/tests/run-all.sh"
+selector="$repo_root/scripts/merge_verification.py"
 
 if [[ ! -f "$runner" ]]; then
   printf 'Echelon pre-push: missing test runner: %s\n' "$runner" >&2
   exit 1
 fi
 
-printf 'Echelon pre-push: running full test suite before push to %s (%s).\n' "$remote" "$url"
-printf 'Command: bash tests/run-all.sh\n\n'
+run_full_suite() {
+  local reason="$1"
+  printf 'Echelon pre-push: running full test suite (%s).\n' "$reason"
+  printf 'Command: bash tests/run-all.sh\n\n'
+  cd "$repo_root"
+  bash "$runner"
+}
 
-cd "$repo_root"
-bash "$runner"
+zero_sha="0000000000000000000000000000000000000000"
+pushes=()
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -n "${local_ref:-}" ]] || continue
+  pushes+=("$local_ref|$local_sha|$remote_ref|$remote_sha")
+done
+
+if [[ "${#pushes[@]}" -ne 1 ]]; then
+  run_full_suite "push does not contain exactly one ref update"
+  exit $?
+fi
+
+IFS='|' read -r local_ref local_sha remote_ref remote_sha <<< "${pushes[0]}"
+
+if [[ "$local_ref" != "refs/heads/main" || "$remote_ref" != "refs/heads/main" \
+  || "$local_sha" == "$zero_sha" || "$remote_sha" == "$zero_sha" ]]; then
+  run_full_suite "push is not a main-to-main branch update"
+  exit $?
+fi
+
+if ! git rev-parse --verify --quiet "${local_sha}^{commit}" >/dev/null \
+  || ! git rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then
+  run_full_suite "push commits are unavailable locally"
+  exit $?
+fi
+
+head_sha="$(git rev-parse HEAD)"
+if [[ "$local_sha" != "$head_sha" ]]; then
+  run_full_suite "push candidate is not the checked-out HEAD"
+  exit $?
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  run_full_suite "working tree is dirty"
+  exit $?
+fi
+
+if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+  run_full_suite "main update is not a fast-forward"
+  exit $?
+fi
+
+if [[ ! -f "$selector" ]]; then
+  run_full_suite "merge-verification selector is unavailable"
+  exit $?
+fi
+
+receipt_dir="$repo_root/tests/reports/merge-verification"
+if [[ -d "$receipt_dir" ]]; then
+  for receipt in "$receipt_dir"/*.json; do
+    [[ -f "$receipt" ]] || continue
+    if python3 "$selector" confirm-fast-forward --repo "$repo_root" --receipt "$receipt" >/dev/null 2>&1; then
+      printf 'Echelon pre-push: reusing matching merge-verification receipt: %s\n' "${receipt#$repo_root/}"
+      exit 0
+    fi
+  done
+fi
+
+printf 'Echelon pre-push: running selected verification for clean main fast-forward to %s (%s).\n' "$remote" "$url"
+set +e
+python3 "$selector" run --repo "$repo_root" --base "$remote_sha" --head "$local_sha"
+selector_rc=$?
+set -e
+
+case "$selector_rc" in
+  0)
+    exit 0
+    ;;
+  1)
+    printf 'Echelon pre-push: selected verification failed; push blocked.\n' >&2
+    exit 1
+    ;;
+  *)
+    run_full_suite "merge-verification selector could not run"
+    ;;
+esac
