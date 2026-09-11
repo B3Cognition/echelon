@@ -264,6 +264,60 @@ def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkey
     assert run.call_args_list[1].kwargs["cwd"] == str(runtime)
 
 
+def test_sync_runtime_skips_perlgraph_for_a_non_perl_delivery_target(tmp_path):
+    """A browser/TypeScript delivery must not need a native Perl parser."""
+    prose = tmp_path / ".echelon" / "prosaic"
+    runtime = tmp_path / ".echelon" / "runtime"
+    (prose / "commands").mkdir(parents=True)
+    (prose / "subagents").mkdir()
+    (runtime / "workflow").mkdir(parents=True)
+    (runtime / "workflow" / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+
+    worktree = tmp_path / "worktree"
+    (worktree / "apps" / "game").mkdir(parents=True)
+    (worktree / "apps" / "game" / "main.ts").write_text("export {};\n", encoding="utf-8")
+    exclude = tmp_path / "git-exclude"
+    gitops = _make_gitops(tmp_path)
+
+    with patch("harness.gitops._run_git") as run_git, patch(
+        "harness.gitops.prepare_codegraph_runtime"
+    ) as prepare_codegraph, patch(
+        "harness.gitops.prepare_perlgraph_runtime"
+    ) as prepare_perlgraph:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree, prepare_codegraph=True)
+
+    prepare_codegraph.assert_called_once_with(worktree / ".echelon" / "runtime")
+    prepare_perlgraph.assert_not_called()
+
+
+def test_sync_runtime_prepares_perlgraph_for_a_perl_delivery_target(tmp_path):
+    """Perl delivery keeps the existing native structural-analysis preparation."""
+    prose = tmp_path / ".echelon" / "prosaic"
+    runtime = tmp_path / ".echelon" / "runtime"
+    (prose / "commands").mkdir(parents=True)
+    (prose / "subagents").mkdir()
+    (runtime / "workflow").mkdir(parents=True)
+    (runtime / "workflow" / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+
+    worktree = tmp_path / "worktree"
+    (worktree / "lib").mkdir(parents=True)
+    (worktree / "lib" / "Game.pm").write_text("package Game;\n", encoding="utf-8")
+    exclude = tmp_path / "git-exclude"
+    gitops = _make_gitops(tmp_path)
+
+    with patch("harness.gitops._run_git") as run_git, patch(
+        "harness.gitops.prepare_codegraph_runtime"
+    ) as prepare_codegraph, patch(
+        "harness.gitops.prepare_perlgraph_runtime"
+    ) as prepare_perlgraph:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree, prepare_codegraph=True)
+
+    prepare_codegraph.assert_called_once_with(worktree / ".echelon" / "runtime")
+    prepare_perlgraph.assert_called_once_with(worktree / ".echelon" / "runtime")
+
+
 def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp_path):
     """Delivery worktrees keep CodeGraph source but never copied dependencies."""
     source = tmp_path / ".echelon" / "runtime"

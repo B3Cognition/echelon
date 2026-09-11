@@ -81,6 +81,40 @@ CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
 CODEGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
 PERLGRAPH_RUNTIME_REL = Path("scripts") / "node" / "perlgraph"
 PERLGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
+_PERL_SOURCE_SUFFIXES = frozenset({".pl", ".pm", ".pod", ".t"})
+_PERL_SOURCE_EXCLUDED_DIRS = frozenset(
+    {
+        ".echelon",
+        ".git",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "third_party",
+        "third-party",
+        "vendor",
+        "venv",
+    }
+)
+
+
+def delivery_target_has_perl_sources(worktree: Path) -> bool:
+    """Return whether the delivery target contains first-party Perl sources.
+
+    PerlGraph has a native dependency, so only provision it in a worktree when
+    the product can actually use its evidence. Generated, vendored, and
+    Echelon-owned runtime trees must not opt a target into that requirement.
+    """
+    for root, directories, filenames in os.walk(worktree):
+        directories[:] = [
+            directory
+            for directory in directories
+            if directory not in _PERL_SOURCE_EXCLUDED_DIRS
+        ]
+        if any(Path(filename).suffix.lower() in _PERL_SOURCE_SUFFIXES for filename in filenames):
+            return True
+    return False
 
 
 def copy_runtime_tree(source: Path, dest: Path) -> None:
@@ -952,7 +986,8 @@ class GitOpsManager:
         prune_delivery_workflow_definition(runtime_dest / "workflow" / "definition.yaml")
         if prepare_codegraph:
             prepare_codegraph_runtime(runtime_dest)
-            prepare_perlgraph_runtime(runtime_dest)
+            if delivery_target_has_perl_sources(worktree):
+                prepare_perlgraph_runtime(runtime_dest)
         self._exclude_prosaic_runtime(worktree)
         logger.info(
             "Synced deployed Echelon Prosaic/runtime into worktree at %s and %s",
