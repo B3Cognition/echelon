@@ -4,6 +4,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Adaptive delivery convergence lease** — Phase B now persists a
+  controller-owned high-water snapshot across delivery restarts and classifies
+  canonical task progress, fulfillment debt, stable blocking failures, and
+  verification-gate advancement. Status, summaries, and content-free telemetry
+  expose meaningful attempts, stall patience, excluded infrastructure attempts,
+  and the best checkpoint.
+
+### Changed
+
+- **Evidence-based outer-loop limits** — The default outer safety ceiling is 12
+  meaningful authoritative observations instead of five raw loop indexes.
+  Provider/session and verification-infrastructure interruptions no longer spend
+  product-repair allowance; two comparable non-improving observations after the
+  minimum three stop with `convergence_stalled`. Explicit caps, token limits,
+  inner same-failure handling, and banzai/semi/guided boundaries remain in force.
+  Hard-cap guidance now supplies a concrete larger `--max-outer` value that
+  preserves the existing convergence lease and durable checkpoint.
+
 ## [4.1.0] - 2026-09-09
 
 ### Fixed

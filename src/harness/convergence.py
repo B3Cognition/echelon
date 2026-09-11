@@ -293,10 +293,10 @@ class ConvergenceLease:
             best_checkpoint_commit=best_checkpoint,
             updated_at=_now(),
         )
-        if attempts >= hard_ceiling:
-            stop_reason = "hard_ceiling"
-        elif attempts >= min_attempts and stalled >= stall_patience:
+        if attempts >= min_attempts and stalled >= stall_patience:
             stop_reason = "stall_patience"
+        elif attempts >= hard_ceiling:
+            stop_reason = "hard_ceiling"
         else:
             stop_reason = None
         return LeaseObservation(
