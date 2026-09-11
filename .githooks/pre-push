@@ -16,8 +16,24 @@ repo_root="$(git rev-parse --show-toplevel)"
 runner="$repo_root/tests/run-all.sh"
 selector="$repo_root/scripts/merge_verification.py"
 
+python_exec="${PYTHON:-}"
+if [[ -z "$python_exec" ]]; then
+  if [[ -x "$repo_root/.venv/bin/python" ]]; then
+    python_exec="$repo_root/.venv/bin/python"
+  elif [[ -x "$HOME/.echelon/venv/bin/python" ]]; then
+    python_exec="$HOME/.echelon/venv/bin/python"
+  else
+    python_exec="$(command -v python3 || true)"
+  fi
+fi
+
 if [[ ! -f "$runner" ]]; then
   printf 'Echelon pre-push: missing test runner: %s\n' "$runner" >&2
+  exit 1
+fi
+
+if [[ -z "$python_exec" || ! -x "$python_exec" ]] && ! command -v "$python_exec" >/dev/null 2>&1; then
+  printf 'Echelon pre-push: no usable Python interpreter was found.\n' >&2
   exit 1
 fi
 
@@ -80,7 +96,7 @@ receipt_dir="$repo_root/tests/reports/merge-verification"
 if [[ -d "$receipt_dir" ]]; then
   for receipt in "$receipt_dir"/*.json; do
     [[ -f "$receipt" ]] || continue
-    if python3 "$selector" confirm-fast-forward --repo "$repo_root" --receipt "$receipt" >/dev/null 2>&1; then
+    if "$python_exec" "$selector" confirm-fast-forward --repo "$repo_root" --receipt "$receipt" >/dev/null 2>&1; then
       printf 'Echelon pre-push: reusing matching merge-verification receipt: %s\n' "${receipt#$repo_root/}"
       exit 0
     fi
@@ -89,7 +105,7 @@ fi
 
 printf 'Echelon pre-push: running selected verification for clean main fast-forward to %s (%s).\n' "$remote" "$url"
 set +e
-python3 "$selector" run --repo "$repo_root" --base "$remote_sha" --head "$local_sha"
+"$python_exec" "$selector" run --repo "$repo_root" --base "$remote_sha" --head "$local_sha"
 selector_rc=$?
 set -e
 

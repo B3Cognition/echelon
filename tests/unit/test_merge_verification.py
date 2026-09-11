@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import sys
+from types import SimpleNamespace
+
+import scripts.merge_verification as merge_verification
 
 from scripts.merge_verification import (
     FULL_UNIT_COMMAND,
@@ -109,6 +112,28 @@ def test_run_plan_executes_commands_and_records_a_passing_receipt(tmp_path) -> N
         current_commit="candidate",
         current_tree="tree",
     ).valid is True
+
+
+def test_run_plan_uses_the_current_interpreter_for_pytest_commands(
+    tmp_path, monkeypatch
+) -> None:
+    plan = plan_for_changed_paths(
+        base_commit="base",
+        candidate_commit="candidate",
+        candidate_tree="tree",
+        changed_paths=("src/harness/state.py",),
+    )
+    invoked: list[tuple[str, ...]] = []
+
+    def fake_run(command, **_kwargs):
+        invoked.append(tuple(command))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(merge_verification.subprocess, "run", fake_run)
+
+    run_plan(repo_root=tmp_path, reports_dir=tmp_path, plan=plan)
+
+    assert invoked == [(sys.executable, "-m", *FULL_UNIT_COMMAND)]
 
 
 def test_candidate_checkout_validation_refuses_dirty_or_non_head_candidates() -> None:

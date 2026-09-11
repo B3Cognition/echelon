@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import sys
 from typing import Iterable
 from uuid import uuid4
 
@@ -171,12 +172,17 @@ def run_plan(*, repo_root: Path, reports_dir: Path, plan: VerificationPlan) -> P
     """Execute a plan in order and persist its compact, Git-bound result."""
     results: list[CommandResult] = []
     for command in plan.commands:
+        execution_command = (
+            (sys.executable, "-m", *command)
+            if command and command[0] == "pytest"
+            else command
+        )
         started = time.monotonic()
-        completed = subprocess.run(command, cwd=repo_root, check=False)
+        completed = subprocess.run(execution_command, cwd=repo_root, check=False)
         duration_ms = int((time.monotonic() - started) * 1000)
         results.append(
             CommandResult(
-                command=command,
+                command=execution_command,
                 exit_code=completed.returncode,
                 duration_ms=duration_ms,
             )

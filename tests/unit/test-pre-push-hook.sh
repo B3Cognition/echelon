@@ -44,7 +44,7 @@ make_sandbox() {
     printf 'candidate\n' > candidate.txt
     git add candidate.txt
     git commit -qm candidate
-    printf 'bin/\ntests/reports/\nrunner.log\npython.log\n' > .gitignore
+    printf '.venv/\nbin/\ntests/reports/\nrunner.log\npython.log\nvenv-python.log\n' > .gitignore
     printf '%s\n' "$exit_code" > runner-exit
     cat > tests/run-all.sh <<'SCRIPT'
 #!/usr/bin/env bash
@@ -82,6 +82,21 @@ case " $* " in
 esac
 SCRIPT
   chmod +x "$tmpdir/bin/python3"
+}
+
+install_fake_venv_python() {
+  local tmpdir="$1"
+  mkdir -p "$tmpdir/.venv/bin"
+  cat > "$tmpdir/.venv/bin/python" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PWD/venv-python.log"
+case " $* " in
+  *" confirm-fast-forward "*) exit "${CONFIRM_EXIT:-1}" ;;
+  *" run "*) exit "${RUN_EXIT:-0}" ;;
+  *) exit 64 ;;
+esac
+SCRIPT
+  chmod +x "$tmpdir/.venv/bin/python"
 }
 
 main_push_refs() {
@@ -140,7 +155,7 @@ if [[ -f "$HOOK" ]]; then
   mkdir -p "$tmp_receipt/tests/reports/merge-verification"
   : > "$tmp_receipt/tests/reports/merge-verification/receipt.json"
   set +e
-  receipt_output="$(PATH="$tmp_receipt/bin:$PATH" CONFIRM_EXIT=0 run_hook "$tmp_receipt" origin "$(main_push_refs "$tmp_receipt")" 2>&1)"
+  receipt_output="$(PYTHON="$tmp_receipt/bin/python3" CONFIRM_EXIT=0 run_hook "$tmp_receipt" origin "$(main_push_refs "$tmp_receipt")" 2>&1)"
   receipt_rc=$?
   set -e
   assert "matching receipt skips the full test runner" "$(
@@ -153,7 +168,7 @@ if [[ -f "$HOOK" ]]; then
   tmp_selected="$(make_sandbox 7)"
   install_fake_python "$tmp_selected"
   set +e
-  selected_output="$(PATH="$tmp_selected/bin:$PATH" RUN_EXIT=0 run_hook "$tmp_selected" origin "$(main_push_refs "$tmp_selected")" 2>&1)"
+  selected_output="$(PYTHON="$tmp_selected/bin/python3" RUN_EXIT=0 run_hook "$tmp_selected" origin "$(main_push_refs "$tmp_selected")" 2>&1)"
   selected_rc=$?
   set -e
   assert "clean main fast-forward runs selected verification" "$(
@@ -167,7 +182,7 @@ if [[ -f "$HOOK" ]]; then
   tmp_helper_error="$(make_sandbox 0)"
   install_fake_python "$tmp_helper_error"
   set +e
-  helper_output="$(PATH="$tmp_helper_error/bin:$PATH" RUN_EXIT=2 run_hook "$tmp_helper_error" origin "$(main_push_refs "$tmp_helper_error")" 2>&1)"
+  helper_output="$(PYTHON="$tmp_helper_error/bin/python3" RUN_EXIT=2 run_hook "$tmp_helper_error" origin "$(main_push_refs "$tmp_helper_error")" 2>&1)"
   helper_rc=$?
   set -e
   assert "selector errors retain the full test fallback" "$(
@@ -175,6 +190,19 @@ if [[ -f "$HOOK" ]]; then
       && ok_result || fail_result "rc=$helper_rc output=$helper_output"
   )"
   rm -rf "$tmp_helper_error"
+
+  tmp_venv="$(make_sandbox 7)"
+  install_fake_venv_python "$tmp_venv"
+  set +e
+  venv_output="$(RUN_EXIT=0 run_hook "$tmp_venv" origin "$(main_push_refs "$tmp_venv")" 2>&1)"
+  venv_rc=$?
+  set -e
+  assert "selected verification uses the repository virtualenv" "$(
+    [[ "$venv_rc" -eq 0 && ! -f "$tmp_venv/runner.log" && -f "$tmp_venv/venv-python.log" ]] \
+      && grep -q ' run --repo ' "$tmp_venv/venv-python.log" \
+      && ok_result || fail_result "rc=$venv_rc output=$venv_output"
+  )"
+  rm -rf "$tmp_venv"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$pass" "$fail"
