@@ -13,8 +13,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dispatch-bound results, protected-input checks, read-only reviewers, and
   per-dispatch budget checks prevent legacy completion markers from authorizing
   progress. The trial requires an enforced read-only provider boundary (currently
-  Codex on a supported host). Default execution is unchanged; durable resume and
-  documentation-only dispatch remain subsequent migration phases.
+  Codex on a supported host). Default execution is unchanged;
+  documentation-only dispatch remains a subsequent migration phase.
+
+- **Durable controlled-delivery recovery** — Opt-in slices persist dispatch
+  intent and validated receipts under an OS-held lock. Restart reuses only
+  matching receipts, preserves the original uncommitted worktree and repair
+  limits, and applies task progress and usage idempotently. Missing candidates,
+  uncertain completion, changed inputs, corrupt journals, or disabling the
+  controller with pending work block for reconciliation rather than starting
+  over. Tightened finite ceilings survive restart; visual/review re-entry counts
+  only new implementation usage. Offline regression tested; no live rollout.
 
 - **Adaptive delivery convergence lease** — Phase B now persists a
   controller-owned high-water snapshot across delivery restarts and classifies

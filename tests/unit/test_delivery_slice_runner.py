@@ -177,7 +177,7 @@ def test_prior_marker_and_receipts_cannot_substitute_for_new_reviews(slice_proje
     assert _run(slice_project, first).succeeded
     (slice_project[0] / ".harness-build-status.json").write_text('{"status":"done"}')
     second = ScriptedExecutor()
-    assert _run(slice_project, second).succeeded
+    assert _run(slice_project, second, operation_id="new-operation").succeeded
     assert _steps(second) == ["implementer", "spec_guard", "code_reviewer", "test_guardian"]
     assert {x[0]["dispatch_id"] for x in first.calls}.isdisjoint(x[0]["dispatch_id"] for x in second.calls)
 

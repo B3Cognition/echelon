@@ -1623,6 +1623,10 @@ class StrategyCoordinator:
                         return current_visual_result
                     state_store.transition("running")
                     controller.reuse_worktree_on_next_run(worktree_path)
+                    reentry_usage_baseline = (
+                        state_store.read().get("tokens_used", 0)
+                        if self._config.llm.features.get("delivery_gate_controller") is True else 0
+                    )
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,
@@ -1632,7 +1636,7 @@ class StrategyCoordinator:
                         build_prompt=get_build_prompt(),
                     )
                     implementation_outer_iterations += implementation_result.outer_iterations
-                    implementation_tokens += implementation_result.tokens_used
+                    implementation_tokens += max(0, implementation_result.tokens_used - reentry_usage_baseline)
                     if implementation_result.status == "verified":
                         visual_reentry_block = self._checkpoint_verified_result(
                             state_store,
@@ -1840,6 +1844,10 @@ class StrategyCoordinator:
                                 "review_result": review_result,
                             })
                         state_store.transition("running")
+                        reentry_usage_baseline = (
+                            state_store.read().get("tokens_used", 0)
+                            if self._config.llm.features.get("delivery_gate_controller") is True else 0
+                        )
                         implementation_result = controller.run_loop(
                             max_outer=intent.max_outer,
                             max_inner=intent.max_inner,
@@ -1851,7 +1859,7 @@ class StrategyCoordinator:
                         implementation_outer_iterations += (
                             implementation_result.outer_iterations
                         )
-                        implementation_tokens += implementation_result.tokens_used
+                        implementation_tokens += max(0, implementation_result.tokens_used - reentry_usage_baseline)
                         if implementation_result.status == "verified":
                             checkpoint_updates = self._verified_checkpoint_updates(
                                 spec_id=intent.spec_id,

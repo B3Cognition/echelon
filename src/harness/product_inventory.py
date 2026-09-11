@@ -36,7 +36,7 @@ class ProductInventoryResult:
     inventory_source: str
 
 
-def product_evidence_fingerprint(project_root: Path) -> str:
+def product_evidence_fingerprint(project_root: Path, *, excluded_roots: tuple[Path, ...] = ()) -> str:
     """Return a stable digest of the bounded product evidence set."""
     root = project_root.expanduser().resolve(strict=True)
     relative_paths, _inventory_source = _inventory_paths(root)
@@ -46,6 +46,7 @@ def product_evidence_fingerprint(project_root: Path) -> str:
             relative
             for relative in relative_paths
             if not _fingerprint_ignored(relative)
+            and not any((root / relative).is_relative_to(excluded) for excluded in excluded_roots)
         ),
     )
     canonical = [

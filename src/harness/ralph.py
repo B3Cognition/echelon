@@ -29,6 +29,7 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional
+from uuid import uuid4
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
@@ -519,9 +520,24 @@ class RalphController:
                     final_verify=None,
                 )
 
+            pending_slice = self._state_store.read().get("delivery_slice_operation")
+            recovering_slice = pending_slice is not None
+            if recovering_slice:
+                preserved = pending_slice.get("worktree_path") if isinstance(pending_slice, dict) else None
+                if (self._config.llm.features.get("delivery_gate_controller") is not True
+                        or not isinstance(preserved, str) or not Path(preserved).is_absolute()
+                        or Path(preserved).is_symlink() or not Path(preserved).is_dir()):
+                    return self._finalize(
+                        status="blocked", reason="delivery_reconciliation_required",
+                        outer_iterations=outer_iter, inner_iterations=total_inner_iterations,
+                        pr_url=pr_url, tokens_used=tokens_used, final_verify=None,
+                        extra_state={"build_reason": "pending delivery candidate is missing, unsafe, or controller disabled"},
+                    )
+                self._resume_worktree_path = None
+                worktree_path = preserved
             # Create worktree — use feature branch when available so spec artifacts
             # (spec.md, tasks.md, constitution.md) are present from the start.
-            if self._resume_worktree_path and outer_iter == start_outer:
+            elif self._resume_worktree_path and outer_iter == start_outer:
                 worktree_path = self._resume_worktree_path
                 self._resume_worktree_path = None
                 if not Path(worktree_path).is_dir():
@@ -559,7 +575,7 @@ class RalphController:
             preserve_worktree = False
 
             try:
-                phase_a_blockers = self._sync_phase_a_inputs_into_worktree(
+                phase_a_blockers = [] if recovering_slice else self._sync_phase_a_inputs_into_worktree(
                     Path(worktree_path)
                 )
                 if phase_a_blockers:
@@ -1481,6 +1497,11 @@ class RalphController:
                 # only while a downstream phase or recovery path needs it.
                 if not preserve_worktree:
                     self._gitops.destroy_worktree(worktree_path, keep_branch=True)
+                    current = self._state_store.read()
+                    operation = current.get("delivery_slice_operation")
+                    if isinstance(operation, dict) and operation.get("worktree_path") == worktree_path:
+                        current.pop("delivery_slice_operation")
+                        self._state_store.write(current)
 
             # Update state after each iteration
             state = self._state_store.read()
@@ -2003,11 +2024,14 @@ class RalphController:
     def _exec_controlled_slice(self, worktree_path: str, prompt: str, *, repair: bool) -> Dict[str, Any]:
         """Adapt the opt-in controller to Ralph's existing build result boundary."""
         from harness.delivery_slice_runner import DeliverySliceRunner
+        from harness.delivery_slice_runner import _digest, _spec_inputs
         from harness.delivery_slice import DeliverySliceError
 
         try:
+            if self._config.llm.features.get("delivery_gate_controller") is not True:
+                raise DeliverySliceError("pending controlled delivery cannot fall back to legacy execution")
             worktree = Path(worktree_path)
-            spec_dir = self._find_spec_dir(worktree)
+            spec_dir = self._find_existing_spec_dir(worktree)
             if spec_dir is None:
                 raise DeliverySliceError("controlled delivery requires a canonical spec directory")
             state = self._state_store.read()
@@ -2020,8 +2044,40 @@ class RalphController:
             else:
                 scope = self._target_task_ids()
             repair_task_id = state.get("delivery_slice_task_id") if repair else None
-            if repair and (not isinstance(repair_task_id, str) or not repair_task_id):
+            operation = state.get("delivery_slice_operation")
+            source = self._source_phase_a_spec_dir(worktree)
+            source_binding = None
+            if source is not None and source.resolve() != spec_dir.resolve():
+                source_binding = _digest(_spec_inputs(source, self._orchestration_root(worktree)))
+            if isinstance(operation, dict):
+                if (operation.get("worktree_path") != str(worktree.resolve())
+                        or operation.get("source_binding") != source_binding):
+                    raise DeliverySliceError("delivery_reconciliation_required: pending worktree or published source changed")
+                if (operation.get("progress_applied") is True
+                        and (repair or state.get("outer_iter", 0) > operation.get("outer_iter", 0))):
+                    operation = None  # A new verified-loop iteration or explicit repair.
+            resuming = operation is not None
+            if resuming:
+                if (not isinstance(operation, dict) or not isinstance(operation.get("id"), str)
+                        or not operation["id"] or not isinstance(operation.get("feedback"), str)
+                        or type(operation.get("accounted_tokens")) is not int
+                        or operation["accounted_tokens"] < 0):
+                    raise DeliverySliceError("invalid pending delivery operation")
+                repair_task_id = operation.get("repair_task_id")
+                prompt = operation["feedback"]
+            elif repair and (not isinstance(repair_task_id, str) or not repair_task_id):
                 raise DeliverySliceError("feedback requires a previously accepted delivery slice task")
+            else:
+                operation = {"id": uuid4().hex, "feedback": prompt,
+                             "repair_task_id": repair_task_id, "accounted_tokens": 0,
+                             "worktree_path": str(worktree.resolve()), "source_binding": source_binding,
+                             "outer_iter": state.get("outer_iter", 0), "progress_applied": False}
+
+            def remember_operation():
+                current = self._state_store.read()
+                current["delivery_slice_operation"] = operation
+                self._state_store.write(current)
+
             # Reuse path/containment preparation, but never send the legacy
             # MANAGER/context routing recipe to a controlled role.
             self._with_harness_context("", worktree_path)
@@ -2029,21 +2085,33 @@ class RalphController:
                 self._llm_provider, self._orchestration_root(worktree),
             ).run(
                 worktree=worktree, spec_dir=spec_dir,
-                evidence_root=self._state_store.state_dir / "delivery-slices",
+                evidence_root=self._state_store.state_dir / "delivery-slices" / hashlib.sha256(
+                    f"{self._strategy_id}:{state.get('run_id', '')}".encode()).hexdigest(),
                 allowed_task_ids=scope, repair_task_id=repair_task_id,
                 feedback=prompt, stop_requested=lambda: self._interrupted or self.check_cancel(),
                 containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
-                token_budget=self._controlled_slice_budget,
+                token_budget=(self._controlled_slice_budget + operation["accounted_tokens"]
+                              if self._controlled_slice_budget is not None else None),
+                operation_id=operation["id"], journal_required=resuming,
+                on_journal_ready=remember_operation,
             )
+            current = self._state_store.read()
+            new_tokens = None
+            if result.token_usage is not None:
+                new_tokens = max(0, result.token_usage - operation["accounted_tokens"])
+                operation["accounted_tokens"] = max(operation["accounted_tokens"], result.token_usage)
+                current["tokens_used"] = current.get("tokens_used", 0) + new_tokens
+            if current.get("delivery_slice_operation", {}).get("id") == operation["id"]:
+                current["delivery_slice_operation"] = operation
             if result.succeeded:
-                current = self._state_store.read()
                 current["delivery_slice_task_id"] = result.task_ids[0]
-                self._state_store.write(current)
+                operation["accepted_task_id"] = result.task_ids[0]
+            self._state_store.write(current)
             return {
                 "exit_code": result.exit_code, "passed": result.succeeded,
                 "build_status": result.status, "completion_marker_explicit": True,
                 "build_reason": result.reason, "blocker_kind": result.blocker_kind,
-                "duration_s": result.duration_ms / 1000, "tokens": result.token_usage,
+                "duration_s": result.duration_ms / 1000, "tokens": new_tokens,
                 "provider_invocation": result.provider_invocation,
                 "impasse": False, "impasse_file": None, "task_ids": result.task_ids or [],
                 "stdout": result.stdout, "stderr": result.stderr,
@@ -2080,7 +2148,8 @@ class RalphController:
             Dict with exit_code, passed, duration_s, tokens, impasse,
             impasse_file.
         """
-        if self._config.llm.features.get("delivery_gate_controller") is True:
+        if (self._config.llm.features.get("delivery_gate_controller") is True
+                or self._state_store.read().get("delivery_slice_operation") is not None):
             return self._exec_controlled_slice(worktree_path, prompt, repair=False)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
@@ -3110,6 +3179,10 @@ class RalphController:
             task_results[task_id] = result
         build["task_results"] = task_results
         state["build"] = build
+        if self._config.llm.features.get("delivery_gate_controller") is True:
+            operation = state.get("delivery_slice_operation")
+            if isinstance(operation, dict) and operation.get("accepted_task_id") in applied:
+                operation["progress_applied"] = True
         self._state_store.write(state)
         return applied
 
@@ -4299,7 +4372,8 @@ class RalphController:
 
         Returns dict with exit_code, passed, duration_s, tokens.
         """
-        if self._config.llm.features.get("delivery_gate_controller") is True:
+        if (self._config.llm.features.get("delivery_gate_controller") is True
+                or self._state_store.read().get("delivery_slice_operation") is not None):
             return self._exec_controlled_slice(worktree_path, prompt, repair=True)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)

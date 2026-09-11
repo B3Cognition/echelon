@@ -99,6 +99,39 @@ Acceptance: reconstruct the controller after interruptions before dispatch,
 after provider return, and before state advancement; prove no skipped gate,
 double progress application, stale evidence reuse, or retry-budget reset.
 
+Implemented checkpoint policy: one locked atomic journal per strategy/run-scoped
+operation, with a strict ordered receipt history rather than a trusted mutable
+next-step or retry counter. The initial empty journal is saved before Ralph
+records its operation pointer; that pointer is durable before provider intent.
+The pointer requires the journal on subsequent calls. Unknown completion cannot
+be reconciled from diagnostic output, even when the diagnostic looks successful.
+
+Ralph records and reuses the original worktree before its ordinary destructive
+creation path. Resuming skips Phase A copying, but compares the independently
+published source binding and all candidate/spec/role fingerprints. Missing or
+unsafe paths and changed source inputs block without overwriting the candidate.
+After accepted task progress, retain the operation through the uncommitted
+checkpoint gap; same-iteration recovery replays it idempotently. A subsequent
+iteration or explicit repair can start a new operation after progress application.
+Normal worktree cleanup retires its pointer; all journals remain as evidence.
+
+Only the exact recorded DONE transformation of the selected task is allowed as
+a progress-only input change after all reviews pass. Other spec/report changes
+invalidate reuse. This deliberately includes controller-generated report changes
+after later verification: they may require reconciliation rather than automatic
+replay. A crash after normal committed-worktree cleanup but before pointer removal
+also blocks on the missing candidate. These conservative availability limits do
+not authorize stale approvals or reconstruction from status markers; subsequent
+finalization/output ownership remains phase 4.
+
+Cumulative provider usage is journaled; strategy state accounts only the unseen
+delta, and controlled visual/review re-entry subtracts already-persisted usage.
+Unknown usage remains unknown. An operation's finite ceiling can tighten, but an
+ordinary restart cannot loosen it. The trial remains off by default. This phase
+introduces no automatic reconciliation/reset command and does not install or run
+live provider delivery; unresolved or mismatched operations require operator
+inspection, not deleting a journal or retrying until it passes.
+
 ### Phase 4: entry points, finalization, and prose migration
 
 Move documentation/finalization routing to explicit controller steps. Resolve
