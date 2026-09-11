@@ -37,7 +37,7 @@ Subcommands:
 Environment variables for `run`:
   HARNESS_SPEC          required  spec ID (e.g., "012")
   HARNESS_MODE          optional  banzai | semi | guided  (default: semi)
-  HARNESS_MAX_OUTER     optional  integer  (default: 5)
+  HARNESS_MAX_OUTER     optional  integer  (default: 12 meaningful observations)
   HARNESS_MAX_INNER     optional  integer  (default: 3)
   HARNESS_STRATEGIES    optional  comma-separated strategy IDs  (default: default)
   HARNESS_AUTO_MERGE    optional  true | false  (default: false)
@@ -55,6 +55,8 @@ from __future__ import annotations
 import os
 import sys
 
+from harness.convergence import DEFAULT_MAX_OUTER
+
 
 def _bool_env(key: str, default: bool = False) -> bool:
     return os.environ.get(key, str(default)).lower() in ("true", "1", "yes")
@@ -67,7 +69,7 @@ def _run() -> None:
         sys.exit(1)
 
     mode = os.environ.get("HARNESS_MODE", "semi").strip()
-    max_outer = int(os.environ.get("HARNESS_MAX_OUTER", "5"))
+    max_outer = int(os.environ.get("HARNESS_MAX_OUTER", str(DEFAULT_MAX_OUTER)))
     max_inner = int(os.environ.get("HARNESS_MAX_INNER", "3"))
     strategies_csv = os.environ.get("HARNESS_STRATEGIES", "default").strip()
     auto_merge = _bool_env("HARNESS_AUTO_MERGE")

@@ -47,6 +47,42 @@ class TestStateStoreInvariants:
         with pytest.raises(MonotonicViolationError, match="tokens_used"):
             store.write(data)
 
+    @pytest.mark.parametrize(
+        "field_name",
+        ["meaningful_attempts", "infrastructure_attempts"],
+    )
+    def test_convergence_attempt_counters_cannot_decrease(
+        self, tmp_path: Path, field_name: str
+    ) -> None:
+        """Persisted lease accounting must survive stale state writes."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["convergence_lease"][field_name] = 3
+        store.write(data)
+
+        stale = store.read()
+        stale["convergence_lease"][field_name] = 2
+
+        with pytest.raises(MonotonicViolationError, match=field_name):
+            store.write(stale)
+
+    def test_convergence_stall_patience_may_reset_after_progress(
+        self, tmp_path: Path
+    ) -> None:
+        """An improving observation is allowed to reset the stall counter."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["convergence_lease"]["meaningful_attempts"] = 2
+        data["convergence_lease"]["stalled_attempts"] = 1
+        store.write(data)
+
+        improved = store.read()
+        improved["convergence_lease"]["meaningful_attempts"] = 3
+        improved["convergence_lease"]["stalled_attempts"] = 0
+
+        store.write(improved)
+        assert store.read()["convergence_lease"]["stalled_attempts"] == 0
+
     def test_iteration_log_deletion_rejected(self, tmp_path: Path) -> None:
         """iteration_log is append-only."""
         store = self._make_store(tmp_path)

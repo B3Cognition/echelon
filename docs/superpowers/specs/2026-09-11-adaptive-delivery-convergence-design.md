@@ -82,14 +82,17 @@ A snapshot improves when at least one of these controller-observed facts moves
 forward without being outweighed by a higher-priority regression:
 
 1. canonical completed-task count increases;
-2. weighted fulfillment debt decreases;
-3. the set of stable blocking failure identities shrinks;
-4. verification advances to a later gate.
+2. verification advances to a later gate;
+3. weighted fulfillment debt decreases;
+4. the set of stable blocking failure identities shrinks.
 
-The comparison is deliberately lexicographic. Task completion and fulfillment
-debt outrank generic failure-count changes, preventing a large noisy test suite
-from masking requirement progress. A changed product fingerprint with equivalent
-evidence is classified as `stalled`, not improved.
+The comparison is deliberately lexicographic. Task completion outranks all
+other evidence. Verification-gate advancement comes next because reaching a
+later gate may expose fulfillment debt that could not be observed earlier;
+treating that newly visible debt as a regression would stop genuine progress.
+Fulfillment debt then outranks generic failure-count changes, preventing a large
+noisy test suite from masking requirement progress. A changed product
+fingerprint with equivalent evidence is classified as `stalled`, not improved.
 
 The first comparable snapshot establishes the baseline. Later snapshots are
 classified as `improved`, `stalled`, or `regressed`. Both `stalled` and
