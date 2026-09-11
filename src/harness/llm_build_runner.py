@@ -40,6 +40,44 @@ class LlmBuildRunner:
         containment_policy_file: str | None = None,
         prompt_metadata: Mapping[str, object] | None = None,
     ) -> BuildResult:
+        return self._exec_status_prompt(
+            worktree_path,
+            prompt,
+            containment_policy_file=containment_policy_file,
+            prompt_metadata=prompt_metadata,
+            recover_missing_marker=True,
+            recover_alternate_results=True,
+        )
+
+    def recover_completion_metadata(
+        self,
+        worktree_path: str,
+        *,
+        containment_policy_file: str | None = None,
+        prompt_metadata: Mapping[str, object] | None = None,
+    ) -> BuildResult:
+        """Retry only the completion marker after a successful task-backed slice."""
+        status_file = Path(worktree_path) / BUILD_STATUS_FILENAME
+        status_file.unlink(missing_ok=True)
+        return self._exec_status_prompt(
+            worktree_path,
+            _missing_task_ids_recovery_prompt(status_file),
+            containment_policy_file=containment_policy_file,
+            prompt_metadata=prompt_metadata,
+            recover_missing_marker=False,
+            recover_alternate_results=False,
+        )
+
+    def _exec_status_prompt(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        containment_policy_file: str | None,
+        prompt_metadata: Mapping[str, object] | None,
+        recover_missing_marker: bool,
+        recover_alternate_results: bool,
+    ) -> BuildResult:
         status_file = Path(worktree_path) / BUILD_STATUS_FILENAME
         start = time.monotonic()
         extra_env = {
@@ -109,7 +147,12 @@ class LlmBuildRunner:
             stderr=stderr,
             duration_ms=duration_ms,
         )
-        if result.status == "unknown" and not status_file.exists() and exit_code == 0:
+        if (
+            recover_missing_marker
+            and result.status == "unknown"
+            and not status_file.exists()
+            and exit_code == 0
+        ):
             recovery_prompt = _missing_marker_recovery_prompt(status_file)
             if prompt_metadata and callable(run_prompt_result):
                 provider_result = run_prompt_result(
@@ -135,7 +178,11 @@ class LlmBuildRunner:
                 stderr=stderr,
                 duration_ms=duration_ms,
             )
-        if result.status == "unknown" and not status_file.exists():
+        if (
+            recover_alternate_results
+            and result.status == "unknown"
+            and not status_file.exists()
+        ):
             legacy_result_file = Path(worktree_path) / ECHELON_RESULT_FILENAME
             if legacy_result_file.exists():
                 result = BuildResult.from_echelon_result_file(
@@ -190,6 +237,22 @@ def _missing_marker_recovery_prompt(status_file: Path) -> str:
         f"{status_file}: use status `done` with only exact completed_task_ids that "
         "were actually completed and verified, otherwise use status `blocked` with "
         "a concrete reason. This file write is mandatory before you finish."
+    )
+
+
+def _missing_task_ids_recovery_prompt(status_file: Path) -> str:
+    """Return the metadata-only retry for a successful marker without task IDs."""
+    return (
+        "RECOVERY: the previous build invocation changed the candidate and returned "
+        "successfully, but its delivery status marker omitted completed_task_ids. "
+        "Do not begin new implementation and do not modify product, test, spec, or "
+        "documentation files. Inspect the current worktree diff and canonical tasks.md "
+        "only enough to identify which tasks the immediately preceding invocation "
+        "actually completed. Then write exactly one JSON object to "
+        f"{status_file}: use status `done` with only exact canonical "
+        "completed_task_ids that were actually completed, otherwise use status "
+        "`blocked` with a concrete reason. Do not infer completion from intent or mark "
+        "unfinished tasks complete. This status-file write is the only permitted change."
     )
 
 

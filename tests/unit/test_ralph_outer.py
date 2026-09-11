@@ -5590,6 +5590,97 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_recovers_missing_task_ids_without_spending_an_outer_attempt(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A metadata-only retry should repair an otherwise successful slice."""
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        _write_no_impact_documentation_report(spec_dir)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        class MissingTaskIdsExecutor:
+            last_stdout = ""
+            last_stderr = ""
+            last_token_usage = 123
+
+            def __init__(self) -> None:
+                self.prompts: list[str] = []
+
+            def exec_prompt(self, worktree_path: str, prompt: str, *, extra_env=None):
+                self.prompts.append(prompt)
+                status_file = Path((extra_env or {})["HARNESS_BUILD_STATUS_FILE"])
+                if len(self.prompts) == 1:
+                    Path(worktree_path, "generated.txt").write_text(
+                        "verified implementation\n",
+                        encoding="utf-8",
+                    )
+                    status_file.write_text(
+                        json.dumps({"status": "done", "completed_task_ids": []}),
+                        encoding="utf-8",
+                    )
+                else:
+                    status_file.write_text(
+                        json.dumps(
+                            {"status": "done", "completed_task_ids": ["T-001"]}
+                        ),
+                        encoding="utf-8",
+                    )
+                return 0
+
+        executor = MissingTaskIdsExecutor()
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=LlmBuildRunner(executor),
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement T-001",
+        )
+
+        assert result.status == "verified"
+        assert result.outer_iterations == 1
+        assert len(executor.prompts) == 2
+        assert "Do not begin new implementation" in executor.prompts[1]
+        assert "- [x] T-001" in tasks_path.read_text(encoding="utf-8")
+        captured = capsys.readouterr()
+        assert "build completion marker omitted completed_task_ids" not in captured.err
+        state = state_store.read()
+        assert state["build"]["task_results"]["T-001"]["status"] == "DONE"
+        assert [entry["phase"] for entry in state["iteration_log"][:2]] == [
+            "build",
+            "build_metadata_recovery",
+        ]
+        gitops.push.assert_called_once_with(str(worktree), "main")
+
     def test_llm_build_timeout_reports_timeout_not_marker_status(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

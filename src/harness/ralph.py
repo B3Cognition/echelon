@@ -683,9 +683,34 @@ class RalphController:
                     tokens_used += _known_token_count(build_result.get("tokens"))
                     self._enforce_completed_task_ids(build_result, worktree_path)
 
+                    build_log_phase = "build"
+                    if build_result.get("build_status") == "missing_task_ids":
+                        recovered_result = self._recover_missing_task_ids(
+                            worktree_path
+                        )
+                        if recovered_result is not None:
+                            self._append_iteration_log(
+                                state, outer_iter, 0, "build",
+                                build_result.get("exit_code", 0),
+                                build_result.get("passed", True),
+                                build_result.get("duration_s", 0.0),
+                                build_result.get("tokens"),
+                                provider_invocation=build_result.get(
+                                    "provider_invocation"
+                                ),
+                            )
+                            build_result = recovered_result
+                            tokens_used += _known_token_count(
+                                build_result.get("tokens")
+                            )
+                            self._enforce_completed_task_ids(
+                                build_result, worktree_path
+                            )
+                            build_log_phase = "build_metadata_recovery"
+
                     # Log build iteration
                     self._append_iteration_log(
-                        state, outer_iter, 0, "build",
+                        state, outer_iter, 0, build_log_phase,
                         build_result.get("exit_code", 0),
                         build_result.get("passed", True),
                         build_result.get("duration_s", 0.0),
@@ -1648,6 +1673,22 @@ class RalphController:
             )
             tokens_used += _known_token_count(fix_result.get("tokens"))
             self._enforce_completed_task_ids(fix_result, worktree_path)
+            fix_log_phase = "fix"
+            if fix_result.get("build_status") == "missing_task_ids":
+                recovered_result = self._recover_missing_task_ids(worktree_path)
+                if recovered_result is not None:
+                    self._append_iteration_log(
+                        state, outer_iter, inner_iter, "fix",
+                        fix_result.get("exit_code", 0),
+                        fix_result.get("passed", True),
+                        fix_result.get("duration_s", 0.0),
+                        fix_result.get("tokens"),
+                        provider_invocation=fix_result.get("provider_invocation"),
+                    )
+                    fix_result = recovered_result
+                    tokens_used += _known_token_count(fix_result.get("tokens"))
+                    self._enforce_completed_task_ids(fix_result, worktree_path)
+                    fix_log_phase = "fix_metadata_recovery"
             scoped_completed_task_ids = _clean_task_ids(fix_result.get("task_ids"))
             applied_task_ids = self._apply_build_task_progress(
                 worktree_path=worktree_path,
@@ -1681,7 +1722,7 @@ class RalphController:
                 }
 
             self._append_iteration_log(
-                state, outer_iter, inner_iter, "fix",
+                state, outer_iter, inner_iter, fix_log_phase,
                 fix_result.get("exit_code", 0),
                 fix_result.get("passed", True),
                 fix_result.get("duration_s", 0.0),
@@ -2021,6 +2062,37 @@ class RalphController:
             "tokens": _estimate_tokens(result),
             "impasse": False,
             "impasse_file": None,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
+
+    def _recover_missing_task_ids(
+        self,
+        worktree_path: str,
+    ) -> Dict[str, Any] | None:
+        """Run one metadata-only recovery without consuming an outer/inner attempt."""
+        if not isinstance(self._llm_build_runner, LlmBuildRunner):
+            return None
+        result = self._llm_build_runner.recover_completion_metadata(
+            worktree_path,
+            containment_policy_file=str(
+                self._state_store.state_dir / "delivery-containment-policy.json"
+            ),
+            prompt_metadata=self._llm_build_prompt_metadata(worktree_path),
+        )
+        return {
+            "exit_code": result.exit_code,
+            "passed": result.succeeded,
+            "build_status": result.status,
+            "completion_marker_explicit": True,
+            "build_reason": result.reason,
+            "blocker_kind": result.blocker_kind,
+            "duration_s": result.duration_ms / 1000.0,
+            "tokens": result.token_usage,
+            "provider_invocation": result.provider_invocation,
+            "impasse": result.is_impasse,
+            "impasse_file": result.impasse_file,
+            "task_ids": result.task_ids or [],
             "stdout": result.stdout,
             "stderr": result.stderr,
         }
