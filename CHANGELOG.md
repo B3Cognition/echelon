@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Opt-in controller-owned delivery gates** — `harness.llm.features.delivery_gate_controller`
+  selects one dependency-ready task and runs IMPLEMENTER, SPEC GUARD, CODE
+  REVIEWER, and TEST GUARDIAN as separate provider calls. Every repair reruns
+  all reviews; two unsuccessful repairs block, including in banzai. Strict
+  dispatch-bound results, protected-input checks, read-only reviewers, and
+  per-dispatch budget checks prevent legacy completion markers from authorizing
+  progress. The trial requires an enforced read-only provider boundary (currently
+  Codex on a supported host). Default execution is unchanged; durable resume and
+  documentation-only dispatch remain subsequent migration phases.
+
 - **Adaptive delivery convergence lease** — Phase B now persists a
   controller-owned high-water snapshot across delivery restarts and classifies
   canonical task progress, fulfillment debt, stable blocking failures, and

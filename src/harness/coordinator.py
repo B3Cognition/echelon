@@ -1367,12 +1367,17 @@ class StrategyCoordinator:
                 nonlocal build_prompt, prompt_error
                 if build_prompt is None:
                     try:
-                        resolved = (
-                            resolve_delivery_build_prompt(
-                                spec.build_command, arguments, Path(self._base_dir),
+                        if self._config.llm.features.get("delivery_gate_controller") is True:
+                            if spec.build_command.split() != ["echelon", "build"]:
+                                raise DeliveryPromptError("Controlled delivery requires 'echelon build'")
+                            resolved = arguments
+                        else:
+                            resolved = (
+                                resolve_delivery_build_prompt(
+                                    spec.build_command, arguments, Path(self._base_dir),
+                                )
+                                if llm_provider is not None else arguments
                             )
-                            if llm_provider is not None else arguments
-                        )
                     except DeliveryPromptError as exc:
                         prompt_error = str(exc)
                         raise

@@ -349,6 +349,7 @@ class RalphController:
         self._strategy_id = strategy_id
         self._config = config
         self._llm_provider = llm_provider
+        self._controlled_slice_budget: float | None = None
         self._llm_build_runner = (
             llm_build_runner
             if llm_build_runner is not None
@@ -605,6 +606,9 @@ class RalphController:
                         worktree_path,
                     )
                     before_build_head = self._current_head(worktree_path)
+                    self._controlled_slice_budget = (
+                        token_budget * 0.95 - tokens_used if token_budget and token_budget > 0 else None
+                    )
                     build_result = self._exec_build(
                         handle, build_command, strategy_context,
                         worktree_path=worktree_path,
@@ -1666,6 +1670,9 @@ class RalphController:
                 build_prompt, current_verify, inner_iter
             )
             before_fix_state = self._state_store.read()
+            self._controlled_slice_budget = (
+                token_budget * 0.95 - tokens_used if token_budget and token_budget > 0 else None
+            )
             fix_result = self._exec_feedback(
                 handle, current_verify, build_command, strategy_context,
                 worktree_path=worktree_path,
@@ -1993,6 +2000,59 @@ class RalphController:
 
     # === Sandbox execution helpers ===
 
+    def _exec_controlled_slice(self, worktree_path: str, prompt: str, *, repair: bool) -> Dict[str, Any]:
+        """Adapt the opt-in controller to Ralph's existing build result boundary."""
+        from harness.delivery_slice_runner import DeliverySliceRunner
+        from harness.delivery_slice import DeliverySliceError
+
+        try:
+            worktree = Path(worktree_path)
+            spec_dir = self._find_spec_dir(worktree)
+            if spec_dir is None:
+                raise DeliverySliceError("controlled delivery requires a canonical spec directory")
+            state = self._state_store.read()
+            raw_scope = state.get("target_task_ids", [])
+            if (state.get("implementation_target") or state.get("declared_targets")
+                    or state.get("target_repo") or state.get("target_path") or raw_scope):
+                if not isinstance(raw_scope, list) or any(not isinstance(item, str) for item in raw_scope):
+                    raise DeliverySliceError("invalid persisted delivery task scope")
+                scope = set(raw_scope)
+            else:
+                scope = self._target_task_ids()
+            repair_task_id = state.get("delivery_slice_task_id") if repair else None
+            if repair and (not isinstance(repair_task_id, str) or not repair_task_id):
+                raise DeliverySliceError("feedback requires a previously accepted delivery slice task")
+            # Reuse path/containment preparation, but never send the legacy
+            # MANAGER/context routing recipe to a controlled role.
+            self._with_harness_context("", worktree_path)
+            result = DeliverySliceRunner(
+                self._llm_provider, self._orchestration_root(worktree),
+            ).run(
+                worktree=worktree, spec_dir=spec_dir,
+                evidence_root=self._state_store.state_dir / "delivery-slices",
+                allowed_task_ids=scope, repair_task_id=repair_task_id,
+                feedback=prompt, stop_requested=lambda: self._interrupted or self.check_cancel(),
+                containment_policy_file=str(self._state_store.state_dir / "delivery-containment-policy.json"),
+                token_budget=self._controlled_slice_budget,
+            )
+            if result.succeeded:
+                current = self._state_store.read()
+                current["delivery_slice_task_id"] = result.task_ids[0]
+                self._state_store.write(current)
+            return {
+                "exit_code": result.exit_code, "passed": result.succeeded,
+                "build_status": result.status, "completion_marker_explicit": True,
+                "build_reason": result.reason, "blocker_kind": result.blocker_kind,
+                "duration_s": result.duration_ms / 1000, "tokens": result.token_usage,
+                "provider_invocation": result.provider_invocation,
+                "impasse": False, "impasse_file": None, "task_ids": result.task_ids or [],
+                "stdout": result.stdout, "stderr": result.stderr,
+            }
+        except (DeliverySliceError, OSError) as exc:
+            return {"exit_code": 1, "passed": False, "build_status": "blocked",
+                    "completion_marker_explicit": True, "build_reason": str(exc),
+                    "duration_s": 0, "tokens": 0, "task_ids": [], "stdout": "", "stderr": ""}
+
     def _exec_build(
         self,
         handle: Optional[SandboxHandle],
@@ -2020,6 +2080,8 @@ class RalphController:
             Dict with exit_code, passed, duration_s, tokens, impasse,
             impasse_file.
         """
+        if self._config.llm.features.get("delivery_gate_controller") is True:
+            return self._exec_controlled_slice(worktree_path, prompt, repair=False)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
             result = self._llm_build_runner.exec_build(
@@ -4237,6 +4299,8 @@ class RalphController:
 
         Returns dict with exit_code, passed, duration_s, tokens.
         """
+        if self._config.llm.features.get("delivery_gate_controller") is True:
+            return self._exec_controlled_slice(worktree_path, prompt, repair=True)
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
             result = self._llm_build_runner.exec_feedback(

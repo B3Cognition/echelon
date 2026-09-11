@@ -1292,6 +1292,7 @@ harness:
   #   #   non_secret_headers: []
   #   #   fixed_framing_byte_upper_bound: 4096
   #   # features:
+  #   #   delivery_gate_controller: false # opt-in trial; requires enforced read-only reviews
   #   #   streaming: true
   #   #   stream_preview: true
   #   #   stream_preview_max_chars: 1200

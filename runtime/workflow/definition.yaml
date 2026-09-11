@@ -23,6 +23,11 @@
 #
 # Schema version: 1
 # =============================================================================
+# Opt-in delivery_gate_controller profile registrations (Python-owned sequence):
+#   echelon.delivery-implementer, echelon.delivery-spec-guard,
+#   echelon.delivery-code-reviewer, echelon.delivery-test-guardian.
+# These bounded profiles are dispatched by harness.delivery_slice_runner, not
+# the legacy build graph below. They never consume its DEGRADED transitions.
 
 schema_version: 1
 controller_runtime_compatibility_version: 3

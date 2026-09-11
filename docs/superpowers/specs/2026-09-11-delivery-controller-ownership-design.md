@@ -54,9 +54,10 @@ Resolve permitted tasks and dependencies before dispatch. Invoke IMPLEMENTER,
 SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN as separate bounded assignments.
 Collect schema-validated results. Python controls retry limits and transitions;
 agents never dispatch the next gate or update workflow state. A completion marker
-alone cannot establish successful review. Resolve the legacy DEGRADED policy
-explicitly against current delivery verification requirements before cutover;
-do not silently introduce automatic approval of failed gates.
+alone cannot establish successful review. User-approved policy (2026-09-11):
+allow the initial implementation plus at most two repair implementations per
+slice. After every repair restart all three reviews. Exhaustion blocks in every
+mode, including banzai; DEGRADED and skipped gates never authorize acceptance.
 
 Bind gate evidence to task scope, source/test candidate contents, and relevant
 spec inputs. Read-only reviewers may produce only declared run-local artifacts.
@@ -68,6 +69,22 @@ Acceptance: real controller tests with scripted external provider responses
 observe exact dispatch order, failure/repair routing, malformed results, task
 scope refusal, mutation detection, and rejection of unsupported skips. Existing
 outer-loop, feedback, documentation, and containment suites must remain green.
+
+Phase 2 is an explicit opt-in trial via `llm.features.delivery_gate_controller:
+true`, not a production-default cutover before phases 3 and 4. Existing runs
+remain on the old path unless enabled. The controlled path never falls back to
+that old path. It requires an advertised enforced read-only provider boundary
+(currently Codex on a supported host), and all four installed delivery-scoped
+Prosaic roles. Unsupported providers block before implementation; provider
+configuration is never silently changed. Separate delivery role profiles avoid
+feeding legacy dispatch/state-writing recipes into the new controller.
+
+Select one dependency-ready canonical task, constrained by the persisted target
+scope. Feedback repairs the last accepted task, not the next open task. Refuse
+missing/invalid scope and all-tasks-complete builds rather than silently invoking
+legacy documentation orchestration; documentation-only dispatch is phase 4.
+This phase writes diagnostic dispatch/results but never resumes from them or
+reuses a previous review. Cross-restart receipt/retry authority remains phase 3.
 
 ### Phase 3: durable interruption and recovery
 
