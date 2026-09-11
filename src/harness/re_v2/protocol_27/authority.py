@@ -103,7 +103,8 @@ class ResolvedSynthesisParentV1:
             )
         selected_layers = dict(sorted(self.selected_layers.items()))
         if set(selected_layers) != set(source_ids) or any(
-            layer not in {"L1", "L2", "L3"} for layer in selected_layers.values()
+            layer not in {"L1", "L2", "L3", "reviewed"}
+            for layer in selected_layers.values()
         ):
             raise Protocol27AuthorityError(
                 "synthesis parent selected layers must exactly cover accepted sources"
@@ -164,6 +165,16 @@ def resolve_synthesis_parent(
     before = load_run_manifest(run_dir)
     if isinstance(before, RunManifestV6):
         resolved = _resolve_embedded_protocol_27(run_dir, before)
+    elif _is_reviewed_protocol_28_manifest(before):
+        from harness.re_v2.reviewed_synthesis_parent import (
+            ReviewedSynthesisParentError,
+            resolve_reviewed_synthesis_parent,
+        )
+
+        try:
+            resolved = resolve_reviewed_synthesis_parent(root, from_run)
+        except ReviewedSynthesisParentError as exc:
+            raise Protocol27AuthorityError(str(exc)) from exc
     else:
         loader = context_loader or _default_context_loader
         resolved = _resolve_layer_parent(root, run_dir, loader(root, run_dir))
@@ -178,6 +189,12 @@ def resolve_synthesis_parent(
         ),
     )
     return resolved
+
+
+def _is_reviewed_protocol_28_manifest(manifest: object) -> bool:
+    from harness.re_v2.protocol_28.model import ReviewedExhaustiveRunManifestV7
+
+    return isinstance(manifest, ReviewedExhaustiveRunManifestV7)
 
 
 def freeze_accepted_source_overviews(

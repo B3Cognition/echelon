@@ -103,6 +103,7 @@ def protocol_28_status_document(
             "blocker": blocker,
             "reason_code": _banner_reason_code(banner),
             **details,
+            "workflow_state": "needs-attention" if blocker else "analyzing",
             "post_l4": {"synthesis": "not run", "publication": "not run"},
             "next_action": _next_action(context, state, blocker, orchestration),
             "banner": banner,
@@ -133,6 +134,7 @@ def _pending_knowledge_document(context, state, events):
         'orchestration': None, 'blocker': {'kind': 'activation', 'reason_code': 'knowledge-activation-incomplete'},
         'reason_code': 'knowledge-activation-incomplete', **_exhaustive_document(context, state, events),
         **_inherited_debt_status(context),
+        'workflow_state': 'needs-attention',
         'post_l4': {'synthesis': 'not run', 'publication': 'not run'},
         'next_action': 'Retry the explicit knowledge activation with its original account and authorization.',
         'banner': 'NEEDS ATTENTION — the explicit knowledge activation has not committed.'}
@@ -171,6 +173,14 @@ def _reviewed_document(context, state, events):
         'complete': 'COMPLETE — all selected knowledge obligations and reconciliations are reviewed.',
         'complete-with-limitations': 'COMPLETE WITH LIMITATIONS — accepted inherited or independently reviewed dependency debt is retained.'}
     manifest = context.inputs.manifest
+    post_l4 = _reviewed_post_l4(context)
+    workflow_state = (
+        'needs-attention'
+        if blocker
+        else ('complete-with-limitations' if limitations else 'complete')
+        if str(post_l4['publication']).startswith('published_')
+        else 'synthesizing'
+    )
     return {'run_id': manifest.run_id, 'engine': manifest.engine, 'engine_protocol_version': '2.8',
         'run_mode': manifest.run_mode, 'status': state.lifecycle_state, 'source_snapshot_id': manifest.source_snapshot_id,
         'partition_manifest_id': manifest.partition_manifest_id, 'revision_id': active.manifest.revision_id,
@@ -180,9 +190,80 @@ def _reviewed_document(context, state, events):
         'orchestration': None, 'blocker': blocker, 'reason_code': blocker['reason_code'] if blocker else None,
         **_exhaustive_document(context, state, events), **inherited, 'limitations': limitations,
         'input_quality': 'partial' if limitations else inherited['input_quality'],
-        'post_l4': {'synthesis': 'not run', 'publication': 'not run'},
-        'next_action': 'Review the exact blocker.' if blocker else ('Continue reviewed work.' if not state.terminal else 'Review the completed analysis.'),
+        'post_l4': post_l4, 'workflow_state': workflow_state,
+        'next_action': ('Review the exact blocker.' if blocker else
+            'Continue reviewed work.' if not state.terminal else
+            'Continue the knowledge workflow.' if workflow_state in {'synthesizing', 'publishing'} else
+            'Review the completed knowledge publication.'),
         'banner': banners[state.lifecycle_state]}
+
+
+def _reviewed_post_l4(context):
+    """Authenticate a current protocol-2.7 publication derived from this run."""
+    from harness.re_registry import ReRegistryPaths, load_published_index
+    from harness.re_v2.protocol_27.recovery import load_protocol_27_run_context
+
+    not_run = {"synthesis": "not run", "publication": "not run"}
+    workspace = context.paths.root.parent.parent.parent
+    index = load_published_index(workspace)
+    if index is None:
+        return not_run
+    child_run_id = index.published_from_run
+    child_dir = workspace / "runs" / child_run_id
+    if child_dir.is_symlink() or not child_dir.is_dir():
+        raise Protocol28StatusError("published synthesis child is missing or unsafe")
+    child = load_protocol_27_run_context(child_dir)
+    manifest = child.inputs.manifest
+    if manifest.parent_run_id != context.inputs.manifest.run_id:
+        return not_run
+    if manifest.parent_manifest_hash != context.inputs.manifest.identity:
+        raise Protocol28StatusError("published synthesis child parent authority is rebound")
+
+    events = child.events.replay()
+    ledger = child.ledger.replay()
+    if not events or events[-1].type != "run_completed":
+        raise Protocol28StatusError("published synthesis child is not complete")
+    root = ledger.synthesis_root
+    materialization = ledger.materialization
+    publication = ledger.publication
+    if root is None or materialization is None or publication is None:
+        raise Protocol28StatusError("published synthesis child lacks closure authority")
+    if (
+        publication.run_id != child_run_id
+        or publication.synthesis_root_id != root.identity
+        or materialization.synthesis_root_id != root.identity
+        or publication.materialization_manifest_id
+        != materialization.materialization_manifest_id
+        or publication.compatibility_generation != index.generation
+        or publication.input_quality != index.publication_status
+        or publication.synthesis_policy_hash != manifest.synthesis_policy_hash
+    ):
+        raise Protocol28StatusError("published synthesis authority is inconsistent")
+
+    quality = index.synthesis_quality
+    if quality is None or (
+        quality.input_quality != publication.input_quality
+        or quality.synthesis_root_id != publication.synthesis_root_id
+        or quality.materialization_manifest_id
+        != publication.materialization_manifest_id
+        or quality.accepted_source_outcome_ids
+        != publication.accepted_source_outcome_ids
+        or quality.debt_manifest_hashes != publication.debt_manifest_hashes
+        or quality.partial_acceptance_receipt_ids
+        != publication.partial_acceptance_receipt_ids
+    ):
+        raise Protocol28StatusError("published synthesis quality is inconsistent")
+
+    index_path = ReRegistryPaths.for_workspace(workspace).index
+    if index_path.is_symlink() or not index_path.is_file():
+        raise Protocol28StatusError("published synthesis index is missing or unsafe")
+    if content_digest(index_path.read_bytes()) != publication.compatibility_index_hash:
+        raise Protocol28StatusError("published synthesis index does not match its receipt")
+    return {
+        "synthesis": "complete",
+        "publication": f"published_{publication.input_quality}",
+        "run_id": child_run_id,
+    }
 
 
 def _inherited_debt_status(context):
@@ -214,12 +295,14 @@ def render_protocol_28_status(
     selection = document["selection"]
     slices = document["slice_counts"]
     resources = document["resources"]
+    post_l4 = document["post_l4"]
     lines = [
         "RE V2 — PROTOCOL 2.8",
         f"run: {document['run_id']}",
         "protocol: 2.8",
         f"mode: {document['run_mode']}",
         f"status: {document['status']}",
+        f"workflow: {document['workflow_state']}",
         f"completion scope: {selection['scope']}",
         f"selected sources: {document['selected_counts']['sources']}",
         f"selected domains: {document['selected_counts']['domains']}",
@@ -249,9 +332,11 @@ def render_protocol_28_status(
         ),
         f"inherited L3 finding closure: {document['l3_finding_closure']}",
         f"L4 closure root: {document['l4_closure_root']}",
-        "workspace synthesis: not run",
-        "workspace publication: not run",
+        f"workspace synthesis: {post_l4['synthesis']}",
+        f"workspace publication: {post_l4['publication']}",
     ]
+    if "run_id" in post_l4:
+        lines.append(f"workspace synthesis run: {post_l4['run_id']}")
     orchestration = document.get("orchestration")
     if isinstance(orchestration, Mapping):
         lines.extend(
