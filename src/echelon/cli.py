@@ -2780,11 +2780,22 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
 
 
-def _outer_cap_delivery_action(spec_id: str) -> tuple[str, str]:
+def _outer_cap_delivery_action(
+    spec_id: str,
+    current_ceiling: object = None,
+) -> tuple[str, str]:
     """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    from harness.convergence import DEFAULT_MAX_OUTER
+
+    try:
+        current = max(1, int(current_ceiling or DEFAULT_MAX_OUTER))
+    except (TypeError, ValueError):
+        current = DEFAULT_MAX_OUTER
+    extended = current + DEFAULT_MAX_OUTER
     return (
-        f"echelon delivery run {spec_id}",
-        "Starts a fresh outer-loop budget from the latest durable checkpoint.",
+        f"echelon delivery run {spec_id} --max-outer {extended}",
+        "Extends the meaningful-attempt ceiling from the latest durable checkpoint "
+        "while preserving the convergence lease.",
     )
 
 
@@ -3033,6 +3044,7 @@ def _cmd_harness_resume(
         "blocker_escalation",
         "checkpoint_outer_cap",
         "docker_unavailable",
+        "convergence_stalled",
         "no_progress",
             "provider_session_limit",
             "target_merge_failed",
@@ -3103,7 +3115,9 @@ def _cmd_harness_resume(
         *retryable_error_reasons,
     }:
         if termination_reason == "outer_cap":
-            next_command, next_explanation = _outer_cap_delivery_action(spec_id)
+            next_command, next_explanation = _outer_cap_delivery_action(
+                spec_id, state.get("max_outer")
+            )
             print(
                 f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
                 f"  Next: {next_command}\n"
@@ -7043,8 +7057,15 @@ def _delivery_status_next_step(
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
         if termination_reason == "outer_cap":
-            command, explanation = _outer_cap_delivery_action(effective_spec)
+            command, explanation = _outer_cap_delivery_action(
+                effective_spec, state.get("max_outer")
+            )
             return f"{command}  # {explanation}"
+        if termination_reason == "convergence_stalled":
+            return (
+                f"echelon delivery continue {effective_spec}  "
+                "# one recovery attempt using the recorded high-water evidence"
+            )
         if str(state.get("escalation_file") or ""):
             choices = escalation.get("choices") if escalation else None
             if isinstance(choices, list):
@@ -7205,7 +7226,8 @@ def _delivery_status_summary(
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
     escalation = (
         None
-        if str(state.get("termination_reason") or "") == "outer_cap"
+        if str(state.get("termination_reason") or "")
+        in {"outer_cap", "convergence_stalled"}
         else _delivery_status_escalation(state, project_root)
     )
     summary = {
@@ -7249,6 +7271,33 @@ def _delivery_status_summary(
         "execution": str(state.get("execution") or ""),
         "next": _delivery_status_next_step(state, spec_id, escalation),
     }
+    convergence = state.get("convergence_lease")
+    if isinstance(convergence, dict):
+        from harness.convergence import (
+            DEFAULT_MAX_OUTER,
+            DEFAULT_STALL_PATIENCE,
+        )
+
+        summary["convergence"] = {
+            "meaningful_attempts": max(
+                0, int(convergence.get("meaningful_attempts") or 0)
+            ),
+            "hard_ceiling": max(
+                1, int(state.get("max_outer") or DEFAULT_MAX_OUTER)
+            ),
+            "stalled_attempts": max(
+                0, int(convergence.get("stalled_attempts") or 0)
+            ),
+            "stall_patience": DEFAULT_STALL_PATIENCE,
+            "infrastructure_attempts": max(
+                0, int(convergence.get("infrastructure_attempts") or 0)
+            ),
+            "last_outcome": str(convergence.get("last_outcome") or "not_observed"),
+            "last_reason": str(convergence.get("last_reason") or ""),
+            "best_checkpoint_commit": str(
+                convergence.get("best_checkpoint_commit") or ""
+            ),
+        }
     if escalation is not None:
         summary["escalation"] = escalation
     publication_failure = state.get("publication_failure")
@@ -7354,6 +7403,33 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
     if summary.get("execution"):
         fields.append(("execution", str(summary["execution"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
+    convergence = summary.get("convergence")
+    if isinstance(convergence, dict):
+        fields.extend(
+            [
+                (
+                    "meaningful attempts",
+                    f"{convergence.get('meaningful_attempts', 0)} / "
+                    f"{convergence.get('hard_ceiling', 0)}",
+                ),
+                (
+                    "stall patience",
+                    f"{convergence.get('stalled_attempts', 0)} / "
+                    f"{convergence.get('stall_patience', 0)}",
+                ),
+                (
+                    "excluded infra",
+                    str(convergence.get("infrastructure_attempts", 0)),
+                ),
+            ]
+        )
+        outcome = str(convergence.get("last_outcome") or "").strip()
+        reason = str(convergence.get("last_reason") or "").strip()
+        if outcome:
+            fields.append(("convergence", f"{outcome}: {reason}" if reason else outcome))
+        checkpoint = str(convergence.get("best_checkpoint_commit") or "").strip()
+        if checkpoint:
+            fields.append(("best checkpoint", checkpoint[:12]))
     tokens = int(summary.get("tokens_used") or 0)
     budget = summary.get("token_budget")
     if budget:

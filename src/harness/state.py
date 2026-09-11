@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from harness.convergence import ConvergenceLease
+from harness.convergence import ConvergenceLease, DEFAULT_MAX_OUTER
 
 logger = logging.getLogger(__name__)
 
@@ -369,7 +369,7 @@ class StateStore:
         self,
         run_id: str,
         mode: str,
-        max_outer: int = 5,
+        max_outer: int = DEFAULT_MAX_OUTER,
         max_inner: int = 3,
         token_budget: int = 0,
         target_repo: str | None = None,

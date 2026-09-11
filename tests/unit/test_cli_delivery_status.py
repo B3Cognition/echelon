@@ -590,6 +590,8 @@ def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budge
     state_file = _write_delivery_state(tmp_path)
     state = json.loads(state_file.read_text(encoding="utf-8"))
     state["termination_reason"] = "outer_cap"
+    state["max_outer"] = 12
+    state["convergence_lease"] = {"meaningful_attempts": 12}
     state_file.write_text(json.dumps(state), encoding="utf-8")
     _write_escalation(tmp_path)
 
@@ -598,16 +600,61 @@ def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budge
     _cmd_delivery_status(["001"], project_root=tmp_path)
 
     out = capsys.readouterr().out
-    assert "echelon delivery run 001" in out
-    assert "fresh outer-loop budget" in out
+    assert "echelon delivery run 001 --max-outer 24" in out
+    assert "extends the meaningful-attempt ceiling" in out.lower()
     assert "echelon delivery resume 001" not in out
     assert "Which database should verification use?" not in out
 
     _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["latest"]["next"].startswith("echelon delivery run 001")
+    assert payload["latest"]["next"].startswith(
+        "echelon delivery run 001 --max-outer 24"
+    )
     assert "escalation" not in payload["latest"]
+
+
+@pytest.mark.unit
+def test_delivery_status_reports_convergence_lease_and_actionable_stall(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "convergence_stalled"
+    state["max_outer"] = 12
+    state["convergence_lease"] = {
+        "schema_version": 1,
+        "meaningful_attempts": 3,
+        "stalled_attempts": 2,
+        "infrastructure_attempts": 2,
+        "last_outcome": "regressed",
+        "last_reason_code": "blocking_failures_increased",
+        "last_reason": "stable blocking failures increased from 1 to 2",
+        "best_checkpoint_commit": "abcdef1234567890",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001"], project_root=tmp_path)
+    output = capsys.readouterr().out
+
+    assert "meaningful attempts" in output
+    assert "3 / 12" in output
+    assert "stall patience" in output
+    assert "2 / 2" in output
+    assert "excluded infra" in output
+    assert "2" in output
+    assert "regressed: stable blocking failures increased from 1 to 2" in output
+    assert "abcdef123456" in output
+    assert "echelon delivery continue 001" in output
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["convergence"]["meaningful_attempts"] == 3
+    assert latest["convergence"]["hard_ceiling"] == 12
+    assert latest["convergence"]["stalled_attempts"] == 2
 
 
 @pytest.mark.unit

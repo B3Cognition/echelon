@@ -197,6 +197,27 @@ def test_regressed_high_water_context_is_bounded_and_provider_actionable(
     assert "secret noise" not in prompt
 
 
+def test_convergence_observation_emits_content_free_telemetry(tmp_path: Path) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    verify = VerifyResult(
+        passed=False,
+        failures=[FailureEntry(FailureCategory.TEST, "unit-a", "raw secret noise")],
+    )
+
+    controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+
+    events_path = state_store.state_dir.parent / "telemetry" / "events.jsonl"
+    event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert event["type"] == "delivery.convergence_observation"
+    assert event["outcome"] == "baseline"
+    assert event["meaningful_attempts"] == 1
+    assert event["hard_ceiling"] == 12
+    assert event["blocking_failure_count"] == 1
+    assert "raw secret noise" not in events_path.read_text(encoding="utf-8")
+
+
 def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
     """Containment command matching is maintained by category, not regex archaeology."""
     commands_by_category = ralph._FILESYSTEM_ACCESS_COMMANDS_BY_CATEGORY

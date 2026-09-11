@@ -568,6 +568,33 @@ def _print_delivery_summary(
             f"PR: {pr_url}" if pr_url else "PR: not created (gh/glab unavailable or pr_host unset)",
             f"iterations: {outer} outer, {inner} inner retries",
         ]
+        convergence = info.get("convergence_lease")
+        if isinstance(convergence, Mapping):
+            from harness.convergence import DEFAULT_STALL_PATIENCE
+
+            meaningful = int(convergence.get("meaningful_attempts") or 0)
+            ceiling = int(info.get("max_outer") or intent.max_outer)
+            stalled = int(convergence.get("stalled_attempts") or 0)
+            infrastructure = int(convergence.get("infrastructure_attempts") or 0)
+            lines.extend(
+                [
+                    f"meaningful attempts: {meaningful}/{ceiling}",
+                    f"stall patience: {stalled}/{DEFAULT_STALL_PATIENCE}",
+                    f"excluded infrastructure attempts: {infrastructure}",
+                ]
+            )
+            outcome = str(convergence.get("last_outcome") or "").strip()
+            outcome_reason = str(convergence.get("last_reason") or "").strip()
+            if outcome:
+                lines.append(
+                    "convergence: "
+                    + (f"{outcome}: {outcome_reason}" if outcome_reason else outcome)
+                )
+            best_checkpoint = str(
+                convergence.get("best_checkpoint_commit") or ""
+            ).strip()
+            if best_checkpoint:
+                lines.append(f"best checkpoint: {best_checkpoint[:12]}")
         if result is not None:
             if reason and reason != "converged":
                 if provider_limited:

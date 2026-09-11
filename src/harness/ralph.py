@@ -33,7 +33,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.candidate_evidence import CandidateEvidenceRunner
-from harness.convergence import ConvergenceLease, LeaseObservation, ProgressSnapshot
+from harness.convergence import (
+    DEFAULT_MAX_OUTER,
+    ConvergenceLease,
+    LeaseObservation,
+    ProgressSnapshot,
+)
 from harness.config import HarnessConfig
 from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
@@ -385,7 +390,7 @@ class RalphController:
 
     def run_loop(
         self,
-        max_outer: int = 5,
+        max_outer: int = DEFAULT_MAX_OUTER,
         max_inner: int = 3,
         token_budget: Optional[int] = None,
         build_command: str = "echelon build",
@@ -3377,6 +3382,12 @@ class RalphController:
         state = self._state_store.read()
         state["convergence_lease"] = observation.lease.to_state()
         self._state_store.write(state)
+        self._append_convergence_telemetry(
+            observation,
+            snapshot=snapshot,
+            hard_ceiling=hard_ceiling,
+            state=state,
+        )
         logger.info(
             "Convergence observation %s (%s): meaningful=%d/%d stalled=%d",
             observation.outcome,
@@ -3386,6 +3397,51 @@ class RalphController:
             observation.lease.stalled_attempts,
         )
         return observation
+
+    def _append_convergence_telemetry(
+        self,
+        observation: LeaseObservation,
+        *,
+        snapshot: ProgressSnapshot,
+        hard_ceiling: int,
+        state: Mapping[str, object],
+    ) -> None:
+        """Append one content-free authoritative convergence observation."""
+        try:
+            telemetry_dir = self._state_store.state_dir.parent / "telemetry"
+            telemetry_dir.mkdir(parents=True, exist_ok=True)
+            event = {
+                "schema_version": 1,
+                "type": "delivery.convergence_observation",
+                "event_time": datetime.now(timezone.utc).isoformat(),
+                "run_id": state.get("run_id") or self._build_id,
+                "spec_id": self._spec_id,
+                "strategy_id": self._strategy_id,
+                "outcome": observation.outcome,
+                "reason_code": observation.reason_code,
+                "should_stop": observation.should_stop,
+                "stop_reason": observation.stop_reason,
+                "meaningful_attempts": observation.lease.meaningful_attempts,
+                "stalled_attempts": observation.lease.stalled_attempts,
+                "infrastructure_attempts": observation.lease.infrastructure_attempts,
+                "hard_ceiling": hard_ceiling,
+                "completed_tasks": snapshot.completed_tasks,
+                "total_tasks": snapshot.total_tasks,
+                "fulfillment_debt": snapshot.fulfillment_debt,
+                "blocking_failure_count": len(snapshot.failure_keys),
+                "gate_rank": snapshot.gate_rank,
+                "product_fingerprint": snapshot.product_fingerprint,
+                "best_checkpoint_commit": observation.lease.best_checkpoint_commit,
+            }
+            with (telemetry_dir / "events.jsonl").open(
+                "a", encoding="utf-8"
+            ) as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception as exc:
+            logger.warning("Could not append convergence telemetry: %s", exc)
 
     def _print_fulfillment_refresh_decision(
         self,

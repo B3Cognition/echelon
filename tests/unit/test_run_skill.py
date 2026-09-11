@@ -87,6 +87,65 @@ def _make_checkpoint_outer_cap_result() -> DeliveryResult:
     )
 
 
+@pytest.mark.unit
+def test_delivery_summary_reports_convergence_stall_without_raw_failure_content(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from harness.skills.run_skill import _print_delivery_summary
+
+    intent = RunIntent(spec_id="001-demo", mode="banzai")
+    result = DeliveryResult(
+        status="blocked",
+        termination_reason="convergence_stalled",
+        outer_iterations=7,
+        inner_iterations=9,
+        pr_url=None,
+        tokens_used=5000,
+        final_verify=VerifyResult(
+            passed=False,
+            failures=[FailureEntry(FailureCategory.TEST, "unit-a", "raw secret")],
+        ),
+        blocked_phase="implementation",
+    )
+    comparison = {
+        "strategies": {
+            "default": {
+                "status": "blocked",
+                "termination_reason": "convergence_stalled",
+                "outer_iterations": 7,
+                "inner_iterations": 9,
+                "tokens_used": 5000,
+                "converged": False,
+                "convergence_lease": {
+                    "meaningful_attempts": 3,
+                    "stalled_attempts": 2,
+                    "infrastructure_attempts": 2,
+                    "last_outcome": "stalled",
+                    "last_reason": "authoritative progress evidence did not improve",
+                    "best_checkpoint_commit": "abcdef1234567890",
+                },
+                "max_outer": 12,
+            }
+        },
+        "summary": {"converged": 0, "failed": 1, "total_tokens": 5000},
+    }
+
+    _print_delivery_summary(
+        intent,
+        {"default": result},
+        comparison,
+        workspace_root=Path("/tmp/nonexistent"),
+        spec_dir=None,
+    )
+
+    output = capsys.readouterr().err
+    assert "meaningful attempts: 3/12" in output
+    assert "stall patience: 2/2" in output
+    assert "excluded infrastructure attempts: 2" in output
+    assert "best checkpoint: abcdef123456" in output
+    assert "raw secret" in output  # verification remains visible in its existing section
+
+
 def test_resolve_run_roots_defaults_workspace_to_harness_root(tmp_path: Path) -> None:
     harness_root, workspace_root = _resolve_run_roots(str(tmp_path), None)
 
