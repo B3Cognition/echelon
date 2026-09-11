@@ -53,6 +53,7 @@ _INPUT_ROLES = frozenset(
         "implementation-authority",
         "partial-acceptance",
         "prosaic-authority",
+        "refresh-authority",
         "response-schema",
         "root-specification",
         "source-authority",
@@ -447,6 +448,29 @@ def load_protocol_27_inputs(run_dir: Path) -> ValidatedProtocol27Inputs:
             object_hash: payloads[object_hash]
             for object_hash in catalog.hashes_for("source-authority")
         }
+        refresh_authority = None
+        refresh_ids = catalog.hashes_for("refresh-authority")
+        if refresh_ids:
+            if len(refresh_ids) != 1:
+                raise Protocol27InputStoreError(
+                    "protocol-2.7 child has ambiguous refresh authority"
+                )
+            from harness.re_v2.knowledge_refresh import (
+                KnowledgeRefreshMergeAuthorityV1,
+            )
+
+            refresh_authority = load_canonical_object(
+                payloads[refresh_ids[0]],
+                KnowledgeRefreshMergeAuthorityV1.from_json_dict,
+            )
+            if (
+                refresh_authority.identity != manifest.parent_manifest_hash
+                or refresh_authority.accepted_source_outcome_ids
+                != tuple(sorted(item.identity for item in outcomes))
+            ):
+                raise Protocol27InputStoreError(
+                    "refresh authority differs from synthesis manifest"
+                )
         parent = ResolvedSynthesisParentV1(
             parent_run_id=manifest.parent_run_id,
             parent_manifest_hash=manifest.parent_manifest_hash,
@@ -467,6 +491,17 @@ def load_protocol_27_inputs(run_dir: Path) -> ValidatedProtocol27Inputs:
                 item.source_id: (item.source_root_key_id, item.content_hash)
                 for item in overview_catalog.projections
             },
+            _refresh_dispositions=(
+                {}
+                if refresh_authority is None
+                else dict(refresh_authority.source_dispositions)
+            ),
+            _checkpoint_origin_run_id=(
+                None
+                if refresh_authority is None
+                else refresh_authority.published_run_id
+            ),
+            _refresh_authority=refresh_authority,
         )
         _validate_loaded(
             manifest,
@@ -578,11 +613,17 @@ def _build_input_closure(
         implementation.verifier_authority_hash,
     }
     context_hashes = {inputs.graph.context_policy_hash}
+    refresh_hashes = (
+        set()
+        if inputs.parent._refresh_authority is None
+        else {inputs.parent._refresh_authority.identity}
+    )
     classified = (
         source_authority_hashes
         | response_hashes
         | implementation_hashes
         | context_hashes
+        | refresh_hashes
     )
     if set(inputs.authority_objects) != classified:
         missing = sorted(classified - set(inputs.authority_objects))
@@ -604,6 +645,8 @@ def _build_input_closure(
         )
     for object_hash in sorted(context_hashes):
         add("context-policy", object_hash, inputs.authority_objects[object_hash])
+    for object_hash in sorted(refresh_hashes):
+        add("refresh-authority", object_hash, inputs.authority_objects[object_hash])
     for source in inputs.parent.accepted_sources:
         add(
             "accepted-source-outcome",

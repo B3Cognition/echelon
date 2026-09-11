@@ -92,6 +92,21 @@ class ResolvedSynthesisParentV1:
         repr=False,
         compare=False,
     )
+    _refresh_dispositions: Mapping[str, str] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+    _checkpoint_origin_run_id: str | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _refresh_authority: object | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.accepted_sources:
@@ -147,6 +162,30 @@ class ResolvedSynthesisParentV1:
             "_overview_authorities",
             MappingProxyType(dict(sorted(self._overview_authorities.items()))),
         )
+        refresh_dispositions = dict(sorted(self._refresh_dispositions.items()))
+        if refresh_dispositions and (
+            set(refresh_dispositions) != set(source_ids)
+            or any(
+                value not in {"reanalyzed", "reused", "not_checked"}
+                for value in refresh_dispositions.values()
+            )
+        ):
+            raise Protocol27AuthorityError(
+                "refresh dispositions must exactly cover synthesis sources"
+            )
+        object.__setattr__(
+            self,
+            "_refresh_dispositions",
+            MappingProxyType(refresh_dispositions),
+        )
+
+    @property
+    def refresh_dispositions(self) -> Mapping[str, str]:
+        return self._refresh_dispositions
+
+    @property
+    def checkpoint_origin_run_id(self) -> str:
+        return self._checkpoint_origin_run_id or self.parent_run_id
 
 
 ContextLoader = Callable[[Path, Path], object]

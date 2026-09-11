@@ -135,6 +135,9 @@ def build_compatibility_candidate(
         )
         fingerprint = reviewed_fingerprint or source.source_root_hash
         source_path = reviewed_source_path or source.source_id
+        freshness = context.inputs.parent_authority.refresh_dispositions.get(
+            source.source_id
+        )
         prefix = f"sources/{source.source_id}"
         required = ("overview.md", "architecture.md", "contracts.md", "components.md")
         if any(f"{prefix}/{name}" not in files for name in required):
@@ -149,6 +152,7 @@ def build_compatibility_candidate(
             "profile_hash": context.inputs.manifest.synthesis_policy_hash,
             "publication_status": source.outcome,
             **({"depth": depth} if depth is not None else {}),
+            **({"freshness": freshness} if freshness is not None else {}),
             "run_id": context.inputs.manifest.run_id,
             "snapshot_id": context.inputs.manifest.source_snapshot_id,
             "knowledge_root_id": source.source_root_hash,
@@ -172,6 +176,7 @@ def build_compatibility_candidate(
             "status": source.outcome,
             "manifest": f"re/{prefix}/manifest.json",
             **({"depth": depth} if depth is not None else {}),
+            **({"freshness": freshness} if freshness is not None else {}),
         }
         source_rows.append(
             {
@@ -181,6 +186,7 @@ def build_compatibility_candidate(
                 "status": source.outcome,
                 "manifest": f"re/{prefix}/manifest.json",
                 **({"depth": depth} if depth is not None else {}),
+                **({"freshness": freshness} if freshness is not None else {}),
             }
         )
 

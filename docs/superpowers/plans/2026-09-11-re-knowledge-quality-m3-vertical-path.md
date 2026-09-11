@@ -259,10 +259,10 @@ Git workspaces and scripted providers.
   winner publishes; stale candidates return a visible retryable conflict.
 - Old consumers remain pinned; new consumers see only the complete new generation.
 
-- [ ] **Step 1: Write failing U6-U9 execution/race/pinning tests.**
-- [ ] **Step 2: Observe RED for missing compatible-source merge.**
-- [ ] **Step 3: Implement the immutable merge and workflow continuation.**
-- [ ] **Step 4: Verify atomicity, conflicts, no-op, and pinning.**
+- [x] **Step 1: Write failing U6-U9 execution/race/pinning tests.**
+- [x] **Step 2: Observe RED for missing compatible-source merge.**
+- [x] **Step 3: Implement the immutable merge and workflow continuation.**
+- [x] **Step 4: Verify atomicity, conflicts, no-op, and pinning.**
 
 ### Task 8: Offline two-service acceptance and release gate
 
