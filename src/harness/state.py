@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from harness.convergence import ConvergenceLease
+
 logger = logging.getLogger(__name__)
 
 
@@ -453,6 +455,7 @@ class StateStore:
             "termination_reason": None,
             "escalation_file": None,
             "iteration_log": [],
+            "convergence_lease": ConvergenceLease().to_state(),
             "started_at": now,
             "updated_at": now,
         }

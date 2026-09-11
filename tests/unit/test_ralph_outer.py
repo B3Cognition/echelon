@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ResourceLimits, NetworkConfig
+from harness.convergence import ConvergenceLease, ProgressSnapshot
 from harness.documentation_gate import DocumentationGateResult
 from harness.errors import SandboxCreationError
 from harness.escalation import EscalationHandler
@@ -78,6 +79,122 @@ def _valid_plan_conformance_json() -> str:
         indent=2,
     ) + "\n"
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+
+def test_raw_outer_ordinal_does_not_exhaust_meaningful_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    """Provider interruptions may advance provenance without spending repair attempts."""
+    controller, provider, gitops, state_store = _make_controller(
+        tmp_path,
+        verify_results=[{"passed": True, "failures": []}],
+    )
+    state = state_store.read()
+    state["outer_iter"] = 5
+    state["convergence_lease"] = {
+        **ConvergenceLease().to_state(),
+        "meaningful_attempts": 2,
+        "infrastructure_attempts": 3,
+    }
+    state_store.write(state)
+
+    result = controller.run_loop(max_outer=3, max_inner=1)
+
+    assert result.status == "verified"
+    gitops.create_worktree.assert_called_once()
+    assert gitops.create_worktree.call_args.args[2] == 5
+    assert provider.create_count == 1
+
+
+def test_equivalent_authoritative_observations_stop_on_convergence_patience(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    verify = VerifyResult(
+        passed=False,
+        failures=[FailureEntry(FailureCategory.TEST, "unit-a", "noise")],
+    )
+
+    first = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+    second = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+    third = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+
+    assert first.should_stop is False
+    assert second.should_stop is False
+    assert third.should_stop is True
+    assert third.stop_reason == "stall_patience"
+    state = state_store.read()["convergence_lease"]
+    assert state["meaningful_attempts"] == 3
+    assert state["stalled_attempts"] == 2
+
+
+def test_infrastructure_finalization_is_excluded_from_meaningful_attempts(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+
+    controller._finalize(
+        status="blocked",
+        reason="sandbox_verification_unavailable",
+        outer_iterations=4,
+        inner_iterations=0,
+        pr_url=None,
+        tokens_used=0,
+        final_verify=None,
+    )
+
+    lease = state_store.read()["convergence_lease"]
+    assert lease["meaningful_attempts"] == 0
+    assert lease["infrastructure_attempts"] == 1
+    assert lease["last_infrastructure_reason"] == "sandbox_verification_unavailable"
+
+
+def test_regressed_high_water_context_is_bounded_and_provider_actionable(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    best = ProgressSnapshot.from_verify_result(
+        VerifyResult(
+            passed=False,
+            failures=[FailureEntry(FailureCategory.TEST, "unit-a", "secret noise")],
+        ),
+        completed_tasks=3,
+        total_tasks=4,
+        product_fingerprint="fingerprint-best",
+        checkpoint_commit="commit-best",
+    )
+    current = ProgressSnapshot.from_verify_result(
+        VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(FailureCategory.TEST, "unit-a", "different secret noise"),
+                FailureEntry(FailureCategory.TEST, "unit-b", "more secret noise"),
+            ],
+        ),
+        completed_tasks=3,
+        total_tasks=4,
+        product_fingerprint="fingerprint-current",
+        checkpoint_commit="commit-current",
+    )
+    lease = ConvergenceLease.from_state(None).observe(best, hard_ceiling=12).lease
+    lease = lease.observe(current, hard_ceiling=12).lease
+    state = state_store.read()
+    state["convergence_lease"] = lease.to_state()
+    state_store.write(state)
+
+    prompt = controller._make_iter_prompt("Build it", 7, "current failure")
+
+    assert "High-water convergence context" in prompt
+    assert "best checkpoint: commit-best" in prompt
+    assert "completed tasks: 3/4" in prompt
+    assert "Recover or improve on that authoritative high-water evidence" in prompt
+    assert "secret noise" not in prompt
 
 
 def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
