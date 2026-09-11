@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -156,6 +157,32 @@ def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
 
     assert next_step == "delivery is active; monitor with echelon delivery status 001"
     assert "delivery run" not in next_step
+
+
+@pytest.mark.unit
+def test_running_delivery_status_hides_terminal_fields_from_a_prior_attempt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A resumed delivery must not report its former stop as its current state."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "running"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    state_file.with_suffix(".lock").write_text(
+        f"pid={os.getpid()}\ntimestamp=2026-07-10T10:15:00+00:00\n",
+        encoding="utf-8",
+    )
+
+    from echelon.cli import _cmd_delivery_status
+
+    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["status"] == "running"
+    assert latest["termination_reason"] == ""
+    assert latest["build_status"] == ""
+    assert latest["build_reason"] == ""
 
 
 @pytest.mark.unit

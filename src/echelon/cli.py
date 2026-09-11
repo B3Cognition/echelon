@@ -7197,6 +7197,10 @@ def _delivery_status_summary(
     spec_id = str(state.get("spec_id") or "")
     strategy = str(state.get("strategy_id") or "default")
     status = str(state.get("status") or "unknown")
+    # Resume deliberately retains terminal fields for recovery/history. They
+    # are not facts about a currently active attempt and must not be presented
+    # as such by `delivery status`.
+    terminal_fields_current = status != "running"
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
     escalation = (
@@ -7214,9 +7218,21 @@ def _delivery_status_summary(
         "inner_iter": int(state.get("inner_iter") or 0),
         "tokens_used": int(state.get("tokens_used") or 0),
         "token_budget": state.get("token_budget"),
-        "termination_reason": str(state.get("termination_reason") or ""),
-        "build_status": str(state.get("build_status") or ""),
-        "build_reason": str(state.get("build_reason") or ""),
+        "termination_reason": (
+            str(state.get("termination_reason") or "")
+            if terminal_fields_current
+            else ""
+        ),
+        "build_status": (
+            str(state.get("build_status") or "")
+            if terminal_fields_current
+            else ""
+        ),
+        "build_reason": (
+            str(state.get("build_reason") or "")
+            if terminal_fields_current
+            else ""
+        ),
         "pr_url": str(state.get("pr_url") or ""),
         "target_branch": str(state.get("target_branch") or ""),
         "target_commit": str(state.get("target_commit") or ""),
