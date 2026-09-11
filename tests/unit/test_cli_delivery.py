@@ -262,12 +262,12 @@ def test_delivery_status_rejects_artifact_only_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from echelon import cli
+    from echelon.delivery_status import command
 
     _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_delivery_status(["001-demo"], project_root=tmp_path)
+        command(spec_id="001-demo", project_root=tmp_path)
 
     assert exc.value.code == 2
     _assert_build_capability_rejection(capsys, "echelon delivery status")

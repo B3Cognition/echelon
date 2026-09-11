@@ -3923,14 +3923,11 @@ def delivery_status(
     """Show current Phase B delivery/Ralph state."""
     from echelon.delivery_status import command
 
-    args: list[str] = []
-    if spec_id is not None:
-        args.append(spec_id)
-    if strategy is not None:
-        args.extend(["--strategy", strategy])
-    if json_output:
-        args.append("--json")
-    command(args)
+    command(
+        spec_id=spec_id or "",
+        strategy=strategy or "",
+        json_output=json_output,
+    )
 
 
 @delivery_app.command("verify-local")

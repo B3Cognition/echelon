@@ -6943,47 +6943,6 @@ def _cmd_delivery_cleanup_local(
         raise SystemExit(1)
 
 
-def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
-    spec_id = ""
-    strategy = ""
-    json_output = False
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg in {"-h", "--help"}:
-            print(
-                "Usage: echelon delivery status [spec_id] [--strategy <id>] [--json]\n\n"
-                "Show Phase B delivery/Ralph status. Without spec_id, shows the latest "
-                "delivery state across specs."
-            )
-            raise SystemExit(0)
-        if arg == "--json":
-            json_output = True
-        elif arg == "--strategy":
-            index += 1
-            if index >= len(args):
-                print("echelon delivery status: --strategy requires a value", file=sys.stderr)
-                raise SystemExit(1)
-            strategy = args[index].strip()
-        elif arg.startswith("--strategy="):
-            strategy = arg.split("=", 1)[1].strip()
-        elif arg.startswith("strategy="):
-            strategy = arg.split("=", 1)[1].strip()
-        elif arg.startswith("-"):
-            print(f"echelon delivery status: unknown option '{arg}'", file=sys.stderr)
-            raise SystemExit(1)
-        elif not spec_id:
-            spec_id = arg.strip()
-        else:
-            print(
-                "echelon delivery status: expected at most one spec_id",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        index += 1
-    return spec_id, strategy, json_output
-
-
 def _delivery_status_escalation(state: dict, project_root: Path) -> dict[str, object] | None:
     """Read optional human-decision details without making status fragile."""
     raw_path = str(state.get("escalation_file") or "").strip()
@@ -7804,53 +7763,6 @@ def _nonnegative_delivery_count(value: object) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
-
-
-def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
-    import json as _json
-
-    root = project_root or Path.cwd()
-    spec_id, strategy, json_output = _parse_delivery_status_args(args)
-    _require_provider_capability(
-        "echelon delivery status",
-        ProviderCapability.BUILD,
-        project_dir=root,
-    )
-    states = _iter_harness_build_states(root)
-    if spec_id:
-        states = [state for state in states if str(state.get("spec_id") or "") == spec_id]
-    if strategy:
-        states = [state for state in states if str(state.get("strategy_id") or "") == strategy]
-
-    summaries = [_delivery_status_summary(state, project_root=root) for state in states]
-    if json_output:
-        payload = {
-            "status": summaries[0]["status"] if summaries else "none",
-            "spec_id": spec_id or (summaries[0].get("spec_id") if summaries else ""),
-            "strategy": strategy,
-            "latest": summaries[0] if summaries else None,
-            "states": summaries[:10],
-        }
-        print(_json.dumps(payload, indent=2, ensure_ascii=False))
-        return
-
-    if not summaries:
-        next_step = f"echelon delivery run {spec_id}" if spec_id else "echelon delivery run <spec_id>"
-        _banner(
-            "DELIVERY STATUS",
-            [
-                ("status", "No delivery runs found"),
-                ("next", next_step),
-            ],
-            subtitle="Phase B delivery",
-        )
-        return
-
-    latest = summaries[0]
-    subtitle = "Phase B delivery"
-    if len(summaries) > 1:
-        subtitle += f" - {len(summaries)} matching state files"
-    _banner("DELIVERY STATUS", _delivery_status_fields(latest), subtitle=subtitle)
 
 
 def _find_harness_checkpoint_state(

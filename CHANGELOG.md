@@ -24,6 +24,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Hard-cap guidance now supplies a concrete larger `--max-outer` value that
   preserves the existing convergence lease and durable checkpoint.
 
+### Fixed
+
+- **Typed delivery status boundary** — `echelon delivery status` now passes
+  Typer-validated `spec_id`, strategy, and JSON values directly to its status
+  service. The redundant argv reconstruction, legacy parser, and duplicate
+  command implementation have been removed without changing status output.
+
 ## [4.1.0] - 2026-09-09
 
 ### Fixed

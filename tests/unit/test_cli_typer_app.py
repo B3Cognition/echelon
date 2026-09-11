@@ -879,12 +879,33 @@ def test_delivery_status_declares_options_and_routes(monkeypatch):
     assert "--strategy" in help_result.output
     assert "--json" in help_result.output
 
-    calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.delivery_status.command", lambda args: calls.append(args))
+    calls: list[dict[str, object]] = []
+
+    def record_status_command(
+        *,
+        spec_id: str = "",
+        strategy: str = "",
+        json_output: bool = False,
+    ) -> None:
+        calls.append(
+            {
+                "spec_id": spec_id,
+                "strategy": strategy,
+                "json_output": json_output,
+            }
+        )
+
+    monkeypatch.setattr("echelon.delivery_status.command", record_status_command)
 
     run(["delivery", "status", "001", "--strategy", "codegen", "--json"])
 
-    assert calls == [["001", "--strategy", "codegen", "--json"]]
+    assert calls == [
+        {
+            "spec_id": "001",
+            "strategy": "codegen",
+            "json_output": True,
+        }
+    ]
 
 
 @pytest.mark.unit
