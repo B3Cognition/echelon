@@ -17066,6 +17066,270 @@ def _cmd_re_refresh(args: list[str]) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class _ReKnowledgeActionOptions:
+    source_ids: tuple[str, ...]
+    depth: str | None
+    token_limit: int
+    active_ms_limit: int
+
+
+def _parse_re_knowledge_action_options(
+    args: list[str], *, allow_sources: bool
+) -> _ReKnowledgeActionOptions:
+    """Parse the intentionally small normal RE action surface."""
+    from harness.re_v2.protocol_22.schema import safe_id
+
+    sources: list[str] = []
+    depth: str | None = None
+    token_limit = 5_000_000
+    time_limit_minutes = 180
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument in {
+            "--source",
+            "--depth",
+            "--re-token-limit",
+            "--re-time-limit-minutes",
+        }:
+            if index + 1 >= len(args):
+                raise ValueError(f"{argument} requires a value")
+            value = args[index + 1].strip()
+            index += 2
+        elif any(
+            argument.startswith(prefix)
+            for prefix in (
+                "--source=",
+                "--depth=",
+                "--re-token-limit=",
+                "--re-time-limit-minutes=",
+            )
+        ):
+            option, value = argument.split("=", 1)
+            value = value.strip()
+            argument = option
+            index += 1
+        else:
+            raise ValueError(f"unknown option {argument!r}")
+        if argument == "--source":
+            if not allow_sources:
+                raise ValueError("--source is valid only with echelon re refresh")
+            safe_id(value, "source")
+            sources.append(value)
+        elif argument == "--depth":
+            if depth is not None:
+                raise ValueError("--depth may be supplied only once")
+            from echelon.re_cli_options import resolve_knowledge_depth
+
+            depth = resolve_knowledge_depth(
+                explicit=value, published=None, workspace_default=None
+            )
+        elif argument == "--re-token-limit":
+            try:
+                token_limit = int(value)
+            except ValueError:
+                raise ValueError("--re-token-limit requires a positive integer") from None
+            if token_limit <= 0:
+                raise ValueError("--re-token-limit requires a positive integer")
+        else:
+            try:
+                time_limit_minutes = int(value)
+            except ValueError:
+                raise ValueError(
+                    "--re-time-limit-minutes requires a positive integer"
+                ) from None
+            if time_limit_minutes <= 0:
+                raise ValueError(
+                    "--re-time-limit-minutes requires a positive integer"
+                )
+    if len(sources) != len(set(sources)):
+        raise ValueError("--source values must be unique")
+    return _ReKnowledgeActionOptions(
+        tuple(sources), depth, token_limit, time_limit_minutes * 60_000
+    )
+
+
+def _reviewed_run_depths(run_dir: Path) -> dict[str, str]:
+    """Read the frozen per-source depth labels from reviewed run authority."""
+    import json
+
+    from harness.re_v2.knowledge_activation import ReviewedDiscoveryAuthorityV1
+    from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+    from harness.re_v2.protocol_28.inputs import ValidatedReviewedProtocol28Inputs
+
+    context = load_protocol_28_run_context(Path(run_dir).resolve())
+    if not isinstance(context.inputs, ValidatedReviewedProtocol28Inputs):
+        raise ValueError("the active RE run is not a repaired reviewed analysis")
+    result: dict[str, str] = {}
+    for authority_id in context.inputs.reviewed_discovery_catalog.authority_ids:
+        authority = ReviewedDiscoveryAuthorityV1.from_json_dict(
+            json.loads(context.objects.read_blob(authority_id))
+        )
+        result[authority.source_id] = authority.depth
+    return dict(sorted(result.items()))
+
+
+def _render_re_knowledge_result(action: str, depth: str, result: object) -> None:
+    state = str(getattr(result, "state", "needs-attention"))
+    generation = getattr(result, "publication_generation", None)
+    reason = getattr(result, "reason_code", None)
+    label = state.replace("complete", "completed", 1)
+    print(f"[re] {action} {label} · depth {depth}")
+    if generation is not None:
+        print(f"[re] published generation {generation}")
+    if reason:
+        print(f"[re] reason: {reason}")
+
+
+def _cmd_re_knowledge_run(args: list[str]) -> None:
+    """Resume reviewed analysis through synthesis and atomic publication."""
+    try:
+        options = _parse_re_knowledge_action_options(args, allow_sources=False)
+        from harness.config import load_config
+        from harness.re_lifecycle import resolve_current_re_run
+        from harness.re_v2.knowledge_workflow import run_knowledge_workflow
+        from harness.squad_provider import SquadCliProvider
+
+        workspace = Path.cwd().resolve()
+        run_dir = resolve_current_re_run(workspace)
+        if run_dir is None:
+            raise ValueError(
+                "needs attention: no repaired analysis is active; ordinary repaired "
+                "analysis creation is still release-gated pending live evaluation"
+            )
+        depths = _reviewed_run_depths(run_dir)
+        frozen = tuple(sorted(set(depths.values())))
+        if options.depth is not None and frozen != (options.depth,):
+            raise ValueError(
+                "needs attention: requested depth differs from the active immutable "
+                "analysis; start a compatible refreshed analysis"
+            )
+        effective_depth = options.depth or (
+            frozen[0] if len(frozen) == 1 else "mixed"
+        )
+        config = load_config(workspace, squad_only=True)
+        result = run_knowledge_workflow(
+            workspace,
+            run_dir.name,
+            lambda: SquadCliProvider(config),
+            token_limit=options.token_limit,
+            active_ms_limit=options.active_ms_limit,
+        )
+        _render_re_knowledge_result("run", effective_depth, result)
+        if str(result.state) == "needs-attention":
+            raise SystemExit(2)
+    except SystemExit:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"echelon re run: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+def _cmd_re_knowledge_refresh(args: list[str]) -> None:
+    """Plan and resume one source-granular reviewed refresh transaction."""
+    try:
+        options = _parse_re_knowledge_action_options(args, allow_sources=True)
+        _run_re_knowledge_refresh_action(
+            Path.cwd().resolve(),
+            options.source_ids,
+            options.depth,
+            options.token_limit,
+            options.active_ms_limit,
+        )
+    except SystemExit:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"echelon re refresh: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+def _run_re_knowledge_refresh_action(
+    workspace: Path,
+    source_ids: tuple[str, ...],
+    explicit_depth: str | None,
+    token_limit: int,
+    active_ms_limit: int,
+) -> None:
+    """Execute the M3 reviewed refresh path for an already prepared analysis."""
+    from harness.config import load_config
+    from harness.re_lifecycle import resolve_current_re_run
+    from harness.re_registry import load_published_index
+    from harness.re_v2.knowledge_refresh import (
+        plan_knowledge_refresh,
+        snapshots_from_partition,
+    )
+    from harness.re_v2.knowledge_workflow import run_knowledge_refresh
+    from harness.squad_provider import SquadCliProvider
+
+    published = load_published_index(workspace)
+    if published is None:
+        raise ValueError("needs attention: no published knowledge exists; run echelon re run")
+    from dataclasses import replace
+    from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    workspace_manifest = discover_workspace(workspace)
+    declared = tuple(source.id for source in workspace_manifest.sources)
+    selected = source_ids or declared
+    unknown = tuple(sorted(set(selected) - set(declared)))
+    if unknown:
+        raise ValueError(
+            "unknown declared source" + ("s" if len(unknown) > 1 else "")
+            + ": " + ", ".join(unknown)
+        )
+    selected_roots = tuple(
+        source for source in workspace_manifest.sources if source.id in set(selected)
+    )
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        selected_roots,
+        _re_v2_snapshot_root(workspace),
+    )
+    selected_manifest = replace(workspace_manifest, sources=selected_roots)
+    partition = build_workspace_partition_catalog(
+        snapshot,
+        selected_manifest,
+        _re_v22_partition_authorities(),
+    )
+    snapshots = tuple(
+        snapshot
+        for snapshot in snapshots_from_partition(partition)
+    )
+    from echelon.re_cli_options import configured_workspace_depth
+
+    plan = plan_knowledge_refresh(
+        declared_source_ids=declared,
+        selected_snapshots=snapshots,
+        selected_source_ids=None if not source_ids else selected,
+        published=published,
+        explicit_depth=explicit_depth,
+        workspace_default=configured_workspace_depth(workspace),
+    )
+    analysis_run_id: str | None = None
+    if plan.reanalyze_source_ids:
+        active = resolve_current_re_run(workspace)
+        if active is None:
+            raise ValueError(
+                "needs attention: changed sources require a prepared repaired analysis; "
+                "ordinary analysis creation remains release-gated"
+            )
+        analysis_run_id = active.name
+    config = load_config(workspace, squad_only=True)
+    result = run_knowledge_refresh(
+        workspace,
+        plan,
+        analysis_run_id,
+        lambda: SquadCliProvider(config),
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+    )
+    depth_label = explicit_depth or "established"
+    _render_re_knowledge_result("refresh", depth_label, result)
+    if str(result.state) == "needs-attention":
+        raise SystemExit(2)
+
+
+@dataclass(frozen=True, slots=True)
 class _ReDeepenOptions:
     target_layer: str
     all_sources: bool

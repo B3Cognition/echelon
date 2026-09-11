@@ -210,10 +210,10 @@ Git workspaces and scripted providers.
   Help and errors name the current action and exact next step without protocol
   archaeology.
 
-- [ ] **Step 1: Write failing command/help and provider-routing tests.**
-- [ ] **Step 2: Observe RED for missing depth and automatic continuation.**
-- [ ] **Step 3: Implement CLI parsing and facade dispatch.**
-- [ ] **Step 4: Verify historical advanced commands and normal commands.**
+- [x] **Step 1: Write failing command/help and provider-routing tests.**
+- [x] **Step 2: Observe RED for missing depth and automatic continuation.**
+- [x] **Step 3: Implement CLI parsing and facade dispatch.**
+- [x] **Step 4: Verify historical advanced commands and normal commands.**
 
 ### Task 6: Plan source-granular refresh from immutable snapshot freshness
 

@@ -41,12 +41,80 @@ def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
     invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
 
     assert help_result.exit_code == 0
-    assert "--engine" in help_result.output
-    assert "v1" in help_result.output
-    assert "v2" in help_result.output
-    assert "--shadow" in help_result.output
+    assert "--engine" not in help_result.output
+    assert "--shadow" not in help_result.output
     assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
     assert invalid.exit_code == 2
+
+
+@pytest.mark.unit
+def test_re_knowledge_actions_lead_with_depth_and_repeatable_source(monkeypatch):
+    from echelon.cli_app import app, run
+
+    run_calls: list[list[str]] = []
+    refresh_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_run",
+        lambda args: run_calls.append(args),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda args: refresh_calls.append(args),
+        raising=False,
+    )
+
+    run_help = CliRunner().invoke(app, ["re", "run", "--help"])
+    refresh_help = CliRunner().invoke(app, ["re", "refresh", "--help"])
+    run(["re", "run", "--depth", "deep"])
+    run(
+        [
+            "re",
+            "refresh",
+            "--source",
+            "api",
+            "--source",
+            "worker",
+            "--depth",
+            "quick",
+        ]
+    )
+
+    assert run_help.exit_code == refresh_help.exit_code == 0
+    assert "--depth" in run_help.output
+    assert "quick" in run_help.output
+    assert "standard" in run_help.output
+    assert "deep" in run_help.output
+    assert "--source" in refresh_help.output
+    assert "--depth" in refresh_help.output
+    assert run_calls == [["--depth", "deep"]]
+    assert refresh_calls == [
+        ["--source", "api", "--source", "worker", "--depth", "quick"]
+    ]
+
+
+@pytest.mark.unit
+def test_re_knowledge_actions_reject_unknown_depth_without_dispatch(monkeypatch):
+    from echelon.cli_app import app
+
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_run",
+        lambda _args: pytest.fail("invalid depth dispatched"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda _args: pytest.fail("invalid depth dispatched"),
+        raising=False,
+    )
+    runner = CliRunner()
+
+    run_result = runner.invoke(app, ["re", "run", "--depth", "future"])
+    refresh_result = runner.invoke(
+        app, ["re", "refresh", "--depth", "future"]
+    )
+
+    assert run_result.exit_code == refresh_result.exit_code == 2
 
 
 @pytest.mark.unit

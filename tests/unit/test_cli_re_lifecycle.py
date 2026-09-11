@@ -87,13 +87,14 @@ def test_re_runtime_resolution_rejects_legacy_extension_only_workspace(
 
 
 @pytest.mark.unit
-def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
+def test_re_run_help_keeps_legacy_reconstruction_out_of_normal_choices() -> None:
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["re", "run", "--help"])
 
     assert result.exit_code == 0
-    assert "--no-reuse" in result.output
+    assert "--depth" in result.output
+    assert "--no-reuse" not in result.output
 
 
 @pytest.mark.unit
@@ -613,7 +614,8 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         "echelon.cli._cmd_re_resume", lambda args: calls.append(("resume", args))
     )
     monkeypatch.setattr(
-        "echelon.cli._cmd_re_refresh", lambda args: calls.append(("refresh", args))
+        "echelon.cli._cmd_re_knowledge_refresh",
+        lambda args: calls.append(("refresh", args)),
     )
     runner = CliRunner()
 

@@ -162,6 +162,12 @@ class ReGoal(str, Enum):
     INVENTORY = "inventory"
 
 
+class ReKnowledgeDepth(str, Enum):
+    QUICK = "quick"
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
 class ReDeepeningLayer(str, Enum):
     L2 = "L2"
     L3 = "L3"
@@ -889,63 +895,106 @@ def version_command() -> None:
 
 @re_app.command("run")
 def re_run(
+    depth: Optional[ReKnowledgeDepth] = typer.Option(
+        None,
+        "--depth",
+        case_sensitive=True,
+        help="Knowledge depth: quick, standard (default), or deep.",
+    ),
     re_policy: str = typer.Option(
         "changed",
         "--re-policy",
         help="Workspace RE policy: none, cached-only, changed, or refresh-all.",
+        hidden=True,
     ),
     re_max_inner: Optional[int] = typer.Option(
         None,
         "--re-max-inner",
         min=1,
         help="Raise source-local RE repair budgets.",
+        hidden=True,
     ),
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
         help="Execution goal: fast, balanced, or high.",
+        hidden=True,
     ),
     re_token_limit: Optional[int] = typer.Option(
         None,
         "--re-token-limit",
         min=1,
         help="Override the profile token ceiling for this run.",
+        hidden=True,
     ),
     re_time_limit_minutes: Optional[int] = typer.Option(
         None,
         "--re-time-limit-minutes",
         min=1,
         help="Override the profile active-time ceiling for this run.",
+        hidden=True,
     ),
-    reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help="Abandon unfinished RE state and replan.",
+        hidden=True,
+    ),
     no_reuse: bool = typer.Option(
         False,
         "--no-reuse",
         help="Ignore published RE artifacts and reconstruct from source.",
+        hidden=True,
     ),
-    engine: ReEngine = typer.Option(
-        ReEngine.V1,
+    engine: Optional[ReEngine] = typer.Option(
+        None,
         "--engine",
         case_sensitive=True,
-        help="Creation engine: v1 (default) or the opt-in pinned v2 kernel.",
+        help="Compatibility engine override: v1 or pinned v2.",
+        hidden=True,
     ),
     shadow: bool = typer.Option(
         False,
         "--shadow",
         help="For v2 only, explain the authoritative plan without dispatching work.",
+        hidden=True,
     ),
     goal: list[ReGoal] = typer.Option(
         [],
         "--goal",
         case_sensitive=True,
         help="For v2 only: baseline (default) or inventory.",
+        hidden=True,
     ),
 ) -> None:
-    """Run or resume workspace reverse engineering; publish explicitly afterward."""
+    """Analyze the workspace and publish one validated knowledge generation."""
+    legacy = bool(
+        engine is not None
+        or shadow
+        or goal
+        or re_max_inner is not None
+        or profile is not None
+        or reset
+        or no_reuse
+        or re_policy != "changed"
+    )
+    if legacy and depth is not None:
+        raise typer.BadParameter(
+            "--depth cannot be combined with legacy RE controls",
+            param_hint="--depth",
+        )
     if len(goal) > 1:
         raise typer.BadParameter("--goal may be supplied only once", param_hint="--goal")
     if goal and engine is not ReEngine.V2:
         raise typer.BadParameter("--goal is valid only with --engine v2", param_hint="--goal")
+    if not legacy:
+        args: list[str] = []
+        if depth is not None:
+            args.extend(["--depth", depth.value])
+        _extend_option(args, "--re-token-limit", re_token_limit)
+        _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+        _legacy_cli()._cmd_re_knowledge_run(args)
+        return
     args = ["--re-policy", re_policy]
     _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
@@ -955,7 +1004,7 @@ def re_run(
         args.append("--reset")
     if no_reuse:
         args.append("--no-reuse")
-    if engine is ReEngine.V2:
+    if engine is not None:
         args.extend(["--engine", engine.value])
     if goal:
         args.extend(["--goal", goal[0].value])
@@ -966,14 +1015,41 @@ def re_run(
 
 @re_app.command("refresh")
 def re_refresh(
-    source: str = typer.Option(
-        ...,
+    source: list[str] = typer.Option(
+        [],
         "--source",
-        help="Declared workspace source ID to refresh and publish.",
+        help="Repeat for each declared source to check; omit to check all sources.",
+    ),
+    depth: Optional[ReKnowledgeDepth] = typer.Option(
+        None,
+        "--depth",
+        case_sensitive=True,
+        help="Override knowledge depth: quick, standard, or deep.",
+    ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Advanced absolute token ceiling for newly analyzed work.",
+        hidden=True,
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Advanced absolute active-time ceiling for newly analyzed work.",
+        hidden=True,
     ),
 ) -> None:
-    """Refresh and publish semantic RE and topology for one source."""
-    _legacy_cli()._cmd_re_refresh(["--source", source])
+    """Check selected sources and atomically publish affected knowledge."""
+    args: list[str] = []
+    for source_id in source:
+        args.extend(["--source", source_id])
+    if depth is not None:
+        args.extend(["--depth", depth.value])
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _legacy_cli()._cmd_re_knowledge_refresh(args)
 
 
 @re_app.command("deepen")
