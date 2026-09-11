@@ -235,10 +235,10 @@ Git workspaces and scripted providers.
   authenticated compatibility. Cross-source workspace outputs depending on a
   changed source are regenerated.
 
-- [ ] **Step 1: Write failing U1-U5 refresh-planning tests.**
-- [ ] **Step 2: Observe RED for the missing planner.**
-- [ ] **Step 3: Implement pure freshness and invalidation planning.**
-- [ ] **Step 4: Verify no repository mutation and deterministic plans.**
+- [x] **Step 1: Write failing U1-U5 refresh-planning tests.**
+- [x] **Step 2: Observe RED for the missing planner.**
+- [x] **Step 3: Implement pure freshness and invalidation planning.**
+- [x] **Step 4: Verify no repository mutation and deterministic plans.**
 
 ### Task 7: Execute and atomically publish refresh generations
 

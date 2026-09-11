@@ -216,8 +216,37 @@ def test_load_published_index_parses_valid_contract(tmp_path: Path) -> None:
     assert index.generation == 4
     assert index.sources["api"].source_path == "sources/api"
     assert index.sources["api"].manifest == "re/sources/api/manifest.json"
+    assert index.sources["api"].depth is None
     assert index.workspace.overview == "re/workspace/overview.md"
     assert index.synthesis_quality is None
+
+
+@pytest.mark.unit
+def test_load_published_index_parses_reviewed_source_depth(tmp_path: Path) -> None:
+    ensure_re_layout(tmp_path)
+    payload = _valid_index()
+    payload["sources"]["api"]["depth"] = "deep"  # type: ignore[index]
+    _write_json(tmp_path / "re" / "index.json", payload)
+
+    index = load_published_index(tmp_path)
+
+    assert index is not None
+    assert index.sources["api"].depth == "deep"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("depth", ["full", "", 3, {}])
+def test_load_published_index_rejects_invalid_source_depth(
+    tmp_path: Path,
+    depth: object,
+) -> None:
+    ensure_re_layout(tmp_path)
+    payload = _valid_index()
+    payload["sources"]["api"]["depth"] = depth  # type: ignore[index]
+    _write_json(tmp_path / "re" / "index.json", payload)
+
+    with pytest.raises(ReRegistryError, match="source depth"):
+        load_published_index(tmp_path)
 
 
 @pytest.mark.unit

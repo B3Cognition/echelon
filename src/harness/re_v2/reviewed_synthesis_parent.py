@@ -8,7 +8,9 @@ operations after this adapter has frozen an exact synthesis parent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+from typing import Literal
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_27.authority import ResolvedSynthesisParentV1
@@ -47,6 +49,9 @@ class ReviewedSourceKnowledgeProjectionV1(KnowledgeValueV1):
     debt_acceptance_ids: tuple[str, ...]
     debt_ids: tuple[str, ...]
     rendered_markdown_hash: str
+    depth: Literal["quick", "standard", "deep"]
+    source_content_id: str
+    source_path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +115,41 @@ def resolve_reviewed_synthesis_parent(
             )
 
         materializer_hash = _materializer_authority_hash()
+        from harness.re_v2.protocol_22.partition import WorkspacePartitionCatalogV1
+
+        reviewed_metadata: dict[str, tuple[str, str, str]] = {}
+        for bundle in context._reviewed_discoveries or ():
+            payload = context.objects.read_blob(bundle.authority.partition_id)
+            if content_digest(payload) != bundle.authority.partition_id:
+                raise ReviewedSynthesisParentError(
+                    "reviewed partition authority hash mismatch"
+                )
+            raw_partition = json.loads(payload)
+            if canonical_json_bytes(raw_partition) != payload:
+                raise ReviewedSynthesisParentError(
+                    "reviewed partition authority is not canonical"
+                )
+            partition = WorkspacePartitionCatalogV1.from_json_dict(raw_partition)
+            matching_sources = tuple(
+                item
+                for item in partition.sources
+                if item.source_id == bundle.authority.source_id
+            )
+            if len(matching_sources) != 1:
+                raise ReviewedSynthesisParentError(
+                    "reviewed partition does not identify exactly one source"
+                )
+            source = matching_sources[0]
+            reviewed_metadata[source.source_id] = (
+                bundle.authority.depth,
+                source.source_content_id,
+                source.workspace_relative_path,
+            )
+        source_content_ids = {
+            item.source_id: item.target_content_id
+            for item in context.inputs.l3_projection_catalog.projections
+            if item.target_kind == "source"
+        }
         authority_objects: dict[str, bytes] = {}
         overview_payloads: dict[str, bytes] = {}
         outcomes: list[AcceptedSourceOutcomeV1] = []
@@ -132,6 +172,21 @@ def resolve_reviewed_synthesis_parent(
         ):
             raise ReviewedSynthesisParentError(
                 "reviewed source roots must exactly and uniquely cover their sources"
+            )
+        if set(reviewed_metadata) != {item.source_id for item in source_roots}:
+            raise ReviewedSynthesisParentError(
+                "reviewed discovery metadata authority does not cover source roots"
+            )
+        if set(source_content_ids) != {item.source_id for item in source_roots}:
+            raise ReviewedSynthesisParentError(
+                "reviewed snapshot authority does not cover source roots"
+            )
+        if any(
+            reviewed_metadata[source_id][1] != source_content_id
+            for source_id, source_content_id in source_content_ids.items()
+        ):
+            raise ReviewedSynthesisParentError(
+                "reviewed source content differs from L3 target authority"
             )
 
         for source_root in sorted(source_roots, key=lambda item: item.source_id):
@@ -166,6 +221,9 @@ def resolve_reviewed_synthesis_parent(
                 debt_acceptance_ids=source_root.debt_acceptance_ids,
                 debt_ids=source_root.debt_ids,
                 rendered_markdown_hash=markdown_hash,
+                depth=reviewed_metadata[source_root.source_id][0],
+                source_content_id=reviewed_metadata[source_root.source_id][1],
+                source_path=reviewed_metadata[source_root.source_id][2],
             )
             _add_value(authority_objects, source_projection)
 

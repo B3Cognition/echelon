@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -169,6 +170,7 @@ def test_reviewed_synthesis_publishes_and_is_consumed_as_one_generation(
     from harness.re_registry import load_published_index
     from harness.re_v2.protocol_27.lifecycle import execute_protocol_27_request
     from harness.re_v2.protocol_28.status import protocol_28_status_document
+    from harness.re_v2.reviewed_synthesis_parent import resolve_reviewed_synthesis_parent
     from tests.unit.test_re_v2_protocol_27_controller import _ScriptedProvider
 
     context = _terminal_reviewed_context_with_executor(tmp_path)
@@ -196,6 +198,32 @@ def test_reviewed_synthesis_publishes_and_is_consumed_as_one_generation(
     assert index.generation == 1
     assert index.publication_status == "complete"
     assert index.published_from_run != context.run_dir.name
+    assert index.sources["api"].depth == "deep"
+    source_target = next(
+        item
+        for item in context.inputs.l3_projection_catalog.projections
+        if item.source_id == "api" and item.target_kind == "source"
+    )
+    assert index.sources["api"].fingerprint == source_target.target_content_id
+    assert index.sources["api"].source_path == "sources/api"
+    source_manifest = json.loads(
+        (tmp_path / index.sources["api"].manifest).read_text(encoding="utf-8")
+    )
+    assert source_manifest["depth"] == "deep"
+    assert source_manifest["run_id"] == index.published_from_run
+    assert source_manifest["snapshot_id"] == context.inputs.manifest.source_snapshot_id
+    assert source_manifest["knowledge_root_id"] in {
+        item.source_root_hash
+        for item in resolve_reviewed_synthesis_parent(
+            tmp_path, context.run_dir.name
+        ).accepted_sources
+    }
+    assert index.synthesis_quality is not None
+    assert source_manifest["accepted_source_outcome_id"] in set(
+        index.synthesis_quality.accepted_source_outcome_ids
+    )
+    assert source_manifest["quality"] == "complete"
+    assert source_manifest["debt_manifest_id"] is None
     consumer_run = tmp_path / "runs" / "spec-consumer"
     consumer_run.mkdir()
     attached = attach_published_re_context(

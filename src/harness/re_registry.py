@@ -65,6 +65,7 @@ class PublishedSource:
     status: str
     manifest: str
     manifest_artifact: ReArtifactDescriptor | None = None
+    depth: str | None = None
 
 
 @dataclass(frozen=True)
@@ -647,6 +648,8 @@ def published_source_is_usable(
             return False
         if manifest.get("publication_status") != source.status:
             return False
+        if source.depth is not None and manifest.get("depth") != source.depth:
+            return False
         overview = _required_string(manifest, "overview", str(manifest_path))
         _require_prefix(overview, PurePosixPath(f"re/sources/{source_id}"), "overview")
         _existing_registry_path(root, overview, "overview")
@@ -765,6 +768,7 @@ def _parse_index(raw: Any, *, workspace_root: Path) -> PublishedReIndex:
                 expected_path=expected_manifest,
                 expected_kind="re-source-manifest",
             ),
+            depth=_parse_optional_depth(source_raw.get("depth"), source_id),
         )
 
     raw_workspace = raw.get("workspace")
@@ -868,6 +872,14 @@ def _parse_synthesis_quality(raw_quality: object) -> PublishedReSynthesisQuality
         debt_manifest_hashes=digests("debt_manifest_hashes"),
         partial_acceptance_receipt_ids=digests("partial_acceptance_receipt_ids"),
     )
+
+
+def _parse_optional_depth(value: object, source_id: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in {"quick", "standard", "deep"}:
+        raise ReRegistryError(f"invalid source depth for {source_id}: {value!r}")
+    return value
 
 
 def _parse_manifest_artifact(
