@@ -3041,6 +3041,7 @@ def _cmd_harness_resume(
             # current verifier acquire fresh evidence; it does not accept the
             # old infrastructure failure as success.
             "verification_infrastructure",
+            "sandbox_verification_unavailable",
         }
     downstream_continuation_reasons = {
         "visual": {
