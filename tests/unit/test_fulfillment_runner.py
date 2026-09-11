@@ -1662,6 +1662,68 @@ class TestFulfillmentRunner:
         assert metadata["verified_commit"] == "head456"
         assert metadata["verify_scope"] == "full"
 
+    def test_scoped_bootstrap_preserves_caller_owned_topology_binding(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "# Tasks\n\n"
+                "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+            ),
+        )
+        _write_matching_audit(tmp_path)
+        initialized = init_verify_spec_run(
+            project_root=tmp_path,
+            spec_id=spec_dir.name,
+            spec_dir=spec_dir,
+            timestamp="scoped-topology-binding",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def omit_topology_receipt(_worktree_path: str, _prompt: str) -> int:
+            for state_path in (tmp_path / "runs").glob("**/state.json"):
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                state.update(
+                    {
+                        "fulfillment_artifacts": "valid",
+                        "status": "blocked",
+                        "blocked_reason": "verify topology evidence is not finalized",
+                        "blocked_at": "2026-09-10T00:00:00+00:00",
+                    }
+                )
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+            _write_matching_report(spec_dir / "fulfillment-report.md")
+            return 0
+
+        provider.exec_prompt.side_effect = omit_topology_receipt
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                spec_dir.name,
+                spec_dir=spec_dir,
+                orchestration_root=tmp_path,
+                scope="scoped",
+                completed_task_ids=["T-001"],
+                verify_run_dir=initialized.verify_run_dir,
+                source_id=".",
+                source_root=tmp_path,
+            )
+
+        assert result.status == "refreshed", result.reason
+        state = json.loads(initialized.state_path.read_text(encoding="utf-8"))
+        assert state["status"] == "complete"
+        receipt = json.loads(
+            (initialized.verify_run_dir / "topology-receipt.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert receipt["source_id"] == "."
+
     def test_scoped_refresh_rechecks_unresolved_ledger_rows_only(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"

@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ResourceLimits, NetworkConfig
+from harness.convergence import ConvergenceLease, ProgressSnapshot
 from harness.documentation_gate import DocumentationGateResult
 from harness.errors import SandboxCreationError
 from harness.escalation import EscalationHandler
@@ -78,6 +79,143 @@ def _valid_plan_conformance_json() -> str:
         indent=2,
     ) + "\n"
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+
+def test_raw_outer_ordinal_does_not_exhaust_meaningful_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    """Provider interruptions may advance provenance without spending repair attempts."""
+    controller, provider, gitops, state_store = _make_controller(
+        tmp_path,
+        verify_results=[{"passed": True, "failures": []}],
+    )
+    state = state_store.read()
+    state["outer_iter"] = 5
+    state["convergence_lease"] = {
+        **ConvergenceLease().to_state(),
+        "meaningful_attempts": 2,
+        "infrastructure_attempts": 3,
+    }
+    state_store.write(state)
+
+    result = controller.run_loop(max_outer=3, max_inner=1)
+
+    assert result.status == "verified"
+    gitops.create_worktree.assert_called_once()
+    assert gitops.create_worktree.call_args.args[2] == 5
+    assert provider.create_count == 1
+
+
+def test_equivalent_authoritative_observations_stop_on_convergence_patience(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    verify = VerifyResult(
+        passed=False,
+        failures=[FailureEntry(FailureCategory.TEST, "unit-a", "noise")],
+    )
+
+    first = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+    second = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+    third = controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+
+    assert first.should_stop is False
+    assert second.should_stop is False
+    assert third.should_stop is True
+    assert third.stop_reason == "stall_patience"
+    state = state_store.read()["convergence_lease"]
+    assert state["meaningful_attempts"] == 3
+    assert state["stalled_attempts"] == 2
+
+
+def test_infrastructure_finalization_is_excluded_from_meaningful_attempts(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+
+    controller._finalize(
+        status="blocked",
+        reason="sandbox_verification_unavailable",
+        outer_iterations=4,
+        inner_iterations=0,
+        pr_url=None,
+        tokens_used=0,
+        final_verify=None,
+    )
+
+    lease = state_store.read()["convergence_lease"]
+    assert lease["meaningful_attempts"] == 0
+    assert lease["infrastructure_attempts"] == 1
+    assert lease["last_infrastructure_reason"] == "sandbox_verification_unavailable"
+
+
+def test_regressed_high_water_context_is_bounded_and_provider_actionable(
+    tmp_path: Path,
+) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    best = ProgressSnapshot.from_verify_result(
+        VerifyResult(
+            passed=False,
+            failures=[FailureEntry(FailureCategory.TEST, "unit-a", "secret noise")],
+        ),
+        completed_tasks=3,
+        total_tasks=4,
+        product_fingerprint="fingerprint-best",
+        checkpoint_commit="commit-best",
+    )
+    current = ProgressSnapshot.from_verify_result(
+        VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(FailureCategory.TEST, "unit-a", "different secret noise"),
+                FailureEntry(FailureCategory.TEST, "unit-b", "more secret noise"),
+            ],
+        ),
+        completed_tasks=3,
+        total_tasks=4,
+        product_fingerprint="fingerprint-current",
+        checkpoint_commit="commit-current",
+    )
+    lease = ConvergenceLease.from_state(None).observe(best, hard_ceiling=12).lease
+    lease = lease.observe(current, hard_ceiling=12).lease
+    state = state_store.read()
+    state["convergence_lease"] = lease.to_state()
+    state_store.write(state)
+
+    prompt = controller._make_iter_prompt("Build it", 7, "current failure")
+
+    assert "High-water convergence context" in prompt
+    assert "best checkpoint: commit-best" in prompt
+    assert "completed tasks: 3/4" in prompt
+    assert "Recover or improve on that authoritative high-water evidence" in prompt
+    assert "secret noise" not in prompt
+
+
+def test_convergence_observation_emits_content_free_telemetry(tmp_path: Path) -> None:
+    controller, _, _, state_store = _make_controller(tmp_path)
+    verify = VerifyResult(
+        passed=False,
+        failures=[FailureEntry(FailureCategory.TEST, "unit-a", "raw secret noise")],
+    )
+
+    controller._record_convergence_observation(
+        verify, "/tmp/worktree", hard_ceiling=12
+    )
+
+    events_path = state_store.state_dir.parent / "telemetry" / "events.jsonl"
+    event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert event["type"] == "delivery.convergence_observation"
+    assert event["outcome"] == "baseline"
+    assert event["meaningful_attempts"] == 1
+    assert event["hard_ceiling"] == 12
+    assert event["blocking_failure_count"] == 1
+    assert "raw secret noise" not in events_path.read_text(encoding="utf-8")
 
 
 def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
@@ -492,6 +630,56 @@ def test_repeated_browser_runtime_crash_is_not_reported_as_product_test_failure(
     assert ralph._is_sandbox_browser_runtime_unavailable(result) is True
 
 
+def test_ambiguous_browser_timeout_is_diagnosed_then_routed_to_normal_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harness.verification_diagnostic import VerificationDiagnosis
+
+    config = _make_config()
+    config.verify_command = "pnpm verify"
+    timeout = {
+        "passed": False,
+        "failures": [{"error": (
+            "Test timeout of 60000ms exceeded.\n"
+            "Object with guid response@abc was not bound in the connection"
+        )}],
+    }
+    controller, provider, *_ = _make_controller(
+        tmp_path,
+        config=config,
+        verify_results=[timeout, timeout],
+        llm_provider=MagicMock(),
+    )
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    _init_git_repo(worktree)
+    (worktree / "package.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(worktree)
+    observed: list[VerifyResult] = []
+
+    def diagnose(**kwargs: object) -> VerificationDiagnosis:
+        observed.append(kwargs["result"])
+        return VerificationDiagnosis(
+            status="diagnosed",
+            owner="product_verification",
+            disposition="repair_delivery",
+            reason="The second page navigation exceeded the test budget.",
+            recommended_action="Repair the browser test configuration.",
+            report_path=tmp_path / "diagnosis.json",
+        )
+
+    monkeypatch.setattr(ralph, "run_verification_diagnostic", diagnose)
+    initial = controller._exec_verify(None, worktree_path=str(worktree))
+    routed = controller._apply_verification_diagnosis(initial, str(worktree))
+
+    assert provider.create_count == 2
+    assert observed == [initial]
+    assert routed.failures[0].category == FailureCategory.TEST
+    assert routed.failures[0].id == "playwright-test-timeout"
+    assert "diagnosis.json" in routed.failures[0].error
+    assert ralph._is_sandbox_browser_runtime_unavailable(routed) is False
+
+
 def _required_browser_runnability() -> ResolvedRunnability:
     return ResolvedRunnability(
         classification="user_facing",
@@ -827,6 +1015,27 @@ def test_partial_delivery_coverage_uses_only_completed_task_ownership(
     assert _completed_task_coverage_case_ids(tasks) == {
         "UT-DONE-001",
         "E2E-DONE-002",
+    }
+
+
+def test_partial_delivery_coverage_accepts_existing_ownership_label(
+    tmp_path: Path,
+) -> None:
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "# Tasks\n\n"
+        "- [x] T-001 complexity=standard phase=foundation req=FR-012 depends=none\n"
+        "  **Status:** DONE\n"
+        "  **Test Case IDs Owned:** `UT-NAV-004`, `UT-NAV-005`, `UT-NAV-006`.\n\n"
+        "- [ ] T-002 complexity=standard phase=feature req=FR-013 depends=T-001\n"
+        "  **Test Case IDs Owned:** `IT-FUTURE-001`.\n",
+        encoding="utf-8",
+    )
+
+    assert _completed_task_coverage_case_ids(tasks) == {
+        "UT-NAV-004",
+        "UT-NAV-005",
+        "UT-NAV-006",
     }
 
 
@@ -1572,7 +1781,14 @@ class TestOuterLoopConvergence:
             )
             (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
             encoding="utf-8",
@@ -1632,7 +1848,14 @@ class TestOuterLoopConvergence:
             )
             (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
             "\n"
@@ -5724,7 +5947,14 @@ class TestOuterLoopConvergence:
             )
             (spec_dir / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+                if name == "coverage-map.md"
+                else f"# {name}\n"
+            )
+            (spec_dir / name).write_text(content, encoding="utf-8")
         (spec_dir / "constitution.md").write_text(
             "# Real Constitution\n\nProject-specific governance.\n",
             encoding="utf-8",

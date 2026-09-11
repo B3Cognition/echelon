@@ -68,6 +68,12 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
                 '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
                 '}\n'
             )
+        elif name == "coverage-map.md":
+            content = (
+                "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                "|---|---|---|---|---|---|---|\n"
+                "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+            )
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")

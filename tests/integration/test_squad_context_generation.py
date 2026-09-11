@@ -554,7 +554,13 @@ phases:
                         '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
                         '}\n'
                         if name == "plan-conformance.json"
-                        else f"# {name}\n"
+                        else (
+                            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+                            "|---|---|---|---|---|---|---|\n"
+                            "| FR-123 | UT-123 | unit | planned | planned | tests | implement |\n"
+                            if name == "coverage-map.md"
+                            else f"# {name}\n"
+                        )
                     )
                     (run_local_spec_dir / name).write_text(
                         content, encoding="utf-8"

@@ -411,14 +411,13 @@ def _make_controller_with_provider(
     return controller, state_store
 
 
-class TestNoProgressGuard:
-    """No-progress guard: escalate early when LLM is stuck (no file changes)."""
+class TestConvergenceGuard:
+    """Evidence-based convergence guard stops equivalent product outcomes."""
 
-    def test_no_progress_triggers_escalation_after_two_fails(
+    def test_equivalent_evidence_stops_after_patience(
         self, tmp_path: Path
     ) -> None:
-        """Two consecutive failed outer iterations with no file changes trigger
-        a no_progress escalation before max_outer is exhausted."""
+        """Baseline plus two equivalent observations exhausts convergence patience."""
         import unittest.mock as mock
 
         provider = _AlwaysFailNoChangesProvider()
@@ -434,22 +433,20 @@ class TestNoProgressGuard:
             f"Expected status=blocked after no-progress escalation. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
-        assert result.termination_reason == "no_progress", (
-            f"Expected termination_reason=no_progress. "
+        assert result.termination_reason == "convergence_stalled", (
+            f"Expected termination_reason=convergence_stalled. "
             f"Got {result.termination_reason!r}"
         )
-        # Should escalate after 2 iterations, not burn through all 5
-        assert result.outer_iterations <= 3, (
-            f"Expected escalation before outer iter 3, "
-            f"got outer_iterations={result.outer_iterations}"
-        )
+        lease = state_store.read()["convergence_lease"]
+        assert lease["meaningful_attempts"] == 3
+        assert lease["stalled_attempts"] == 2
 
-    def test_progress_resets_no_progress_count(self, tmp_path: Path) -> None:
-        """File changes on iter 2 reset the no_progress counter so iter 3
-        alone is insufficient to trigger escalation (count=1, threshold=2)."""
+    def test_file_changes_do_not_reset_evidence_patience(self, tmp_path: Path) -> None:
+        """Arbitrary file churn cannot turn equivalent verification into progress."""
         import unittest.mock as mock
 
-        # Sequence: [False, True, False] — no change, change, no change
+        # Sequence deliberately includes a changed iteration. Verification
+        # remains equivalent, so the convergence lease must still stop.
         file_change_sequence = [False, True, False]
         call_counter = {"n": 0}
 
@@ -467,9 +464,7 @@ class TestNoProgressGuard:
         with mock.patch.object(controller, "_has_file_changes", side_effect=_side_effect):
             result = controller.run_loop(max_outer=3, max_inner=1)
 
-        # Should NOT have escalated with no_progress — after iter 2 the counter
-        # was reset to 0, so iter 3 only brought it to 1 (below threshold=2).
-        assert result.termination_reason != "no_progress", (
-            f"no_progress escalation should not fire when count was reset. "
-            f"Got status={result.status!r}, reason={result.termination_reason!r}"
-        )
+        assert result.termination_reason == "convergence_stalled"
+        lease = state_store.read()["convergence_lease"]
+        assert lease["meaningful_attempts"] == 3
+        assert lease["stalled_attempts"] == 2

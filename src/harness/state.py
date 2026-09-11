@@ -16,9 +16,12 @@ import logging
 import os
 import re
 import tempfile
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from harness.convergence import ConvergenceLease, DEFAULT_MAX_OUTER
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +212,7 @@ class StateStore:
             return {}
         text = self.state_file.read_text(encoding="utf-8")
         self._data = json.loads(text)
-        return dict(self._data)
+        return deepcopy(self._data)
 
     def write(self, data: Dict[str, Any]) -> None:
         """Write state atomically: .tmp -> fsync -> rename, keep .bak.
@@ -253,13 +256,20 @@ class StateStore:
                 pass
             raise
 
-        self._data = data
+        self._data = deepcopy(data)
 
     # --- Invariant validation ---
 
     def _validate_invariants(self, new_data: Dict[str, Any]) -> None:
         """Validate state invariants before writing."""
-        old_data = self._data or self.read()
+        # Read the committed value rather than trusting the in-memory cache.
+        # Callers routinely update nested state structures; a shallow alias
+        # must not mutate the comparison baseline before validation runs.
+        old_data = (
+            json.loads(self.state_file.read_text(encoding="utf-8"))
+            if self.state_file.exists()
+            else {}
+        )
         if not old_data:
             # First write, no invariants to check
             return
@@ -321,6 +331,34 @@ class StateStore:
                     f"{old_val} -> {new_val}"
                 )
 
+        # Convergence budgets are durable accounting, just like token and
+        # execution counters. Stall patience is intentionally excluded because
+        # an authoritative improvement resets it to zero.
+        old_lease = old_data.get("convergence_lease")
+        new_lease = new_data.get("convergence_lease")
+        if isinstance(old_lease, dict):
+            for field_name in (
+                "meaningful_attempts",
+                "infrastructure_attempts",
+            ):
+                if field_name not in old_lease:
+                    continue
+                if not isinstance(new_lease, dict) or field_name not in new_lease:
+                    raise MonotonicViolationError(
+                        f"convergence_lease.{field_name} cannot be removed"
+                    )
+                old_val = old_lease[field_name]
+                new_val = new_lease[field_name]
+                if (
+                    isinstance(old_val, int)
+                    and isinstance(new_val, int)
+                    and new_val < old_val
+                ):
+                    raise MonotonicViolationError(
+                        f"convergence_lease.{field_name} must be monotonically "
+                        f"non-decreasing: {old_val} -> {new_val}"
+                    )
+
     @staticmethod
     def _validate_phase_checkpoint(
         old_data: Dict[str, Any], new_data: Dict[str, Any]
@@ -367,7 +405,7 @@ class StateStore:
         self,
         run_id: str,
         mode: str,
-        max_outer: int = 5,
+        max_outer: int = DEFAULT_MAX_OUTER,
         max_inner: int = 3,
         token_budget: int = 0,
         target_repo: str | None = None,
@@ -453,6 +491,7 @@ class StateStore:
             "termination_reason": None,
             "escalation_file": None,
             "iteration_log": [],
+            "convergence_lease": ConvergenceLease().to_state(),
             "started_at": now,
             "updated_at": now,
         }

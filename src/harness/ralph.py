@@ -33,6 +33,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.candidate_evidence import CandidateEvidenceRunner
+from harness.convergence import (
+    DEFAULT_MAX_OUTER,
+    ConvergenceLease,
+    LeaseObservation,
+    ProgressSnapshot,
+)
 from harness.config import HarnessConfig
 from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
@@ -97,6 +103,10 @@ from harness.verification_evidence import (
     redact_verification_text,
     write_verification_receipt,
 )
+from harness.verification_diagnostic import (
+    diagnosis_required as verification_diagnosis_required,
+    run_verification_diagnostic,
+)
 from harness.verification_plan import build_verification_plan, materialize_services
 from harness.stacks.resolver import (
     resolved_coverage_observer_plan_sha256,
@@ -123,9 +133,13 @@ logger = logging.getLogger(__name__)
 
 SAME_FAILURE_REPEAT_THRESHOLD = 3
 
-# Number of consecutive failed outer iterations with no file changes before
-# escalating with a no-progress block.
-_NO_PROGRESS_THRESHOLD = 2
+_NON_CHARGEABLE_INFRASTRUCTURE_REASONS = {
+    "provider_session_limit",
+    "sandbox_verification_unavailable",
+    "user_runnability_sandbox_prerequisite",
+    "verification_infrastructure",
+    "verify_command_needed",
+}
 _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
@@ -376,7 +390,7 @@ class RalphController:
 
     def run_loop(
         self,
-        max_outer: int = 5,
+        max_outer: int = DEFAULT_MAX_OUTER,
         max_inner: int = 3,
         token_budget: Optional[int] = None,
         build_command: str = "echelon build",
@@ -450,7 +464,6 @@ class RalphController:
         start_outer = state.get("outer_iter", 0)
         last_verify_failures_text: str = ""
         final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
-        no_progress_count = 0  # consecutive failed outer iters with no file changes
 
         # Resolve the spec's feature branch once. When found, all worktrees are
         # checked out on that branch so spec artifacts (spec.md, tasks.md,
@@ -479,7 +492,8 @@ class RalphController:
                 self._spec_id, e,
             )
 
-        for outer_iter in range(start_outer, max_outer):
+        outer_iter = start_outer
+        while self._convergence_lease().meaningful_attempts < max_outer:
             # Check termination conditions
             termination = self._check_termination(
                 tokens_used=tokens_used,
@@ -973,6 +987,9 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
+                    verify_result = self._apply_verification_diagnosis(
+                        verify_result, worktree_path
+                    )
                     verify_result = self._apply_post_verify_gates(
                         verify_result,
                         worktree_path,
@@ -1362,60 +1379,11 @@ class RalphController:
                             final_verify=inner_result.get("final_verify"),
                         )
 
-                    # No-progress guard: if the LLM made no file changes on a
-                    # failed iteration, increment the stuck counter and escalate
-                    # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.
-                    fulfillment_gaps_after_checkpoint = bool(
-                        final_verify
-                        and _is_only_fulfillment_gaps(final_verify)
-                        and self._last_checkpoint_has_task_progress()
+                    convergence_observation = self._record_convergence_observation(
+                        inner_result["final_verify"],
+                        worktree_path,
+                        hard_ceiling=max_outer,
                     )
-                    if fulfillment_refresh_deferred or fulfillment_gaps_after_checkpoint:
-                        no_progress_count = 0
-                    elif self._has_file_changes(worktree_path):
-                        no_progress_count = 0
-                    else:
-                        no_progress_count += 1
-                        logger.warning(
-                            "No file changes detected after failed outer iter %d "
-                            "(no_progress_count=%d/%d)",
-                            outer_iter, no_progress_count, _NO_PROGRESS_THRESHOLD,
-                        )
-                        if no_progress_count >= _NO_PROGRESS_THRESHOLD:
-                            preserve_worktree = True
-                            escalation_file = self._escalation.escalate(
-                                spec_id=self._spec_id,
-                                strategy_id=self._strategy_id,
-                                category="no_progress",
-                                context=(
-                                    "## No Progress Detected\n\n"
-                                    f"The build loop has failed {no_progress_count} consecutive "
-                                    "iterations with no file changes.\n"
-                                    "This usually means the LLM is stuck or the build "
-                                    "instructions are unclear.\n\n"
-                                    "Please review the build output above and either:\n"
-                                    f"1. Run echelon delivery continue {self._spec_id} "
-                                    "to retry without new instructions\n"
-                                    f"2. Run echelon delivery resume {self._spec_id} "
-                                    '"<clarification>" if the task needs guidance\n'
-                                    "3. Reset and restart with --reset flag"
-                                ),
-                                last_verify_result=_verify_to_dict(
-                                    inner_result["final_verify"]
-                                ) if inner_result.get("final_verify") else None,
-                            )
-                            state = self._state_store.read()
-                            state["escalation_file"] = escalation_file
-                            self._state_store.write(state)
-                            return self._finalize(
-                                status="blocked",
-                                reason="no_progress",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
-                            )
 
                     # Inner loop exhausted -- commit progress and continue outer
                     try:
@@ -1440,6 +1408,31 @@ class RalphController:
                             ),
                         )
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
+
+                    if convergence_observation.should_stop:
+                        stop_reason = (
+                            "convergence_stalled"
+                            if convergence_observation.stop_reason == "stall_patience"
+                            else "checkpoint_outer_cap"
+                            if (
+                                fulfillment_refresh_deferred
+                                or (
+                                    final_verify is not None
+                                    and _is_only_fulfillment_gaps(final_verify)
+                                    and self._last_checkpoint_has_task_progress()
+                                )
+                            )
+                            else "outer_cap"
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason=stop_reason,
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=inner_result.get("final_verify"),
+                        )
 
                 finally:
                     if handle is not None:
@@ -1466,6 +1459,7 @@ class RalphController:
             state["tokens_used"] = tokens_used
             state["pr_url"] = pr_url
             self._state_store.write(state)
+            outer_iter += 1
 
         # Outer cap reached. If the only outstanding verification failure is an
         # intentionally deferred banzai fulfillment refresh, useful checkpointed
@@ -1490,7 +1484,7 @@ class RalphController:
             return self._finalize(
                 status="blocked",
                 reason="checkpoint_outer_cap",
-                outer_iterations=max_outer,
+                outer_iterations=outer_iter,
                 inner_iterations=total_inner_iterations,
                 pr_url=pr_url,
                 tokens_used=tokens_used,
@@ -1501,7 +1495,7 @@ class RalphController:
         return self._finalize(
             status="blocked",
             reason="outer_cap",
-            outer_iterations=max_outer,
+            outer_iterations=outer_iter,
             inner_iterations=total_inner_iterations,
             pr_url=pr_url,
             tokens_used=tokens_used,
@@ -1783,6 +1777,9 @@ class RalphController:
 
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
+            current_verify = self._apply_verification_diagnosis(
+                current_verify, worktree_path
+            )
             inner_changed_files = self._changed_files_since_head(worktree_path)
             current_verify = self._apply_post_verify_gates(
                 current_verify,
@@ -2216,6 +2213,74 @@ class RalphController:
         )
         return self._apply_task_progress_gate(
             verify_result, worktree_path, require_completion=True
+        )
+
+    def _apply_verification_diagnosis(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Attach one DEBUGGER receipt to the timeout/cleanup-error signature.
+
+        A diagnostic is not authority to block or pass a candidate.  The
+        deterministic signature already proves that verification failed; after
+        its one fresh-sandbox retry, the safe delivery action is to give the
+        ordinary repair loop a test failure plus the retained explanation.
+        """
+        if not verification_diagnosis_required(verify_result):
+            return verify_result
+
+        if self._llm_provider is None:
+            diagnosis_note = "DEBUGGER diagnosis unavailable: no coding provider configured."
+            report_path = ""
+        else:
+            diagnosis = run_verification_diagnostic(
+                worktree=Path(worktree_path),
+                evidence_root=self._state_store.state_dir.parent / "evidence",
+                result=verify_result,
+                executor=self._llm_provider,
+            )
+            report_path = str(diagnosis.report_path or "")
+            diagnosis_note = (
+                f"DEBUGGER diagnosis ({diagnosis.status}; owner={diagnosis.owner}; "
+                f"disposition={diagnosis.disposition}): {diagnosis.reason or 'no conclusion'}"
+            )
+            if diagnosis.recommended_action:
+                diagnosis_note += f" Recommended action: {diagnosis.recommended_action}"
+
+        routed_failures: list[FailureEntry] = []
+        for failure in verify_result.failures:
+            if failure.id != "browser-verification-diagnosis-required":
+                routed_failures.append(failure)
+                continue
+            details = dict(failure.details)
+            details.update({
+                "original_failure_id": failure.id,
+                "diagnostic_report": report_path,
+                "diagnostic": diagnosis_note,
+            })
+            routed_failures.append(
+                FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="playwright-test-timeout",
+                    error=(
+                        f"{failure.error}\n\n{diagnosis_note}"
+                        + (f"\nDiagnostic receipt: {report_path}" if report_path else "")
+                    ),
+                    details=details,
+                )
+            )
+        evidence = dict(verify_result.verification_evidence)
+        evidence["verification_diagnostic"] = {
+            "required": True,
+            "report_path": report_path,
+        }
+        return VerifyResult(
+            passed=False,
+            failures=routed_failures,
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+            verification_evidence=evidence,
         )
 
     def _apply_coverage_observation_gate(
@@ -3277,6 +3342,106 @@ class RalphController:
         except (TypeError, ValueError):
             return False
         return after > before
+
+    def _convergence_lease(self) -> ConvergenceLease:
+        state = self._state_store.read()
+        return ConvergenceLease.from_state(state.get("convergence_lease"))
+
+    def _latest_checkpoint_commit(self) -> str | None:
+        state = self._state_store.read()
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            return None
+        for checkpoint in reversed(checkpoints):
+            if not isinstance(checkpoint, dict):
+                continue
+            commit = checkpoint.get("commit")
+            if isinstance(commit, str) and commit.strip():
+                return commit.strip()
+        return None
+
+    def _record_convergence_observation(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+        *,
+        hard_ceiling: int,
+    ) -> LeaseObservation:
+        total_tasks, completed_tasks = self._task_progress_counts()
+        snapshot = ProgressSnapshot.from_verify_result(
+            verify_result,
+            completed_tasks=completed_tasks,
+            total_tasks=total_tasks,
+            product_fingerprint=_safe_product_evidence_fingerprint(worktree_path),
+            checkpoint_commit=self._latest_checkpoint_commit(),
+        )
+        observation = self._convergence_lease().observe(
+            snapshot,
+            hard_ceiling=hard_ceiling,
+        )
+        state = self._state_store.read()
+        state["convergence_lease"] = observation.lease.to_state()
+        self._state_store.write(state)
+        self._append_convergence_telemetry(
+            observation,
+            snapshot=snapshot,
+            hard_ceiling=hard_ceiling,
+            state=state,
+        )
+        logger.info(
+            "Convergence observation %s (%s): meaningful=%d/%d stalled=%d",
+            observation.outcome,
+            observation.reason_code,
+            observation.lease.meaningful_attempts,
+            hard_ceiling,
+            observation.lease.stalled_attempts,
+        )
+        return observation
+
+    def _append_convergence_telemetry(
+        self,
+        observation: LeaseObservation,
+        *,
+        snapshot: ProgressSnapshot,
+        hard_ceiling: int,
+        state: Mapping[str, object],
+    ) -> None:
+        """Append one content-free authoritative convergence observation."""
+        try:
+            telemetry_dir = self._state_store.state_dir.parent / "telemetry"
+            telemetry_dir.mkdir(parents=True, exist_ok=True)
+            event = {
+                "schema_version": 1,
+                "type": "delivery.convergence_observation",
+                "event_time": datetime.now(timezone.utc).isoformat(),
+                "run_id": state.get("run_id") or self._build_id,
+                "spec_id": self._spec_id,
+                "strategy_id": self._strategy_id,
+                "outcome": observation.outcome,
+                "reason_code": observation.reason_code,
+                "should_stop": observation.should_stop,
+                "stop_reason": observation.stop_reason,
+                "meaningful_attempts": observation.lease.meaningful_attempts,
+                "stalled_attempts": observation.lease.stalled_attempts,
+                "infrastructure_attempts": observation.lease.infrastructure_attempts,
+                "hard_ceiling": hard_ceiling,
+                "completed_tasks": snapshot.completed_tasks,
+                "total_tasks": snapshot.total_tasks,
+                "fulfillment_debt": snapshot.fulfillment_debt,
+                "blocking_failure_count": len(snapshot.failure_keys),
+                "gate_rank": snapshot.gate_rank,
+                "product_fingerprint": snapshot.product_fingerprint,
+                "best_checkpoint_commit": observation.lease.best_checkpoint_commit,
+            }
+            with (telemetry_dir / "events.jsonl").open(
+                "a", encoding="utf-8"
+            ) as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception as exc:
+            logger.warning("Could not append convergence telemetry: %s", exc)
 
     def _print_fulfillment_refresh_decision(
         self,
@@ -5385,12 +5550,35 @@ class RalphController:
         """Augment base prompt with iteration context for outer loop."""
         if not base:
             return ""
+        convergence_context = self._convergence_high_water_context()
         if outer_iter == 0 or not last_failures:
-            return base
+            return f"{base}{convergence_context}"
         return (
             f"{base}\n\n"
             f"This is iteration {outer_iter}. "
             f"Previous build failed with:\n{last_failures}"
+            f"{convergence_context}"
+        )
+
+    def _convergence_high_water_context(self) -> str:
+        lease = self._convergence_lease()
+        best = lease.best_snapshot
+        if lease.last_outcome not in {"stalled", "regressed"} or best is None:
+            return ""
+        checkpoint = lease.best_checkpoint_commit or "unavailable"
+        fingerprint = best.product_fingerprint[:12] or "unavailable"
+        return (
+            "\n\n## High-water convergence context\n"
+            f"last outcome: {lease.last_outcome}\n"
+            f"reason: {lease.last_reason}\n"
+            f"best checkpoint: {checkpoint}\n"
+            f"best fingerprint: {fingerprint}\n"
+            f"completed tasks: {best.completed_tasks}/{best.total_tasks}\n"
+            f"fulfillment debt: {best.fulfillment_debt}\n"
+            f"blocking failure identities: {len(best.failure_keys)}\n"
+            f"verification gate: {best.gate_rank}\n"
+            "Recover or improve on that authoritative high-water evidence. "
+            "Do not create report-only churn or weaken verification.\n"
         )
 
     def _make_feedback_prompt(self, base: str, verify_result: VerifyResult, inner_iter: int) -> str:
@@ -6456,6 +6644,12 @@ class RalphController:
 
         try:
             state = self._state_store.read()
+            if reason in _NON_CHARGEABLE_INFRASTRUCTURE_REASONS:
+                state["convergence_lease"] = (
+                    ConvergenceLease.from_state(state.get("convergence_lease"))
+                    .with_infrastructure_attempt(reason)
+                    .to_state()
+                )
             state["tokens_used"] = tokens_used
             state["pr_url"] = pr_url
             state["termination_reason"] = reason

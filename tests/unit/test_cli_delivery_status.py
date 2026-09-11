@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -159,11 +160,37 @@ def test_running_delivery_status_recommends_monitoring_not_redispatch() -> None:
 
 
 @pytest.mark.unit
+def test_running_delivery_status_hides_terminal_fields_from_a_prior_attempt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A resumed delivery must not report its former stop as its current state."""
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["status"] = "running"
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    state_file.with_suffix(".lock").write_text(
+        f"pid={os.getpid()}\ntimestamp=2026-07-10T10:15:00+00:00\n",
+        encoding="utf-8",
+    )
+
+    from echelon.delivery_status import command
+
+    command(spec_id="001", json_output=True, project_root=tmp_path)
+
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["status"] == "running"
+    assert latest["termination_reason"] == ""
+    assert latest["build_status"] == ""
+    assert latest["build_reason"] == ""
+
+
+@pytest.mark.unit
 def test_delivery_status_shows_failed_runnability_action(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     _write_delivery_state(
         tmp_path,
@@ -180,7 +207,7 @@ def test_delivery_status_shows_failed_runnability_action(
         },
     )
 
-    _cmd_delivery_status([], project_root=tmp_path)
+    command(project_root=tmp_path)
 
     output = capsys.readouterr().out
     assert "user runnable" in output
@@ -195,7 +222,7 @@ def test_delivery_status_shows_strict_coverage_observation_summary(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     _write_delivery_state(
         tmp_path,
@@ -217,7 +244,7 @@ def test_delivery_status_shows_strict_coverage_observation_summary(
         },
     )
 
-    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
     payload = json.loads(capsys.readouterr().out)["latest"]
     assert payload["coverage_observation"]["requirements_observed"] == 3
     assert payload["coverage_observation"]["observers"]["vitest-core"] == {
@@ -226,7 +253,7 @@ def test_delivery_status_shows_strict_coverage_observation_summary(
     }
     assert payload["coverage_observation"]["fingerprint_tuple_complete"] is True
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
     output = capsys.readouterr().out
     assert "3 / 3 requirements observed" in output
     assert "playwright-e2e: 2/2 passed" in output
@@ -239,7 +266,7 @@ def test_delivery_status_runnability_shows_passing_local_run_commands(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     commands = {
         "prerequisites": ["Docker 27", "pnpm 10"],
@@ -263,11 +290,11 @@ def test_delivery_status_runnability_shows_passing_local_run_commands(
         },
     )
 
-    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    command(json_output=True, project_root=tmp_path)
     json_payload = json.loads(capsys.readouterr().out)
     assert json_payload["latest"]["user_runnability"]["user_commands"] == commands
 
-    _cmd_delivery_status([], project_root=tmp_path)
+    command(project_root=tmp_path)
     output = capsys.readouterr().out
     assert "pnpm start:local" in output
     assert "echelon stack provision --target browser-game" in output
@@ -279,7 +306,7 @@ def test_delivery_status_surfaces_separate_unverified_local_journey(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     local_journey = {
         "status": "unverified",
@@ -312,11 +339,11 @@ def test_delivery_status_surfaces_separate_unverified_local_journey(
         },
     )
 
-    _cmd_delivery_status(["--json"], project_root=tmp_path)
+    command(json_output=True, project_root=tmp_path)
     json_payload = json.loads(capsys.readouterr().out)
     assert json_payload["latest"]["user_runnability"]["local_journey"] == local_journey
 
-    _cmd_delivery_status([], project_root=tmp_path)
+    command(project_root=tmp_path)
     output = capsys.readouterr().out
     assert "local journey" in output
     assert "unverified" in output
@@ -371,14 +398,14 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
     }
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
-    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
     payload = json.loads(capsys.readouterr().out)["latest"]
     assert payload["playwright"] == {"total": 2, "passed": 2, "failed": 0, "skipped": 0}
     assert payload["visual_evidence"]["artifact_count"] == 3
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
     output = capsys.readouterr().out
     assert "2 passed, 0 failed, 0 skipped" in output
     assert "3 retained (passed)" in output
@@ -388,12 +415,12 @@ def test_delivery_status_surfaces_execution_and_visual_evidence(
 
 @pytest.mark.unit
 def test_delivery_status_prints_latest_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     state_file = _write_delivery_state(tmp_path)
     _write_spec(tmp_path)
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
     assert "DELIVERY STATUS" in out
@@ -422,9 +449,9 @@ def test_delivery_status_reports_dead_running_lock_as_interrupted(
         encoding="utf-8",
     )
 
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
-    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
 
     latest = json.loads(capsys.readouterr().out)["latest"]
     assert latest["status"] == "interrupted"
@@ -439,7 +466,7 @@ def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     state_file = _write_delivery_state(tmp_path)
     state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -452,7 +479,7 @@ def test_delivery_status_does_not_recommend_landing_an_already_landed_spec(
         encoding="utf-8",
     )
 
-    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["latest"]["spec_status"] == "landed"
@@ -464,7 +491,7 @@ def test_delivery_status_prints_publication_failure_cause(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     state_file = _write_delivery_state(tmp_path)
     state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -475,7 +502,7 @@ def test_delivery_status_prints_publication_failure_cause(
     }
     state_file.write_text(json.dumps(state), encoding="utf-8")
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
     assert "publish stage" in out
@@ -486,12 +513,12 @@ def test_delivery_status_prints_publication_failure_cause(
 
 @pytest.mark.unit
 def test_delivery_status_json_filters_strategy(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     _write_delivery_state(tmp_path, strategy="default")
     _write_delivery_state(tmp_path, strategy="codegen")
 
-    _cmd_delivery_status(["001", "--strategy", "codegen", "--json"], project_root=tmp_path)
+    command(spec_id="001", strategy="codegen", json_output=True, project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "blocked"
@@ -506,9 +533,9 @@ def test_delivery_status_without_state_points_to_run(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
     assert "No delivery runs found" in out
@@ -520,12 +547,12 @@ def test_delivery_status_discovers_target_delivery_state(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     state_file = _write_target_delivery_state(tmp_path)
     _write_spec(tmp_path)
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
     assert "browser-3d-game" in out
@@ -538,12 +565,12 @@ def test_delivery_status_renders_escalation_question_and_recommended_command(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
     _write_delivery_state(tmp_path)
     escalation_path = _write_escalation(tmp_path)
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
     assert "Which database should verification use?" in out
@@ -563,24 +590,71 @@ def test_delivery_status_outer_cap_ignores_stale_escalation_and_starts_new_budge
     state_file = _write_delivery_state(tmp_path)
     state = json.loads(state_file.read_text(encoding="utf-8"))
     state["termination_reason"] = "outer_cap"
+    state["max_outer"] = 12
+    state["convergence_lease"] = {"meaningful_attempts": 12}
     state_file.write_text(json.dumps(state), encoding="utf-8")
     _write_escalation(tmp_path)
 
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     out = capsys.readouterr().out
-    assert "echelon delivery run 001" in out
-    assert "fresh outer-loop budget" in out
+    assert "echelon delivery run 001 --max-outer 24" in out
+    assert "extends the meaningful-attempt ceiling" in out.lower()
     assert "echelon delivery resume 001" not in out
     assert "Which database should verification use?" not in out
 
-    _cmd_delivery_status(["001", "--json"], project_root=tmp_path)
+    command(spec_id="001", json_output=True, project_root=tmp_path)
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["latest"]["next"].startswith("echelon delivery run 001")
+    assert payload["latest"]["next"].startswith(
+        "echelon delivery run 001 --max-outer 24"
+    )
     assert "escalation" not in payload["latest"]
+
+
+@pytest.mark.unit
+def test_delivery_status_reports_convergence_lease_and_actionable_stall(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state_file = _write_delivery_state(tmp_path)
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    state["termination_reason"] = "convergence_stalled"
+    state["max_outer"] = 12
+    state["convergence_lease"] = {
+        "schema_version": 1,
+        "meaningful_attempts": 3,
+        "stalled_attempts": 2,
+        "infrastructure_attempts": 2,
+        "last_outcome": "regressed",
+        "last_reason_code": "blocking_failures_increased",
+        "last_reason": "stable blocking failures increased from 1 to 2",
+        "best_checkpoint_commit": "abcdef1234567890",
+    }
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    from echelon.delivery_status import command
+
+    command(spec_id="001", project_root=tmp_path)
+    output = capsys.readouterr().out
+
+    assert "meaningful attempts" in output
+    assert "3 / 12" in output
+    assert "stall patience" in output
+    assert "2 / 2" in output
+    assert "excluded infra" in output
+    assert "2" in output
+    assert "regressed: stable blocking failures increased from 1 to 2" in output
+    assert "abcdef123456" in output
+    assert "echelon delivery continue 001" in output
+
+    command(spec_id="001", json_output=True, project_root=tmp_path)
+    latest = json.loads(capsys.readouterr().out)["latest"]
+    assert latest["convergence"]["meaningful_attempts"] == 3
+    assert latest["convergence"]["hard_ceiling"] == 12
+    assert latest["convergence"]["stalled_attempts"] == 2
 
 
 @pytest.mark.unit
@@ -644,9 +718,9 @@ def test_delivery_status_keeps_matching_local_pass_after_later_preflight_failure
             ),
         )
 
-    from echelon.cli import _cmd_delivery_status
+    from echelon.delivery_status import command
 
-    _cmd_delivery_status(["001"], project_root=tmp_path)
+    command(spec_id="001", project_root=tmp_path)
 
     output = capsys.readouterr().out
     assert "local verification" in output

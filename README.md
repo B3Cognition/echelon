@@ -72,8 +72,34 @@ Enable the tracked hooks in each checkout:
 git config core.hooksPath .githooks
 ```
 
-The pre-push hook runs `bash tests/run-all.sh` before pushes to `origin` and
+For a clean, single-ref fast-forward push to `main`, the pre-push hook reuses a
+matching merge-verification receipt when available, otherwise runs selected
+verification. All other pushes to `origin` run `bash tests/run-all.sh`, and CI
+still runs the comprehensive suite remotely.
 blocks the push when any suite is red.
+
+### Local merge verification
+
+For a local merge, first select and run the verification plan from the exact
+candidate diff. The helper uses focused tests only for its explicit CLI surface;
+all other changes fall back to `pytest -q -m unit`.
+
+```bash
+python scripts/merge_verification.py plan --base origin/main
+python scripts/merge_verification.py run --base origin/main
+```
+
+`run` writes an ignored receipt under `tests/reports/merge-verification/`. After
+a fast-forward merge, do not repeat an identical suite: validate that the
+receipt's candidate commit and tree are exactly the new `HEAD` instead.
+
+```bash
+python scripts/merge_verification.py confirm-fast-forward --receipt \
+  tests/reports/merge-verification/<receipt>.json
+```
+
+Any merge commit, rebase, changed tree, missing receipt, or unrecognized change
+invalidates that evidence and requires a new verification run.
 
 When Node.js and npm are available, the installer also prepares pinned
 Context7, CodeGraph, and PerlGraph runtimes under

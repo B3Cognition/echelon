@@ -96,7 +96,14 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+            if name == "coverage-map.md" and canonical_tasks
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     tasks = (
         "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
         if canonical_tasks
@@ -553,6 +560,78 @@ class TestCmdHarnessResume:
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
+
+    def test_convergence_stalled_continues_from_high_water_state(
+        self, tmp_path: Path
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "convergence_stalled",
+            "convergence_lease": {
+                "meaningful_attempts": 3,
+                "stalled_attempts": 2,
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001", "mode=banzai"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_verification_infrastructure_retries_after_harness_update(
+        self, tmp_path: Path
+    ) -> None:
+        """A retained sandbox failure may be retried by a newer harness."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "verification_infrastructure",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_sandbox_verification_unavailable_retries_after_docker_recovers(
+        self, tmp_path: Path
+    ) -> None:
+        """A daemon outage is transient and must preserve the delivery checkpoint."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "sandbox_verification_unavailable",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_target_merge_failure_retries_without_git_recovery(
         self, tmp_path: Path

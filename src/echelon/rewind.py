@@ -144,8 +144,10 @@ def prepare_rewind(
     checkpoint_commit: str = "",
     checkpoint_next_phase: str = "",
     discard_active_spec_dirty_paths: frozenset[str] = frozenset(),
+    dirty_spec_dir: Path | None = None,
 ) -> RewindResult:
     resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
+    dirty_scope_spec_dir = dirty_spec_dir or resolved_spec_dir
     ledger = load_checkpoint_ledger(resolved_spec_dir)
     try:
         checkpoint = resolve_rewind_checkpoint(
@@ -175,11 +177,11 @@ def prepare_rewind(
         )
     dirty_paths = worktree_dirty_paths(project_root)
     active_spec_dirty_paths = _active_spec_dirty_paths(
-        project_root, resolved_spec_dir, dirty_paths
+        project_root, dirty_scope_spec_dir, dirty_paths
     )
     allowed_dirty_paths = _allowed_recovery_dirty_paths(
         project_root,
-        resolved_spec_dir,
+        dirty_scope_spec_dir,
         discard_active_spec_dirty_paths,
     )
     blocking_dirty_paths = [
@@ -231,8 +233,17 @@ def prepare_rewind(
         "Continue with:\n  "
         + shlex.join(command_args)
     )
-    if dirty_paths:
-        message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))
+    preserved_dirty_paths = sorted(set(dirty_paths) - set(recovery_dirty_paths))
+    if recovery_dirty_paths:
+        message += (
+            "\n\nRecovery-owned spec changes to discard on confirm:\n  "
+            + "\n  ".join(recovery_dirty_paths)
+        )
+    if preserved_dirty_paths:
+        message += (
+            "\n\nWorkspace changes to preserve:\n  "
+            + "\n  ".join(preserved_dirty_paths)
+        )
     if not confirm:
         return RewindResult(
             False,
@@ -249,7 +260,7 @@ def prepare_rewind(
         _discard_recovery_dirty_paths(project_root, recovery_dirty_paths)
         remaining_active_dirt = _active_spec_dirty_paths(
             project_root,
-            resolved_spec_dir,
+            dirty_scope_spec_dir,
             worktree_dirty_paths(project_root),
         )
         if remaining_active_dirt:

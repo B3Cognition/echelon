@@ -2827,11 +2827,22 @@ def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], st
     return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
 
 
-def _outer_cap_delivery_action(spec_id: str) -> tuple[str, str]:
+def _outer_cap_delivery_action(
+    spec_id: str,
+    current_ceiling: object = None,
+) -> tuple[str, str]:
     """Return the sole checkpoint-preserving action after outer-loop exhaustion."""
+    from harness.convergence import DEFAULT_MAX_OUTER
+
+    try:
+        current = max(1, int(current_ceiling or DEFAULT_MAX_OUTER))
+    except (TypeError, ValueError):
+        current = DEFAULT_MAX_OUTER
+    extended = current + DEFAULT_MAX_OUTER
     return (
-        f"echelon delivery run {spec_id}",
-        "Starts a fresh outer-loop budget from the latest durable checkpoint.",
+        f"echelon delivery run {spec_id} --max-outer {extended}",
+        "Extends the meaningful-attempt ceiling from the latest durable checkpoint "
+        "while preserving the convergence lease.",
     )
 
 
@@ -2850,7 +2861,8 @@ def _cmd_harness_resume(
             f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
-            "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+                "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+                "verification-infrastructure retries,\n"
             "downstream visual/review/finalization failures, and recovery from\n"
             "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
@@ -3079,10 +3091,17 @@ def _cmd_harness_resume(
         "blocker_escalation",
         "checkpoint_outer_cap",
         "docker_unavailable",
+        "convergence_stalled",
         "no_progress",
-        "provider_session_limit",
-        "target_merge_failed",
-    }
+            "provider_session_limit",
+            "target_merge_failed",
+            # This may be a repaired harness classifier or a repaired sandbox
+            # prerequisite. Retrying preserves the checkpoint and lets the
+            # current verifier acquire fresh evidence; it does not accept the
+            # old infrastructure failure as success.
+            "verification_infrastructure",
+            "sandbox_verification_unavailable",
+        }
     downstream_continuation_reasons = {
         "visual": {
             "app_runtime_failed",
@@ -3143,7 +3162,9 @@ def _cmd_harness_resume(
         *retryable_error_reasons,
     }:
         if termination_reason == "outer_cap":
-            next_command, next_explanation = _outer_cap_delivery_action(spec_id)
+            next_command, next_explanation = _outer_cap_delivery_action(
+                spec_id, state.get("max_outer")
+            )
             print(
                 f"✗ Spec {spec_id!r} exhausted its outer-loop budget and cannot be resumed in place.\n"
                 f"  Next: {next_command}\n"
@@ -6444,6 +6465,7 @@ def _reset_rewind_state(
     checkpoint_phases_before_target: set[str] | None = None,
     boundary_completion_id: str = "",
     preserve_resolved_gate_rejection: bool = False,
+    preserve_resolved_coverage_map_repair: bool = False,
     preserve_failed_human_gate_for_cas: bool = False,
 ) -> dict:
     rewound = dict(state)
@@ -6467,6 +6489,11 @@ def _reset_rewind_state(
             and state.get("status") == "blocked"
             and state.get("blocked_reason") == "gate_rejected"
         )
+        resolved_coverage_map_repair = (
+            preserve_resolved_coverage_map_repair
+            and decision["status"] == "resolved"
+            and decision["source_kind"] == "human_gate"
+        )
         failed_human_gate = (
             preserve_failed_human_gate_for_cas
             and decision["status"] == "failed"
@@ -6474,7 +6501,11 @@ def _reset_rewind_state(
             and state.get("status") == "blocked"
             and state.get("phase") == decision.get("source_phase")
         )
-        if not (resolved_gate_rejection or failed_human_gate):
+        if not (
+            resolved_gate_rejection
+            or resolved_coverage_map_repair
+            or failed_human_gate
+        ):
             from echelon.rewind import RewindError
 
             raise RewindError(
@@ -6959,47 +6990,6 @@ def _cmd_delivery_cleanup_local(
         raise SystemExit(1)
 
 
-def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
-    spec_id = ""
-    strategy = ""
-    json_output = False
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg in {"-h", "--help"}:
-            print(
-                "Usage: echelon delivery status [spec_id] [--strategy <id>] [--json]\n\n"
-                "Show Phase B delivery/Ralph status. Without spec_id, shows the latest "
-                "delivery state across specs."
-            )
-            raise SystemExit(0)
-        if arg == "--json":
-            json_output = True
-        elif arg == "--strategy":
-            index += 1
-            if index >= len(args):
-                print("echelon delivery status: --strategy requires a value", file=sys.stderr)
-                raise SystemExit(1)
-            strategy = args[index].strip()
-        elif arg.startswith("--strategy="):
-            strategy = arg.split("=", 1)[1].strip()
-        elif arg.startswith("strategy="):
-            strategy = arg.split("=", 1)[1].strip()
-        elif arg.startswith("-"):
-            print(f"echelon delivery status: unknown option '{arg}'", file=sys.stderr)
-            raise SystemExit(1)
-        elif not spec_id:
-            spec_id = arg.strip()
-        else:
-            print(
-                "echelon delivery status: expected at most one spec_id",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        index += 1
-    return spec_id, strategy, json_output
-
-
 def _delivery_status_escalation(state: dict, project_root: Path) -> dict[str, object] | None:
     """Read optional human-decision details without making status fragile."""
     raw_path = str(state.get("escalation_file") or "").strip()
@@ -7073,8 +7063,15 @@ def _delivery_status_next_step(
         return f"echelon delivery land {effective_spec}"
     if status == "blocked":
         if termination_reason == "outer_cap":
-            command, explanation = _outer_cap_delivery_action(effective_spec)
+            command, explanation = _outer_cap_delivery_action(
+                effective_spec, state.get("max_outer")
+            )
             return f"{command}  # {explanation}"
+        if termination_reason == "convergence_stalled":
+            return (
+                f"echelon delivery continue {effective_spec}  "
+                "# one recovery attempt using the recorded high-water evidence"
+            )
         if str(state.get("escalation_file") or ""):
             choices = escalation.get("choices") if escalation else None
             if isinstance(choices, list):
@@ -7227,11 +7224,16 @@ def _delivery_status_summary(
     spec_id = str(state.get("spec_id") or "")
     strategy = str(state.get("strategy_id") or "default")
     status = str(state.get("status") or "unknown")
+    # Resume deliberately retains terminal fields for recovery/history. They
+    # are not facts about a currently active attempt and must not be presented
+    # as such by `delivery status`.
+    terminal_fields_current = status != "running"
     checkpoints = state.get("checkpoint_commits")
     checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
     escalation = (
         None
-        if str(state.get("termination_reason") or "") == "outer_cap"
+        if str(state.get("termination_reason") or "")
+        in {"outer_cap", "convergence_stalled"}
         else _delivery_status_escalation(state, project_root)
     )
     summary = {
@@ -7244,9 +7246,21 @@ def _delivery_status_summary(
         "inner_iter": int(state.get("inner_iter") or 0),
         "tokens_used": int(state.get("tokens_used") or 0),
         "token_budget": state.get("token_budget"),
-        "termination_reason": str(state.get("termination_reason") or ""),
-        "build_status": str(state.get("build_status") or ""),
-        "build_reason": str(state.get("build_reason") or ""),
+        "termination_reason": (
+            str(state.get("termination_reason") or "")
+            if terminal_fields_current
+            else ""
+        ),
+        "build_status": (
+            str(state.get("build_status") or "")
+            if terminal_fields_current
+            else ""
+        ),
+        "build_reason": (
+            str(state.get("build_reason") or "")
+            if terminal_fields_current
+            else ""
+        ),
         "pr_url": str(state.get("pr_url") or ""),
         "target_branch": str(state.get("target_branch") or ""),
         "target_commit": str(state.get("target_commit") or ""),
@@ -7263,6 +7277,33 @@ def _delivery_status_summary(
         "execution": str(state.get("execution") or ""),
         "next": _delivery_status_next_step(state, spec_id, escalation),
     }
+    convergence = state.get("convergence_lease")
+    if isinstance(convergence, dict):
+        from harness.convergence import (
+            DEFAULT_MAX_OUTER,
+            DEFAULT_STALL_PATIENCE,
+        )
+
+        summary["convergence"] = {
+            "meaningful_attempts": max(
+                0, int(convergence.get("meaningful_attempts") or 0)
+            ),
+            "hard_ceiling": max(
+                1, int(state.get("max_outer") or DEFAULT_MAX_OUTER)
+            ),
+            "stalled_attempts": max(
+                0, int(convergence.get("stalled_attempts") or 0)
+            ),
+            "stall_patience": DEFAULT_STALL_PATIENCE,
+            "infrastructure_attempts": max(
+                0, int(convergence.get("infrastructure_attempts") or 0)
+            ),
+            "last_outcome": str(convergence.get("last_outcome") or "not_observed"),
+            "last_reason": str(convergence.get("last_reason") or ""),
+            "best_checkpoint_commit": str(
+                convergence.get("best_checkpoint_commit") or ""
+            ),
+        }
     if escalation is not None:
         summary["escalation"] = escalation
     publication_failure = state.get("publication_failure")
@@ -7368,6 +7409,33 @@ def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
     if summary.get("execution"):
         fields.append(("execution", str(summary["execution"])))
     fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
+    convergence = summary.get("convergence")
+    if isinstance(convergence, dict):
+        fields.extend(
+            [
+                (
+                    "meaningful attempts",
+                    f"{convergence.get('meaningful_attempts', 0)} / "
+                    f"{convergence.get('hard_ceiling', 0)}",
+                ),
+                (
+                    "stall patience",
+                    f"{convergence.get('stalled_attempts', 0)} / "
+                    f"{convergence.get('stall_patience', 0)}",
+                ),
+                (
+                    "excluded infra",
+                    str(convergence.get("infrastructure_attempts", 0)),
+                ),
+            ]
+        )
+        outcome = str(convergence.get("last_outcome") or "").strip()
+        reason = str(convergence.get("last_reason") or "").strip()
+        if outcome:
+            fields.append(("convergence", f"{outcome}: {reason}" if reason else outcome))
+        checkpoint = str(convergence.get("best_checkpoint_commit") or "").strip()
+        if checkpoint:
+            fields.append(("best checkpoint", checkpoint[:12]))
     tokens = int(summary.get("tokens_used") or 0)
     budget = summary.get("token_budget")
     if budget:
@@ -7744,53 +7812,6 @@ def _nonnegative_delivery_count(value: object) -> int:
         return 0
 
 
-def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
-    import json as _json
-
-    root = project_root or Path.cwd()
-    spec_id, strategy, json_output = _parse_delivery_status_args(args)
-    _require_provider_capability(
-        "echelon delivery status",
-        ProviderCapability.BUILD,
-        project_dir=root,
-    )
-    states = _iter_harness_build_states(root)
-    if spec_id:
-        states = [state for state in states if str(state.get("spec_id") or "") == spec_id]
-    if strategy:
-        states = [state for state in states if str(state.get("strategy_id") or "") == strategy]
-
-    summaries = [_delivery_status_summary(state, project_root=root) for state in states]
-    if json_output:
-        payload = {
-            "status": summaries[0]["status"] if summaries else "none",
-            "spec_id": spec_id or (summaries[0].get("spec_id") if summaries else ""),
-            "strategy": strategy,
-            "latest": summaries[0] if summaries else None,
-            "states": summaries[:10],
-        }
-        print(_json.dumps(payload, indent=2, ensure_ascii=False))
-        return
-
-    if not summaries:
-        next_step = f"echelon delivery run {spec_id}" if spec_id else "echelon delivery run <spec_id>"
-        _banner(
-            "DELIVERY STATUS",
-            [
-                ("status", "No delivery runs found"),
-                ("next", next_step),
-            ],
-            subtitle="Phase B delivery",
-        )
-        return
-
-    latest = summaries[0]
-    subtitle = "Phase B delivery"
-    if len(summaries) > 1:
-        subtitle += f" - {len(summaries)} matching state files"
-    _banner("DELIVERY STATUS", _delivery_status_fields(latest), subtitle=subtitle)
-
-
 def _find_harness_checkpoint_state(
     project_root: Path,
     spec_id: str,
@@ -8101,11 +8122,25 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
+        coverage_map_planning_defect = _coverage_map_planning_defect_for_spec(
+            project_root,
+            spec_id,
+        )
         if build_status == "provider_session_limit":
             fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
         elif termination_reason == "build_blocked":
-            fields.append(("next", f"resolve the reported blocker, then echelon spec reopen {spec_id}"))
+            if coverage_map_planning_defect:
+                fields.append(
+                    (
+                        "next",
+                        "echelon spec rewind phase3-sentinel\n"
+                        "  then echelon spec rewind phase3-sentinel --confirm\n"
+                        "  then echelon spec continue",
+                    )
+                )
+            else:
+                fields.append(("next", f"resolve the reported blocker, then echelon spec reopen {spec_id}"))
             subtitle = "HARNESS BUILD BLOCKED"
         elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
@@ -8502,6 +8537,27 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             subtitle = "RUN BLOCKED — resolve the block before building"
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
+
+
+def _coverage_map_planning_defect_for_spec(project_root: Path, spec_id: str) -> bool:
+    """Whether the latest exact-spec delivery blocked on a stale coverage map."""
+    harness_state = _find_latest_harness_build_state(project_root)
+    if (
+        harness_state is None
+        or str(harness_state.get("spec_id") or "") != spec_id
+        or str(harness_state.get("termination_reason") or "") != "build_blocked"
+    ):
+        return False
+    verification = harness_state.get("last_verify_result")
+    raw_failures = verification.get("failures", []) if isinstance(verification, dict) else []
+    if not isinstance(raw_failures, list):
+        return False
+    return any(
+        isinstance(failure, dict)
+        and "coverage-observer-map-incomplete"
+        in f"{failure.get('id') or ''} {failure.get('error') or ''}".lower()
+        for failure in raw_failures
+    )
 
 
 def _run_artifact_dir(project_root: Path, run_dir: Path) -> Path:
@@ -11129,6 +11185,18 @@ def _failed_gate_rewind_authority(
     """Authorize a failed gate rewind before any Git or ledger mutation."""
     from echelon.rewind import RewindError
 
+    if (
+        str(getattr(checkpoint, "phase", "") or "") == "phase3-sentinel"
+        and _coverage_map_planning_defect_for_spec(
+            project_root,
+            str(state.get("spec_id") or ""),
+        )
+    ):
+        # Delivery has authoritatively established that Phase A's test plan is
+        # stale. Replaying SENTINEL preserves resolved product decisions and
+        # regenerates only its dependent planning artifacts.
+        return None
+
     raw_decision = state.get("blocked_decision")
     if (
         not isinstance(raw_decision, Mapping)
@@ -11410,7 +11478,25 @@ def _cmd_rewind(
                     )
                     replacement_state = deepcopy(state)
 
-                    recovery_dirty_paths = frozenset()
+                    coverage_map_recovery = (
+                        str(getattr(checkpoint, "phase", "") or "")
+                        == "phase3-sentinel"
+                        and _coverage_map_planning_defect_for_spec(
+                            project_root,
+                            str(state.get("spec_id") or ""),
+                        )
+                    )
+                    recovery_dirty_paths = (
+                        frozenset(
+                            {
+                                "spec.md",
+                                "tasks.md",
+                                "harness-run-history.json",
+                            }
+                        )
+                        if coverage_map_recovery
+                        else frozenset()
+                    )
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
                             RetargetRecoveryError,
@@ -11461,10 +11547,29 @@ def _cmd_rewind(
                             )
                         except RetargetRecoveryError as exc:
                             raise RewindError(str(exc)) from exc
+                    if coverage_map_recovery:
+                        # Validate the only state transition unique to this
+                        # recovery before prepare_rewind mutates Git or removes
+                        # recovery-owned files. The post-rewind call below
+                        # still writes the exact rewind state after cleanup.
+                        _reset_rewind_state(
+                            state,
+                            checkpoint.phase,
+                            spec_dir_ref,
+                            boundary_completion_id=(
+                                checkpoint.boundary_completion_id
+                            ),
+                            preserve_resolved_coverage_map_repair=True,
+                        )
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,
                         spec_dir=spec_dir,
+                        dirty_spec_dir=(
+                            project_root / "specs" / spec_dir.name
+                            if (project_root / "specs" / spec_dir.name).is_dir()
+                            else spec_dir
+                        ),
                         target=target,
                         confirm=confirm,
                         checkpoint_commit=checkpoint_commit,
@@ -11519,6 +11624,9 @@ def _cmd_rewind(
                                 failed_gate_authority is None
                                 and isinstance(state.get("blocked_decision"), Mapping)
                                 and state["blocked_decision"].get("status") == "resolved"
+                            ),
+                            preserve_resolved_coverage_map_repair=(
+                                coverage_map_recovery
                             ),
                             preserve_failed_human_gate_for_cas=(
                                 failed_gate_authority is not None

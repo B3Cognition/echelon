@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from harness.convergence import DEFAULT_MAX_OUTER
+
 
 VALID_MODES = {"banzai", "semi", "guided"}
 
@@ -31,7 +33,7 @@ class RunIntent:
     """
     spec_id: str
     mode: str = "semi"
-    max_outer: int = 5
+    max_outer: int = DEFAULT_MAX_OUTER
     max_inner: int = 3
     token_budget: Optional[int] = None
     auto_merge: bool = True
@@ -171,7 +173,7 @@ def parse_intent(text: str) -> RunIntent:
         mode = mode_match.group(1).lower()
 
     # Extract max_outer
-    max_outer = 5
+    max_outer = DEFAULT_MAX_OUTER
     outer_match = _MAX_OUTER_PATTERN.search(text)
     if outer_match:
         max_outer = int(outer_match.group(1))

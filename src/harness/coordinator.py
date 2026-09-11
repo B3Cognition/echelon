@@ -390,6 +390,8 @@ class StrategyCoordinator:
                 "fulfillment_refresh": state.get("fulfillment_refresh"),
                 "user_runnability": state.get("user_runnability"),
                 "publication_failure": state.get("publication_failure"),
+                "max_outer": state.get("max_outer"),
+                "convergence_lease": state.get("convergence_lease"),
             }
 
         # Summary

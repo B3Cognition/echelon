@@ -62,6 +62,12 @@ cat > "$tmpdir/specs/024-test/tasks.md" <<'TASKS'
   **Files:**
   - `repo-b/src/main.py` - repo-b implementation
 TASKS
+cat > "$tmpdir/specs/024-test/coverage-map.md" <<'COVERAGE'
+| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |
+|---|---|---|---|---|---|---|
+| FR-001 | E2E-001 | e2e | planned | direct | tests/e2e/test-e2e-orchestrator-prefixed-output.sh | exercise repo-a dispatch |
+| FR-002 | E2E-002 | e2e | planned | direct | tests/e2e/test-e2e-orchestrator-prefixed-output.sh | exercise repo-b dispatch |
+COVERAGE
 printf '# Constitution\n\nPrinciples are defined for this project.\n' \
   > "$tmpdir/specs/024-test/constitution.md"
 

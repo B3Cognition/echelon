@@ -20,7 +20,7 @@ class TestRunIntentConstruction:
         intent = RunIntent(spec_id="012")
         assert intent.spec_id == "012"
         assert intent.mode == "semi"
-        assert intent.max_outer == 5
+        assert intent.max_outer == 12
         assert intent.max_inner == 3
         assert intent.token_budget is None
         assert intent.auto_merge is True
@@ -129,7 +129,7 @@ class TestParseIntent:
         intent = parse_intent("spec 012")
         assert intent.spec_id == "012"
         assert intent.mode == "semi"
-        assert intent.max_outer == 5
+        assert intent.max_outer == 12
         assert intent.max_inner == 3
         assert intent.token_budget is None
         assert intent.auto_merge is True

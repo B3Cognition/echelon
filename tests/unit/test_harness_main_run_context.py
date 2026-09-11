@@ -18,6 +18,24 @@ _NEXT_STEP = (
 
 
 @pytest.mark.unit
+def test_standalone_run_uses_shared_meaningful_outer_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HARNESS_SPEC", "042")
+    monkeypatch.delenv("HARNESS_MAX_OUTER", raising=False)
+
+    with patch("harness.config.load_config", return_value=MagicMock()), \
+         patch("harness.gitops.GitOpsManager", return_value=MagicMock()), \
+         patch("harness.docker_provider.DockerWorktreeProvider", return_value=MagicMock()), \
+         patch("harness.skills.run_skill.run") as run:
+        from harness.__main__ import _run
+
+        _run()
+
+    assert "max 12 outer iterations" in run.call_args.args[0]
+
+
+@pytest.mark.unit
 def test_standalone_run_renders_invalid_orchestration_context(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -24,6 +24,12 @@ from harness.squad_state import SquadStateStore
 DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 
+_FR_001_COVERAGE_MAP = (
+    "| Requirement ID | Test Case ID | Test Type | Automation Status | Coverage Type | Evidence | Gap / Action |\n"
+    "|---|---|---|---|---|---|---|\n"
+    "| FR-001 | UT-001 | unit | planned | planned | tests | implement |\n"
+)
+
 
 def _valid_plan_conformance_json() -> str:
     return json.dumps(
@@ -162,6 +168,8 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
         content = (
             _valid_plan_conformance_json()
             if name == "plan-conformance.json"
+            else _FR_001_COVERAGE_MAP
+            if name == "coverage-map.md"
             else f"# {name}\n"
         )
         (active_spec_dir / name).write_text(content, encoding="utf-8")
@@ -281,6 +289,8 @@ def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Pat
         content = (
             _valid_plan_conformance_json()
             if name == "plan-conformance.json"
+            else _FR_001_COVERAGE_MAP
+            if name == "coverage-map.md"
             else f"# {name}\n"
         )
         (active_spec_dir / name).write_text(content, encoding="utf-8")
@@ -337,6 +347,8 @@ def test_context_metadata_publication_staging_defers_mining(
         content = (
             _valid_plan_conformance_json()
             if name == "plan-conformance.json"
+            else _FR_001_COVERAGE_MAP
+            if name == "coverage-map.md"
             else "# Photo Album\n\nFR-001: Upload a photo.\n"
         )
         (active_spec_dir / name).write_text(

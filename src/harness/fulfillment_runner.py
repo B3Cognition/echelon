@@ -267,6 +267,9 @@ class FulfillmentRunner:
                 coverage_observation=coverage_observation,
                 coverage_observation_sha256=coverage_observation_sha256,
                 observer_required=observer_required,
+                verify_run_dir=verify_run_dir,
+                source_id=source_id,
+                source_root=source_root,
             )
         force_execution = reconcile or dry_run
         if not force_execution and _latest_full_report_matches_cache(
@@ -537,6 +540,9 @@ class FulfillmentRunner:
         coverage_observation: CoverageObservationResult | None,
         coverage_observation_sha256: str | None,
         observer_required: bool,
+        verify_run_dir: Path | str | None,
+        source_id: str | None,
+        source_root: Path | str | None,
     ) -> FulfillmentRefreshResult:
         if spec_dir is None or commit is None:
             return FulfillmentRefreshResult(
@@ -619,6 +625,9 @@ class FulfillmentRunner:
                     ),
                     coverage_observation=coverage_observation,
                     observer_required=observer_required,
+                    verify_run_dir=verify_run_dir,
+                    source_id=source_id,
+                    source_root=source_root,
                 )
             return FulfillmentRefreshResult(
                 status="cached",
@@ -643,6 +652,9 @@ class FulfillmentRunner:
                 ),
                 coverage_observation=coverage_observation,
                 observer_required=observer_required,
+                verify_run_dir=verify_run_dir,
+                source_id=source_id,
+                source_root=source_root,
             )
 
         skill_path = find_skill(
