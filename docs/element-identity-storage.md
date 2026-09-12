@@ -5,6 +5,61 @@ wired into spec producers, providers, artifact adapters, evidence, or squad
 publication. Existing authoring behavior remains in place. Importing this module
 does not activate identity management or create workspace state.
 
+## Sealed publication inspection boundary
+
+`PreparedSquadPublication.inspect()` is a read-only context manager on the existing
+sealed publisher. It reloads and authenticates the schema-1 manifest and stages
+against the existing `PublicationMarker`, then captures exact current target and
+sealed postimage bytes under the existing project publication lock. It never
+trusts the prepared object's mutable manifest. It performs no promotion, deletion,
+restoration, stage sealing/discard, identity write, graph write, receipt, checkpoint
+or completion update. The existing lock may create its
+`.echelon/runtime/publication.lock` control path; this is its only incidental write.
+
+The detached frozen values live in `harness.squad_publication_snapshot`:
+`PublicationSnapshot` contains the marker, `promoted_prefix`, and an ordered tuple
+of `PublicationOperationSnapshot` values. Each operation contains its action and
+manifest-relative target, preimage/postimage/current `PublicationImageDescriptor`
+values, `current_bytes`, and `postimage_bytes`. Descriptors preserve exact validated
+hashes and modes. Missing images use kind `missing`, null hash/mode and `None`
+bytes; a present empty file is kind `file` with `b""`. Deletes have no postimage
+bytes. Writes always expose the sealed bytes, including already-promoted targets.
+
+The prefix is the existing global manifest-order promotion rule's lower bound.
+Equal pre/post images do not force the boundary, so this is not a count of images
+that match postimages. Every current image must match its recorded preimage or
+postimage, and the whole list must admit one legal prefix. Corruption or drift
+rejects the entire inspection. No-follow descriptor traversal retains root,
+ancestor, file and absence bindings and revalidates them, the manifest and stages
+before yielding and on successful context exit. Absent target parents are not
+created. Caller exceptions propagate and release retained descriptors and the lock.
+
+The body is for short controller-owned validation or identity transactions, not
+provider work. Do not recursively call `publish`, `discard`, or `inspect` while
+holding the non-reentrant publication lock. Inspection introduces no additional
+lock hierarchy. Its authority ends when that context exits.
+
+Successful inspection includes successful exit validation, not just receipt of
+the yielded value. A future caller that persists a pending intent inside the body
+must leave it pending if exit validation fails: this reader cannot roll back a
+separately committed database transaction. Do not mark publication, graph or
+completion successful inside the body.
+
+For an already-promoted target, `preimage` is the authenticated original manifest
+descriptor, but `current_bytes` contains its current postimage. Inspection cannot
+recover the original bytes. A future durable intent must retain accepted before
+images before promotion and match their hashes and modes to the preimage
+descriptor; it must never treat current postimage bytes as the baseline.
+
+Snapshot coverage is limited to manifest operations, not every unchanged semantic
+or dependent input. This API does not authenticate semantic review, provide
+complete candidate capture, reserve identity intents, finalize lifecycle/bindings,
+produce graph receipts, or integrate identity at run-local acceptance/final export.
+Existing Phase A completion transactions, candidate isolation and repair remain
+the integration owners. Rejected candidates remain diagnostics and cannot update
+canonical artifacts, graphs or memory. Published labels, including `FR-001` and
+historical composite IDs, retain their exact spelling.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.

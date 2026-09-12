@@ -9,11 +9,15 @@ import re
 import secrets
 import stat
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from harness.controller_lock_order import controller_lock_order
+
+if TYPE_CHECKING:
+    from harness.squad_publication_snapshot import PublicationSnapshot
 
 try:
     import fcntl as _fcntl
@@ -945,32 +949,24 @@ def authenticate_publication_prefix(
     operations: object,
 ) -> int:
     """Require one global manifest-order post-prefix followed by preimages."""
+    from harness.squad_publication_snapshot import _authenticate_image_prefix
+
     if type(operations) is not list:
         _raise("manifest_invalid")
-    lower_boundary = 0
-    upper_boundary = len(operations)
-    for index, operation in enumerate(operations):
-        if type(operation) is not dict:
-            _raise("manifest_invalid")
-        target = _normalize_relative_path(operation.get("target"))
-        preimage = _validate_image(operation.get("preimage"))
-        postimage = _validate_image(operation.get("postimage"))
-        current = _target_image(
-            Path(project_root),
-            target,
-            invalid_code="target_drift",
-        )
-        if current != preimage and current != postimage:
-            _raise("target_drift")
-        if preimage == postimage:
-            continue
-        if current == postimage:
-            lower_boundary = max(lower_boundary, index + 1)
-        else:
-            upper_boundary = min(upper_boundary, index)
-        if lower_boundary > upper_boundary:
-            _raise("target_drift")
-    return lower_boundary
+
+    def images() -> Iterator[tuple[object, object, object]]:
+        for operation in operations:
+            if type(operation) is not dict:
+                _raise("manifest_invalid")
+            target = _normalize_relative_path(operation.get("target"))
+            preimage = _validate_image(operation.get("preimage"))
+            postimage = _validate_image(operation.get("postimage"))
+            current = _target_image(
+                Path(project_root), target, invalid_code="target_drift"
+            )
+            yield preimage, postimage, current
+
+    return _authenticate_image_prefix(images())
 
 
 def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int]:
@@ -1528,6 +1524,107 @@ def _remove_directory_contents(directory_fd: int) -> None:
         _raise("publish_io")
 
 
+class _InspectionPaths:
+    """Retain directory, absence and regular-file bindings for one inspection."""
+
+    def __init__(self, resources: ExitStack) -> None:
+        self.resources = resources
+        self.directories: list[tuple[int, str, int, str]] = []
+        self.missing: list[tuple[int, str, str]] = []
+        self.files: list[tuple[int, _PinnedRegular, str]] = []
+
+    def directory(
+        self, root_fd: int, parts: tuple[str, ...], *, code: str,
+        allow_missing: bool = False,
+    ) -> int | None:
+        current = root_fd
+        for name in parts:
+            try:
+                metadata = os.stat(name, dir_fd=current, follow_symlinks=False)
+            except FileNotFoundError:
+                if not allow_missing:
+                    _raise(code)
+                self.missing.append((current, name, code))
+                return None
+            except OSError:
+                _raise(code)
+            if not stat.S_ISDIR(metadata.st_mode):
+                _raise(code)
+            child = _open_directory(
+                name, dir_fd=current, missing_code=code, invalid_code=code
+            )
+            self.resources.callback(os.close, child)
+            try:
+                opened_identity = _directory_identity(os.fstat(child))
+            except OSError:
+                _raise(code)
+            if opened_identity != _directory_identity(metadata):
+                _raise(code)
+            self.directories.append((current, name, child, code))
+            current = child
+        return current
+
+    def current(self, root_fd: int, relative: Path) -> _PinnedRegular | None:
+        parent = self.directory(
+            root_fd, relative.parts[:-1], code="target_drift", allow_missing=True
+        )
+        if parent is None:
+            return None
+        try:
+            metadata = os.stat(relative.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            self.missing.append((parent, relative.name, "target_drift"))
+            return None
+        except OSError:
+            _raise("target_drift")
+        if not stat.S_ISREG(metadata.st_mode):
+            _raise("target_drift")
+        pinned = _pin_regular_at(
+            parent, Path(relative.name),
+            missing_code="target_drift", invalid_code="target_drift",
+        )
+        self.resources.callback(os.close, pinned.fd)
+        if _regular_identity(metadata) != pinned.identity:
+            _raise("target_drift")
+        self.files.append((parent, pinned, "target_drift"))
+        return pinned
+
+    def verify(self) -> None:
+        for parent, name, child, code in self.directories:
+            try:
+                _verify_directory_entry(parent, name, child)
+            except PublicationError:
+                _raise(code)
+        for parent, name, code in self.missing:
+            try:
+                os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                _raise(code)
+            _raise(code)
+        for parent, pinned, code in self.files:
+            _verify_pinned_regular(
+                parent, pinned, missing_code=code, invalid_code=code
+            )
+
+
+def _read_pinned_bytes(pinned: _PinnedRegular, *, code: str) -> bytes:
+    """Bind a detached read to the retained file identity and digest."""
+    try:
+        if _regular_identity(os.fstat(pinned.fd)) != pinned.identity:
+            _raise(code)
+        content = _read_fd_bytes(pinned.fd, code=code)
+        if (
+            hashlib.sha256(content).hexdigest() != pinned.sha256
+            or _regular_identity(os.fstat(pinned.fd)) != pinned.identity
+        ):
+            _raise(code)
+        return content
+    except OSError:
+        _raise(code)
+
+
 @dataclass(frozen=True)
 class PreparedSquadPublication:
     """A sealed and verified transaction that is safe to publish later."""
@@ -1537,6 +1634,102 @@ class PreparedSquadPublication:
     _transaction_root: Path
     _manifest: dict[str, object]
     marker: PublicationMarker
+
+    @contextmanager
+    def inspect(self) -> Iterator[PublicationSnapshot]:
+        """Inspect exact sealed/current images under the existing publication lock.
+
+        Success includes exit validation. Keep bodies short and controller-owned;
+        never recursively publish, discard or inspect under this non-reentrant lock.
+        """
+        from harness.squad_publication_snapshot import (
+            PublicationImageDescriptor,
+            PublicationOperationSnapshot,
+            PublicationSnapshot,
+            _authenticate_image_prefix,
+            _image_descriptor,
+        )
+
+        _require_secure_posix()
+        marker = _marker_from(self.marker)
+        expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
+        if self._transaction_root != expected_root:
+            _raise("manifest_invalid")
+        with _publication_exclusivity(self._project_root):
+            with ExitStack() as resources:
+                paths = _InspectionPaths(resources)
+                filesystem_fd = _open_directory(
+                    Path("/"), missing_code="publish_io", invalid_code="publish_io"
+                )
+                resources.callback(os.close, filesystem_fd)
+                project = _require_real_directory(
+                    self._project_root, code="manifest_invalid"
+                )
+                project_fd = paths.directory(
+                    filesystem_fd, project.parts[1:],
+                    code="target_drift",
+                )
+                verified, pinned = _load_prepared_pinned(
+                    self._project_root, self._squad_dir, marker
+                )
+                resources.callback(pinned.close)
+                paths.verify()
+                squad_fd = paths.directory(
+                    filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
+                )
+                assert project_fd is not None and squad_fd is not None
+                try:
+                    squad_identity = _directory_identity(os.fstat(squad_fd))
+                    pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
+                except OSError:
+                    _raise("stage_corrupt")
+                if squad_identity != pinned_squad_identity:
+                    _raise("stage_corrupt")
+                stage_bytes: dict[str, bytes] = {}
+                for name, stage in pinned.stages.items():
+                    paths.directory(
+                        pinned.transaction_fd, Path(name).parts[:-1],
+                        code="stage_corrupt",
+                    )
+                    stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
+                operations: list[PublicationOperationSnapshot] = []
+                for operation in verified._manifest["operations"]:
+                    current = paths.current(project_fd, Path(operation["target"]))
+                    if current is None:
+                        descriptor = PublicationImageDescriptor("missing", None, None)
+                        content = None
+                    else:
+                        descriptor = PublicationImageDescriptor(
+                            "file", current.sha256, stat.S_IMODE(current.identity[2])
+                        )
+                        content = _read_pinned_bytes(current, code="target_drift")
+                    postimage = _image_descriptor(operation["postimage"])
+                    post_bytes = (
+                        stage_bytes[operation["staged"]]
+                        if operation["action"] == "write" else None
+                    )
+                    if post_bytes is not None and (
+                        hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
+                    ):
+                        _raise("stage_corrupt")
+                    operations.append(PublicationOperationSnapshot(
+                        action=operation["action"], target=operation["target"],
+                        preimage=_image_descriptor(operation["preimage"]),
+                        postimage=postimage, current=descriptor,
+                        current_bytes=content, postimage_bytes=post_bytes,
+                    ))
+                snapshot = PublicationSnapshot(
+                    marker=marker,
+                    promoted_prefix=_authenticate_image_prefix(
+                        (op.preimage, op.postimage, op.current) for op in operations
+                    ),
+                    operations=tuple(operations),
+                )
+                paths.verify()
+                pinned.verify()
+                yield snapshot
+                paths.verify()
+                pinned.verify()
 
     def _publish_write(
         self,
