@@ -1,7 +1,7 @@
 """Explicit, inactive SQLite allocation authority; never inferred from documents.
 
-Only imports materialize identities. Reservations are permanent claims, including
-when their caller dies. No producer or content lifecycle is wired to this module.
+Reservations are permanent claims, including when their caller dies. Lifecycle
+storage is explicit and inactive: no producer or publication is wired here.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ import stat
 from uuid import UUID, uuid4
 
 from kernel.element_ids import decimal_to_int, format_element_id, int_to_decimal
+from harness import element_identity_schema as schema
+from harness import element_identity_lifecycle as lifecycle
 
 
 _VERSION = 1
@@ -28,35 +30,6 @@ _LABEL = re.compile(r"(AC|FR|NFR|ISS|U|A|T)-([A-Za-z0-9][A-Za-z0-9_.-]*)\Z")
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 _DATABASE = "registry.sqlite3"
 _MARKER = "authority.json"
-
-# Canonical text avoids SQLite's signed-64-bit integer and floating-point limits.
-_CANONICAL = "{0} NOT GLOB '*[^0-9]*' AND ({0} = '0' OR {0} GLOB '[1-9]*')"
-_SCHEMA = {
-    "metadata": "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
-    "counters": "CREATE TABLE counters (spec_id TEXT NOT NULL, kind TEXT NOT NULL, "
-        "high_water TEXT NOT NULL CHECK (" + _CANONICAL.format("high_water") + "), "
-        "PRIMARY KEY (spec_id, kind)) WITHOUT ROWID",
-    "operations": "CREATE TABLE operations (operation_id TEXT PRIMARY KEY, method TEXT NOT NULL, "
-        "spec_id TEXT NOT NULL, digest TEXT NOT NULL) WITHOUT ROWID",
-    "reservations": "CREATE TABLE reservations (operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id), "
-        "spec_id TEXT NOT NULL, kind TEXT NOT NULL, first_ordinal TEXT NOT NULL CHECK (" +
-        _CANONICAL.format("first_ordinal") + " AND first_ordinal != '0'), "
-        "first_length INTEGER NOT NULL, last_ordinal TEXT NOT NULL CHECK (" +
-        _CANONICAL.format("last_ordinal") + "), count TEXT NOT NULL CHECK (" +
-        _CANONICAL.format("count") + " AND count != '0')) WITHOUT ROWID",
-    "reservation_ranges": "CREATE UNIQUE INDEX reservation_ranges ON reservations "
-        "(spec_id, kind, first_length, first_ordinal)",
-    "reservation_maxima": "CREATE INDEX reservation_maxima ON reservations "
-        "(spec_id, kind, length(last_ordinal), last_ordinal)",
-    "entities": "CREATE TABLE entities (spec_id TEXT NOT NULL, element_id TEXT NOT NULL, "
-        "kind TEXT NOT NULL, subject TEXT NOT NULL, ordinal TEXT CHECK (ordinal IS NULL OR (" +
-        _CANONICAL.format("ordinal") + " AND ordinal != '0')), "
-        "PRIMARY KEY (spec_id, element_id)) WITHOUT ROWID",
-    "entity_ordinals": "CREATE UNIQUE INDEX entity_ordinals ON entities (spec_id, kind, ordinal)",
-    "entity_maxima": "CREATE INDEX entity_maxima ON entities "
-        "(spec_id, kind, length(ordinal), ordinal) WHERE ordinal IS NOT NULL",
-}
-
 
 class IdentityStoreError(ValueError):
     """Invalid request or unavailable authority; callers must not invent IDs."""
@@ -201,17 +174,8 @@ def _database(path, *, readonly=False):
         connection.close()
 
 
-def _validate(connection, marker):
-    if connection.execute("PRAGMA user_version").fetchone()[0] != _VERSION:
-        raise IdentityStoreError("unsupported identity database schema version")
-    actual = {row["name"]: row["sql"] for row in connection.execute(
-        "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
-    )}
-    if actual != _SCHEMA:
-        raise IdentityStoreError("identity database schema or required indexes are malformed")
-    metadata = dict(connection.execute("SELECT key, value FROM metadata"))
-    if metadata != {key: str(value) for key, value in marker.items()}:
-        raise IdentityStoreError("authority marker and database identity do not match")
+def _validate(connection, marker, *, allow_old=False):
+    return schema.validate(connection, marker, allow_old=allow_old)
 
 
 def _claim_directory(path):
@@ -254,10 +218,11 @@ class IdentityStore:
         with _database(directory / _DATABASE) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
-                for statement in _SCHEMA.values():
+                for statement in schema.SCHEMA.values():
                     connection.execute(statement)
                 connection.executemany("INSERT INTO metadata VALUES (?, ?)",
-                                       [(key, str(value)) for key, value in marker.items()])
+                                       [(key, str(value)) for key, value in marker.items()]
+                                       + [("schema_version", schema.SCHEMA_VERSION)])
                 connection.execute(f"PRAGMA user_version={_VERSION}")
                 connection.commit()
             except BaseException:
@@ -276,6 +241,27 @@ class IdentityStore:
         with _database(directory / _DATABASE) as connection:
             _validate(connection, marker)
         return cls(workspace, marker)
+
+    @classmethod
+    @_public
+    def upgrade(cls, workspace: Path) -> IdentityStore:
+        """Explicitly upgrade only recognized authority; never initialize or repair."""
+        workspace = _safe_path(workspace)
+        directory = _directory(workspace / ".echelon/identity")
+        marker = _authority(_read_json(directory / _MARKER))
+        with _database(directory / _DATABASE) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                version = _validate(connection, marker, allow_old=True)
+                cls._audit(connection, lifecycle_state=version != "1")
+                if version == "1":
+                    schema.upgrade(connection)
+                _validate(connection, marker)
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+        return cls.open(workspace)
 
     @contextmanager
     def _transaction(self, *, write=False):
@@ -401,6 +387,7 @@ class IdentityStore:
                 if existing is not None:
                     if existing[0] != subject:
                         raise IdentityStoreError("element_id is already bound to a different subject")
+                    self._head(connection, spec_id, label)
                     continue
                 if ordinal is not None:
                     # The predecessor range can be found with one indexed seek.
@@ -423,19 +410,290 @@ class IdentityStore:
                     maxima[kind] = max(maxima[kind], number)
                 connection.execute("INSERT INTO entities VALUES (?, ?, ?, ?, ?)",
                                    (spec_id, label, kind, subject, ordinal))
+                connection.execute("INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) "
+                                   "VALUES (?,?,'imported',NULL)", (spec_id, label))
             for kind, number in maxima.items():
                 self._set_high_water(connection, spec_id, kind, number)
 
     @_public
     def lookup(self, *, spec_id: str, element_id: str) -> dict | None:
-        """Copy an imported identity record; reservations are not entities."""
+        """Copy exact allocation binding plus verified current lifecycle content."""
         _identifier(spec_id, "spec_id")
         kind, _ = _parse_label(element_id)
         with self._transaction() as connection:
             self._high_water(connection, spec_id, kind)
-            row = connection.execute("SELECT * FROM entities WHERE spec_id=? AND element_id=?",
+            return self._head(connection, spec_id, element_id)
+
+    @staticmethod
+    def _revision(connection, spec_id, element_id, revision):
+        row = connection.execute("SELECT * FROM revisions WHERE spec_id=? AND element_id=? AND revision=?",
+                                 (spec_id, element_id, revision)).fetchone()
+        if row is None:
+            return None
+        lifecycle.revision(row["revision"])
+        lifecycle.text(row["content"], "stored content")
+        entity = connection.execute("SELECT subject FROM entities WHERE spec_id=? AND element_id=?",
+                                    (spec_id, element_id)).fetchone()
+        operation = connection.execute("SELECT method,spec_id FROM operations WHERE operation_id=?",
+                                       (row["operation_id"],)).fetchone()
+        if (entity is None or entity[0] != row["subject"]
+                or operation is None or tuple(operation) != ("lifecycle", spec_id)
+                or hashlib.sha256(row["content"].encode("utf-8")).hexdigest() != row["content_sha256"]
+                or row["status"] not in {"active", "retired", "superseded"}):
+            raise IdentityStoreError("stored revision digest or binding is inconsistent")
+        if row["status"] == "active":
+            if row["reason"] is not None:
+                raise IdentityStoreError("active revision contains a terminal reason")
+        else:
+            lifecycle.text(row["reason"], "terminal reason")
+            previous = connection.execute(
+                "SELECT status,subject,content,content_sha256 FROM revisions "
+                "WHERE spec_id=? AND element_id=? AND revision=?",
+                (spec_id, element_id, _decimal(_integer(revision) - 1)),
+            ).fetchone()
+            if (previous is None or previous["status"] != "active"
+                    or previous["subject"] != row["subject"]
+                    or previous["content"] != row["content"]
+                    or previous["content_sha256"] != row["content_sha256"]):
+                raise IdentityStoreError("terminal revision does not retain its active predecessor content")
+        return dict(row)
+
+    @classmethod
+    def _head(cls, connection, spec_id, element_id):
+        entity = connection.execute("SELECT * FROM entities WHERE spec_id=? AND element_id=?",
+                                    (spec_id, element_id)).fetchone()
+        if entity is None:
+            return None
+        head = connection.execute("SELECT status,revision FROM lifecycle_heads WHERE spec_id=? AND element_id=?",
+                                  (spec_id, element_id)).fetchone()
+        maximum = connection.execute("SELECT revision FROM revisions WHERE spec_id=? AND element_id=? "
+                                     "ORDER BY length(revision) DESC,revision DESC LIMIT 1",
                                      (spec_id, element_id)).fetchone()
-            return dict(row) if row else None
+        if head is None or head["revision"] != (maximum[0] if maximum else None):
+            raise IdentityStoreError("lifecycle head is missing or inconsistent with retained revisions")
+        if head["status"] == "imported":
+            if head["revision"] is not None:
+                raise IdentityStoreError("imported entity has assessed revision history")
+            return dict(entity) | dict(head) | {"content": None, "content_sha256": None}
+        if head["revision"] is None:
+            raise IdentityStoreError("assessed entity is missing its revision binding")
+        revision = cls._revision(connection, spec_id, element_id, head["revision"])
+        if revision is None or revision["status"] != head["status"]:
+            raise IdentityStoreError("head and revision status bindings disagree")
+        return dict(entity) | {key: revision[key] for key in ("status", "revision", "content", "content_sha256")}
+
+    @_public
+    def read_revision(self, *, spec_id: str, element_id: str, revision: str) -> dict | None:
+        _identifier(spec_id, "spec_id")
+        kind, _ = _parse_label(element_id)
+        lifecycle.revision(revision)
+        with self._transaction() as connection:
+            self._high_water(connection, spec_id, kind)
+            self._head(connection, spec_id, element_id)
+            return self._revision(connection, spec_id, element_id, revision)
+
+    @classmethod
+    def _lineage(cls, connection, spec_id, element_id):
+        rows = connection.execute(
+            "SELECT * FROM lifecycle_lineage WHERE spec_id=? AND predecessor_id=? UNION "
+            "SELECT * FROM lifecycle_lineage WHERE spec_id=? AND successor_id=? "
+            "ORDER BY predecessor_id,successor_id", (spec_id, element_id, spec_id, element_id),
+        ).fetchall()
+        for link in rows:
+            for label in (link["predecessor_id"], link["successor_id"]):
+                kind, _ = _parse_label(label)
+                cls._high_water(connection, spec_id, kind)
+                if cls._head(connection, spec_id, label) is None:
+                    raise IdentityStoreError("lineage entity is missing")
+            predecessor = cls._revision(connection, spec_id, link["predecessor_id"], link["predecessor_revision"])
+            terminal = cls._revision(connection, spec_id, link["predecessor_id"],
+                                     _decimal(_integer(link["predecessor_revision"]) + 1))
+            successor = cls._revision(connection, spec_id, link["successor_id"], link["successor_revision"])
+            if (predecessor is None or predecessor["status"] != "active" or terminal is None
+                    or terminal["status"] != "superseded" or successor is None
+                    or successor["revision"] != "1" or successor["status"] != "active"
+                    or terminal["operation_id"] != link["operation_id"]
+                    or successor["operation_id"] != link["operation_id"]
+                    or terminal["reason"] != link["reason"]
+                    or terminal["content"] != predecessor["content"]):
+                raise IdentityStoreError("lineage revision or operation binding is inconsistent")
+        return tuple(dict(row) for row in rows)
+
+    @_public
+    def lineage(self, *, spec_id: str, element_id: str) -> tuple[dict, ...]:
+        _identifier(spec_id, "spec_id")
+        kind, _ = _parse_label(element_id)
+        with self._transaction() as connection:
+            self._high_water(connection, spec_id, kind)
+            self._head(connection, spec_id, element_id)
+            return self._lineage(connection, spec_id, element_id)
+
+    @classmethod
+    def _receipt(cls, connection, operation_id, spec_id):
+        row = connection.execute("SELECT receipt,receipt_sha256 FROM lifecycle_receipts WHERE operation_id=?",
+                                 (operation_id,)).fetchone()
+        if row is None or hashlib.sha256(row[0].encode("ascii")).hexdigest() != row[1]:
+            raise IdentityStoreError("lifecycle receipt is missing or damaged")
+        receipt = json.loads(row[0])
+        if not isinstance(receipt, list) or not receipt:
+            raise IdentityStoreError("invalid lifecycle receipt")
+        for entry in receipt:
+            if (not isinstance(entry, dict)
+                    or set(entry) != {"element_id", "revision", "status", "lineage"}):
+                raise IdentityStoreError("invalid lifecycle receipt entry")
+            label = entry["element_id"]
+            cls._head(connection, spec_id, label)
+            revision = cls._revision(connection, spec_id, label, entry["revision"])
+            links = [link for link in cls._lineage(connection, spec_id, label)
+                     if link["operation_id"] == operation_id]
+            if (revision is None or revision["operation_id"] != operation_id
+                    or revision["status"] != entry["status"] or links != entry["lineage"]):
+                raise IdentityStoreError("lifecycle receipt bindings are inconsistent")
+        return tuple(receipt)
+
+    @classmethod
+    def _creation(cls, connection, spec_id, change):
+        kind, ordinal = _parse_label(change.element_id)
+        if ordinal is None or change.element_id != format_element_id(kind, _integer(ordinal)):
+            raise IdentityStoreError("creation requires the exact controller-issued numeric label")
+        if cls._head(connection, spec_id, change.element_id) is not None:
+            raise IdentityStoreError("element_id is already materialized")
+        reservation = connection.execute("SELECT * FROM reservations WHERE operation_id=?",
+                                         (change.reservation_operation_id,)).fetchone()
+        if reservation is None or reservation["spec_id"] != spec_id or reservation["kind"] != kind:
+            raise IdentityStoreError("matching reservation is missing")
+        cls._validate_reservation(connection, reservation)
+        if not (_integer(reservation["first_ordinal"]) <= _integer(ordinal) <= _integer(reservation["last_ordinal"])):
+            raise IdentityStoreError("element_id is outside its reservation")
+        if connection.execute("SELECT 1 FROM entities WHERE spec_id=? AND kind=? AND ordinal=?",
+                              (spec_id, kind, ordinal)).fetchone():
+            raise IdentityStoreError("numeric ordinal is already materialized")
+        return (change.element_id, "1", change.subject, change.content, "active", None, kind, ordinal)
+
+    @classmethod
+    def _existing_change(cls, connection, spec_id, label, expected, *, subject=None, content=None,
+                         status="active", reason=None, adopt=False):
+        head = cls._head(connection, spec_id, label)
+        if head is None or head["status"] != ("imported" if adopt else "active"):
+            raise IdentityStoreError("entity is not in the required lifecycle state")
+        if head["revision"] != expected:
+            raise IdentityStoreError("stale expected_revision")
+        if subject is not None and subject != head["subject"]:
+            raise IdentityStoreError("revision cannot change immutable subject")
+        revision = "1" if adopt else _decimal(_integer(expected) + 1)
+        return (label, revision, head["subject"], head["content"] if content is None else content,
+                status, reason, None, None)
+
+    @_public
+    def apply_lifecycle(self, *, spec_id: str, operation_id: str,
+                        changes: Sequence[lifecycle.LifecycleChange]) -> tuple[dict, ...]:
+        """Validate a whole batch against its prestate, then atomically persist it."""
+        _identifier(spec_id, "spec_id")
+        _identifier(operation_id, "operation_id")
+        changes, payload, labels = lifecycle.request(changes)
+        digest = _digest(["lifecycle", spec_id, payload])
+        with self._transaction(write=True) as connection:
+            for kind in {_parse_label(label)[0] for label in labels}:
+                self._high_water(connection, spec_id, kind)
+            if self._operation(connection, operation_id, "lifecycle", spec_id, digest):
+                return self._receipt(connection, operation_id, spec_id)
+            planned, links = [], []
+            for change in changes:
+                if type(change) is lifecycle.ElementCreate:
+                    planned.append(self._creation(connection, spec_id, change))
+                elif type(change) is lifecycle.ElementAdopt:
+                    planned.append(self._existing_change(connection, spec_id, change.element_id, None,
+                        subject=change.subject, content=change.content, adopt=True))
+                elif type(change) is lifecycle.ElementRevision:
+                    planned.append(self._existing_change(connection, spec_id, change.element_id, change.expected_revision,
+                        subject=change.subject, content=change.content))
+                elif type(change) is lifecycle.ElementRetirement:
+                    planned.append(self._existing_change(connection, spec_id, change.element_id, change.expected_revision,
+                        status="retired", reason=change.reason))
+                else:
+                    for label, expected in change.predecessors:
+                        planned.append(self._existing_change(connection, spec_id, label, expected,
+                            status="superseded", reason=change.reason))
+                    for successor in change.successors:
+                        planned.append(self._creation(connection, spec_id, successor))
+                    links.extend((spec_id, label, expected, successor.element_id, "1", change.kind, change.reason, operation_id)
+                                 for label, expected in change.predecessors for successor in change.successors)
+            for label, revision, subject, content, status, reason, kind, ordinal in planned:
+                if kind is not None:
+                    connection.execute("INSERT INTO entities (spec_id,element_id,kind,subject,ordinal) VALUES (?,?,?,?,?)",
+                                       (spec_id, label, kind, subject, ordinal))
+                connection.execute("INSERT INTO revisions "
+                    "(spec_id,element_id,revision,subject,content,content_sha256,status,reason,operation_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (spec_id, label, revision, subject, content, hashlib.sha256(content.encode("utf-8")).hexdigest(), status, reason, operation_id))
+                connection.execute("INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) VALUES (?,?,?,?) "
+                    "ON CONFLICT(spec_id,element_id) DO UPDATE SET status=excluded.status,revision=excluded.revision",
+                    (spec_id, label, status, revision))
+            connection.executemany("INSERT INTO lifecycle_lineage "
+                "(spec_id,predecessor_id,predecessor_revision,successor_id,successor_revision,kind,reason,operation_id) "
+                "VALUES (?,?,?,?,?,?,?,?)", links)
+            result = [{"element_id": row[0], "revision": row[1], "status": row[4],
+                       "lineage": [link for link in self._lineage(connection, spec_id, row[0])
+                                   if link["operation_id"] == operation_id]} for row in planned]
+            receipt = _json(result)
+            connection.execute("INSERT INTO lifecycle_receipts (operation_id,receipt,receipt_sha256) VALUES (?,?,?)",
+                               (operation_id, receipt, hashlib.sha256(receipt.encode("ascii")).hexdigest()))
+            return tuple(result)
+
+    @staticmethod
+    def _validate_reservation(connection, row):
+        first, last, count = (_integer(row[key]) for key in ("first_ordinal", "last_ordinal", "count"))
+        operation = connection.execute("SELECT method,spec_id,digest FROM operations WHERE operation_id=?",
+                                       (row["operation_id"],)).fetchone()
+        if (first <= 0 or count <= 0 or last != first + count - 1
+                or row["first_length"] != len(row["first_ordinal"])
+                or operation is None or tuple(operation) != ("reserve", row["spec_id"],
+                    _digest(["reserve", row["spec_id"], row["kind"], row["count"]]))):
+            raise IdentityStoreError("reservation history is inconsistent")
+
+    @classmethod
+    def _audit(cls, connection, *, lifecycle_state):
+        """Full validation is restricted to explicit upgrade/restore."""
+        if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
+            raise IdentityStoreError("database integrity check failed")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise IdentityStoreError("database has inconsistent foreign keys")
+        cls._audit_counters(connection)
+        if connection.execute(
+            "SELECT 1 FROM operations LEFT JOIN reservations USING (operation_id) "
+            "WHERE operations.method='reserve' AND reservations.operation_id IS NULL LIMIT 1"
+        ).fetchone():
+            raise IdentityStoreError("reservation operation is missing its retained range")
+        previous = {}
+        for row in connection.execute("SELECT * FROM reservations ORDER BY spec_id,kind,first_length,first_ordinal"):
+            cls._validate_reservation(connection, row)
+            key = (row["spec_id"], row["kind"])
+            if _integer(row["first_ordinal"]) <= previous.get(key, 0):
+                raise IdentityStoreError("reservation ranges overlap")
+            previous[key] = _integer(row["last_ordinal"])
+        if not lifecycle_state:
+            for row in connection.execute("SELECT * FROM entities"):
+                kind, ordinal = _parse_label(row["element_id"])
+                _identifier(row["subject"], "stored subject")
+                if (kind, ordinal) != (row["kind"], row["ordinal"]):
+                    raise IdentityStoreError("legacy identity label and ordinal binding disagree")
+                if ordinal is not None:
+                    claim = connection.execute(
+                        "SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
+                        "AND (first_length,first_ordinal) <= (?,?) "
+                        "ORDER BY first_length DESC,first_ordinal DESC LIMIT 1",
+                        (row["spec_id"], kind, len(ordinal), ordinal),
+                    ).fetchone()
+                    if claim and _integer(ordinal) <= _integer(claim[0]):
+                        raise IdentityStoreError("legacy import overlaps a retained reservation")
+        if lifecycle_state:
+            for row in connection.execute("SELECT spec_id,element_id FROM entities"):
+                cls._head(connection, *row)
+            for row in connection.execute("SELECT spec_id,element_id,revision FROM revisions"):
+                cls._revision(connection, *row)
+            for row in connection.execute("SELECT spec_id,predecessor_id FROM lifecycle_lineage"):
+                cls._lineage(connection, *row)
+            for row in connection.execute("SELECT operation_id,spec_id FROM operations WHERE method='lifecycle'"):
+                cls._receipt(connection, *row)
 
     @_public
     def high_water(self, *, spec_id: str, kind: str) -> str:
@@ -479,22 +737,27 @@ class IdentityStore:
             raise IdentityStoreError("backup is incomplete or its digest/authority is invalid")
         with _database(backup / _DATABASE, readonly=True) as source:
             source.execute("BEGIN")
-            _validate(source, marker)
+            version = _validate(source, marker, allow_old=True)
             # Validate the digest while holding the same read snapshot that is
             # copied below. DELETE journaling prevents a concurrent writer from
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            if [row[0] for row in source.execute("PRAGMA integrity_check")] != ["ok"]:
-                raise IdentityStoreError("backup database integrity check failed")
-            if source.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                raise IdentityStoreError("backup database has inconsistent foreign keys")
-            cls._audit_counters(source)
+            cls._audit(source, lifecycle_state=version != "1")
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")
             with _database(directory / _DATABASE) as target:
                 source.backup(target)
+                if version == "1":
+                    target.execute("BEGIN IMMEDIATE")
+                    try:
+                        schema.upgrade(target)
+                        _validate(target, marker)
+                        target.commit()
+                    except BaseException:
+                        target.rollback()
+                        raise
                 _validate(target, marker)
             _sync_directory(directory)
         return cls.open(workspace)

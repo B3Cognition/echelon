@@ -23,6 +23,56 @@ def _reserve_batch(arguments):
     )
 
 
+def _revise_same_baseline(workspace, index, ready, start, results):
+    from harness.element_identity_lifecycle import ElementRevision
+    store = IdentityStore.open(Path(workspace))
+    ready.put(index)
+    if not start.wait(20):
+        raise RuntimeError("revision race did not start")
+    try:
+        receipt = store.apply_lifecycle(spec_id="race", operation_id=f"revision-{index}", changes=(
+            ElementRevision("AC-000001", "1", "Movement", f"Body from {index}"),
+        ))
+        results.put(("committed", receipt[0]["revision"]))
+    except IdentityStoreError as error:
+        results.put(("rejected", str(error)))
+
+
+def test_two_processes_revising_same_baseline_have_one_winner(tmp_path):
+    from harness.element_identity_lifecycle import ElementCreate
+    store = IdentityStore.initialize(tmp_path)
+    store.reserve(spec_id="race", kind="AC", operation_id="reserve", count=1)
+    store.apply_lifecycle(spec_id="race", operation_id="create", changes=(
+        ElementCreate("AC-000001", "Movement", "Original", "reserve"),
+    ))
+    context = multiprocessing.get_context("spawn")
+    ready, results, start = context.Queue(), context.Queue(), context.Event()
+    processes = [context.Process(target=_revise_same_baseline, args=(str(tmp_path), index, ready, start, results))
+                 for index in range(2)]
+    try:
+        for process in processes:
+            process.start()
+        assert {ready.get(timeout=20), ready.get(timeout=20)} == {0, 1}
+        start.set()
+        outcomes = [results.get(timeout=20), results.get(timeout=20)]
+        assert sorted(outcome[0] for outcome in outcomes) == ["committed", "rejected"]
+        assert next(value for status, value in outcomes if status == "committed") == "2"
+        assert "stale" in next(value for status, value in outcomes if status == "rejected")
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+        assert store.lookup(spec_id="race", element_id="AC-000001")["revision"] == "2"
+        assert store.read_revision(spec_id="race", element_id="AC-000001", revision="1")["content"] == "Original"
+        with sqlite3.connect(tmp_path / ".echelon/identity/registry.sqlite3") as connection:
+            assert connection.execute("SELECT count(*) FROM revisions").fetchone()[0] == 2
+            assert connection.execute("SELECT count(*) FROM operations WHERE method='lifecycle'").fetchone()[0] == 2
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(10)
+
+
 def _commit_then_wait(workspace, ready):
     store = IdentityStore.open(Path(workspace))
     store.reserve(spec_id="001-demo", kind="AC", operation_id="terminated", count=3)
@@ -141,6 +191,9 @@ def test_million_identity_capacity_uses_indexed_lookup_and_counter(tmp_path):
              "ORDER BY length(last_ordinal) DESC, last_ordinal DESC LIMIT 1", ("capacity", "AC")),
             ("SELECT ordinal FROM entities WHERE spec_id=? AND kind=? AND ordinal IS NOT NULL "
              "ORDER BY length(ordinal) DESC, ordinal DESC LIMIT 1", ("capacity", "AC")),
+            ("SELECT status,revision FROM lifecycle_heads WHERE spec_id=? AND element_id=?", ("capacity", "AC-1000000")),
+            ("SELECT revision FROM revisions WHERE spec_id=? AND element_id=? "
+             "ORDER BY length(revision) DESC,revision DESC LIMIT 1", ("capacity", "AC-1000000")),
         ]
         for query, args in queries:
             plan = connection.execute("EXPLAIN QUERY PLAN " + query, args).fetchall()
