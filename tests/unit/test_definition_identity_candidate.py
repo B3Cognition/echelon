@@ -167,14 +167,28 @@ def test_issue_identity_can_be_an_existing_reference_target(tmp_path):
     assert result.references[0].target_id == "ISS-001"
 
 
-@pytest.mark.parametrize("role", ["issues", "lexicon_projection", "invented"])
-def test_occurrence_projection_and_unknown_roles_stay_unsupported(tmp_path, role):
+@pytest.mark.parametrize("role", ["issues", "invented"])
+def test_occurrence_and_unknown_roles_stay_unsupported(tmp_path, role):
     from harness.element_identity_store import IdentityStore
 
     store = IdentityStore.initialize(tmp_path)
     text = "### ISS-001: Observed issue\n" if role == "issues" else "FR-001\n"
     result = check(store, tmp_path, (("unsupported.md", role, text, text),))
     assert diagnostic_codes(result) == {"unsupported_role"}
+
+
+def test_projection_role_requires_an_explicit_source_association(tmp_path):
+    from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
+    from harness.element_identity_store import IdentityStore
+
+    store = IdentityStore.initialize(tmp_path)
+    result = store.check_identity_candidate(
+        spec_id="demo",
+        artifacts=(CandidateArtifact(
+            "unsupported.md", "lexicon_projection", "FR-001\n", "FR-001\n"),),
+        scope=IdentityEditScope((), ()),
+    )
+    assert diagnostic_codes(result) == {"invalid_lexicon", "projection_binding_missing"}
 
 
 def test_native_lexicon_is_authoritative_but_cannot_duplicate_markdown_definition(tmp_path):

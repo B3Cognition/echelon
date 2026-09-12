@@ -12,6 +12,15 @@ U/A/FR/NFR/AC/T families without weakening the discovery policy. The two exact
 scope types select fixed internal policies; callers cannot override role,
 lifecycle-family, caption, or nesting rules.
 
+The general wrapper also accepts explicit supplemental associations:
+`projection_sources: Sequence[LexiconProjectionSource]` and
+`evidence_inventories: Sequence[EvidenceInventoryContext]`. A projection
+descriptor names its captured projection, authoritative requirements source, and
+optional captured glossary. An inventory descriptor names its captured JSON
+inventory and the exact seed locators validation must cover. These descriptors
+are structural controller assertions only, not durable binding receipts,
+semantic approval, or a publication-success signal.
+
 Callers provide `CandidateArtifact(path, role, before_text, after_text)` entries.
 Paths use canonical relative POSIX syntax. Text is exact UTF-8 encodable source
 without NUL; `None` denotes an absent image and the empty string denotes an empty
@@ -20,7 +29,8 @@ An absent image contributes an empty typed fact set without invoking its adapter
 a present empty string is still parsed and may be invalid, as it is for native
 Lexicon. Creating or removing a whole Lexicon file also requires explicit
 unowned-text permission for its `ARTIFACT`/`TITLE` content outside declarations.
-All caller sequences are copied into tuples and validated before the transaction.
+All caller sequences, descriptors, and inventory seed sequences are copied into
+tuples and validated before the transaction.
 Malformed requests raise `IdentityStoreError`; structural candidate defects are
 returned as diagnostics. Nonempty lifecycle batches use existing strict request
 validation. An empty batch proposes no lifecycle change.
@@ -42,8 +52,11 @@ inside otherwise valid source text are candidate diagnostics, not API errors.
 | `requirements` | Unsupported | FR/NFR/AC definitions | Adapter-recognized local references |
 | `tasks` | Unsupported | T definitions | Canonical `req`/`depends` plus other adapter-recognized references |
 | `lexicon` | Unsupported | Native FR/NFR/AC definitions | Native `DEPENDS` plus other adapter-recognized references |
+| `lexicon_projection` | Unsupported | Explicitly associated derived declarations; never authoritative definitions | Projection references with the projection path/hash/span |
+| `glossary` | Unsupported | Empty typed fact set with exact content hash | None; labels and URLs are opaque text |
+| `evidence_inventory` | Unsupported | Empty typed fact set with exact content hash | None; source IDs and locators are opaque text |
 | `investigation`, `evidence`, `references` | References only | References only | Adapter-recognized local references |
-| `issues`, `lexicon_projection`, unrecognized roles | Unsupported | Unsupported | None interpreted by the checker |
+| `issues`, unrecognized roles | Unsupported | Unsupported | None interpreted by the checker |
 
 Roles are never inferred from filenames. Unsupported roles produce
 `unsupported_role`. ISS may be an existing exact reference target, but issue
@@ -51,6 +64,37 @@ occurrences are not definitions and ISS lifecycle effects are outside both scope
 policies. Native `lexicon` is authoritative; `lexicon_projection` is not a second
 definition source. Naming duplicate authoritative definitions in two supported
 artifacts never makes the duplicate legal.
+
+## Supplemental associations
+
+Roles are still never inferred from filenames. Every captured
+`lexicon_projection` requires exactly one `LexiconProjectionSource`; every
+captured `evidence_inventory` requires exactly one `EvidenceInventoryContext`.
+Descriptor primary paths cannot repeat. Every named path must use canonical
+relative POSIX syntax and must be present in the captured bundle with the
+declared role. A present projection image requires the corresponding source
+image. A declared glossary may be absent in either image, in which case
+validation receives `None`; a present empty glossary remains the exact empty
+string. An undeclared glossary is never discovered by filename or opened from
+disk.
+
+Each present projection image runs the shared complete SPEC Lexicon validator on
+the exact captured projection, source, and optional glossary text. Every finding
+is returned as `invalid_lexicon_projection` with its original code, message,
+line, span, and image; parser diagnostics remain independent. The managed
+FR/NFR/AC projection labels must also exactly equal the typed declarations from
+the named requirements source image, otherwise
+`projection_authority_mismatch` is returned. This does not add ERROR or other
+families to the registry. Multiple projections may explicitly name the same
+source. Native Lexicon and Markdown declarations remain independently
+authoritative and still conflict when duplicated.
+
+Each present inventory image runs the shared inventory validator with the exact
+snapshotted seed locators. Structural, frontier, and required-seed failures are
+returned as `invalid_evidence_inventory`. A present empty JSON document is
+invalid; an absent image is not parsed. Missing or mismatched associations are
+blocking diagnostics (`projection_binding_missing`, `inventory_binding_missing`,
+or `supplemental_binding_mismatch`) and never imply empty required-seed coverage.
 
 The existing [artifact grammar](element-identity-artifacts.md) is unchanged;
 malformed syntax, qualified references, wrong-role declarations, and other parser
@@ -101,6 +145,14 @@ Nested requirement declarations must have source intervals that are disjoint or
 properly contained; crossing, identical, malformed, and out-of-bounds intervals
 are rejected. Discovery retains its original non-overlap rule.
 
+Derived projection declarations retain their real spans in this scope check.
+Changing a block requires the projection artifact path and its exact element ID;
+permission for the source does not authorize the projection. Header, source-hash,
+glossary, inventory, and other text outside managed spans requires unowned-text
+permission. A projection may be introduced or removed without a second lifecycle
+event when its authoritative source identity is otherwise preserved, created, or
+retired correctly.
+
 Unless unowned-text permission is explicit, text outside authorized declaration
 spans must remain exactly equal, including Unicode, CRLF, comments, and order.
 The comparison replaces surviving authorized declarations with collision-free
@@ -121,8 +173,9 @@ unowned-text permission.
 
 References resolve by exact same-spec labels against validated current/projected
 heads. Generic and evidence references may target terminal history. In the
-general wrapper, canonical task `req`/`depends` fields and native Lexicon
-`DEPENDS` clauses reach dependency validation through their real adapters. Their
+general wrapper, canonical task `req`/`depends` fields and native or derived
+Lexicon `DEPENDS` clauses reach dependency validation through their real
+adapters. Their
 exact target must be active: imported-but-unassessed, retired, and superseded
 targets produce `inactive_dependency`. Proposed active creations and revisions in
 the same lifecycle batch may resolve. Missing exact targets remain
@@ -142,11 +195,14 @@ reinterpreted. Revision values retain deterministic operation/entry order.
 | `historical` | Non-null assessed revisions exist, but none certifies that active head |
 
 An unchanged evidence source may become historical when its target is revised.
-A changed source hash receives no carried-over claims. Null claims never certify
-current content. No claims are inserted, copied, or rebound. Reference states are
-returned separately from structural diagnostics and cannot certify a semantic
-gate. Diagnostics are deduplicated only when identical and sorted by path, ID,
-code, and detail; reference states follow path and source-span order.
+A changed source hash, including changed projection wording for the same
+authoritative revision, receives no carried-over claims. Projection claims retain
+the projection's path, hash, and span rather than the associated source's
+provenance. Null claims never certify current content. No claims are inserted,
+copied, or rebound. Reference states are returned separately from structural
+diagnostics and cannot certify a semantic gate. Diagnostics are deduplicated only
+when identical and sorted by path, ID, code, and detail; reference states follow
+path and source-span order.
 
 ## Publication boundary
 
@@ -158,6 +214,8 @@ durable intent/CAS, and decide required evidence gates. A detached check cannot
 authorize publication after concurrent registry or source changes.
 
 Qualified and interval reference resolution, issue occurrence authorization,
-derived Lexicon/source binding, JSON source-inventory checks, durable publication
-and CAS, producer integration, graph/memory consumers, history tools, bounded
-repair, combined provider simulation, and explicit rollout remain follow-on work.
+historical import/audit tools, canonical and staged authentication, semantic
+review of changed derived wording, durable publication intents/receipts and CAS,
+producer integration, graph/memory consumers, bounded repair, combined provider
+simulation, and explicit rollout remain follow-on work. The general checker stays
+inactive and cannot authenticate completeness or authorize publication.

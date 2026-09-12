@@ -12,6 +12,7 @@ from harness.element_identity_candidate import (
     IdentityCandidateCheck, _DISCOVERY_POLICY, _IDENTITY_POLICY,
     _identity_scope_diagnostics, scope_diagnostics,
 )
+from harness import element_identity_bundle as bundle
 
 
 _EMPTY_CONTENT_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -21,6 +22,8 @@ def _parse_image(artifact, text):
     if text is None:
         return ParsedIdentityArtifact(
             artifact.path, artifact.role, _EMPTY_CONTENT_SHA256, (), (), ())
+    if artifact.role in {"glossary", "evidence_inventory"}:
+        return bundle._empty_fact_image(path=artifact.path, role=artifact.role, text=text)
     return parse_identity_artifact(path=artifact.path, role=artifact.role, text=text)
 
 
@@ -36,7 +39,8 @@ def _head(connection, store, spec_id, label):
 
 
 def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
-          policy=_DISCOVERY_POLICY, result_factory=DiscoveryCandidateCheck):
+          policy=_DISCOVERY_POLICY, result_factory=DiscoveryCandidateCheck,
+          projection_sources=(), evidence_inventories=()):
     diagnostics, references, images = [], [], []
     definitions = {"before": {}, "after": {}}
     ordinals = {"before": {}, "after": {}}
@@ -63,6 +67,8 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
                 diagnose(diagnostic.code, artifact.path, None,
                          f"{image} span:{diagnostic.span.start}:{diagnostic.span.end}: {diagnostic.detail}")
             for entry in parsed.declarations:
+                if entry.disposition != "definition":
+                    continue
                 definitions[image].setdefault(entry.element_id, []).append((artifact.path, entry))
                 try:
                     kind, ordinal = authority._parse_label(entry.element_id)
@@ -75,6 +81,10 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
         scope_checker = _identity_scope_diagnostics if policy.nested_requirement_spans else scope_diagnostics
         diagnostics.extend(scope_checker(artifact, before, after, scope))
         images.append((artifact, before, after))
+
+    if policy is _IDENTITY_POLICY:
+        diagnostics.extend(bundle._diagnostics(
+            images, projection_sources, evidence_inventories))
 
     for image in ("before", "after"):
         for label, entries in definitions[image].items():
@@ -220,6 +230,9 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
     return result()
 
 
-def check_identity(connection, store, spec_id, artifacts, scope, changes, affected):
+def check_identity(connection, store, spec_id, artifacts, scope, changes, affected,
+                   projection_sources, evidence_inventories):
     return check(connection, store, spec_id, artifacts, scope, changes, affected,
-                 policy=_IDENTITY_POLICY, result_factory=IdentityCandidateCheck)
+                 policy=_IDENTITY_POLICY, result_factory=IdentityCandidateCheck,
+                 projection_sources=projection_sources,
+                 evidence_inventories=evidence_inventories)

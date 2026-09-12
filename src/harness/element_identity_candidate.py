@@ -8,7 +8,10 @@ from harness.element_artifacts import _validate_input
 
 
 SUPPORTED_ROLES = frozenset({"unknowns", "assumptions", "investigation", "evidence", "references"})
-IDENTITY_SUPPORTED_ROLES = SUPPORTED_ROLES | frozenset({"requirements", "tasks", "lexicon"})
+IDENTITY_SUPPORTED_ROLES = SUPPORTED_ROLES | frozenset({
+    "requirements", "tasks", "lexicon", "lexicon_projection", "glossary",
+    "evidence_inventory",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +144,15 @@ def request(spec_id, artifacts, scope, changes):
     return _request(spec_id, artifacts, scope, changes, policy=_DISCOVERY_POLICY)
 
 
-def identity_request(spec_id, artifacts, scope, changes):
+def identity_request(spec_id, artifacts, scope, changes, projection_sources, evidence_inventories):
     """Normalize the strict general request through its fixed six-family policy."""
-    return _request(spec_id, artifacts, scope, changes, policy=_IDENTITY_POLICY)
+    from harness.element_identity_bundle import _normalize
+
+    artifacts, scope, changes, affected = _request(
+        spec_id, artifacts, scope, changes, policy=_IDENTITY_POLICY)
+    projection_sources, evidence_inventories = _normalize(
+        projection_sources, evidence_inventories)
+    return artifacts, scope, changes, affected, projection_sources, evidence_inventories
 
 
 def _scope_diagnostics(artifact, before, after, scope, *, allow_nested):
