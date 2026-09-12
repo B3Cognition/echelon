@@ -5,9 +5,9 @@ scheduler or account. Ordinary slice acceptance never satisfies these gates.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import json
-from typing import Literal
+from typing import Literal, get_args, get_origin, get_type_hints
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_evidence import (
@@ -230,6 +230,63 @@ def _put(context, value):
     return put(context.objects, value)
 
 
+def _normalize_provider_authority_arrays(value, annotation):
+    """Canonicalize order-insensitive provider arrays before typed admission.
+
+    ``KnowledgeValueV1`` stores every tuple in identity order, while JSON Schema
+    can express uniqueness but cannot require that ordering. This boundary sorts
+    only well-typed set-like arrays; it never removes duplicates or repairs
+    missing, extra, or malformed values.
+    """
+    origin = get_origin(annotation)
+    if origin is tuple:
+        if not isinstance(value, list):
+            return value
+        item_type = get_args(annotation)[0]
+        normalized = [
+            _normalize_provider_authority_arrays(item, item_type)
+            for item in value
+        ]
+        if item_type is str and all(isinstance(item, str) for item in normalized):
+            return sorted(normalized)
+        if (
+            isinstance(item_type, type)
+            and issubclass(item_type, KnowledgeValueV1)
+            and all(isinstance(item, dict) for item in normalized)
+        ):
+            return sorted(
+                normalized,
+                key=lambda item: content_digest(canonical_json_bytes(item)),
+            )
+        return normalized
+    if (
+        isinstance(annotation, type)
+        and issubclass(annotation, KnowledgeValueV1)
+        and isinstance(value, dict)
+    ):
+        hints = get_type_hints(annotation)
+        result = dict(value)
+        for field in fields(annotation):
+            if field.name in result:
+                result[field.name] = _normalize_provider_authority_arrays(
+                    result[field.name], hints[field.name]
+                )
+        return result
+    return value
+
+
+def _provider_knowledge_value(cls, value):
+    actual = cls
+    if cls is KnowledgeReconciliationCandidateV1 and isinstance(value, dict):
+        if 'debt_resolutions' in value:
+            actual = DebtResolvingKnowledgeReconciliationCandidateV1
+    elif cls is KnowledgeReconciliationReviewV1 and isinstance(value, dict):
+        if 'resolved_debt_candidate_ids' in value:
+            actual = DebtResolvingKnowledgeReconciliationReviewV1
+    normalized = _normalize_provider_authority_arrays(value, actual)
+    return actual.from_json_dict(normalized)
+
+
 def build_reconciliation_work(context, target, *, scope, input_results):
     """Derive exact required work from active reviewed categories and prior roots."""
     from harness.re_v2.knowledge_revision import load_knowledge_revision, _bundles
@@ -370,13 +427,25 @@ def _reconciliation_context(context, active, view, work, *, role, candidate=None
         row = _rows(context.objects, key)
         if row['selector']['source_id'] == work.source_id:
             outcomes.append({'outcome_id': key, **{k: row[k] for k in ('selector', 'reason_class', 'disposition', 'reason_code')}})
+    response_authority = {
+        'work_item_id': work.identity,
+        'obligation_ids': list(work.obligation_ids),
+        'input_result_ids': list(work.input_result_ids),
+        'required_checks': list(RECONCILIATION_CHECKS),
+        'each_check_result_ids': list(work.input_result_ids),
+        'permitted_check_evidence_ids': list(work.evidence_ids),
+        'minimum_check_evidence_ids': 1 if work.evidence_ids else 0,
+    }
+    if candidate is not None:
+        response_authority['candidate_id'] = candidate.identity
     payload = canonical_json_bytes({'schema_version': 1, 'kind': 'knowledge-reconciliation', 'role': role,
         'work_item': work.to_json_dict(), 'category_assessments': categories,
         'snapshot_evidence': [safe[key].to_json_dict() for key in work.evidence_ids],
         'accepted_results': results, 'inherited_debt': inherited, 'evidence_request_outcomes': outcomes,
         'candidate': candidate.to_json_dict() if candidate else None,
         'feedback': [r.to_json_dict() for r in feedback] if role == 'producer' else [],
-        'required_checks': list(RECONCILIATION_CHECKS), 'debt_authorized': active.authorization.allow_debt})
+        'required_checks': list(RECONCILIATION_CHECKS), 'response_authority': response_authority,
+        'debt_authorized': active.authorization.allow_debt})
     maximum = context.inputs.exhaustive_policy.max_context_bytes + (
         context.inputs.exhaustive_policy.max_candidate_output_bytes if role == 'verifier' else 0)
     if len(payload) > maximum:
@@ -409,7 +478,7 @@ def _artifact(context, work, capture, cls, candidate=None):
     raw = parse_captured_result(context.objects, capture.capture, validate_provider_output)
     if len(raw) > context.inputs.exhaustive_policy.max_candidate_output_bytes:
         raise ValueError('reconciliation-output-bound')
-    artifact = cls.from_json_dict(json.loads(raw))
+    artifact = _provider_knowledge_value(cls, json.loads(raw))
     if candidate is None:
         validate_reconciliation_candidate(work, artifact)
     else:
@@ -698,7 +767,7 @@ def authenticate_knowledge_record(objects, model, state):
         raw = parse_captured_result(objects, capture, validate_provider_output)
         if (capture.result_kind != 'provider_result' or model.role != envelope.role or
                 (envelope.slice_spec_id, envelope.plan_entry_id) != (work.identity, work.identity)
-                or cls.from_json_dict(json.loads(raw)) != artifact):
+                or _provider_knowledge_value(cls, json.loads(raw)) != artifact):
             raise ValueError('reconciliation-artifact-capture-mismatch')
         context, active = _frozen_authority(objects, work.revision_manifest_id, state)
         if len(raw) > context.inputs.exhaustive_policy.max_candidate_output_bytes:

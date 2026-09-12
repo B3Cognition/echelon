@@ -12,6 +12,9 @@ normalized accepted lower results, exact inherited debt (including the typed
 `InheritedResidualDebtContextV1` view of accepted L3 debt) and authenticated evidence
 request outcomes. Producer mode also receives durable reviewer feedback; verifier
 mode receives the immutable candidate in a fresh context, without producer reasoning.
+The trusted `response_authority` supplies the exact work/candidate identities,
+complete obligation/result arrays, and per-check evidence grounding minimums; agents
+copy these values and never reconstruct content hashes.
 Carried L4 limitations include the exact original acceptance, debt items and candidates.
 Never supply private evidence mappings, source checkout paths or transcripts.
 

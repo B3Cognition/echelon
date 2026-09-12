@@ -103,11 +103,47 @@ def test_slice_pass_requires_separate_target_and_source_reviews_before_completio
     for role, value in backend.calls:
         if value.get('kind') == 'knowledge-reconciliation' and role == 'verifier':
             assert value['candidate'] and 'producer_reasoning' not in value
+        if value.get('kind') == 'knowledge-reconciliation':
+            authority = value['response_authority']
+            work = value['work_item']
+            assert authority['work_item_id'] == content_digest(
+                canonical_json_bytes(work)
+            )
+            assert authority.get('candidate_id') == (
+                content_digest(canonical_json_bytes(value['candidate']))
+                if value['candidate'] is not None
+                else None
+            )
+            assert authority['obligation_ids'] == work['obligation_ids']
+            assert authority['input_result_ids'] == work['input_result_ids']
+            assert authority['each_check_result_ids'] == work['input_result_ids']
+            assert authority['permitted_check_evidence_ids'] == work['evidence_ids']
+            assert authority['minimum_check_evidence_ids'] == (
+                1 if work['evidence_ids'] else 0
+            )
     assert protocol_28_status_document(context.run_dir)['status'] == 'complete'
     before = bytes_under(context.paths.root)
     assert run_protocol_28_exhaustive(context.run_dir, lambda: pytest.fail('completed replay requested a provider')) == result
     assert_bounded_revision_replay(context, active, monkeypatch)
     assert bytes_under(context.paths.root) == before
+
+
+@pytest.mark.unit
+def test_provider_reconciliation_set_order_is_normalized_before_authority(tmp_path):
+    context, *_ = reconciliation_fixture(tmp_path)
+
+    def reverse_set_order(role, supplied, value):
+        if role == 'producer':
+            value['checks'] = list(reversed(value['checks']))
+        return value
+
+    result = run_protocol_28_exhaustive(
+        context.run_dir,
+        lambda: KnowledgeBackend(mutate=reverse_set_order),
+    )
+
+    assert result.state == 'complete'
+    assert result.run_root_id is not None
 
 
 @pytest.mark.unit

@@ -62,16 +62,26 @@ NEVER turn generic unknown, repeated feedback or retry exhaustion into debt auto
 ALWAYS preserve exact obligation, candidate, review, revision and authorization IDs.
 NEVER write receipts, ledgers, events, roots, controller state or publication artifacts.
 
+ALWAYS copy `work_item_id`, `obligation_ids`, `input_result_ids` and per-check
+grounding requirements exactly from `response_authority`; in verifier mode also
+copy its `candidate_id`.
+NEVER derive content identities yourself, cite only a subset of
+`each_check_result_ids`, or leave a check ungrounded when
+`minimum_check_evidence_ids` is nonzero.
+
 ## Protocol
 
 1. Read the supplied safe evidence, reviewed category rows and accepted lower results.
 2. Check category coverage, contradictions, cross-slice call chains, evidence support,
    dependency continuity, omitted work and inherited debt. Preserve the complete scope.
-3. In producer mode propose `KnowledgeReconciliationCandidateV1`; use durable reviewer
+3. Copy the exact response IDs and per-check result/evidence constraints from
+   `response_authority`; array order is canonicalized by the trusted adapter but array
+   membership is not repaired.
+4. In producer mode propose `KnowledgeReconciliationCandidateV1`; use durable reviewer
    feedback to address the actual failed check, not merely reword it.
-4. In verifier mode return `KnowledgeReconciliationReviewV1` with PASS, REPAIR or
+5. In verifier mode return `KnowledgeReconciliationReviewV1` with PASS, REPAIR or
    narrowly supported ACCEPT_WITH_DEBT. The existing controller validates the result.
-5. When new evidence supports separate closure, use the explicit
+6. When new evidence supports separate closure, use the explicit
    `DebtResolvingKnowledgeReconciliationCandidateV1` subtype with `debt_resolutions`.
    The independent `DebtResolvingKnowledgeReconciliationReviewV1` must name every
    resolved proposal in `resolved_debt_candidate_ids`; ordinary PASS retains debt.
