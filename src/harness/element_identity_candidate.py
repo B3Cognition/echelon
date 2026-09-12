@@ -155,7 +155,8 @@ def identity_request(spec_id, artifacts, scope, changes, projection_sources, evi
     return artifacts, scope, changes, affected, projection_sources, evidence_inventories
 
 
-def _scope_diagnostics(artifact, before, after, scope, *, allow_nested):
+def _scope_diagnostics(
+        artifact, before, after, scope, *, allow_nested, preserve_image_presence=False):
     """Mask only exact authorized declaration spans, preserving all other text."""
     result = []
     path = artifact.path
@@ -206,10 +207,14 @@ def _scope_diagnostics(artifact, before, after, scope, *, allow_nested):
         chunks.append(text[cursor:])
         return "".join(chunks)
 
+    before_unowned = masked(artifact.before_text or "", before, after_ids)
+    after_unowned = masked(artifact.after_text or "", after, before_ids)
+    presence_changed = (
+        preserve_image_presence
+        and (artifact.before_text is None) != (artifact.after_text is None)
+    )
     if path not in scope.unowned_text_paths and (
-        masked(artifact.before_text or "", before, after_ids)
-        != masked(artifact.after_text or "", after, before_ids)
-    ):
+            presence_changed or before_unowned != after_unowned):
         result.append(CandidateDiagnostic("unowned_text_changed", path, None,
                                           "text outside authorized definition spans changed"))
     return tuple(result)
@@ -223,4 +228,10 @@ def scope_diagnostics(artifact, before, after, scope):
 def _identity_scope_diagnostics(artifact, before, after, scope):
     """Apply the general policy, permitting real nested requirement declarations."""
     return _scope_diagnostics(
-        artifact, before, after, scope, allow_nested=artifact.role == "requirements")
+        artifact,
+        before,
+        after,
+        scope,
+        allow_nested=artifact.role == "requirements",
+        preserve_image_presence=artifact.role in {"glossary", "evidence_inventory"},
+    )

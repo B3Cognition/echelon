@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,6 +83,11 @@ def seeded_store(tmp_path, source: str = SOURCE):
     store.apply_lifecycle(spec_id="demo", operation_id="adopt", changes=tuple(
         ElementAdopt(row.element_id, row.caption, row.content) for row in rows))
     return store
+
+
+def logical_state(tmp_path):
+    with sqlite3.connect(tmp_path / ".echelon/identity/registry.sqlite3") as connection:
+        return tuple(connection.iterdump())
 
 
 def check(store, *, artifacts, projection_sources=(), evidence_inventories=(), scope=None, changes=()):
@@ -560,6 +566,71 @@ def test_absent_inventory_image_is_not_parsed_but_present_empty_is_invalid(tmp_p
        scope=IdentityEditScope(("evidence.json",), (), ("evidence.json",)))
     assert any(item.code == "invalid_evidence_inventory" and "after" in item.detail
                for item in empty.diagnostics)
+
+
+@pytest.mark.parametrize(("before", "after"), [(None, ""), ("", None)],
+                         ids=["absent-to-empty", "empty-to-absent"])
+def test_absent_and_empty_glossary_transition_requires_unowned_scope(
+        tmp_path, before, after):
+    from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
+
+    store = seeded_store(tmp_path)
+    original = logical_state(tmp_path)
+    artifact = CandidateArtifact("glossary.md", "glossary", before, after)
+    denied = check(
+        store, artifacts=(artifact,),
+        scope=IdentityEditScope(("glossary.md",), ()),
+    )
+    assert codes(denied) == {"unowned_text_changed"}
+    assert logical_state(tmp_path) == original
+
+    allowed = check(
+        store, artifacts=(artifact,),
+        scope=IdentityEditScope(("glossary.md",), (), ("glossary.md",)),
+    )
+    assert allowed.diagnostics == ()
+    assert logical_state(tmp_path) == original
+
+
+@pytest.mark.parametrize(("before", "after"), [(None, ""), ("", None)],
+                         ids=["absent-to-empty", "empty-to-absent"])
+def test_absent_and_empty_inventory_transition_independently_requires_unowned_scope(
+        tmp_path, before, after):
+    from harness.element_identity_bundle import EvidenceInventoryContext
+    from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
+
+    store = seeded_store(tmp_path)
+    original = logical_state(tmp_path)
+    artifact = CandidateArtifact("evidence.json", "evidence_inventory", before, after)
+    context = (EvidenceInventoryContext("evidence.json"),)
+    denied = check(
+        store, artifacts=(artifact,), evidence_inventories=context,
+        scope=IdentityEditScope(("evidence.json",), ()),
+    )
+    assert {"invalid_evidence_inventory", "unowned_text_changed"} == codes(denied)
+    assert logical_state(tmp_path) == original
+
+    allowed = check(
+        store, artifacts=(artifact,), evidence_inventories=context,
+        scope=IdentityEditScope(("evidence.json",), (), ("evidence.json",)),
+    )
+    assert codes(allowed) == {"invalid_evidence_inventory"}
+    assert logical_state(tmp_path) == original
+
+
+def test_unchanged_supplemental_images_do_not_require_edit_scope(tmp_path):
+    from harness.element_identity_bundle import EvidenceInventoryContext
+    from harness.element_identity_candidate import CandidateArtifact
+
+    store = seeded_store(tmp_path)
+    original = logical_state(tmp_path)
+    result = check(store, artifacts=(
+        CandidateArtifact("glossary.md", "glossary", "", ""),
+        CandidateArtifact("evidence.json", "evidence_inventory", "", ""),
+    ), evidence_inventories=(EvidenceInventoryContext("evidence.json"),))
+    assert not ({"artifact_out_of_scope", "unowned_text_changed"} & codes(result))
+    assert codes(result) == {"invalid_evidence_inventory"}
+    assert logical_state(tmp_path) == original
 
 
 def test_inventory_whole_text_change_requires_artifact_and_unowned_scope(tmp_path):
