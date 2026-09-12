@@ -235,6 +235,12 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   Interrupted prefixes retain recovery material; callbacks do not establish
   accepted-source, semantic, namespace or completion authority. No live caller
   has been switched to this API.
+- Stored source-fingerprint validation: implemented in `40ff5fbf` and
+  independently reviewed. Five-module suite: 240 passed; a subsequent test-only
+  empty-tree refinement passed its focused check. The strict decoder validates
+  the existing canonical metadata format and shares tree-layout rules with
+  the original-byte codec. Self-consistent changed metadata remains a claim,
+  not provenance, accepted-source authority or a publication receipt.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
