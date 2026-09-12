@@ -330,12 +330,14 @@ def test_valid_but_different_genesis_claims_cannot_select_authority(tmp_path, fi
 def test_two_contexts_and_specs_do_not_allow_context_substitution(tmp_path):
     store = IdentityStore.initialize(tmp_path)
     first, first_source = enroll(store)
-    other_manifest = empty_tree_manifest("specs/other")
-    second_source = store.register_source_context(
-        spec_id="other",
-        context_id="other-source",
-        operation_id="other-source-registration",
-        manifest=other_manifest,
+    second, second_source = enroll(
+        store,
+        spec="other",
+        run="second",
+        context="other-source",
+        spec_path="specs/other",
+        source_operation="other-source-registration",
+        managed_operation="other-managed-registration",
     )
     forged = {
         **first,
@@ -350,7 +352,9 @@ def test_two_contexts_and_specs_do_not_allow_context_substitution(tmp_path):
     assert store.check_managed_context(
         spec_id="demo", run_id="first", record=first
     )["source_context"] == first_source
-    assert store.source_context(spec_id="other", context_id="other-source") == second_source
+    assert store.check_managed_context(
+        spec_id="other", run_id="second", record=second
+    )["source_context"] == second_source
 
 
 @pytest.mark.parametrize(
