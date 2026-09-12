@@ -108,14 +108,74 @@ successful before image, recapture and compare the complete tree before promotio
 and bind the exact image set, edit scope and review to a durable intent.
 
 One selected tree does not cover all external semantic dependencies. Constitution,
-glossary and product inputs must be bound by a future complete-bundle owner under
-one coherent validation scope; sequential snapshots are not an atomic cross-tree
-read set. Candidate writing, provider dispatch, identity allocation/lifecycle/
-binding, controller routing, publication promotion and activation are unchanged.
+glossary and product inputs require an explicit complete selection. The joint
+inspection below captures that declared selection in one scope; sequential
+snapshots are not an atomic cross-tree read set. Candidate writing, provider
+dispatch, identity allocation/lifecycle/binding, controller routing, publication
+promotion and activation are unchanged.
 Existing Phase A completion transactions, candidate isolation and repair remain
 the integration owners. Rejected candidates stay diagnostic and cannot update
 canonical artifacts, graphs or memory. Published labels, including `FR-001` and
 historical composite IDs, remain exactly as published.
+
+## Joint sealed-publication and selected-source inspection boundary
+
+`PreparedSquadPublication.inspect_sources(tree_paths=(), file_paths=())` is an
+inactive, read-only building block for a future durable identity publication
+intent. The controller supplies both sequences explicitly. Before opening
+descriptors or acquiring the lock, the reader copies and validates every exact
+UTF-8 string using the existing canonical nonempty project-relative path grammar.
+Empty batches are valid; strings and bytes are not batches. Duplicate paths and
+component-wise ancestor/descendant selections fail within and across both batches,
+including file/file overlaps. Prefix siblings such as `spec/a` and `spec/ab`
+remain distinct. A sealed operation target may also appear in the source
+selection; this is necessary for baseline observation.
+
+The frozen `PublicationSourcesSnapshot` in `harness.squad_source_snapshot`
+contains the entire unchanged `PublicationSnapshot`, a path-sorted tuple of
+`ProjectTreeSnapshot` values and a path-sorted tuple of `ProjectPathSnapshot`
+values. Individual paths carry `path`, the exact `PublicationImageDescriptor`,
+and `content`: a missing file or ancestor gives a missing descriptor and `None`,
+while an empty regular file gives its actual hash/mode and `b""`. Directories,
+symlinks and special files are rejected for individual file selections. Trees
+retain their complete iterative traversal semantics, including hidden/binary
+files, all directory modes and memberships, and nested empty directories. Stable
+hardlinked regular files retain the existing read-only capture behavior; link
+count, content and identity changes still invalidate their pins. Absence is never
+materialized, and resource or capability failures fail closed without truncation.
+
+Both public inspectors share one sealed-capture implementation, and both tree
+readers share one traversal implementation. Joint inspection acquires exactly
+one existing project inspection scope and publication lock associated with its
+retained root descriptor. All selected sources, missing components, directories,
+file identities and sealed transaction resources belong to that scope's resource
+owner. Immediately before yielding and again on normal exit, it jointly verifies
+all retained source bindings/memberships and the sealed transaction, even when
+both selections are empty. A source changed while a later source is being read
+cannot escape before yield; body-time drift fails normal exit. Caller exceptions
+propagate unchanged and release the lock and owned descriptors.
+
+There is no implicit workspace scan, extension filter, Markdown decoding, role
+inference, external-project traversal or filtering of sealed operations. Source
+trees/files observe current canonical bytes; operation postimages describe the
+sealed proposed bytes. No staged bytes are overlaid onto source observations.
+An interrupted promotion still exposes the existing global prefix lower bound
+and no-op ambiguity; current postimages cannot reconstruct original preimage
+bytes. The future intent owner must authenticate declared dependency coverage,
+retain original before images, validate typed role/scope mappings and semantic
+review, and perform candidate checks on one guarded ledger baseline.
+
+Keep this controller-owned scope short: do not run providers or recursively
+inspect, publish or discard inside it. Successful observation includes normal
+context exit. A caller write committed inside the body is not undone by a later
+source-drift exception and must not be considered completed on yield alone.
+These detached values supply no receipt, durable lease, graph permission,
+semantic assessment, promotion authority or post-exit freshness. Pending-write
+protection, recovery/finalization, graph receipts, managed producers and bounded
+repair remain required. There is no new schema, on-disk protocol, identity write,
+provider routing, promotion/discard behavior or activation. Existing Phase A
+completion transactions, candidate isolation and repair remain the owners, and
+published labels and string IDs retain their exact spelling.
 
 ## Strict request recovery codec
 

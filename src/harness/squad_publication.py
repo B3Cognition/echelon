@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -18,6 +18,7 @@ from harness.controller_lock_order import controller_lock_order
 
 if TYPE_CHECKING:
     from harness.squad_publication_snapshot import PublicationSnapshot
+    from harness.squad_source_snapshot import PublicationSourcesSnapshot
 
 try:
     import fcntl as _fcntl
@@ -1711,13 +1712,19 @@ class PreparedSquadPublication:
     _manifest: dict[str, object]
     marker: PublicationMarker
 
-    @contextmanager
-    def inspect(self) -> Iterator[PublicationSnapshot]:
-        """Inspect exact sealed/current images under the existing publication lock.
+    def _inspection_marker(self) -> PublicationMarker:
+        _require_secure_posix()
+        marker = _marker_from(self.marker)
+        expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
+        if self._transaction_root != expected_root:
+            _raise("manifest_invalid")
+        return marker
 
-        Success includes exit validation. Keep bodies short and controller-owned;
-        never recursively publish, discard or inspect under this non-reentrant lock.
-        """
+    def _capture_inspection(
+        self, paths: _InspectionPaths, filesystem_fd: int, project_fd: int,
+        marker: PublicationMarker,
+    ) -> tuple[PublicationSnapshot, _PinnedTransaction]:
+        """Capture sealed images in a caller-owned scope without acquiring a lock."""
         from harness.squad_publication_snapshot import (
             PublicationImageDescriptor,
             PublicationOperationSnapshot,
@@ -1726,69 +1733,107 @@ class PreparedSquadPublication:
             _image_descriptor,
         )
 
-        _require_secure_posix()
-        marker = _marker_from(self.marker)
-        expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
-        if self._transaction_root != expected_root:
-            _raise("manifest_invalid")
+        verified, pinned = _load_prepared_pinned(
+            self._project_root, self._squad_dir, marker
+        )
+        paths.resources.callback(pinned.close)
+        paths.verify()
+        squad_fd = paths.directory(
+            filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
+        )
+        assert project_fd is not None and squad_fd is not None
+        try:
+            squad_identity = _directory_identity(os.fstat(squad_fd))
+            pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
+        except OSError:
+            _raise("stage_corrupt")
+        if squad_identity != pinned_squad_identity:
+            _raise("stage_corrupt")
+        stage_bytes: dict[str, bytes] = {}
+        for name, stage in pinned.stages.items():
+            paths.directory(
+                pinned.transaction_fd, Path(name).parts[:-1],
+                code="stage_corrupt",
+            )
+            stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
+        operations: list[PublicationOperationSnapshot] = []
+        for operation in verified._manifest["operations"]:
+            current = paths.current(project_fd, Path(operation["target"]))
+            if current is None:
+                descriptor = PublicationImageDescriptor("missing", None, None)
+                content = None
+            else:
+                descriptor = PublicationImageDescriptor(
+                    "file", current.sha256, stat.S_IMODE(current.identity[2])
+                )
+                content = _read_pinned_bytes(current, code="target_drift")
+            postimage = _image_descriptor(operation["postimage"])
+            post_bytes = (
+                stage_bytes[operation["staged"]]
+                if operation["action"] == "write" else None
+            )
+            if post_bytes is not None and (
+                hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
+            ):
+                _raise("stage_corrupt")
+            operations.append(PublicationOperationSnapshot(
+                action=operation["action"], target=operation["target"],
+                preimage=_image_descriptor(operation["preimage"]),
+                postimage=postimage, current=descriptor,
+                current_bytes=content, postimage_bytes=post_bytes,
+            ))
+        snapshot = PublicationSnapshot(
+            marker=marker,
+            promoted_prefix=_authenticate_image_prefix(
+                (op.preimage, op.postimage, op.current) for op in operations
+            ),
+            operations=tuple(operations),
+        )
+        return snapshot, pinned
+
+    @contextmanager
+    def inspect(self) -> Iterator[PublicationSnapshot]:
+        """Inspect exact sealed/current images under the existing publication lock.
+
+        Success includes exit validation. Keep bodies short and controller-owned;
+        never recursively publish, discard or inspect under this non-reentrant lock.
+        """
+        marker = self._inspection_marker()
         with _project_inspection_scope(self._project_root) as scope:
-            paths, filesystem_fd, project_fd = scope
-            verified, pinned = _load_prepared_pinned(
-                self._project_root, self._squad_dir, marker
-            )
-            paths.resources.callback(pinned.close)
+            paths, _, _ = scope
+            snapshot, pinned = self._capture_inspection(*scope, marker)
             paths.verify()
-            squad_fd = paths.directory(
-                filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
-            )
-            assert project_fd is not None and squad_fd is not None
-            try:
-                squad_identity = _directory_identity(os.fstat(squad_fd))
-                pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
-            except OSError:
-                _raise("stage_corrupt")
-            if squad_identity != pinned_squad_identity:
-                _raise("stage_corrupt")
-            stage_bytes: dict[str, bytes] = {}
-            for name, stage in pinned.stages.items():
-                paths.directory(
-                    pinned.transaction_fd, Path(name).parts[:-1],
-                    code="stage_corrupt",
-                )
-                stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
-            operations: list[PublicationOperationSnapshot] = []
-            for operation in verified._manifest["operations"]:
-                current = paths.current(project_fd, Path(operation["target"]))
-                if current is None:
-                    descriptor = PublicationImageDescriptor("missing", None, None)
-                    content = None
-                else:
-                    descriptor = PublicationImageDescriptor(
-                        "file", current.sha256, stat.S_IMODE(current.identity[2])
-                    )
-                    content = _read_pinned_bytes(current, code="target_drift")
-                postimage = _image_descriptor(operation["postimage"])
-                post_bytes = (
-                    stage_bytes[operation["staged"]]
-                    if operation["action"] == "write" else None
-                )
-                if post_bytes is not None and (
-                    hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
-                ):
-                    _raise("stage_corrupt")
-                operations.append(PublicationOperationSnapshot(
-                    action=operation["action"], target=operation["target"],
-                    preimage=_image_descriptor(operation["preimage"]),
-                    postimage=postimage, current=descriptor,
-                    current_bytes=content, postimage_bytes=post_bytes,
-                ))
-            snapshot = PublicationSnapshot(
-                marker=marker,
-                promoted_prefix=_authenticate_image_prefix(
-                    (op.preimage, op.postimage, op.current) for op in operations
-                ),
-                operations=tuple(operations),
-            )
+            pinned.verify()
+            yield snapshot
+            paths.verify()
+            pinned.verify()
+
+    @contextmanager
+    def inspect_sources(
+        self, *, tree_paths: Sequence[str] = (), file_paths: Sequence[str] = (),
+    ) -> Iterator[PublicationSourcesSnapshot]:
+        """Inspect sealed images and selected sources under one short lock scope.
+
+        Success includes normal exit. Do not run providers or recursively inspect,
+        publish or discard here. These observations grant no post-exit freshness.
+        """
+        from harness.squad_source_snapshot import (
+            PublicationSourcesSnapshot,
+            _capture_project_path,
+            _capture_project_tree,
+            _source_selection,
+        )
+
+        tree_paths, file_paths = _source_selection(tree_paths, file_paths)
+        marker = self._inspection_marker()
+        with _project_inspection_scope(self._project_root) as scope:
+            paths, _, project_fd = scope
+            publication, pinned = self._capture_inspection(*scope, marker)
+            trees = tuple(_capture_project_tree(paths, project_fd, path) for path in tree_paths)
+            files = tuple(_capture_project_path(paths, project_fd, path) for path in file_paths)
+            snapshot = PublicationSourcesSnapshot(publication, trees, files)
+            # Earlier captures must still hold after every later read, including
+            # when the selected sources are empty and only the seal is retained.
             paths.verify()
             pinned.verify()
             yield snapshot
