@@ -110,6 +110,11 @@ After the exact association comparison was refactored from individual booleans t
 40 passed in 3.76s
 ```
 
+The two test-only self-review additions—explicit current-source association
+mutation coverage and same-head nested detachment coverage—were both present and
+focused-green before the required covering set below. They are included in its
+470-test result; there were no code or test changes after that covering run.
+
 ### Required final covering set (run once)
 
 Command:
