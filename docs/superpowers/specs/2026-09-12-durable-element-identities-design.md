@@ -170,6 +170,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   verification edges remain explicitly unassessed. Canonical history validation
   and detached ownership do not authenticate the caller's source/namespace or
   activate any live graph builder, audit, publisher or memory consumer.
+- Identity-aware read-only graph selectors and traversal: implemented in
+  `6e947d75` and independently reviewed with no findings. Exact four-module
+  suite: 116 passed. Bare labels prefer their durable entity while preserving
+  cross-spec ambiguity; typed impact includes retained revisions, provenance,
+  evidence and occurrences without reverse Spec fanout or successor lineage.
+  Results preserve assessment metadata and do not certify current sources,
+  invalidate workflow stages or activate live managed graph loading.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
