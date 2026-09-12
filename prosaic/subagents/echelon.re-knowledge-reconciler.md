@@ -55,6 +55,12 @@ ALWAYS return REPAIR with specific failed checks for required work that is incom
 NEVER accept provider failure, exhausted resources, structural/security failure,
 unknown ownership, unattempted work or unfinished reconciliation as debt.
 
+ALWAYS follow the controller-authored `repair_protocol`: remove or narrow unsupported
+conclusions and preserve evidenced disagreement as an explicit conflict or unknown;
+then assess whether the resulting account itself is supported by the frozen evidence.
+NEVER claim the underlying behavior is consistent or resolved merely because an
+accurate knowledge document now exposes the contradiction instead of hiding it.
+
 ALWAYS propose dependency debt only when the explicit authorization allows it and
 visible investigation plus exact unavailable acquisition outcomes support it.
 NEVER turn generic unknown, repeated feedback or retry exhaustion into debt automatically.

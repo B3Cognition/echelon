@@ -438,14 +438,34 @@ def _reconciliation_context(context, active, view, work, *, role, candidate=None
     }
     if candidate is not None:
         response_authority['candidate_id'] = candidate.identity
-    payload = canonical_json_bytes({'schema_version': 1, 'kind': 'knowledge-reconciliation', 'role': role,
+    document = {'schema_version': 1, 'kind': 'knowledge-reconciliation', 'role': role,
         'work_item': work.to_json_dict(), 'category_assessments': categories,
         'snapshot_evidence': [safe[key].to_json_dict() for key in work.evidence_ids],
         'accepted_results': results, 'inherited_debt': inherited, 'evidence_request_outcomes': outcomes,
         'candidate': candidate.to_json_dict() if candidate else None,
         'feedback': [r.to_json_dict() for r in feedback] if role == 'producer' else [],
         'required_checks': list(RECONCILIATION_CHECKS), 'response_authority': response_authority,
-        'debt_authorized': active.authorization.allow_debt})
+        'debt_authorized': active.authorization.allow_debt}
+    reconciler_contract = context.objects.read_blob(
+        active.authorization.reconciler_contract_id
+    )
+    if (
+        role == 'producer'
+        and feedback
+        and b'`repair_protocol`' in reconciler_contract
+    ):
+        # Controller-authored repair semantics remove the model's tempting but
+        # invalid escape routes. A conflict may remain explicit knowledge, while
+        # unsupported conclusions must disappear; neither case is an automatic
+        # debt acceptance or a claim that the underlying behavior was resolved.
+        document['repair_protocol'] = {
+            'failed_check_names': sorted(row.check for row in feedback),
+            'required_outcome': 'supported-or-explicitly-unknown',
+            'unsupported_claim_action': 'remove-or-narrow',
+            'contradiction_action': 'preserve-as-explicit-conflict',
+            'debt_action': 'dependency-ambiguity-only',
+        }
+    payload = canonical_json_bytes(document)
     maximum = context.inputs.exhaustive_policy.max_context_bytes + (
         context.inputs.exhaustive_policy.max_candidate_output_bytes if role == 'verifier' else 0)
     if len(payload) > maximum:

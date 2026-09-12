@@ -15,6 +15,11 @@ mode receives the immutable candidate in a fresh context, without producer reaso
 The trusted `response_authority` supplies the exact work/candidate identities,
 complete obligation/result arrays, and per-check evidence grounding minimums; agents
 copy these values and never reconstruct content hashes.
+After a reviewed failure, producer mode also receives a controller-authored
+`repair_protocol`. It requires unsupported conclusions to be removed or narrowed
+and evidenced contradictions to remain explicit conflicts or unknown behavior.
+The protocol never authorizes hiding a conflict, calling it resolved, or accepting
+it as debt merely because an attempt repeated.
 Carried L4 limitations include the exact original acceptance, debt items and candidates.
 Never supply private evidence mappings, source checkout paths or transcripts.
 

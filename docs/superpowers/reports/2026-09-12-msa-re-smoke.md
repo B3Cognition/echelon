@@ -90,6 +90,23 @@ ordinary refresh workflow. A reviewed-analysis guidance/debt successor needs a
 separate explicit authority design; it must not reopen this immutable run or
 downgrade contradictory evidence into dependency debt.
 
+That diagnosis was subsequently narrowed against the approved simple-workflow
+contract. A new protocol-specific resume/debt successor is neither necessary nor
+desirable for ordinary reviewed refresh: repeating the same `echelon re refresh`
+action is the specified immutable recovery path. The implementation now reports
+that exact copyable action for exhausted reviewed refresh reconciliation. New
+reconciler contracts also receive a controller-authored repair protocol requiring
+unsupported conclusions to be removed or narrowed and evidenced disagreement to
+remain an explicit conflict or unknown. It does not authorize a false PASS or
+convert repeated contradiction into debt. The capability is frozen-contract
+gated, so historical runs reconstruct their original context byte-for-byte.
+
+The focused reconciliation, status, role, refresh, and end-to-end suite passed 52
+tests after this repair. The stopped MSA run replays under the checkout reader and
+now recommends `echelon re refresh --source caic-msa-jenkins --depth standard`.
+A new paid attempt remains separate live evidence; this report does not claim that
+the strengthened real-model reconciliation has yet completed the standard refresh.
+
 Observed conservative analysis charges were 2,307,328 tokens for the first
 standard attempt and 3,970,077 for the second. Including the successful quick
 analysis and synthesis, the smoke consumed 11,294,696 conservative tokens,

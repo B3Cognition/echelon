@@ -191,11 +191,58 @@ def _reviewed_document(context, state, events):
         **_exhaustive_document(context, state, events), **inherited, 'limitations': limitations,
         'input_quality': 'partial' if limitations else inherited['input_quality'],
         'post_l4': post_l4, 'workflow_state': workflow_state,
-        'next_action': ('Review the exact blocker.' if blocker else
+        'next_action': (_reviewed_blocker_action(context, active, blocker) if blocker else
             'Continue reviewed work.' if not state.terminal else
             'Continue the knowledge workflow.' if workflow_state in {'synthesizing', 'publishing'} else
             'Review the completed knowledge publication.'),
         'banner': banners[state.lifecycle_state]}
+
+
+def _reviewed_blocker_action(context, active, blocker):
+    """Return the ordinary immutable recovery action when it is provably known."""
+    if blocker.get('reason_code') not in {
+        'unchanged-reconciliation-outcome',
+        'reconciliation-attempts-exhausted',
+    }:
+        return 'Review the exact blocker.'
+    try:
+        from harness.re_v2.knowledge_creation import (
+            load_reviewed_analysis_creation_intent,
+        )
+
+        request_dir = context.run_dir.parent / active.manifest.logical_run_id
+        intent = load_reviewed_analysis_creation_intent(request_dir)
+    except (OSError, RuntimeError, ValueError):
+        return 'Review the exact blocker.'
+    if not isinstance(intent, dict):
+        return 'Review the exact blocker.'
+    selection = intent.get('selection')
+    depths = intent.get('source_depths')
+    if (
+        not isinstance(selection, dict)
+        or selection.get('all_sources') is not False
+        or not isinstance(selection.get('source_ids'), list)
+        or not selection['source_ids']
+        or not all(isinstance(source_id, str) and source_id for source_id in selection['source_ids'])
+        or not isinstance(depths, list)
+    ):
+        return 'Review the exact blocker.'
+    command = 'echelon re refresh' + ''.join(
+        f' --source {source_id}' for source_id in selection['source_ids']
+    )
+    depth_values = {
+        row[1]
+        for row in depths
+        if isinstance(row, list)
+        and len(row) == 2
+        and all(isinstance(value, str) for value in row)
+    }
+    if len(depth_values) == 1:
+        command += f' --depth {next(iter(depth_values))}'
+    return (
+        f'run `{command}`; it will create a new immutable reviewed attempt and '
+        'preserve the current publication'
+    )
 
 
 def _reviewed_post_l4(context):

@@ -181,9 +181,99 @@ def test_reviewer_failure_is_durable_and_unchanged_fingerprint_stops_calls(tmp_p
     producer_contexts = [c for role, c in backend.calls if role == 'producer' and c.get('kind') == 'knowledge-reconciliation']
     assert len(producer_contexts) == 2
     assert producer_contexts[1]['feedback'][0]['check'] == failure
+    repair = producer_contexts[1]['repair_protocol']
+    assert repair['failed_check_names'] == [failure]
+    assert repair['required_outcome'] == 'supported-or-explicitly-unknown'
+    assert repair['unsupported_claim_action'] == 'remove-or-narrow'
+    assert repair['contradiction_action'] == 'preserve-as-explicit-conflict'
+    assert repair['debt_action'] == 'dependency-ambiguity-only'
     count = len(backend.calls)
     repeated = run_protocol_28_exhaustive(context.run_dir, lambda: backend)
     assert repeated.state == 'needs-attention' and len(backend.calls) == count
+
+
+@pytest.mark.unit
+def test_unchanged_reviewed_refresh_status_recommends_ordinary_immutable_retry(tmp_path):
+    context, *_ = reconciliation_fixture(tmp_path)
+    result = run_protocol_28_exhaustive(
+        context.run_dir,
+        lambda: KnowledgeBackend(failure='contradictions'),
+    )
+    assert result.reason_code == 'unchanged-reconciliation-outcome'
+
+    from harness.re_v2.knowledge_revision import load_knowledge_revision
+
+    active = load_knowledge_revision(context)
+    request_dir = context.paths.root.parent.parent / active.manifest.logical_run_id / 'v2'
+    request_dir.mkdir(parents=True, exist_ok=True)
+    request_dir.joinpath('knowledge-creation.json').write_bytes(canonical_json_bytes({
+        'schema_version': 1,
+        'kind': 'reviewed_analysis_creation_intent',
+        'request_run_id': active.manifest.logical_run_id,
+        'analysis_run_id': context.run_dir.name,
+        'created_at': '2026-09-12T12:00:00Z',
+        'snapshot_id': context.inputs.manifest.source_snapshot_id,
+        'workspace_partition_id': content_digest(b'fixture-partition'),
+        'selection': {
+            'schema_version': 1,
+            'all_sources': False,
+            'source_ids': ['repo-a'],
+            'domain_keys': [],
+        },
+        'source_depths': [['repo-a', 'standard']],
+        'token_limit': 5_000_000,
+        'active_ms_limit': 10_800_000,
+    }))
+
+    status = protocol_28_status_document(context.run_dir)
+
+    assert status['next_action'].startswith(
+        'run `echelon re refresh --source repo-a --depth standard`'
+    )
+    assert 'new immutable reviewed attempt' in status['next_action']
+    assert 'resume' not in status['next_action']
+
+
+@pytest.mark.unit
+def test_legacy_frozen_reconciler_replays_without_new_repair_context_field(tmp_path):
+    context, _, _, _, active = reconciliation_fixture(tmp_path)
+    module = reconciliation_module()
+    run_protocol_28_exhaustive(
+        context.run_dir,
+        lambda: KnowledgeBackend(failure='contradictions'),
+    )
+    work = next(iter(context.ledger.replay().knowledge_work.values()))
+    check = module.KnowledgeReconciliationCheckV1(
+        1,
+        'contradictions',
+        'failed',
+        work.evidence_ids,
+        work.input_result_ids,
+        (),
+        'The frozen legacy review found a contradiction.',
+    )
+    legacy_contract_id = context.objects.put_blob(
+        b'legacy reconciler contract without structured repair guidance'
+    )
+    legacy_active = replace(
+        active,
+        authorization=replace(
+            active.authorization,
+            reconciler_contract_id=legacy_contract_id,
+        ),
+    )
+
+    payload = json.loads(module._reconciliation_context(
+        context,
+        legacy_active,
+        context.ledger.replay(),
+        work,
+        role='producer',
+        feedback=(check,),
+    ))
+
+    assert payload['feedback'][0]['check'] == 'contradictions'
+    assert 'repair_protocol' not in payload
 
 
 @pytest.mark.unit
