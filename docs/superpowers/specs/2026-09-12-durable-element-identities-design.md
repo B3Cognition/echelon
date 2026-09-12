@@ -269,6 +269,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   guided/semi/banzai modes, CAS and interrupted writes are covered. This field
   still needs registry authentication and independent runtime selection; external
   deletion, subsequent runs and physical source ownership are not certified.
+- Explicit managed context authentication: implemented in `a095707a`, with
+  distinct-spec/run test coverage in `d5438181`, and independently reviewed.
+  Five-module implementation suite: 470 passed; final test-only amendment:
+  40 focused tests passed. One query-only transaction compares an independently
+  selected spec/run and supplied record to durable genesis, then returns the
+  associated accepted source head. It neither enrolls nor repairs authority.
+  Runtime mode selection, removed-metadata detection, physical source freshness
+  and publication/semantic completion remain separate required integrations.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
