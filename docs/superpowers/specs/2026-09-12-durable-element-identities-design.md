@@ -125,6 +125,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and numeric coercions reject. Reopened-store retries preserve original receipts
   after later history. Decoding is not semantic, adoption or publication authority
   and does not persist or activate a durable intent.
+- Pinned source-tree capture: implemented in `83b5a04a` and independently
+  reviewed with no findings. Exact three-module compatibility suite: 255 passed.
+  Complete selected-directory membership, directory modes and exact regular-file
+  bytes share the reviewed root/lock/pin owner; missing and empty trees remain
+  distinct. This is an observation of one selected tree during a bounded context,
+  not post-exit freshness, complete external dependency coverage or publication
+  authority. No provider authoring isolation or live workflow is activated.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
