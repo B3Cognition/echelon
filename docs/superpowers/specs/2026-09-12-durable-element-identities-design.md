@@ -63,7 +63,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   independently reviewed with no findings. Focused tests: 36 passed; complete
   requested compatibility set: 224 passed. Pure Lexicon/source/glossary and
   inventory APIs preserve existing rules while validating exact supplied text;
-  legacy Path behavior remains distinct. Supplemental bundle integration is next.
+  legacy Path behavior remains distinct.
+- Supplemental bundle integration: implemented in `5aa44f08`, corrected in
+  `ac9f6e73`, and independently reviewed. Required compatibility suite: 402
+  passed; absent/empty supplemental scope correction: 163 covering tests
+  passed. Derived Lexicon keeps explicit source associations without duplicate
+  identity authority; glossary and inventory retain exact image scope. An extra
+  broad run was interrupted without a failure summary and is not accepted as
+  passing evidence. Five possible cached delivery-test failures passed in a
+  focused root check; final full integration remains required. Issue occurrence
+  candidate authorization is next; no live enforcement is activated.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
