@@ -38,6 +38,7 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
         )
 
     monkeypatch.setattr(workflow, "run_knowledge_workflow", execute)
+    monkeypatch.setattr(cli, "_is_reviewed_analysis_run", lambda _path: True)
     monkeypatch.setattr(cli, "_reviewed_run_depths", lambda _path: {"api": "deep"})
 
     cli._cmd_re_knowledge_run(["--depth", "deep"])
@@ -50,24 +51,54 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
 
 
 @pytest.mark.integration
-def test_normal_run_reports_one_actionable_step_when_analysis_is_unavailable(
+def test_normal_run_creates_reviewed_analysis_when_none_is_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import echelon.cli as cli
+    import harness.re_v2.knowledge_workflow as workflow
 
+    run_dir = tmp_path / "runs" / "re-created-analysis"
+    run_dir.mkdir(parents=True)
+    config = object()
+    provider = object()
+    creations = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "harness.re_lifecycle.resolve_current_re_run", lambda _root: None
     )
+    monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: config)
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider", lambda actual: provider
+    )
+    monkeypatch.setattr(cli, "_is_reviewed_analysis_run", lambda _path: False)
+    monkeypatch.setattr(
+        cli,
+        "_create_or_resume_re_knowledge_analysis",
+        lambda root, active, options, actual_config: (
+            creations.append((root, active, options.depth, actual_config)) or run_dir,
+            "standard",
+        ),
+    )
+    monkeypatch.setattr(
+        cli, "_reviewed_run_depths", lambda _path: {"api": "standard"}
+    )
+    monkeypatch.setattr(
+        workflow,
+        "run_knowledge_workflow",
+        lambda root, run_id, provider_factory, **_kwargs: (
+            provider_factory(),
+            workflow.KnowledgeWorkflowResultV1(
+                run_id, "complete", "re-synthesis", 1, None
+            ),
+        )[1],
+    )
 
-    with pytest.raises(SystemExit) as failure:
-        cli._cmd_re_knowledge_run([])
+    cli._cmd_re_knowledge_run([])
 
-    assert failure.value.code == 2
-    error = capsys.readouterr().err
-    assert "needs attention" in error
-    assert "echelon re run --engine v2" not in error
-    assert "repaired analysis" in error
+    assert creations == [(tmp_path.resolve(), None, None, config)]
+    output = capsys.readouterr().out
+    assert "completed" in output
+    assert "generation 1" in output
 
 
 @pytest.mark.integration

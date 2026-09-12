@@ -26,6 +26,8 @@ from harness.re_v2.protocol_27.lifecycle import (
 )
 from harness.re_v2.protocol_27.model import SynthesisBudgetPolicyV1
 from harness.re_v2.protocol_28.lifecycle import run_protocol_28_exhaustive
+from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+from harness.re_v2.protocol_28.model import KnowledgeAccountTransferV1
 from harness.re_v2.protocol_28.status import protocol_28_status_document
 from harness.re_v2.reviewed_synthesis_parent import resolve_reviewed_synthesis_parent
 
@@ -62,6 +64,41 @@ class KnowledgeRefreshResultV1:
     publication_generation: int | None
     reason_code: str | None
     receipt_path: str
+
+
+def _remaining_synthesis_budget(
+    context: object,
+    *,
+    token_limit: int | None,
+    active_ms_limit: int | None,
+) -> tuple[int | None, int | None]:
+    """Return the unspent aggregate allowance after reviewed analysis."""
+    resources = getattr(context, "resources", None)
+    records = tuple(getattr(resources, "records", ()))
+    if not records or not isinstance(records[0], KnowledgeAccountTransferV1):
+        return token_limit, active_ms_limit
+    decision = resources.decision
+    remaining_tokens = (
+        None
+        if decision.token_limit is None
+        else max(
+            0,
+            decision.token_limit
+            - decision.charged_tokens
+            - decision.open_token_reservations,
+        )
+    )
+    remaining_active_ms = (
+        None
+        if decision.active_ms_limit is None
+        else max(
+            0,
+            decision.active_ms_limit
+            - decision.charged_active_ms
+            - decision.open_active_ms_reservations,
+        )
+    )
+    return remaining_tokens, remaining_active_ms
 
 
 def run_knowledge_workflow(
@@ -110,6 +147,20 @@ def run_knowledge_workflow(
         )
     _fault(fault_hook, "after_analysis")
 
+    synthesis_tokens, synthesis_active_ms = _remaining_synthesis_budget(
+        load_protocol_28_run_context(run_dir),
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+    )
+    if synthesis_tokens == 0 or synthesis_active_ms == 0:
+        return KnowledgeWorkflowResultV1(
+            analysis_run_id,
+            "needs-attention",
+            None,
+            None,
+            "aggregate-budget-exhausted-before-synthesis",
+        )
+
     parent = resolve_reviewed_synthesis_parent(root, analysis_run_id)
     partial_sources = tuple(
         item.source_id for item in parent.accepted_sources if item.outcome == "partial"
@@ -119,8 +170,8 @@ def run_knowledge_workflow(
         SimpleNamespace(
             from_run=analysis_run_id,
             accepted_partial_sources=partial_sources,
-            token_limit=token_limit,
-            active_ms_limit=active_ms_limit,
+            token_limit=synthesis_tokens,
+            active_ms_limit=synthesis_active_ms,
         ),
         shared_provider,  # type: ignore[arg-type]
         fault_hook=fault_hook,
@@ -250,6 +301,22 @@ def run_knowledge_refresh(
         )
     _fault(fault_hook, "after_refresh_analysis")
 
+    synthesis_tokens, synthesis_active_ms = _remaining_synthesis_budget(
+        load_protocol_28_run_context(run_dir),
+        token_limit=token_limit,
+        active_ms_limit=active_ms_limit,
+    )
+    if synthesis_tokens == 0 or synthesis_active_ms == 0:
+        return _refresh_result(
+            root,
+            plan,
+            analysis_run_id,
+            "needs-attention",
+            None,
+            current.generation,
+            "aggregate-budget-exhausted-before-synthesis",
+        )
+
     latest = load_published_index(root)
     if latest is None or latest.generation != plan.publication_generation:
         return _refresh_result(
@@ -282,8 +349,8 @@ def run_knowledge_refresh(
         merged,
         SynthesisBudgetPolicyV1(
             schema_version=1,
-            token_limit=token_limit,
-            active_ms_limit=active_ms_limit,
+            token_limit=synthesis_tokens,
+            active_ms_limit=synthesis_active_ms,
             provider_attempt_limit=2,
             generation_attempt_limit=2,
             result_contract_retry_limit=1,

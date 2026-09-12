@@ -55,8 +55,8 @@
 
 - [ ] Write failing CLI tests proving `echelon re run` creates a fresh reviewed request when none exists, resumes only a compatible active request, and creates a new immutable request when a stopped run binds obsolete inputs.
 - [ ] Route changed-source refresh through the same constructor for the selected snapshot while retaining authenticated unchanged publication inputs. Preserve no-op refresh with zero provider calls and no generation increment.
-- [ ] Display effective depth, selected sources, configured provider, and aggregate ceilings before dispatch. Report running/completed/completed-with-limitations/needs-attention without protocol or layer instructions.
-- [ ] Remove the ordinary creation release refusal only for this repaired path; leave explicit legacy commands routed by their pinned manifests.
+- [x] Display effective depth, selected sources, configured provider, and aggregate ceilings before fresh dispatch. Report running/completed/completed-with-limitations/needs-attention without protocol or layer instructions.
+- [x] Remove the ordinary run-creation release refusal only for this repaired path; leave explicit legacy commands routed by their pinned manifests. Refresh release routing remains below.
 - [ ] Run `pytest -q tests/unit/test_cli_re_knowledge_actions.py tests/integration/test_re_v2_knowledge_end_to_end.py`.
 - [ ] Commit: `feat(re): enable ordinary repaired run and refresh`.
 

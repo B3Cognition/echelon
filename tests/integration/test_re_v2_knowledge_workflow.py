@@ -26,6 +26,23 @@ class _WorkflowProvider:
 
 
 @pytest.mark.integration
+def test_transferred_knowledge_account_grants_synthesis_only_remaining_budget(
+    tmp_path,
+) -> None:
+    from harness.re_v2.knowledge_workflow import _remaining_synthesis_budget
+
+    context = _reviewed_context_with_executor(tmp_path, complete=False)
+    decision = context.resources.decision
+
+    assert _remaining_synthesis_budget(
+        context, token_limit=99_000_000, active_ms_limit=99_000_000
+    ) == (
+        decision.token_limit - decision.charged_tokens,
+        decision.active_ms_limit - decision.charged_active_ms,
+    )
+
+
+@pytest.mark.integration
 def test_workflow_restarts_after_analysis_and_publishes_once(
     tmp_path,
     monkeypatch,

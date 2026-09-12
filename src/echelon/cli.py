@@ -17155,10 +17155,16 @@ def _reviewed_run_depths(run_dir: Path) -> dict[str, str]:
 
     from harness.re_v2.knowledge_activation import ReviewedDiscoveryAuthorityV1
     from harness.re_v2.protocol_28.context import load_protocol_28_run_context
-    from harness.re_v2.protocol_28.inputs import ValidatedReviewedProtocol28Inputs
+    from harness.re_v2.protocol_28.inputs import (
+        ReviewedProtocol28CreationInputs,
+        ValidatedReviewedProtocol28Inputs,
+    )
 
     context = load_protocol_28_run_context(Path(run_dir).resolve())
-    if not isinstance(context.inputs, ValidatedReviewedProtocol28Inputs):
+    if not isinstance(
+        context.inputs,
+        (ReviewedProtocol28CreationInputs, ValidatedReviewedProtocol28Inputs),
+    ):
         raise ValueError("the active RE run is not a repaired reviewed analysis")
     result: dict[str, str] = {}
     for authority_id in context.inputs.reviewed_discovery_catalog.authority_ids:
@@ -17167,6 +17173,21 @@ def _reviewed_run_depths(run_dir: Path) -> dict[str, str]:
         )
         result[authority.source_id] = authority.depth
     return dict(sorted(result.items()))
+
+
+def _is_reviewed_analysis_run(run_dir: Path | None) -> bool:
+    if run_dir is None:
+        return False
+    import json
+
+    manifest = run_dir / "v2" / "run.json"
+    if manifest.is_symlink() or not manifest.is_file():
+        return False
+    try:
+        value = json.loads(manifest.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("invalid active RE run manifest") from None
+    return isinstance(value, dict) and value.get("engine_protocol_version") == "2.8"
 
 
 def _render_re_knowledge_result(action: str, depth: str, result: object) -> None:
@@ -17181,6 +17202,159 @@ def _render_re_knowledge_result(action: str, depth: str, result: object) -> None
         print(f"[re] reason: {reason}")
 
 
+def _capture_re_knowledge_authority(workspace: Path) -> tuple[object, object, tuple[str, ...]]:
+    """Freeze all declared sources for one ordinary reviewed request."""
+    from harness.re_v2.protocol_22.partition import build_workspace_partition_catalog
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    manifest = discover_workspace(workspace)
+    source_ids = tuple(sorted(source.id for source in manifest.sources))
+    if not source_ids:
+        raise ValueError("needs attention: the workspace declares no sources to analyze")
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        manifest.sources,
+        _re_v2_snapshot_root(workspace),
+    )
+    partition = build_workspace_partition_catalog(
+        snapshot,
+        manifest,
+        _re_v22_partition_authorities(),
+    )
+    return snapshot, partition, source_ids
+
+
+def _resume_creation_depths(intent: dict[str, object]) -> tuple[tuple[str, str], ...]:
+    raw = intent.get("source_depths")
+    if not isinstance(raw, list):
+        raise ValueError("invalid active reviewed-analysis creation intent")
+    rows: list[tuple[str, str]] = []
+    for row in raw:
+        if (
+            not isinstance(row, list)
+            or len(row) != 2
+            or not all(isinstance(value, str) for value in row)
+        ):
+            raise ValueError("invalid active reviewed-analysis creation intent")
+        rows.append((row[0], row[1]))
+    return tuple(rows)
+
+
+def _create_or_resume_re_knowledge_analysis(
+    workspace: Path,
+    active: Path | None,
+    options: _ReKnowledgeActionOptions,
+    config: object,
+) -> tuple[Path, str]:
+    """Create or recover the reviewed analysis prerequisite for ordinary run."""
+    from harness.re_registry import load_published_index
+    from harness.re_v2.knowledge_creation import (
+        ReviewedAnalysisCreationOptions,
+        create_or_resume_reviewed_analysis,
+        load_reviewed_analysis_creation_intent,
+    )
+    from harness.re_v2.protocol_24.model import SelectionScopeV1
+
+    intent = (
+        load_reviewed_analysis_creation_intent(active)
+        if active is not None
+        else None
+    )
+    snapshot, partition, source_ids = _capture_re_knowledge_authority(workspace)
+    if intent is not None and (
+        intent.get("snapshot_id") != getattr(snapshot, "snapshot_id", None)
+        or intent.get("workspace_partition_id") != getattr(partition, "identity", None)
+    ):
+        # The old immutable request remains available for diagnosis; changed
+        # source authority starts a new request and never rewrites it.
+        intent = None
+
+    if intent is None:
+        from echelon.re_cli_options import (
+            configured_workspace_depth,
+            resolve_source_depths,
+        )
+
+        published = load_published_index(workspace)
+        established = (
+            {
+                source_id: published.sources[source_id].depth
+                if source_id in published.sources
+                else None
+                for source_id in source_ids
+            }
+            if published is not None
+            else {}
+        )
+        depths = resolve_source_depths(
+            source_ids,
+            explicit=options.depth,
+            published=established,
+            workspace_default=configured_workspace_depth(workspace),
+        )
+        request_run_id = _new_re_v2_run_id(workspace)
+        analysis_run_id = f"{request_run_id}-analysis"
+        created_at = _re_v2_now()
+        token_limit = options.token_limit
+        active_ms_limit = options.active_ms_limit
+        _activate_re_v2_run(workspace, request_run_id)
+    else:
+        request_run_id = str(intent.get("request_run_id", ""))
+        analysis_run_id = str(intent.get("analysis_run_id", ""))
+        created_at = str(intent.get("created_at", ""))
+        depths = dict(_resume_creation_depths(intent))
+        token_limit = intent.get("token_limit")
+        active_ms_limit = intent.get("active_ms_limit")
+        if (
+            request_run_id != active.name
+            or not analysis_run_id.startswith("re-")
+            or type(token_limit) is not int
+            or type(active_ms_limit) is not int
+        ):
+            raise ValueError("invalid active reviewed-analysis creation intent")
+        if options.depth is not None and set(depths.values()) != {options.depth}:
+            raise ValueError(
+                "needs attention: requested depth differs from the active immutable "
+                "analysis request"
+            )
+
+    depth_label = (
+        next(iter(set(depths.values())))
+        if len(set(depths.values())) == 1
+        else "mixed"
+    )
+    provider_id = str(getattr(getattr(config, "llm", None), "cli", "configured"))
+    print(
+        f"[re] run starting · depth {depth_label} · provider {provider_id}",
+        flush=True,
+    )
+    print(
+        f"[re] scope {len(source_ids)} source(s) · aggregate ceiling "
+        f"{token_limit} tokens / {active_ms_limit // 60_000} minutes",
+        flush=True,
+    )
+    creation = create_or_resume_reviewed_analysis(
+        workspace,
+        ReviewedAnalysisCreationOptions(
+            request_run_id=request_run_id,
+            analysis_run_id=analysis_run_id,
+            created_at=created_at,
+            snapshot=snapshot,
+            workspace_partition=partition,
+            selection=SelectionScopeV1(1, True, (), ()),
+            source_depths=tuple(sorted(depths.items())),
+            token_limit=token_limit,
+            active_ms_limit=active_ms_limit,
+            config=config,
+        ),
+    )
+    if creation.state != "ready" or creation.analysis_run_id is None:
+        _render_re_knowledge_result("run", depth_label, creation)
+        raise SystemExit(2)
+    _activate_re_v2_run(workspace, creation.analysis_run_id)
+    return workspace / "runs" / creation.analysis_run_id, depth_label
+
+
 def _cmd_re_knowledge_run(args: list[str]) -> None:
     """Resume reviewed analysis through synthesis and atomic publication."""
     try:
@@ -17192,22 +17366,27 @@ def _cmd_re_knowledge_run(args: list[str]) -> None:
 
         workspace = Path.cwd().resolve()
         run_dir = resolve_current_re_run(workspace)
-        if run_dir is None:
-            raise ValueError(
-                "needs attention: no repaired analysis is active; ordinary repaired "
-                "analysis creation is still release-gated pending live evaluation"
-            )
-        depths = _reviewed_run_depths(run_dir)
-        frozen = tuple(sorted(set(depths.values())))
-        if options.depth is not None and frozen != (options.depth,):
-            raise ValueError(
-                "needs attention: requested depth differs from the active immutable "
-                "analysis; start a compatible refreshed analysis"
-            )
-        effective_depth = options.depth or (
-            frozen[0] if len(frozen) == 1 else "mixed"
-        )
         config = load_config(workspace, squad_only=True)
+        depths = (
+            _reviewed_run_depths(run_dir)
+            if _is_reviewed_analysis_run(run_dir)
+            else None
+        )
+        if depths is None:
+            run_dir, effective_depth = _create_or_resume_re_knowledge_analysis(
+                workspace, run_dir, options, config
+            )
+            depths = _reviewed_run_depths(run_dir)
+        else:
+            frozen = tuple(sorted(set(depths.values())))
+            if options.depth is not None and frozen != (options.depth,):
+                raise ValueError(
+                    "needs attention: requested depth differs from the active immutable "
+                    "analysis; run echelon re refresh with the requested depth"
+                )
+            effective_depth = options.depth or (
+                frozen[0] if len(frozen) == 1 else "mixed"
+            )
         result = run_knowledge_workflow(
             workspace,
             run_dir.name,
