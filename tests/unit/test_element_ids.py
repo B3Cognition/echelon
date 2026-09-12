@@ -71,3 +71,53 @@ def test_sort_key_has_deterministic_opaque_fallback() -> None:
         "legacy-a",
         "legacy-z",
     ]
+
+
+def test_format_handles_giant_ordinals_without_changing_global_guard() -> None:
+    """Python's decimal conversion guard must not impose an ID ceiling."""
+    import sys
+
+    guard = sys.get_int_max_str_digits()
+    assert format_element_id("AC", 10 ** 5000) == "AC-1" + "0" * 5000
+    assert sys.get_int_max_str_digits() == guard
+
+
+def test_giant_numeric_sorting_retains_padding_and_does_not_change_guard() -> None:
+    """Large legacy labels must sort numerically without normalization."""
+    import sys
+
+    guard = sys.get_int_max_str_digits()
+    lower = "FR-" + "9" * 5000
+    padded_lower = "FR-0" + "9" * 5000
+    higher = "FR-1" + "0" * 5000
+    assert sorted([higher, lower, padded_lower], key=element_id_sort_key) == [padded_lower, lower, higher]
+    assert sys.get_int_max_str_digits() == guard
+
+
+def test_decimal_counter_helpers_allow_zero_and_preserve_legacy_digit_parsing() -> None:
+    """Counters need zero, while existing numeric sorting accepts padded Unicode digits."""
+    from kernel.element_ids import decimal_to_int, int_to_decimal
+
+    assert int_to_decimal(0) == "0"
+    assert decimal_to_int("0") == 0
+    assert decimal_to_int("00042") == 42
+    assert decimal_to_int("٠٠٤٢") == 42
+    assert element_id_sort_key("FR-٠٠٤٢") == ("FR", 0, 42, "FR-٠٠٤٢")
+
+
+@pytest.mark.parametrize("value", [True, -1, 1.5, "1", None])
+def test_decimal_counter_format_rejects_invalid_values(value) -> None:
+    """Counter formatting must never coerce bool, negative, or noninteger values."""
+    from kernel.element_ids import int_to_decimal
+
+    with pytest.raises(ValueError):
+        int_to_decimal(value)
+
+
+@pytest.mark.parametrize("value", ["", "-1", "+1", "1.0", " 1", "one", None, 1])
+def test_decimal_counter_parse_rejects_nondecimal_values(value) -> None:
+    """Malformed decimal counter input must not be silently coerced."""
+    from kernel.element_ids import decimal_to_int
+
+    with pytest.raises(ValueError):
+        decimal_to_int(value)
