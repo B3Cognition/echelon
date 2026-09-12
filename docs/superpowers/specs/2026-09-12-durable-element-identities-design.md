@@ -40,8 +40,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   measured million-record import test deselected because routine allocation
   and import paths were unchanged. The binding-specific suite passed 92 tests.
   Recorded provenance is not semantic verification or publication authority.
-- Read-only lifecycle preflight: next checkpoint, sharing existing lifecycle
-  rules without mutating history or reserving a publication baseline.
+- Read-only lifecycle preflight: implemented in `f975bd53` and independently
+  reviewed with no findings. Focused preview tests: 20 passed; combined
+  storage/lifecycle/process tests: 258 passed, with one unchanged capacity case
+  deselected. Preview shares application rules without mutating history or
+  reserving a publication baseline.
+- Offline discovery candidate preflight: next checkpoint, using the sanitized
+  smoke fixtures and explicit edit scope. It will not activate publication.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
