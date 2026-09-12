@@ -79,8 +79,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and original fingerprint guards are preserved without writes. Seven-family
   structural coverage remains limited to supported typed grammar: unrecognized
   legacy issue headings and complete report/gate authentication still require
-  explicit managed integration. No live enforcement is activated. Explicit
-  authority administration is the next checkpoint.
+  explicit managed integration. No live enforcement is activated.
+- Explicit authority administration: implemented in `eb00b2db`, corrected in
+  `44ec4322`, and independently reviewed. Required compatibility suite: 311
+  passed; malformed JSON decoder error correction: 36 admin tests passed.
+  Query-only integrity reports and explicit initialize/upgrade/backup/restore/
+  subject-only import operations do not activate managed identities or assess
+  imported history. The next checkpoint inventories explicitly supplied
+  historical snapshots and reports conflicts without guessing reconciliation.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
