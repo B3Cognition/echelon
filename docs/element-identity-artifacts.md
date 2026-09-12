@@ -40,16 +40,18 @@ bullet is a child declaration as well as part of its parent's exact source
 block; references in overlapping blocks use the innermost declaration owner.
 
 HTML comments, frontmatter, matching backtick or tilde fences, blockquotes, and
-indented code do not carry declaration or reference authority. Four-space
-continuation paragraphs and nested lists owned by a list item remain active;
-deeper indented code does not. Inline code remains active, so a local path such
-as `investigation/U-001.md` retains the exact `U-001` reference. Numeric ranges
-use one interval reference and are never expanded. Task `req=` and `depends=`
-ranges retain that field's `requires` or `depends` relation and are never split
-into endpoint references. `INFRA`, `UNMAPPED`, and `none` are metadata
-sentinels rather than element IDs. Investigation and evidence references have
-the `evidence` relation, but that relation does not verify evidence or bind it
-to any revision.
+indented code do not carry declaration or reference authority. List ownership
+is tracked from each marker's actual content column, so continuation paragraphs
+and nested lists remain active across intervening paragraphs. Indented code and
+fences are recognized relative to that content column. Comment-like markers in
+excluded blockquotes, indented code, and fences remain inert. Inline code
+remains active, so a local path such as `investigation/U-001.md` retains the
+exact `U-001` reference. Numeric ranges use one interval reference and are never
+expanded. Task `req=` and `depends=` ranges retain that field's `requires` or
+`depends` relation and are never split into endpoint references. `INFRA`,
+`UNMAPPED`, and `none` are metadata sentinels rather than element IDs.
+Investigation and evidence references have the `evidence` relation, but that
+relation does not verify evidence or bind it to any revision.
 
 The parser preserves duplicates and exact source order. It recognizes legacy
 numeric widths, arbitrarily large ASCII numeric labels, and supported ASCII

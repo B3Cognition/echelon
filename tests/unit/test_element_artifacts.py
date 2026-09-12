@@ -194,10 +194,56 @@ def test_list_owned_four_space_continuations_are_active_but_indented_code_is_not
     ]
 
 
+def test_list_content_columns_survive_paragraphs_and_nested_child_indentation():
+    text = (
+        "- **FR-001**: Parent.\n"
+        "  continuation paragraph\n"
+        "    more AC-001\n"
+        "- **FR-002**: Second parent.\n"
+        "    - **AC-002**: Four-space child.\n"
+        "      continuation U-002\n"
+    )
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == [
+        "FR-001",
+        "FR-002",
+        "AC-002",
+    ]
+    assert [(reference.target_id, reference.owner_id) for reference in result.references] == [
+        ("AC-001", "FR-001"),
+        ("U-002", "AC-002"),
+    ]
+    assert not result.diagnostics
+
+
 def test_fence_delimiter_inside_html_comment_cannot_hide_later_active_source():
     text = "<!--\n```markdown\n-->\n### U-001: Actual question\n"
     result = parse_identity_artifact(path="unknowns.md", role="unknowns", text=text)
     assert [declaration.element_id for declaration in result.declarations] == ["U-001"]
+    assert not result.references
+    assert not result.diagnostics
+
+
+@pytest.mark.parametrize("inactive_prefix", ["> ", "    "])
+def test_comment_markers_in_inactive_containers_cannot_open_real_comments(
+    inactive_prefix: str,
+):
+    text = f"{inactive_prefix}<!-- example\n\n### U-001: Actual question\n"
+    result = parse_identity_artifact(path="unknowns.md", role="unknowns", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == ["U-001"]
+    assert not result.references
+    assert not result.diagnostics
+
+
+def test_fenced_example_relative_to_list_content_cannot_declare_elements():
+    text = (
+        "- **FR-001**: Parent\n\n"
+        "    ```markdown\n"
+        "    - **AC-001**: Example only\n"
+        "    ```\n"
+    )
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == ["FR-001"]
     assert not result.references
     assert not result.diagnostics
 

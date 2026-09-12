@@ -313,3 +313,106 @@ Exit 0 with no output.
 - Confirmed the changes do not touch stores, publication, producers, CLI,
   installation, or the parent-only planning commit.
 - Concerns: none.
+
+## Fix round 2 — bounded Markdown container state
+
+Review base: `d2f17a8f677ad99f157f28fca8484e26cde7b4e5`.
+
+All three round-two findings are covered by behavioral regression tests. The
+quoted and indented-code comment-marker finding is parameterized, so the three
+findings produce four concrete test cases. The RED run below used the reviewed
+scanner behavior restored in the working tree before the permanent fix.
+
+### TDD RED evidence
+
+Command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py::test_list_content_columns_survive_paragraphs_and_nested_child_indentation tests/unit/test_element_artifacts.py::test_comment_markers_in_inactive_containers_cannot_open_real_comments tests/unit/test_element_artifacts.py::test_fenced_example_relative_to_list_content_cannot_declare_elements -q
+```
+
+Pre-fix output (exit 1):
+
+```text
+FFFF                                                                     [100%]
+FAILED tests/unit/test_element_artifacts.py::test_list_content_columns_survive_paragraphs_and_nested_child_indentation
+FAILED tests/unit/test_element_artifacts.py::test_comment_markers_in_inactive_containers_cannot_open_real_comments[> ]
+FAILED tests/unit/test_element_artifacts.py::test_comment_markers_in_inactive_containers_cannot_open_real_comments[    ]
+FAILED tests/unit/test_element_artifacts.py::test_fenced_example_relative_to_list_content_cannot_declare_elements
+4 failed in 0.19s
+```
+
+### Implementation decisions
+
+- Replaced the nearest-predecessor continuation heuristic with a bounded
+  unordered-list container state that records each marker's actual content
+  column and pops containers on nonblank dedent.
+- Classify continuation text, nested list markers, blockquotes, and indented
+  code relative to the active content column. This retains parent references
+  after intervening continuation paragraphs and retains six-space continuation
+  text owned by a four-space child list item.
+- Recognize fence openers and matching closers relative to the same content
+  column. A list-contained fenced example is therefore inactive without
+  changing root-fence behavior.
+- Classify a source line before permitting it to open a new HTML comment, so
+  quoted and indented-code comment-like markers remain inert. Already-open real
+  comments and fences are handled first and retain their lexical state.
+- Kept the helper local to the existing Markdown scanner. No parser dependency,
+  store, validation, publication, producer, or CLI behavior was added.
+
+### GREEN evidence
+
+Focused round-two regressions:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py::test_list_content_columns_survive_paragraphs_and_nested_child_indentation tests/unit/test_element_artifacts.py::test_comment_markers_in_inactive_containers_cannot_open_real_comments tests/unit/test_element_artifacts.py::test_fenced_example_relative_to_list_content_cannot_declare_elements -q
+....                                                                     [100%]
+4 passed in 0.17s
+```
+
+Focused adapter suites:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py tests/unit/test_element_artifact_lexicon.py -q
+..................................................................       [100%]
+66 passed in 0.26s
+```
+
+Original requested adapter/compatibility command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py tests/unit/test_element_artifact_lexicon.py tests/unit/test_tasks_canonical_contract.py tests/unit/test_lexicon_parser.py tests/unit/test_requirement_projection.py tests/unit/test_issue_identity.py -q
+........................................................................ [ 71%]
+.............................                                            [100%]
+101 passed in 1.53s
+```
+
+Source hygiene:
+
+```text
+git diff --check
+```
+
+Exit 0 with no output.
+
+### Files changed in fix round 2
+
+- `src/harness/element_artifact_markdown.py`
+- `tests/unit/test_element_artifacts.py`
+- `docs/element-identity-artifacts.md`
+- `.superpowers/sdd/2026-09-12-element-artifact-adapters/task-1-report.md`
+
+### Self-review and concerns
+
+- Rechecked parent continuation ownership across intervening paragraphs, child
+  content-column ownership, sibling and nested-list dedent, list-relative fence
+  opening and closure, and quoted/indented comment-marker inactivity.
+- Confirmed real comment and fence state takes precedence once opened, so
+  excluded-looking lines within those regions cannot prematurely switch the
+  scanner to another lexical state.
+- Confirmed all prior adapter tests remain green, including nested declaration
+  ownership, unsupported declaration diagnostics, task relation ranges,
+  Lexicon validation, and qualified-reference diagnostics.
+- This remains a read-only parser checkpoint. It does not yet enforce
+  publication.
+- Concerns: none.

@@ -42,6 +42,9 @@ _TASK_LIKE_RE = re.compile(rf"^- \[[ xX]\][ \t]+(?P<id>T-{_TASK_VALUE})\b")
 _ANY_TASK_LIKE_RE = re.compile(r"^- \[[ xX]\][ \t]+(?P<id>T-[A-Za-z0-9_-]+)\b")
 _TASK_TITLE_RE = re.compile(r"^[ \t]+\*\*Title:\*\*[ \t]*(?P<title>.+?)[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^[ ]{0,3}(?P<delim>`{3,}|~{3,})[^\r\n]*$")
+_LIST_MARKER_RE = re.compile(
+    r"^(?P<indent> *)(?P<marker>[-*+])(?P<spacing>[ \t]{1,4})(?=\S)"
+)
 _QUALIFIED_PATH_RE = re.compile(
     rf"(?<![\w.-])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+#{_ID_CORE}(?!\w)"
 )
@@ -77,6 +80,53 @@ class _Line:
     start: int
     end: int
     body: str
+
+
+@dataclass(frozen=True)
+class _ContainerLine:
+    content_indent: int
+    blockquote: bool = False
+    indented_code: bool = False
+
+
+class _ContainerState:
+    """Track bounded unordered-list content columns for source classification."""
+
+    def __init__(self) -> None:
+        self._content_indents: list[int] = []
+
+    def classify(self, body: str) -> _ContainerLine:
+        if not body.strip():
+            content_indent = self._content_indents[-1] if self._content_indents else 0
+            return _ContainerLine(content_indent)
+        if body.startswith("\t"):
+            return _ContainerLine(0, indented_code=True)
+
+        indentation = len(body) - len(body.lstrip(" "))
+        while self._content_indents and indentation < self._content_indents[-1]:
+            self._content_indents.pop()
+
+        parent_indent = self._content_indents[-1] if self._content_indents else 0
+        relative = _relative_body(body, parent_indent)
+        if re.match(r"^[ ]{0,3}>", relative):
+            return _ContainerLine(parent_indent, blockquote=True)
+
+        marker = _LIST_MARKER_RE.match(body)
+        if marker is not None:
+            marker_indent = len(marker.group("indent"))
+            if marker_indent >= parent_indent + 4:
+                return _ContainerLine(parent_indent, indented_code=True)
+            content_indent = marker.end()
+            self._content_indents.append(content_indent)
+            return _ContainerLine(parent_indent)
+
+        if self._content_indents:
+            content_indent = self._content_indents[-1]
+            return _ContainerLine(
+                content_indent,
+                indented_code=indentation >= content_indent + 4,
+            )
+        return _ContainerLine(0, indented_code=indentation >= 4)
 
 
 def parse_markdown_source(text: str, role: str):
@@ -137,21 +187,9 @@ def _visible_body(line: _Line, active: bytearray) -> str:
     )
 
 
-def _owned_list_continuation(index: int, lines: list[_Line]) -> bool:
-    body = lines[index].body
-    if body.startswith("\t"):
-        return False
-    indentation = len(body) - len(body.lstrip(" "))
-    if indentation < 4 or indentation >= 6:
-        return False
-    for candidate in reversed(lines[:index]):
-        if not candidate.body.strip():
-            continue
-        candidate_indent = len(candidate.body) - len(candidate.body.lstrip(" "))
-        if candidate_indent >= indentation:
-            continue
-        return re.match(r"^[ ]{0,3}[-*+][ \t]+", candidate.body) is not None
-    return False
+def _relative_body(body: str, content_indent: int) -> str:
+    prefix = " " * content_indent
+    return body[content_indent:] if content_indent and body.startswith(prefix) else body
 
 
 def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
@@ -177,13 +215,17 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
         _mark_inactive(active, 0, lines[close].end)
         first_available = close + 1
 
-    in_fence: tuple[str, int, int] | None = None
+    in_fence: tuple[str, int, int, int] | None = None
     in_comment: int | None = None
-    for index, line in enumerate(lines[first_available:], start=first_available):
+    containers = _ContainerState()
+    for line in lines[first_available:]:
         if in_fence is not None:
-            char, length, _opener = in_fence
+            char, length, content_indent, _opener = in_fence
             _mark_inactive(active, line.start, line.end)
-            if re.fullmatch(rf"[ ]{{0,3}}{re.escape(char)}{{{length},}}[ \t]*", line.body):
+            relative = _relative_body(line.body, content_indent)
+            if re.fullmatch(
+                rf"[ ]{{0,3}}{re.escape(char)}{{{length},}}[ \t]*", relative
+            ):
                 in_fence = None
             continue
 
@@ -197,6 +239,12 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
             _mark_inactive(active, line.start, close + 3)
             in_comment = None
             cursor = close + 3
+
+        container = containers.classify(_visible_body(line, active))
+        if container.blockquote or container.indented_code:
+            _mark_inactive(active, line.start, line.end)
+            continue
+
         while cursor < body_end:
             opener = text.find("<!--", cursor, body_end)
             if opener < 0:
@@ -212,21 +260,17 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
         visible = _visible_body(line, active)
         if not visible.strip():
             continue
-        fence = _FENCE_OPEN_RE.match(visible)
+        relative = _relative_body(visible, container.content_indent)
+        fence = _FENCE_OPEN_RE.match(relative)
         if fence is not None:
             delimiter = fence.group("delim")
-            in_fence = (delimiter[0], len(delimiter), line.start)
-            _mark_inactive(active, line.start, line.end)
-            continue
-        if (
-            re.match(r"^[ ]{0,3}>", visible)
-            or visible.startswith("\t")
-            or (visible.startswith("    ") and not _owned_list_continuation(index, lines))
-        ):
+            in_fence = (
+                delimiter[0], len(delimiter), container.content_indent, line.start
+            )
             _mark_inactive(active, line.start, line.end)
 
     if in_fence is not None:
-        opener = in_fence[2]
+        opener = in_fence[3]
         diagnostics.append(ArtifactDiagnostic(
             "unterminated_fence", _span(opener, len(text), line_starts),
             "fenced code opener has no matching closing delimiter",
