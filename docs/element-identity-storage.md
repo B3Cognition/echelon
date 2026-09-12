@@ -1606,6 +1606,57 @@ snapshot. Source/semantic/recovery/completion integration, memory
 current-revision semantics, producer activation and bounded repair remain
 separate work; this helper makes no live audit or end-to-end publication claim.
 
+## Inactive managed metadata in squad state
+
+`SquadStateStore.initialize(..., managed_identity=record)` accepts the exact
+ten-string genesis record returned by managed registration: `version` (`"1"`),
+`workspace_uuid`, `epoch_uuid`, `spec_id`, `operation_id`, `run_id`, `context_id`,
+`spec_path`, `source_registration_operation_id`, and `source_manifest_sha256`.
+The pure `validate_managed_identity_record` reuses the managed-request codec and
+lifecycle text validation and returns a detached flat dictionary. This checks
+structure only: a valid record remains a caller claim until a trusted runtime
+owner compares it with the durable registry.
+
+The optional initialization argument does not enroll a spec. It supplies initial
+`spec_id` and must match the explicitly requested `run_id`. An ordinary legacy
+initialization keeps its existing shape and has no `managed_identity` key. A
+present null, false, empty, partial, or malformed field is invalid. Only explicit
+initialization may introduce metadata into an empty or legacy state store; no
+live initialization caller has been changed to supply it.
+
+Once present, the exact genesis record and its run/spec association are immutable
+through the state owner. Same-run reinitialization preserves the existing record
+and canonical `spec_id`, including when an unchanged controller initializer
+omits the new argument. Selection and persistence share the existing exclusive
+state lock. Supplied identical metadata is allowed; replacement, removal, a
+different run, or invalid retained metadata rejects before state, backup, or
+replacement-temp writes. An explicit managed initialization also rejects malformed
+prior JSON. Unknown malformed legacy files retain the existing legacy policy;
+the owner does not infer authority from substrings in corrupt content.
+
+`MANAGED_IDENTITY_KEYS` reserves this field separately from Phase A routing
+identity. Provider echoes, controller enrichment, queued effects, control intents,
+ordinary removals, and trusted routing effects cannot own it. Existing prepared
+result attestations and the sole `_save_unlocked` writer enforce the boundary,
+including exact saves, recovery snapshots, and manual controller state updates.
+State revision CAS, human-input write authority, and pre/post-replacement
+durability semantics remain in effect. No registry, namespace, or source lookup
+runs under the state lock.
+
+The record describes the first registered run and original source root. Mutable
+state `spec_dir` need not equal genesis `spec_path`: preservation neither proves
+physical source isolation nor authorizes export or relocation. A subsequent run
+requires a new explicit bound-state protocol, not relabeling this genesis record.
+
+**Activation remains blocked.** Complete external state deletion, removal of the
+field outside this owner, wholly corrupted state that cannot be identified as
+managed, a missing registry, and old authority schemas require a future durable
+registry gate at trusted startup/dispatch/completion owners. This layer cannot
+detect those conditions or authenticate supplied receipt provenance or current
+source scope. Candidate isolation, producer reservations, exact
+source/identity/graph completion, semantic judgment, and bounded repair remain
+separate prerequisites.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,

@@ -27,6 +27,10 @@ from harness.blocked_decision import (
     validate_blocked_decision,
 )
 from harness.controller_lock_order import controller_lock_order
+from harness.element_identity_state import (
+    MANAGED_IDENTITY_KEY,
+    validate_managed_identity_record,
+)
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
@@ -215,6 +219,43 @@ class StateAdvanceError(RuntimeError):
         super().__init__(message)
         self.json_path = json_path
         self.validator = validator
+
+
+def _managed_identity_from_state(state: dict) -> dict[str, str] | None:
+    """Validate structure and first-run association, never durable provenance."""
+    try:
+        if MANAGED_IDENTITY_KEY not in state:
+            return None
+        record = validate_managed_identity_record(state[MANAGED_IDENTITY_KEY])
+        for field in ("spec_id", "run_id"):
+            if type(state.get(field)) is not str or state[field] != record[field]:
+                raise ValueError("managed state association changed")
+        return record
+    except Exception:
+        pass
+    raise StateAdvanceError(
+        "invalid managed identity state",
+        json_path="$.managed_identity",
+        validator="managed_identity",
+    ) from None
+
+
+def _validate_managed_identity_write(
+    current: dict,
+    desired: dict,
+    *,
+    allow_initialization: bool = False,
+) -> None:
+    retained = _managed_identity_from_state(current)
+    candidate = _managed_identity_from_state(desired)
+    if (retained is not None and candidate != retained) or (
+        retained is None and candidate is not None and not allow_initialization
+    ):
+        raise StateAdvanceError(
+            "managed identity metadata is immutable outside initialization",
+            json_path="$.managed_identity",
+            validator="managed_identity",
+        ) from None
 
 
 def _autonomous_default_candidate_from_state(
@@ -2192,6 +2233,7 @@ class SquadStateStore:
         value = loads_strict_json(self._path.read_text())
         if type(value) is not dict:
             raise ValueError("squad state must be a JSON object")
+        _managed_identity_from_state(value)
         return value
 
     def load(self) -> dict:
@@ -2323,17 +2365,16 @@ class SquadStateStore:
         state: dict,
         *,
         allow_human_input_authority_update: bool = False,
+        allow_managed_identity_initialization: bool = False,
     ) -> dict:
+        # Validate before deepcopy can invoke methods on a hostile record.
+        _managed_identity_from_state(state)
         next_state = deepcopy(state)
         previous_revision = 0
         current_state: dict[str, Any] = {}
+        old_text: str | None = None
         if self._path.exists():
             old_text = self._path.read_text()
-            bak = self._path.with_suffix(".json.bak")
-            try:
-                bak.write_text(old_text)
-            except OSError:
-                logger.warning("Could not write .bak file: %s", bak)
             try:
                 old_state = loads_strict_json(old_text)
                 if type(old_state) is dict:
@@ -2343,7 +2384,24 @@ class SquadStateStore:
                 if type(old_revision) is int and old_revision >= 0:
                     previous_revision = old_revision
             except ValueError:
-                pass
+                if MANAGED_IDENTITY_KEY in next_state:
+                    raise StateAdvanceError(
+                        "managed initialization requires readable prior state",
+                        json_path="$.managed_identity",
+                        validator="managed_identity",
+                    ) from None
+
+        _validate_managed_identity_write(
+            current_state,
+            next_state,
+            allow_initialization=allow_managed_identity_initialization,
+        )
+        if old_text is not None:
+            bak = self._path.with_suffix(".json.bak")
+            try:
+                bak.write_text(old_text)
+            except OSError:
+                logger.warning("Could not write .bak file: %s", bak)
 
         _validate_human_input_authority_write(
             current_state,
@@ -2446,6 +2504,10 @@ class SquadStateStore:
             if exc.stage == "post_replace":
                 raise
             cause: Exception = exc
+        except StateAdvanceError as exc:
+            if exc.validator == "managed_identity":
+                raise
+            cause = exc
         except Exception as exc:
             cause = exc
 
@@ -4245,6 +4307,7 @@ class SquadStateStore:
         requested_re_sources: list[str] | None = None,
         spec_authoring_mode: str = "proportional",
         stack_contract: dict[str, object] | None = None,
+        managed_identity: dict[str, str] | None = None,
     ) -> None:
         if autonomy_mode == "semi" and mode in AUTONOMY_MODES and mode not in PROJECT_MODES:
             autonomy_mode = mode
@@ -4295,7 +4358,37 @@ class SquadStateStore:
             # narrow compatibility signal for a pre-protocol WHY2 decision.
             initial_state[BANZAI_DEFAULT_CANDIDATE_PROTOCOL_VERSION_KEY] = 1
         with self._lock(exclusive=True):
-            self._save_unlocked(initial_state)
+            # Preserve owned metadata during the existing controller reset under
+            # this same lock. No registry/source access belongs in this owner.
+            try:
+                retained = _managed_identity_from_state(self._load_unlocked())
+            except ValueError:
+                if managed_identity is not None:
+                    raise StateAdvanceError(
+                        "managed initialization requires readable prior state",
+                        json_path="$.managed_identity",
+                        validator="managed_identity",
+                    ) from None
+                retained = None  # Preserve unknown malformed legacy behavior.
+            selected = retained if managed_identity is None else managed_identity
+            if selected is not None:
+                try:
+                    selected = validate_managed_identity_record(selected)
+                except Exception:
+                    raise StateAdvanceError(
+                        "invalid managed identity initialization",
+                        json_path="$.managed_identity",
+                        validator="managed_identity",
+                    ) from None
+                initial_state[MANAGED_IDENTITY_KEY] = selected
+                initial_state["spec_id"] = selected["spec_id"]
+                _managed_identity_from_state(initial_state)
+                self._save_unlocked(
+                    initial_state,
+                    allow_managed_identity_initialization=True,
+                )
+            else:
+                self._save_unlocked(initial_state)
 
     def _check_monotonics(self, old: dict, new: dict) -> None:
         old_tokens = old.get("token_usage", 0)

@@ -1059,6 +1059,108 @@ def test_prepared_run_preserves_bootstrap_contract_during_initialization(
     assert observed["phase_completion_outcomes"] == []
 
 
+def _managed_identity_state_record():
+    return {
+        "version": "1", "workspace_uuid": "12345678-1234-1234-1234-123456789abc",
+        "epoch_uuid": "23456789-2345-2345-2345-23456789abcd",
+        "spec_id": "demo", "operation_id": "managed-registration", "run_id": "first",
+        "context_id": "source", "spec_path": "squad/run-test/specs/demo",
+        "source_registration_operation_id": "source-registration", "source_manifest_sha256": "a" * 64,
+    }
+
+
+@pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
+def test_managed_identity_prepared_initialization_survives_controller_fresh_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     autonomy_mode=mode, managed_identity=metadata)
+    preparing = store.load()
+    preparing.update(status="preparing", checkpoint_policy_version=2, phase_completion_outcomes=[])
+    store.save(preparing)
+    original_revision = store.load()["state_revision"]
+    monkeypatch.setattr(ctrl._graph, "entry_phase", lambda: "phase1-tracker")
+    monkeypatch.setattr(ctrl, "_refresh_run_context", lambda _reason: None)
+    def first_dispatch(*args, **kwargs):
+        assert store.load()["managed_identity"] == metadata
+        assert store.load()["status"] == "running"
+        # Exercise a real fresh-start dispatch, then use the existing deferred
+        # interruption path to keep the test within this single phase.
+        ctrl._handle_sigint(None, None)
+        return SquadAgentResult(exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+            echelon_result={"verdict": "ALIGNED", "state_updates": {}, "journal_entries": []})
+    provider.exec_agent.side_effect = first_dispatch
+
+    ctrl.run("Build carefully", mode)
+
+    observed = SquadStateStore(store._squad_dir).load()
+    assert observed["managed_identity"] == metadata
+    assert observed["spec_id"] == "demo" and observed["run_id"] == "first"
+    assert observed["phase"] == "phase1-tracker" and observed["status"] == "interrupted"
+    assert provider.exec_agent.call_count == 1
+    assert observed["state_revision"] > original_revision
+    assert observed["autonomy_mode"] == mode
+    assert observed["checkpoint_policy_version"] == 2
+    assert observed["phase_completion_outcomes"] == []
+
+
+def test_managed_identity_manual_replay_preserves_metadata_before_simulated_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     managed_identity=metadata)
+    def ask_for_input(*args, **kwargs):
+        observed = store.load()
+        assert observed["managed_identity"] == metadata
+        assert observed["replay_note"] == "retained"
+        return SquadAgentResult(exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+            echelon_result={"verdict": "STOP_AND_ASK", "state_updates": {
+                "status": "blocked", "blocked_reason": "human_clarification_required",
+                "escalation_question": "Which product boundary applies?",
+            }, "journal_entries": []})
+    provider.exec_agent.side_effect = ask_for_input
+    monkeypatch.setattr(ctrl, "_refresh_run_context", lambda _reason: None)
+
+    result = ctrl.run_single_phase("phase1-tracker", "Build carefully", "semi",
+                                  initial_state_updates={"replay_note": "retained"})
+
+    assert provider.exec_agent.call_count == 1
+    assert result.status == "blocked"
+    assert store.load()["managed_identity"] == metadata
+    assert store.load()["blocked_decision"]["source_kind"] == "provider_escalation"
+
+
+@pytest.mark.parametrize("mode", ["guided", "semi", "banzai"])
+@pytest.mark.parametrize("managed", [False, True])
+def test_managed_identity_manual_updates_reject_injection_before_provider_dispatch(
+    tmp_path: Path, mode: str, managed: bool,
+) -> None:
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    metadata = _managed_identity_state_record()
+    store.initialize("first", "greenfield", "Build carefully", 0, "phase1-tracker",
+                     autonomy_mode=mode, managed_identity=metadata if managed else None)
+    before = store._path.read_bytes()
+    backup = store._path.with_suffix(".json.bak")
+    original_backup = backup.read_bytes() if backup.exists() else None
+    replacement = {**metadata, "operation_id": "replacement"}
+
+    with pytest.raises(StateAdvanceError) as caught:
+        ctrl.run_single_phase("phase1-tracker", "Build carefully", mode,
+            initial_state_updates={"managed_identity": replacement, "spec_id": "demo"})
+
+    assert caught.value.json_path == "$.managed_identity"
+    assert provider.exec_agent.call_count == 0
+    assert store._path.read_bytes() == before
+    assert (backup.read_bytes() if backup.exists() else None) == original_backup
+
+
 def _install_test_clarification_policy(
     ctrl: SquadController,
     *,
