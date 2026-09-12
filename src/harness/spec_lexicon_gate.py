@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harness.lexicon_gate_io import write_json_atomic
-from lexicon.glossary import load_glossary_terms
+from lexicon.glossary import load_glossary_terms, parse_glossary_terms
 
 
 @dataclass(frozen=True)
@@ -191,24 +191,64 @@ def _validate_spec_lexicon_artifacts(
     glossary_path: Path,
     artifact_type: str,
 ) -> dict[str, object]:
+    derived_text = derived_path.read_text(encoding="utf-8")
+    source_text = source_path.read_text(encoding="utf-8")
+    glossary_text = (
+        glossary_path.read_text(encoding="utf-8")
+        if glossary_path.is_file()
+        else None
+    )
+    report = validate_spec_lexicon_texts(
+        derived_text=derived_text,
+        source_text=source_text,
+        source_name=source_path.name,
+        glossary_text=glossary_text,
+        artifact_type=artifact_type,
+    )
+    return {
+        "schema_version": report["schema_version"],
+        "artifact_type": report["artifact_type"],
+        "artifact_path": str(derived_path),
+        "source_path": str(source_path),
+        "glossary_path": str(glossary_path),
+        "artifact_sha256": _sha256_file(derived_path),
+        "source_sha256": _sha256_file(source_path),
+        "glossary_sha256": _optional_sha256_file(glossary_path),
+        "ok": report["ok"],
+        "findings": report["findings"],
+    }
+
+
+def validate_spec_lexicon_texts(
+    *,
+    derived_text: str,
+    source_text: str,
+    source_name: str,
+    glossary_text: str | None,
+    artifact_type: str,
+) -> dict[str, object]:
+    """Validate one exact captured Lexicon/source/glossary text snapshot."""
     from lexicon.source_contract import (
-        source_approved_terms,
-        source_contract_findings,
+        source_approved_terms_text,
+        source_contract_findings_text,
     )
     from lexicon.validity import validate as validate_lexicon
 
-    derived_text = derived_path.read_text(encoding="utf-8")
     validation = validate_lexicon(
         derived_text,
         glossary=(
-            _load_glossary_terms(glossary_path)
-            | source_approved_terms(source_path)
+            (parse_glossary_terms(glossary_text) if glossary_text is not None else set())
+            | source_approved_terms_text(source_text)
         ),
         artifact_type=artifact_type,
     )
     raw_findings = [
         *validation.findings,
-        *source_contract_findings(derived_text, source_path),
+        *source_contract_findings_text(
+            derived_text,
+            source_text=source_text,
+            source_name=source_name,
+        ),
     ]
     findings = [
         {
@@ -222,12 +262,13 @@ def _validate_spec_lexicon_artifacts(
     return {
         "schema_version": 1,
         "artifact_type": artifact_type,
-        "artifact_path": str(derived_path),
-        "source_path": str(source_path),
-        "glossary_path": str(glossary_path),
-        "artifact_sha256": _sha256_file(derived_path),
-        "source_sha256": _sha256_file(source_path),
-        "glossary_sha256": _optional_sha256_file(glossary_path),
+        "artifact_sha256": hashlib.sha256(derived_text.encode("utf-8")).hexdigest(),
+        "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        "glossary_sha256": (
+            hashlib.sha256(glossary_text.encode("utf-8")).hexdigest()
+            if glossary_text is not None
+            else None
+        ),
         "ok": not findings,
         "findings": findings,
     }

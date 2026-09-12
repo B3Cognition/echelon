@@ -16,8 +16,13 @@ def load_glossary_terms(path: Path | None) -> set[str]:
     if path is None or not path.is_file():
         return set()
 
+    return parse_glossary_terms(path.read_text(encoding="utf-8"))
+
+
+def parse_glossary_terms(text: str) -> set[str]:
+    """Return approved terms parsed from captured glossary text."""
     terms: set[str] = set()
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
