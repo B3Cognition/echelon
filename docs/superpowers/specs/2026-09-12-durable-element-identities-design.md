@@ -303,6 +303,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   from mutable source reads. These are compatibility observations, not managed
   validation or evidence proof; full captured-source graph assembly remains
   outstanding and no live graph consumer is activated.
+- Detached projected source images: implemented in `d5183dcd` and independently
+  reviewed with no findings. Six-module covering suite: 369 passed. One shared
+  transformation now returns exact selected final bytes and their existing
+  manifest, preserving public/private prefix contracts and deeply detached
+  records. Real guarded publication and interrupted recovery match the prediction.
+  The separate value carrier is not an observed capture or recovery baseline;
+  complete graph assembly, source ownership and live integration remain required.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
