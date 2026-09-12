@@ -130,7 +130,7 @@ class DiscoveryController:
         if self.fault_hook is not None:
             self.fault_hook(point)
 
-    def _repair_context(self, state, dispatch_id):
+    def _repair_context(self, state, dispatch_id, *, schema_version=2):
         request = state.dispatches[dispatch_id]
         capture = state.captures[dispatch_id]
         applied = state.applied[dispatch_id]
@@ -148,12 +148,22 @@ class DiscoveryController:
         revision = _load(self.account.objects.read_blob(request["revision_id"]))
         self.acquisition.boundary.provider_bytes(request["binding_id"])
         base = _load(self.account.objects.read_blob(revision["context_id"]))
-        candidate = _load(self.account.objects.read_blob(capture["output_id"]))
+        candidate_bytes = self.account.objects.read_blob(capture["output_id"])
+        if schema_version == 1:
+            candidate_field = {"previous_candidate": _load(candidate_bytes)}
+        elif schema_version == 2:
+            try:
+                candidate_text = candidate_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raise DiscoveryError("invalid-discovery-repair-feedback") from None
+            candidate_field = {"previous_candidate_text": candidate_text}
+        else:
+            raise DiscoveryError("invalid-discovery-repair-feedback")
         return canonical_json_bytes({
-            "schema_version": 1,
+            "schema_version": schema_version,
             "kind": "untrusted_discovery_repair_context",
             "safe_discovery_context": base,
-            "previous_candidate": candidate,
+            **candidate_field,
             "deterministic_feedback": {
                 "reason_code": feedback["reason_code"],
                 "requirement": (
@@ -248,7 +258,12 @@ class DiscoveryController:
             )
             if index is None or index == 0:
                 raise DiscoveryError("discovery-dispatch-context-mismatch")
-            expected = self._repair_context(state, source_history[index - 1])
+            previous = source_history[index - 1]
+            expected = self._repair_context(state, previous)
+            if request["context_id"] != content_digest(expected):
+                # Compatibility for repair requests reserved before schema 2
+                # made rejected JSON opaque instead of reparsing it.
+                expected = self._repair_context(state, previous, schema_version=1)
         if (
             request["context_id"] != content_digest(expected)
             or self.account.objects.read_blob(request["context_id"]) != expected

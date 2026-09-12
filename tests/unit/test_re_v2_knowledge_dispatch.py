@@ -253,7 +253,7 @@ def test_opted_in_invalid_proposal_gets_bounded_deterministic_repair_context(tmp
         repair = json.loads(context)
         assert repair["kind"] == "untrusted_discovery_repair_context"
         assert repair["deterministic_feedback"]["reason_code"] == "invalid-discovery-response"
-        assert repair["previous_candidate"] == {"not": "a proposal"}
+        assert repair["previous_candidate_text"] == '{"not":"a proposal"}'
         return canonical_json_bytes(_proposal(repair["safe_discovery_context"]))
 
     controller, account, _phase, calls = _controller(
@@ -265,6 +265,65 @@ def test_opted_in_invalid_proposal_gets_bounded_deterministic_repair_context(tmp
     assert controller.step().state == "proposal_ready"
     assert len(calls) == 2
     assert account.status().charged_tokens == 200_000
+
+
+@pytest.mark.unit
+def test_duplicate_json_field_can_receive_an_opaque_second_repair(tmp_path):
+    replies = iter((
+        b'{"not":"a proposal"}',
+        b'{"not":1,"not":2}',
+        None,
+    ))
+
+    def backend(context):
+        reply = next(replies)
+        if reply is not None:
+            return reply
+        repair = json.loads(context)
+        assert repair["schema_version"] == 2
+        assert repair["deterministic_feedback"]["reason_code"] == (
+            "duplicate-discovery-field"
+        )
+        assert repair["previous_candidate_text"] == '{"not":1,"not":2}'
+        return canonical_json_bytes(_proposal(repair["safe_discovery_context"]))
+
+    controller, account, _phase, calls = _controller(
+        tmp_path, turns=5, repairs=2, backend=backend
+    )
+
+    assert controller.step().state == "repair_ready"
+    assert controller.step().state == "repair_ready"
+    assert controller.step().state == "proposal_ready"
+    assert len(calls) == 3
+    assert account.status().charged_tokens == 300_000
+
+
+@pytest.mark.unit
+def test_schema_1_repair_context_replays_after_opaque_upgrade(tmp_path):
+    replies = iter((b'{"not":"a proposal"}', None))
+
+    def backend(context):
+        reply = next(replies)
+        if reply is not None:
+            return reply
+        repair = json.loads(context)
+        assert repair["schema_version"] == 1
+        return canonical_json_bytes(_proposal(repair["safe_discovery_context"]))
+
+    controller, _account, _phase, calls = _controller(
+        tmp_path, turns=4, repairs=1, backend=backend
+    )
+    assert controller.step().state == "repair_ready"
+    upgraded = controller._repair_context
+    controller._repair_context = lambda state, dispatch_id: upgraded(
+        state, dispatch_id, schema_version=1
+    )
+    proposal = controller.step()
+    controller._repair_context = upgraded
+
+    assert proposal.state == "proposal_ready"
+    assert controller.step() == proposal
+    assert len(calls) == 2
 
 
 @pytest.mark.unit

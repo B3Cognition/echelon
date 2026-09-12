@@ -9,7 +9,9 @@ run ownership lock. This phase is not a second scheduler.
 Supply only the committed `untrusted_discovery_context` bytes authenticated by
 `DiscoveryAcquisition`, or a controller-authenticated
 `untrusted_discovery_repair_context` containing that safe context, the prior
-screened candidate and one closed deterministic admission reason. The ordinary
+screened candidate as opaque UTF-8 text and one closed deterministic admission
+reason. Opaque retention allows duplicate-field and otherwise invalid JSON to be
+repaired without reparsing it as authority. The ordinary
 context contains selected source/depth, originating obligation, screened inventory
 and evidence, required source/domain categories, and recorded evidence outcomes.
 Never supply a checkout path, raw inventory mapping or private receipt.
