@@ -71,8 +71,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   identity authority; glossary and inventory retain exact image scope. An extra
   broad run was interrupted without a failure summary and is not accepted as
   passing evidence. Five possible cached delivery-test failures passed in a
-  focused root check; final full integration remains required. Issue occurrence
-  candidate authorization is next; no live enforcement is activated.
+  focused root check; final full integration remains required.
+- Issue occurrence candidate authorization: implemented in `2d043bba`, corrected
+  in `43b0ad36`, and independently reviewed. Required compatibility suite: 544
+  passed; candidate history-adoption bypass correction: 269 covering tests
+  passed. Exact report provenance, current/projected revisions, retained history
+  and original fingerprint guards are preserved without writes. Seven-family
+  structural coverage remains limited to supported typed grammar: unrecognized
+  legacy issue headings and complete report/gate authentication still require
+  explicit managed integration. No live enforcement is activated. Explicit
+  authority administration is the next checkpoint.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
