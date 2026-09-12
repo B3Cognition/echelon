@@ -418,6 +418,17 @@ reservation endpoints and imported ordinals with bounded seeks; validation does
 not scan entity tables or sort all claims. No SQL numeric casts or floating-point
 comparisons are used.
 
+Internal transaction composers may call
+`element_identity_lifecycle_store.apply_changes(...)` and
+`element_identity_binding_store.record(...)` only with the authenticated
+authority connection already inside the caller's active write transaction.
+These connection-owned helpers do not open, begin, commit, roll back, or create
+savepoints, and composers must let any lifecycle or downstream binding failure
+abort the whole transaction. They must not nest public `IdentityStore` methods.
+Composition alone does not authenticate historical sources, semantic decisions,
+canonical files, or graph completion, and it does not authorize activation or
+publication.
+
 Use a local filesystem with working SQLite locking and synchronization. Authority
 components, their parent path components, and SQLite sidecar paths must not be
 symlinks. The library checks those paths before opening state. Workspace owners

@@ -599,34 +599,9 @@ class IdentityStore:
         """Validate a whole batch against its prestate, then atomically persist it."""
         _identifier(spec_id, "spec_id")
         _identifier(operation_id, "operation_id")
-        changes, payload, labels = lifecycle.request(changes)
-        digest = _digest(["lifecycle", spec_id, payload])
+        changes = lifecycle.request(changes)[0]
         with self._transaction(write=True) as connection:
-            for kind in {_parse_label(label)[0] for label in labels}:
-                self._high_water(connection, spec_id, kind)
-            if self._operation(connection, operation_id, "lifecycle", spec_id, digest):
-                return self._receipt(connection, operation_id, spec_id)
-            planned, links = lifecycle_store.plan_changes(connection, self, spec_id, changes)
-            for label, revision, subject, content, status, reason, kind, ordinal in planned:
-                if kind is not None:
-                    connection.execute("INSERT INTO entities (spec_id,element_id,kind,subject,ordinal) VALUES (?,?,?,?,?)",
-                                       (spec_id, label, kind, subject, ordinal))
-                connection.execute("INSERT INTO revisions "
-                    "(spec_id,element_id,revision,subject,content,content_sha256,status,reason,operation_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (spec_id, label, revision, subject, content, hashlib.sha256(content.encode("utf-8")).hexdigest(), status, reason, operation_id))
-                connection.execute("INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) VALUES (?,?,?,?) "
-                    "ON CONFLICT(spec_id,element_id) DO UPDATE SET status=excluded.status,revision=excluded.revision",
-                    (spec_id, label, status, revision))
-            connection.executemany("INSERT INTO lifecycle_lineage "
-                "(spec_id,predecessor_id,predecessor_revision,successor_id,successor_revision,kind,reason,operation_id) "
-                "VALUES (?,?,?,?,?,?,?,?)", ((*link, operation_id) for link in links))
-            result = [{"element_id": row[0], "revision": row[1], "status": row[4],
-                       "lineage": [link for link in self._lineage(connection, spec_id, row[0])
-                                   if link["operation_id"] == operation_id]} for row in planned]
-            receipt = _json(result)
-            connection.execute("INSERT INTO lifecycle_receipts (operation_id,receipt,receipt_sha256) VALUES (?,?,?)",
-                               (operation_id, receipt, hashlib.sha256(receipt.encode("ascii")).hexdigest()))
-            return tuple(result)
+            return lifecycle_store.apply_changes(connection, self, spec_id, operation_id, changes)
 
     @_public
     def preview_lifecycle(self, *, spec_id: str,
