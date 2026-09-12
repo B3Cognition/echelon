@@ -61,6 +61,75 @@ def _reviewed_context_with_executor(
     return context
 
 
+def _reviewed_context_with_configured_provider(
+    tmp_path,
+    *,
+    complete: bool,
+):
+    from harness.re_v2.canonical import canonical_json_bytes, content_digest
+    from harness.re_v2.knowledge_accounting import KnowledgeProviderContract
+    from harness.re_v2.protocol_28.executors import build_l4_executor_catalog
+    from tests.unit.test_re_v2_protocol_28_preparation import _preparation_fixture
+
+    workspace, intent, parent_authority, options = _preparation_fixture(
+        tmp_path / "runs"
+    )
+    contract = KnowledgeProviderContract(
+        provider_id="codex",
+        model_id="gpt-5.6-sol",
+        adapter_digest=content_digest(b"configured provider adapter"),
+        execution_mode="configured-provider-accounted",
+        input_accounting="rendered-prompt-utf8-bytes",
+    )
+    contract_bytes = canonical_json_bytes({
+        "provider_id": contract.provider_id,
+        "model_id": contract.model_id,
+        "adapter_digest": contract.adapter_digest,
+        "execution_mode": contract.execution_mode,
+        "input_accounting": contract.input_accounting,
+    })
+    binding_bytes = canonical_json_bytes({
+        "schema_version": 1,
+        "kind": "reviewed_analysis_configured_provider",
+        "provider_contract_id": contract.identity,
+    })
+    intent = replace(
+        intent,
+        executor_catalog_id=build_l4_executor_catalog(
+            inherited_executor_contract_hash=content_digest(binding_bytes),
+            producer_agent_contract_hash=content_digest(options.producer_agent_bytes),
+            verifier_agent_contract_hash=content_digest(options.verifier_agent_bytes),
+        ).identity,
+    )
+    authority_objects = dict(options.authority_objects)
+    authority_objects[contract.identity] = contract_bytes
+    parent_authority = replace(
+        parent_authority,
+        lower_l0_l2_authority_ids=tuple(sorted({
+            *parent_authority.lower_l0_l2_authority_ids,
+            contract.identity,
+        })),
+    )
+    context, *_ = reconciliation_fixture(
+        tmp_path / "runs",
+        prepared=(
+            workspace,
+            intent,
+            parent_authority,
+            replace(
+                options,
+                inherited_executor_contract_bytes=binding_bytes,
+                authority_objects=authority_objects,
+            ),
+        ),
+    )
+    if complete:
+        assert run_protocol_28_exhaustive(
+            context.run_dir, lambda: KnowledgeBackend()
+        ).state == "complete"
+    return context
+
+
 def _terminal_reviewed_context_with_executor(
     tmp_path,
     *,
@@ -176,6 +245,54 @@ def test_reviewed_parent_builds_existing_protocol_27_synthesis_inputs(
     loaded = load_protocol_27_inputs(prepared.run_dir)
     assert loaded.manifest.parent_run_id == context.run_dir.name
     assert loaded.source_overview_catalog == inputs.source_overview_catalog
+
+
+@pytest.mark.integration
+def test_reviewed_parent_accepts_configured_provider_binding(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from harness.prosaic_prompt_loader import ProsaicPromptLoader
+    from harness.re_v2.protocol_27.authority import resolve_synthesis_parent
+    from harness.re_v2.protocol_27.lifecycle import (
+        _protocol_27_input_set,
+        synthesis_request,
+    )
+    from harness.re_v2.publication import EMPTY_INDEX_HASH
+    from tests.re_v2_protocol_27_fixtures import synthesis_budget_policy_v1
+
+    context = _reviewed_context_with_configured_provider(tmp_path, complete=True)
+    parent = resolve_synthesis_parent(tmp_path, context.run_dir.name, ())
+    budget = synthesis_budget_policy_v1()
+    request = synthesis_request(
+        parent,
+        budget,
+        expected_v2_index_hash=EMPTY_INDEX_HASH,
+        expected_compatibility_generation=0,
+    )
+    monkeypatch.setattr(
+        ProsaicPromptLoader,
+        "load_subagent",
+        lambda _self, _name: _synthesis_agent(),
+    )
+
+    inputs = _protocol_27_input_set(
+        tmp_path,
+        "re-reviewed-configured-synthesis",
+        "2026-09-12T12:30:00Z",
+        parent,
+        request,
+        budget,
+    )
+
+    executor_ids = {
+        entry.executor_contract_hash for entry in inputs.graph.templates
+    }
+    assert executor_ids
+    assert all(
+        json.loads(inputs.authority_objects[executor_id])["provider_id"] == "codex"
+        for executor_id in executor_ids
+    )
 
 
 @pytest.mark.integration

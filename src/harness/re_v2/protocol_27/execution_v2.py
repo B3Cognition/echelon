@@ -145,6 +145,18 @@ def compose_synthesis_executor_v2(
         renderer_implementation_digest=renderer_implementation_digest,
         verifier_implementation_digest=verifier_implementation_digest,
     )
+    return promote_synthesis_executor_v2(
+        base,
+        renderer_implementation_digest=renderer_implementation_digest,
+    )
+
+
+def promote_synthesis_executor_v2(
+    base: ExecutorContractEntryV1,
+    *,
+    renderer_implementation_digest: str,
+) -> ExecutorContractEntryV1:
+    """Promote an authenticated synthesis executor to aggregate-safe rendering."""
     renderer = base.request_renderer
     assert isinstance(renderer, SynthesisRequestRendererAuthorityV1)
     return replace(

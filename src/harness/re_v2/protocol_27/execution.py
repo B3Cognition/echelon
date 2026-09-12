@@ -11,6 +11,7 @@ from typing import Callable
 
 from harness.echelon_result_schema import EchelonResultContract
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact
+from harness.re_v2.knowledge_accounting import KnowledgeProviderContract
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.ledger import ObjectStore, ReV2LedgerError
 from harness.re_v2.protocol_22.authorities import InstalledAuthorityRegistry
@@ -225,6 +226,85 @@ def compose_synthesis_executor(
             implementation_digest=verifier_implementation_digest,
         ),
         request_renderer=renderer,
+    )
+
+
+def compose_configured_provider_synthesis_executor(
+    provider_contract: KnowledgeProviderContract,
+    *,
+    agent_contract_hash: str,
+    response_schema_hashes: dict[str, str],
+    renderer_implementation_digest: str,
+    verifier_implementation_digest: str,
+    provider_implementation_digest: str,
+) -> ExecutorContractEntryV1:
+    """Bind synthesis to the configured provider authority frozen by analysis."""
+    if (
+        not isinstance(provider_contract, KnowledgeProviderContract)
+        or provider_contract.execution_mode != "configured-provider-accounted"
+        or provider_contract.input_accounting != "rendered-prompt-utf8-bytes"
+    ):
+        raise Protocol27ExecutionError(
+            "synthesis requires an accounted configured-provider contract"
+        )
+    if set(response_schema_hashes) != SYNTHESIS_GENERATED_KINDS:
+        raise Protocol27ExecutionError("synthesis executor schema set is incomplete")
+    renderer = SynthesisRequestRendererAuthorityV1(
+        renderer_id=SYNTHESIS_RENDERER_ID,
+        renderer_version="1",
+        implementation_digest=renderer_implementation_digest,
+        agent_contract_hash=agent_contract_hash,
+        response_schemas=tuple(
+            SynthesisResponseSchemaReferenceV1(kind, response_schema_hashes[kind])
+            for kind in sorted(response_schema_hashes)
+        ),
+    )
+    bridge_digest = content_digest({
+        "schema_version": 1,
+        "kind": "configured-provider-synthesis-bridge",
+        "provider_contract_id": provider_contract.identity,
+        "provider_implementation_digest": provider_implementation_digest,
+    })
+    return ExecutorContractEntryV1(
+        producer_family=SYNTHESIS_PRODUCER_FAMILY,
+        execution_mode="cli",
+        provider_id=provider_contract.provider_id,
+        api_transport=None,
+        adapter_id=SHARED_AI_CLI_ADAPTER_ID,
+        adapter_contract_version="knowledge-v1",
+        executor_implementation_digest=bridge_digest,
+        producer_protocol_version="protocol-2.7-workspace-synthesis-v1",
+        result_contract_id=SYNTHESIS_RESULT_CONTRACT_ID,
+        verifier=VerifierAuthorityV1(
+            verifier_id="re-v2-synthesis-verifier",
+            verifier_version="1",
+            implementation_digest=verifier_implementation_digest,
+        ),
+        model=None,
+        request_renderer=renderer,
+        request_tokenizer=None,
+        generation=None,
+        reservation_calculator=ReservationCalculatorAuthorityV1(
+            calculator_id=DISPATCH_CALCULATOR_ID,
+            calculator_version=1,
+            implementation_digest=provider_implementation_digest,
+        ),
+        token_accounting=TokenAccountingAuthorityV1(
+            normalization_id=SHARED_PROVIDER_USAGE_NORMALIZER_ID,
+            normalization_version="1",
+            implementation_digest=provider_implementation_digest,
+            unknown_class_policy="untrusted",
+        ),
+        limits=ExecutorLimitsV1(
+            provider_context_tokens=None,
+            max_internal_calls=1,
+            max_followup_input_tokens_per_call=0,
+            max_completion_tokens_per_call=0,
+            max_tool_rounds=0,
+            max_tool_result_bytes_per_round=0,
+            max_billable_tokens_per_dispatch=262_144,
+            max_active_ms_per_dispatch=300_000,
+        ),
     )
 
 
