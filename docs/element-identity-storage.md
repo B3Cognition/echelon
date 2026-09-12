@@ -484,7 +484,7 @@ authority.
 
 `harness.element_identity_publication` defines exact frozen, slotted request types:
 `PublicationOperation(method, operation_id, payload)` and
-`PublicationIntentRequest(manifest_sha256, recovery_payload, operations=())`.
+`PublicationIntentRequest(manifest_sha256, recovery_payload, operations=(), sources=None)`.
 The operations tuple contains at most one operation for each of `lifecycle`,
 `reference_claims`, and `issue_occurrences`, in that order; any subset, including
 the empty tuple, is valid. Child IDs are unique, exact nonblank UTF-8 strings
@@ -518,8 +518,10 @@ The store exposes these keyword-only methods:
 - `apply_identity_publication(spec_id, operation_id)` authenticates the prepared
   journal and baseline, then invokes the existing connection-owned lifecycle
   and binding writers in request order. Every child effect, its original receipt,
-  the application receipt and the state change commit together. Any fault rolls
-  them all back, retaining the prepared intent and guard.
+  the application receipt and the state change commit together. A failure before
+  commit rolls them all back, retaining the prepared intent and guard. A failure
+  reported after an actual commit is an uncertain outcome recovered by reading
+  and retrying the original receipt; it is not evidence of rollback.
 - `release_identity_publication(spec_id, operation_id, completion_payload)`
   requires an applied intent and retains exact nonblank/NUL-free UTF-8 completion
   data. Only this explicit transition releases the spec guard. It supplies no
@@ -604,6 +606,96 @@ acceptance and final export still need one shared integration without duplicate
 revisions; historical reconciliation, managed feature snapshots, all seven
 producers, bounded repair, and offline/live checkpoints remain follow-on work.
 
+## Durable accepted source contexts (inactive schema 5)
+
+`register_source_context(spec_id=..., context_id=..., operation_id=..., manifest=...)`
+explicitly accepts one validated, detached `SourceManifestSnapshot` as the initial
+head of a caller-selected observation scope. `context_id` is an opaque name within
+the canonical spec, not a pathname or inferred run. Multiple contexts may coexist.
+Registration neither allocates IDs nor changes revisions, files, or the materialized
+identity-history wire. It cannot replace a context, reset its history, or silently
+refresh dependencies. It records an ordinary globally owned `source_context`
+operation with `_digest(["source_context", spec_id, context_id, manifest.payload])`
+and joins the existing pending-spec and permanent-child guard. An exact registration
+retry returns its original receipt even during another pending publication or after
+later accepted heads; changed arguments and other operation IDs cannot take over.
+
+`source_context(spec_id=..., context_id=...)` reads one detached current-head record
+in one query-only transaction. Both APIs return exactly string `version="1"`,
+`workspace_uuid`, `epoch_uuid`, `spec_id`, `context_id`,
+`registration_operation_id`, `operation_id`, `sequence`, and `manifest` (exactly
+`payload` and `sha256`). Registration has sequence `"0"` and its own operation ID.
+Accepted publications use their parent operation ID and a positive unbounded
+canonical decimal sequence. Even equal-content publications advance once. The
+compare-and-swap token is the original predecessor receipt identity, not equal
+content hashes. Missing context reads return `None` only without associated orphan
+source authority; orphan registration operations cause conservative rejection
+within that spec because their digest cannot reconstruct a deleted context name.
+
+The optional exact frozen/slotted `PublicationSourceClaim(context_id,
+expected_operation_id, baseline_payload)` makes a publication source-bound.
+`baseline_payload` is the unchanged canonical initial-source encoding, retaining
+all original prefix-zero images and complete selected bytes. Its marker hash must
+equal the enclosing request's manifest hash. Codecs revalidate intact exact types
+at every boundary, reject malformed/deep/Unicode inputs with bounded errors, and
+perform no I/O. Recovery and completion payloads retain their existing opaque
+contracts. A source-bearing request has string version `"2"` and exactly the
+version-1 root fields plus `sources`, whose only fields are the three claim fields.
+There is no `sources:null` wire variant. Source-less requests retain their exact
+version-1 bytes, decoded defaults, child codecs, operation order, and receipts.
+
+First prepare requires the exact current predecessor and the exact before manifest
+derived from the retained source trees/files. Ordered selected tree roots and
+explicit file paths must equal registration and the projected after selection.
+The existing final projector derives the after manifest; callers cannot supply
+an arbitrary after hash. The next sequence, predecessor and projected source plan
+are retained atomically with the existing parent/child claims. Prepared rows have
+no application digest and do not advance the head. Apply uses the existing three
+child writers, then atomically accepts that plan and advances the independent
+context pointer from its exact predecessor. Its closed version-2 application
+receipt contains exactly `version`, `publication`, `operations`, and `sources`
+(the full new source-head receipt). The canonical application hash is stored in
+both the parent and source row, without a circular self-hash. Release retains its
+version-1 shape and binds that exact application hash. Original prepare/apply/release
+retries validate retained associations before any comparison with today's head,
+so later accepted publications do not reapply or rewind old receipts.
+
+Schema 5 adds only `source_contexts`, `source_publications`, the unique context
+sequence index, the partial numeric accepted-head index, and the partial
+spec/operation registration index. The initial registration manifest is immutable;
+only `source_contexts.head_publication_id` advances. A current read requires this
+independent pointer to match the indexed highest accepted row. Missing pointed
+rows, highest-row deletion, pointer-only rewind/clearing, premature acceptance,
+or cross-context pointers fail without repair or fallback to registration.
+Exact context/parent lookups use primary keys; head reads validate the current row
+and its immediate retained predecessor without recursive history replay. Full
+audits validate every chain, contiguous sequence increments, original registration
+digests, parent/source associations, and highest heads. Recomputed local hashes
+cannot make a source plan disagree with its retained request or predecessor.
+This detects contradictions; it cannot authenticate a coherently substituted
+older entire database against an external authority.
+
+Connection-owned helpers in `element_identity_source_store` require an active
+caller transaction and never own commits, change PRAGMAs, acquire publication
+locks, read files, or call providers. The real guarded publisher is composed with
+prepare/apply only in tests: interrupted promotion keeps the original source head
+and prepared intent, recovery decodes the stored original baseline, and explicit
+release follows successful owner completion. After-callback failure retains the
+pending guard and recovery material. No controller, provider, graph, CLI, or memory
+producer is activated.
+
+Contexts and complete selections are trusted caller declarations. A genuinely
+empty selection is valid metadata, not proof of dependency completeness. A
+self-consistent request naming another registered context is judged against that
+context; this library cannot authenticate which context the live caller should
+choose. Future managed-run wiring must bind the exact context and namespace,
+authenticate complete dependencies and their refresh, canonical relocation,
+semantic review, graph bytes, and completion, and protect ledger access. Source
+acceptance does not establish filesystem freshness or semantic approval. Shared
+external-dependency changes require an authenticated owner transition, not an
+accepted-head overwrite. Historical reconciliation, bounded repair, revision-aware
+memory, and live/offline controller matrices remain separate work.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.
@@ -613,8 +705,8 @@ The workspace must already exist. State lives in `.echelon/identity/`:
 - `registry.sqlite3`: matching authority metadata, operation receipts, counters,
   reservation ranges, entities, lifecycle heads, immutable content revisions,
   direct lineage, immutable reference claims, issue occurrences, publication
-  intents, permanent child-operation claims, and receipts.
-  Database schema version is separate metadata (`schema_version=4`); marker
+  intents, permanent child-operation claims, source contexts/publications, and receipts.
+  Database schema version is separate metadata (`schema_version=5`); marker
   format and SQLite `user_version` remain 1.
 
 The authority directory is created exclusively with mode `0700`; new sensitive
@@ -1178,18 +1270,23 @@ establish a completion gate.
 ## Explicit schema upgrade
 
 `IdentityStore.upgrade(workspace)` recognizes only exact reviewed schemas 1
-(allocation), 2 (lifecycle), 3 (bindings), and 4 (publication journal), with their
-matching metadata. Versions 1/2/3 remain frozen, including a separate reviewed
-v3 SQL fixture. Ordinary `open` on schema 1, 2, or 3 reports that explicit upgrade is required and
+(allocation), 2 (lifecycle), 3 (bindings), 4 (publication journal), and 5 (source
+contexts), with matching metadata. Versions 1–4 remain frozen, including independent
+SQL fixtures and a literal schema-4 journal DDL test. Ordinary `open` on schema 1,
+2, 3, or 4 reports that explicit upgrade is required and
 does not mutate storage.
 Upgrade audits authority, integrity, foreign keys, retained numeric claims,
 reservation history and legacy import/reservation overlap inside one
 `BEGIN IMMEDIATE` transaction. Schema 1 first gains lifecycle tables and
 imported/null heads. Versions 1/2 gain binding tables/indexes; versions 1/2/3
-gain the two publication tables and their two indexes. The metadata update adds
+gain the two publication tables and their two indexes. Versions 1–4 gain only the
+source tables/indexes. The metadata update adds
 no fabricated bindings, publication intents, child claims, or completion. Audit
 dispatch validates lifecycle for versions 2+, bindings for 3+, and publication
-history for 4 before migration. Exact
+history for 4+, and source state for 5 before migration. Frozen schema-4 journal
+audits explicitly disable source-table access and reject version-2 source claims.
+Internal namespace validation recognizes frozen schema metadata for these audits;
+ordinary public open and transaction boundaries still require the current schema. Exact
 labels, counters, reservations, lifecycle history, retry bindings and UUIDs stay
 intact. Current-schema audits retain shared entity label/kind/ordinal/subject
 checks; legacy reservation/import overlap rejection applies only to schema 1.
@@ -1248,7 +1345,8 @@ rejected even if direct SQLite edits caused them.
 ## Backup and restore
 
 `store.backup(destination)` requires a fresh dedicated directory whose parent
-exists. It uses SQLite online backup from one read transaction, writes the bound
+exists. It fully audits the authority before claiming the destination, uses SQLite
+online backup from that same read transaction, writes the bound
 authority marker, then writes `manifest.json` last. The completed manifest binds
 the authority/version and database SHA-256 digest. Files and directories are
 synchronized. Existing destinations are never overwritten. A failed operation
@@ -1266,12 +1364,14 @@ cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,
 operation receipts, counters, and reservations. It never merges or overwrites.
-A recognized schema 1, 2, or 3 backup is validated before claiming destination
+A recognized schema 1, 2, 3, or 4 backup is validated before claiming destination
 state, then upgraded transactionally only in the fresh restored database. The
 backup itself is unchanged. Unknown schema versions fail before destination
 creation. Current backups retain lifecycle history, immutable claims, original
 receipts, report provenance and issue fingerprints. Schema-4 backups also retain
-every prepared/applied/released publication and all permanent child claims. Restore
+every prepared/applied/released publication and all permanent child claims. Schema-5
+backups also retain and audit complete source contexts, source plans, acceptance
+receipts and independent head pointers. Restore
 does not promote files, authenticate completion, or clear a pending guard.
 
 A backup is a point-in-time snapshot. Restoring an old snapshot cannot recover

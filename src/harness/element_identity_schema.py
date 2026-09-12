@@ -4,7 +4,7 @@ No filesystem access, authority creation, commits, or transaction ownership.
 The marker/user_version retain format 1; metadata versions the database schema.
 """
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 _CANONICAL = "{0} NOT GLOB '*[^0-9]*' AND ({0} = '0' OR {0} GLOB '[1-9]*')"
 ALLOCATION_SCHEMA = {
     "metadata": "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
@@ -100,7 +100,25 @@ PUBLICATION_SCHEMA = {
         "CHECK (method IN ('lifecycle','reference_claims','issue_occurrences')), digest TEXT NOT NULL) WITHOUT ROWID",
     "publication_claim_methods": "CREATE UNIQUE INDEX publication_claim_methods ON publication_operation_claims (publication_id, method)",
 }
-SCHEMA = SCHEMA_V3 | PUBLICATION_SCHEMA
+SCHEMA_V4 = SCHEMA_V3 | PUBLICATION_SCHEMA
+SOURCE_SCHEMA = {
+    "source_contexts": "CREATE TABLE source_contexts (spec_id TEXT NOT NULL, context_id TEXT NOT NULL, "
+        "registration_operation_id TEXT NOT NULL UNIQUE REFERENCES operations(operation_id), "
+        "manifest TEXT NOT NULL, manifest_sha256 TEXT NOT NULL, "
+        "head_publication_id TEXT REFERENCES publication_intents(operation_id), "
+        "PRIMARY KEY (spec_id,context_id)) WITHOUT ROWID",
+    "source_publications": "CREATE TABLE source_publications (publication_id TEXT PRIMARY KEY REFERENCES publication_intents(operation_id), "
+        "spec_id TEXT NOT NULL, context_id TEXT NOT NULL, sequence TEXT NOT NULL CHECK (" +
+        _CANONICAL.format("sequence") + " AND sequence != '0'), "
+        "predecessor_operation_id TEXT NOT NULL REFERENCES operations(operation_id), "
+        "manifest TEXT NOT NULL, manifest_sha256 TEXT NOT NULL, application_sha256 TEXT, "
+        "FOREIGN KEY (spec_id,context_id) REFERENCES source_contexts(spec_id,context_id)) WITHOUT ROWID",
+    "source_publication_sequences": "CREATE UNIQUE INDEX source_publication_sequences ON source_publications (spec_id,context_id,sequence)",
+    "source_publication_heads": "CREATE INDEX source_publication_heads ON source_publications "
+        "(spec_id,context_id,length(sequence),sequence) WHERE application_sha256 IS NOT NULL",
+    "source_registration_specs": "CREATE INDEX source_registration_specs ON operations (spec_id,operation_id) WHERE method='source_context'",
+}
+SCHEMA = SCHEMA_V4 | SOURCE_SCHEMA
 
 
 def validate(connection, marker, *, allow_old=False):
@@ -109,12 +127,12 @@ def validate(connection, marker, *, allow_old=False):
     actual = {row[0]: row[1] for row in connection.execute(
         "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
     )}
-    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA):
+    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA):
         raise ValueError("identity database schema or required indexes are malformed")
     metadata = dict(connection.execute("SELECT key, value FROM metadata"))
     expected = {key: str(value) for key, value in marker.items()}
     version = ("1" if actual == ALLOCATION_SCHEMA else "2" if actual == SCHEMA_V2
-               else "3" if actual == SCHEMA_V3 else SCHEMA_VERSION)
+               else "3" if actual == SCHEMA_V3 else "4" if actual == SCHEMA_V4 else SCHEMA_VERSION)
     if version != "1":
         expected["schema_version"] = version
     if metadata != expected:
@@ -139,6 +157,9 @@ def upgrade(connection):
             connection.execute(statement)
     if version is None or version[0] in {"2", "3"}:
         for statement in PUBLICATION_SCHEMA.values():
+            connection.execute(statement)
+    if version is None or version[0] in {"2", "3", "4"}:
+        for statement in SOURCE_SCHEMA.values():
             connection.execute(statement)
     connection.execute("INSERT INTO metadata (key,value) VALUES ('schema_version',?) "
                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (SCHEMA_VERSION,))

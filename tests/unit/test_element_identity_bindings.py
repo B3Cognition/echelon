@@ -336,12 +336,12 @@ def test_each_frozen_source_history_is_audited_before_upgrade_mutation(tmp_path,
     assert state(tmp_path) == before
 
 
-@pytest.mark.parametrize("version", ["1", "2", "3", "4"])
+@pytest.mark.parametrize("version", ["1", "2", "3", "5"])
 @pytest.mark.parametrize("damage", [None, "unknown", "ordinal", "receipt"])
 def test_restore_audits_each_schema_before_destination_claim(tmp_path, version, damage):
     source = tmp_path / "source"
     source.mkdir()
-    if version in {"3", "4"}:
+    if version in {"3", "5"}:
         store = seeded(source)
         original_reference = record(store, claim())
         original_occurrence = observe(store, occurrence())
@@ -368,7 +368,7 @@ def test_restore_audits_each_schema_before_destination_claim(tmp_path, version, 
         assert not (destination / ".echelon").exists()
     else:
         restored = IdentityStore.restore(destination, directory)
-        if version in {"3", "4"}:
+        if version in {"3", "5"}:
             assert record(restored, claim()) == original_reference
             assert observe(restored, occurrence()) == original_occurrence
         else:
@@ -486,9 +486,9 @@ def test_large_assessed_revision_is_bound_without_machine_integer_casts(tmp_path
 
 
 @pytest.mark.parametrize("version,method", [("1", "reference_claims"), ("2", "issue_occurrences"),
-                                           ("3", "identity_publication"), ("4", "unknown")])
+                                           ("3", "identity_publication"), ("5", "unknown")])
 def test_audit_rejects_operation_methods_that_cannot_belong_to_schema(tmp_path, version, method):
-    if version == "4":
+    if version == "5":
         seeded(tmp_path)
     else:
         older_authority(tmp_path, version)

@@ -35,6 +35,7 @@ from harness.element_identity_publication import PublicationIntentRequest
 
 if TYPE_CHECKING:
     from harness.element_identity_snapshot import IdentityHistorySnapshot
+    from harness.squad_source_manifest import SourceManifestSnapshot
 
 
 _VERSION = 1
@@ -267,8 +268,8 @@ class IdentityStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = _validate(connection, marker, allow_old=True)
-                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4"},
-                           publication_state=version == "4")
+                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5"},
+                           publication_state=version in {"4", "5"}, source_state=version == "5")
                 if version != schema.SCHEMA_VERSION:
                     schema.upgrade(connection)
                 _validate(connection, marker)
@@ -302,7 +303,7 @@ class IdentityStore:
         metadata = dict(connection.execute("SELECT key,value FROM metadata"))
         marker = _authority({"version": 1, "workspace_uuid": metadata.get("workspace_uuid"),
                              "epoch_uuid": metadata.get("epoch_uuid")})
-        _validate(connection, marker)
+        _validate(connection, marker, allow_old=True)
         return {key: marker[key] for key in ("workspace_uuid", "epoch_uuid")}
 
     @staticmethod
@@ -702,6 +703,22 @@ class IdentityStore:
                 projection_sources, evidence_inventories, issue_reports)
 
     @_public
+    def register_source_context(self, *, spec_id: str, context_id: str, operation_id: str,
+                                manifest: SourceManifestSnapshot) -> dict:
+        from harness import element_identity_source_store as source_store
+
+        with self._transaction(write=True) as connection:
+            return source_store.register(connection, self, spec_id, context_id, operation_id, manifest)
+
+    @_public
+    def source_context(self, *, spec_id: str, context_id: str) -> dict | None:
+        from harness import element_identity_source_store as source_store
+
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            return source_store.read(connection, self, spec_id, context_id)
+
+    @_public
     def prepare_identity_publication(self, *, spec_id: str, operation_id: str,
                                      request: PublicationIntentRequest) -> dict:
         from harness import element_identity_publication_store as publication_store
@@ -771,10 +788,11 @@ class IdentityStore:
             "lifecycle_heads", "lifecycle_lineage", "lifecycle_receipts",
             "reference_claims", "issue_occurrences", "binding_receipts",
             "publication_intents", "publication_operation_claims",
+            "source_contexts", "source_publications",
         )
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
-            self._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True)
+            self._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True)
             counts = {
                 table: _decimal(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in tables
@@ -798,7 +816,7 @@ class IdentityStore:
             raise IdentityStoreError("reservation history is inconsistent")
 
     @classmethod
-    def _audit(cls, connection, *, lifecycle_state, binding_state=False, publication_state=False):
+    def _audit(cls, connection, *, lifecycle_state, binding_state=False, publication_state=False, source_state=False):
         """Fully validate an explicitly audited, upgraded, or restored authority."""
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise IdentityStoreError("database integrity check failed")
@@ -811,6 +829,8 @@ class IdentityStore:
             methods.update(("reference_claims", "issue_occurrences"))
         if publication_state:
             methods.add("identity_publication")
+        if source_state:
+            methods.add("source_context")
         if any(row[0] not in methods for row in connection.execute("SELECT DISTINCT method FROM operations")):
             raise IdentityStoreError("operation method is unsupported by this authority schema")
         cls._audit_counters(connection)
@@ -854,7 +874,11 @@ class IdentityStore:
         if publication_state:
             from harness import element_identity_publication_store as publication_store
 
-            publication_store.audit(connection, cls)
+            publication_store.audit(connection, cls, source_state=source_state)
+        if source_state:
+            from harness import element_identity_source_store as source_store
+
+            source_store.audit(connection, cls)
 
     @_public
     def record_reference_claims(self, *, spec_id: str, operation_id: str,
@@ -904,6 +928,7 @@ class IdentityStore:
     def backup(self, destination: Path) -> None:
         """Write a dedicated online snapshot; only the final manifest completes it."""
         with self._transaction() as source:
+            self._audit(source, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True)
             destination = _claim_directory(destination)
             database = destination / _DATABASE
             _write_new(database, b"")
@@ -941,8 +966,8 @@ class IdentityStore:
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4"},
-                       publication_state=version == "4")
+            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5"},
+                       publication_state=version in {"4", "5"}, source_state=version == "5")
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")

@@ -148,7 +148,7 @@ def _persisted_plan(connection, store, row, plan, child_id):
         raise ValueError("published lineage differs from retained exact plan")
 
 
-def _application(connection, store, row, plan, children):
+def _application(connection, store, row, plan, children, *, source_receipt=None):
     results = []
     for operation, _, _, digest in children:
         saved = connection.execute("SELECT method,spec_id,digest FROM operations WHERE operation_id=?",
@@ -171,10 +171,13 @@ def _application(connection, store, row, plan, children):
             _absent_rows(connection, operation.operation_id, (operation.method, "binding_receipts"))
             receipt = binding_store.receipt(connection, store, operation.method, row["spec_id"], operation.operation_id)
         results.append({"method": operation.method, "operation_id": operation.operation_id, "receipt": list(receipt)})
-    return {"version": "1", "publication": _preparation(connection, row), "operations": results}
+    result = {"version": "1", "publication": _preparation(connection, row), "operations": results}
+    if source_receipt is not None:
+        result.update(version="2", sources=source_receipt)
+    return result
 
 
-def _load(connection, store, spec_id, operation_id, *, effects=True):
+def _load(connection, store, spec_id, operation_id, *, effects=True, source_state=True):
     operation = connection.execute("SELECT method,spec_id,digest FROM operations WHERE operation_id=?",
                                    (operation_id,)).fetchone()
     row = connection.execute("SELECT * FROM publication_intents WHERE operation_id=?", (operation_id,)).fetchone()
@@ -188,6 +191,8 @@ def _load(connection, store, spec_id, operation_id, *, effects=True):
     lifecycle.text(spec_id, "spec_id")
     lifecycle.text(operation_id, "operation_id")
     request = decode_publication_request(row["request"])
+    if not source_state and request.sources is not None:
+        raise ValueError("source-bearing publication is unsupported by this schema")
     if encode_publication_request(request) != row["request"] or _hash(row["request"]) != row["request_sha256"]:
         raise ValueError("publication request digest or encoding is damaged")
     plan = _stored_json(row["plan"])
@@ -209,6 +214,10 @@ def _load(connection, store, spec_id, operation_id, *, effects=True):
         raise ValueError("publication without lifecycle has a nonempty plan")
     _absent_rows(connection, operation_id)
     _preparation(connection, row)
+    source_receipt = None
+    if source_state:
+        from harness import element_identity_source_store as sources
+        source_receipt = sources.validate_plan(connection, store, spec_id, operation_id, request)
     state = row["state"]
     if state not in {"prepared", "applied", "released"}:
         raise ValueError("invalid publication state")
@@ -226,7 +235,7 @@ def _load(connection, store, spec_id, operation_id, *, effects=True):
         _stored_json(row["application_receipt"])
         if _hash(row["application_receipt"]) != row["application_receipt_sha256"]:
             raise ValueError("publication application receipt digest is damaged")
-        if effects and authority._json(_application(connection, store, row, plan, children)) != row["application_receipt"]:
+        if effects and authority._json(_application(connection, store, row, plan, children, source_receipt=source_receipt)) != row["application_receipt"]:
             raise ValueError("publication application receipt associations are damaged")
         if state == "applied":
             if row["completion_payload"] is not None or row["completion_payload_sha256"] is not None:
@@ -305,6 +314,8 @@ def prepare(connection, store, spec_id, operation_id, request):
                        (operation_id, spec_id, request_json, _hash(request_json), plan, _hash(plan)))
     connection.executemany("INSERT INTO publication_operation_claims (operation_id,publication_id,method,digest) VALUES (?,?,?,?)",
                            ((op.operation_id, operation_id, op.method, digest) for op, _, _, digest in children))
+    from harness import element_identity_source_store as sources
+    sources.prepare(connection, store, spec_id, operation_id, request)
     return _preparation(connection, {"operation_id": operation_id, "spec_id": spec_id,
                                     "request_sha256": _hash(request_json), "plan_sha256": _hash(plan)})
 
@@ -315,7 +326,7 @@ def apply(connection, store, spec_id, operation_id):
     loaded = _load(connection, store, spec_id, operation_id)
     if loaded is None:
         raise ValueError("publication intent does not exist")
-    row, _, plan, children = loaded
+    row, request, plan, children = loaded
     if row["state"] != "prepared":
         return _stored_json(row["application_receipt"])
     adapter = _ApplicationStore(store, operation_id)
@@ -324,8 +335,11 @@ def apply(connection, store, spec_id, operation_id):
             lifecycle_store.apply_changes(connection, adapter, spec_id, op.operation_id, entries)
         else:
             binding_store.record(connection, adapter, op.method, spec_id, op.operation_id, payload)
-    receipt = _application(connection, store, row, plan, children)
+    from harness import element_identity_source_store as sources
+    source_receipt = sources.validate_plan(connection, store, spec_id, operation_id, request)
+    receipt = _application(connection, store, row, plan, children, source_receipt=source_receipt)
     encoded = authority._json(receipt)
+    sources.accept(connection, store, spec_id, operation_id, request, receipt)
     connection.execute("UPDATE publication_intents SET state='applied',application_receipt=?,application_receipt_sha256=? WHERE operation_id=?",
                        (encoded, _hash(encoded), operation_id))
     return receipt
@@ -368,7 +382,7 @@ def pending(connection, store, spec_id):
 
 
 @authority._public
-def audit(connection, store):
+def audit(connection, store, *, source_state=True):
     _require(connection)
     authority.IdentityStore._namespace(connection)
     operations = connection.execute("SELECT operation_id FROM publication_intents UNION "
@@ -376,5 +390,5 @@ def audit(connection, store):
         "SELECT operation_id FROM operations WHERE method='identity_publication'")
     for (operation_id,) in operations:
         row = connection.execute("SELECT spec_id FROM publication_intents WHERE operation_id=?", (operation_id,)).fetchone()
-        if row is None or _load(connection, store, row[0], operation_id) is None:
+        if row is None or _load(connection, store, row[0], operation_id, source_state=source_state) is None:
             raise ValueError("orphan publication parent or child claim")
