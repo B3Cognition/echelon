@@ -260,6 +260,7 @@ def test_producer_context_states_exact_finding_disposition_contract(
             realize_slice(entry, {}),
             role="producer",
             producer_contract_failure_codes=(
+                "missing-primary-evidence-anchors",
                 "unresolved-findings-not-addressed",
             ),
         )
@@ -270,6 +271,7 @@ def test_producer_context_states_exact_finding_disposition_contract(
         "unresolved_finding_ids": "subset of addressed_finding_ids",
     }
     assert payload["producer_contract_failure_codes"] == [
+        "missing-primary-evidence-anchors",
         "unresolved-findings-not-addressed"
     ]
 

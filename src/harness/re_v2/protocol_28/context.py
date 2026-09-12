@@ -336,6 +336,7 @@ def _serialize_protocol_28_slice_context(
     allowed_contract_failure_codes = frozenset(
         {
             "malformed-result-contract",
+            "missing-primary-evidence-anchors",
             "unresolved-findings-not-addressed",
         }
     )

@@ -76,6 +76,8 @@ def test_analyst_is_bounded_and_never_claims_controller_authority() -> None:
     assert "absent sibling slices" in body
     assert "every claim has at least one `subject_ids` value" in body
     assert "supporting_subject_ids" in body
+    assert "missing-primary-evidence-anchors" in body
+    assert "Copy the nested `anchor` object for every primary evidence ID" in body
 
 
 def test_verifier_uses_fresh_context_and_cannot_modify_candidate() -> None:

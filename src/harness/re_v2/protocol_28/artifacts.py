@@ -642,7 +642,10 @@ def validate_candidate(
         anchor_ids.add(anchor.identity)
         acknowledged.add(anchor.evidence_id)
     if not set(plan_entry.primary_snapshot_evidence_ids).issubset(acknowledged):
-        raise Protocol28ArtifactError("candidate primary evidence lacks exact anchors")
+        raise Protocol28ArtifactError(
+            "candidate primary evidence lacks exact anchors",
+            reason_code="missing-primary-evidence-anchors",
+        )
     for claim in candidate.claims:
         if not set(claim.subject_ids).issubset(permitted_subjects) or not set(claim.evidence_anchor_ids).issubset(anchor_ids):
             raise Protocol28ArtifactError("candidate claim exceeds subject or evidence boundary")

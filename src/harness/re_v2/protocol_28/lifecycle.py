@@ -133,7 +133,9 @@ def _producer_contract_failure_codes(
                 and event.payload["output_artifact_key_id"]
                 == slice_spec.output_artifact_key_id
                 and event.payload["reason_code"] in {
-                    "malformed-result-contract", "unresolved-findings-not-addressed"
+                    "malformed-result-contract",
+                    "missing-primary-evidence-anchors",
+                    "unresolved-findings-not-addressed",
                 }
             }
         )

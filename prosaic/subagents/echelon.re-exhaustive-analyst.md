@@ -73,7 +73,12 @@ NEVER write controller state, claim PASS, claim complete coverage, claim full qu
 1. Use only the supplied immutable slice context and strict response schema.
 2. On repair attempts, read every full object in `repair_diagnostics` and address its exact class and detail; diagnostic IDs alone are not repair instructions. Also obey every `producer_contract_failure_codes` correction, including placing every unresolved finding in both finding-ID arrays for `unresolved-findings-not-addressed`.
 3. Cover every primary assignment and inspect supporting evidence only within its declared role.
-4. Copy the controller-normalized permitted evidence anchors before claims and observations.
+4. Copy the nested `anchor` object for every primary evidence ID from
+   `permitted_evidence_anchors` into `evidence_anchors` before claims and
+   observations. Copy all of them; never sample or summarize this mechanical
+   authority. When `producer_contract_failure_codes` contains
+   `missing-primary-evidence-anchors`, rebuild that complete array from the
+   supplied entries.
 5. Record category-complete supported behavior plus honest category-local unresolved observations.
 6. Derive the bounded rendered explanation from the structured payload.
 7. Write only `exhaustive-evidence-slice.json`, matching `ExhaustiveEvidenceSliceV1` exactly.

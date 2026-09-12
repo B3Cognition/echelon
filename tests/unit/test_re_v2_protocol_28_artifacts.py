@@ -119,6 +119,19 @@ def test_candidate_requires_exact_primary_evidence_acknowledgement() -> None:
 
 
 @pytest.mark.unit
+def test_missing_primary_evidence_anchors_have_stable_repair_reason() -> None:
+    entry, spec, evidence, candidate = _candidate_fixture()
+    missing = replace(candidate, evidence_anchors=candidate.evidence_anchors[:-1])
+
+    with pytest.raises(Protocol28ArtifactError) as raised:
+        validate_candidate(
+            spec, entry, evidence, missing.to_json_dict(), build_initial_exhaustive_policy()
+        )
+
+    assert raised.value.reason_code == "missing-primary-evidence-anchors"
+
+
+@pytest.mark.unit
 def test_candidate_rejects_anchor_outside_staged_shard_range() -> None:
     entry, spec, evidence, candidate = _candidate_fixture()
     anchor = candidate.evidence_anchors[0]
