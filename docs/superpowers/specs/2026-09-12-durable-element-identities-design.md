@@ -225,6 +225,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   publisher's actual new-directory mode. Real publication and interrupted retry
   match the retained original's expectation. This is not a fresh observation
   or guarded-promotion/accepted-source authority; those remain integration work.
+- Guarded selected-source publication: implemented in `1227855d`, corrected
+  in `dc4a4964` and `3a79678f`, and independently reviewed. Initial six-module
+  suite: 438 passed; final three-module fix coverage: 298 passed. The opt-in
+  publisher uses the existing lock and sole promotion loop, checks complete
+  selected sources at publication boundaries, and retains distinct target
+  ancestor bindings through the invocation. Real replacement and bounded-handle
+  regressions caught and corrected both lifetime and resource-growth gaps.
+  Interrupted prefixes retain recovery material; callbacks do not establish
+  accepted-source, semantic, namespace or completion authority. No live caller
+  has been switched to this API.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
