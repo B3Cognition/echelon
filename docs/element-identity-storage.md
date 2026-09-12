@@ -330,6 +330,22 @@ as its pre-promotion and structural guard. It does not manufacture an initial
 capture from a partial or final observation, and it preserves the guard's bounded
 publication failure.
 
+`project_publication_source_images(initial)` exposes the same transformation as a
+frozen `ProjectedPublicationSources` value containing the exact final `trees` and
+individual `files` tuples plus their `manifest`. Every returned tree, directory,
+tree-file, selected-path and image-descriptor record is freshly detached from the
+validated original; immutable byte and string values are preserved exactly. The
+manifest is produced once from those returned tuples through
+`snapshot_source_manifest`, so recomputing it from the tuples yields the same value
+and the legacy manifest projector returns that value unchanged.
+
+The projected value deliberately has no publication marker or promoted-prefix
+fields and is not a `PublicationSourcesSnapshot`. It cannot be encoded as an
+initial physical capture, validates no caller-constructed instance, and conveys no
+capture freshness, seal authentication or acceptance authority. The private
+prefix transformer used by guarded interrupted-publication recovery retains its
+existing manifest-only contract and uses this same image transformation.
+
 Projection is component-relative and cannot expand the explicit selection. Exact
 writes replace selected file images with their sealed postimage and bytes; exact
 deletes make explicitly selected files missing. Within a selected tree, writes add

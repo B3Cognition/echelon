@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from harness import squad_publication as publication
@@ -20,6 +21,13 @@ from harness.squad_source_snapshot import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectedPublicationSources:
+    trees: tuple[ProjectTreeSnapshot, ...]
+    files: tuple[ProjectPathSnapshot, ...]
+    manifest: SourceManifestSnapshot
+
+
 def _parts(path: str) -> tuple[str, ...]:
     return tuple(Path(path).parts)
 
@@ -32,6 +40,10 @@ def _missing() -> PublicationImageDescriptor:
     return PublicationImageDescriptor("missing", None, None)
 
 
+def _detached_image(image: PublicationImageDescriptor) -> PublicationImageDescriptor:
+    return PublicationImageDescriptor(image.kind, image.sha256, image.mode)
+
+
 def _invalid() -> None:
     raise publication.PublicationError("manifest_invalid")
 
@@ -40,8 +52,15 @@ def project_publication_source_manifest(
     initial: PublicationSourcesSnapshot,
 ) -> SourceManifestSnapshot:
     """Project the exact selected-source metadata after every sealed operation."""
+    return project_publication_source_images(initial).manifest
+
+
+def project_publication_source_images(
+    initial: PublicationSourcesSnapshot,
+) -> ProjectedPublicationSources:
+    """Project detached exact selected-source images after every sealed operation."""
     encode_initial_publication_sources(initial)
-    return _transform_selected_sources(initial, len(initial.publication.operations))
+    return _project_selected_sources(initial, len(initial.publication.operations))
 
 
 def _transform_selected_sources(
@@ -51,6 +70,18 @@ def _transform_selected_sources(
     new_directories: tuple[str, ...] = (),
 ) -> SourceManifestSnapshot:
     """Internal transformation of a validated original; never an initial guard."""
+    return _project_selected_sources(
+        initial, prefix, new_directories=new_directories,
+    ).manifest
+
+
+def _project_selected_sources(
+    initial: PublicationSourcesSnapshot,
+    prefix: int,
+    *,
+    new_directories: tuple[str, ...] = (),
+) -> ProjectedPublicationSources:
+    """Build detached selected-source images from one validated original."""
 
     try:
         operations = tuple(
@@ -77,8 +108,16 @@ def _transform_selected_sources(
 
         projected_trees: list[ProjectTreeSnapshot] = []
         for tree, root in tree_roots:
-            directories = {item.path: item for item in tree.directories}
-            files = {item.path: item for item in tree.files}
+            directories = {
+                item.path: ProjectDirectorySnapshot(item.path, item.mode)
+                for item in tree.directories
+            }
+            files = {
+                item.path: ProjectFileSnapshot(
+                    item.path, _detached_image(item.image), item.content,
+                )
+                for item in tree.files
+            }
             exists = tree.exists
             for path in new_directories:
                 if _is_at_or_below(_parts(path), root):
@@ -105,7 +144,9 @@ def _transform_selected_sources(
                         ),
                     )
                 files[operation.target] = ProjectFileSnapshot(
-                    operation.target, operation.postimage, postimage_bytes,
+                    operation.target,
+                    _detached_image(operation.postimage),
+                    postimage_bytes,
                 )
             projected_trees.append(ProjectTreeSnapshot(
                 tree.path,
@@ -121,7 +162,9 @@ def _transform_selected_sources(
         for item, _ in selected_files:
             operation = operation_by_target.get(item.path)
             if operation is None:
-                projected_files.append(item)
+                projected_files.append(ProjectPathSnapshot(
+                    item.path, _detached_image(item.image), item.content,
+                ))
             elif operation.action == "delete":
                 projected_files.append(ProjectPathSnapshot(
                     item.path, _missing(), None,
@@ -131,11 +174,16 @@ def _transform_selected_sources(
                 if type(postimage_bytes) is not bytes:
                     _invalid()
                 projected_files.append(ProjectPathSnapshot(
-                    item.path, operation.postimage, postimage_bytes,
+                    item.path,
+                    _detached_image(operation.postimage),
+                    postimage_bytes,
                 ))
 
-        return snapshot_source_manifest(
-            trees=tuple(projected_trees), files=tuple(projected_files),
+        trees = tuple(projected_trees)
+        files = tuple(projected_files)
+        manifest = snapshot_source_manifest(trees=trees, files=files)
+        return ProjectedPublicationSources(
+            trees=trees, files=files, manifest=manifest,
         )
     except publication.PublicationError:
         raise
