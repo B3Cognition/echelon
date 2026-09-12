@@ -184,6 +184,10 @@ def _load(connection, store, spec_id, operation_id, *, effects=True, source_stat
     if operation is None and row is None:
         if connection.execute(_CLAIM, (operation_id,)).fetchone():
             raise ValueError("operation_id belongs to a claimed child method")
+        if source_state and connection.execute(
+            "SELECT 1 FROM source_publications WHERE publication_id=?", (operation_id,),
+        ).fetchone():
+            raise ValueError("source publication retained without its parent operation")
         return None
     if operation is None or tuple(operation)[:2] != ("identity_publication", spec_id) or row is None or row["spec_id"] != spec_id:
         raise ValueError("publication intent/operation association is missing or conflicting")

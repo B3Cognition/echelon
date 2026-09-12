@@ -643,6 +643,90 @@ def test_source_plan_helper_rejects_an_altered_parent_request(tmp_path):
         with pytest.raises(IdentityStoreError): sources.validate_plan(connection, store, "demo", "pub", changed)
 
 
+@pytest.mark.parametrize("phase", ["prepared", "applied", "released"])
+def test_missing_parent_and_operation_with_retained_source_row_never_returns_absent(tmp_path, phase):
+    store, _ = seed_empty(tmp_path)
+    store.prepare_identity_publication(spec_id="demo", operation_id="pub", request=source_request())
+    if phase != "prepared": store.apply_identity_publication(spec_id="demo", operation_id="pub")
+    if phase == "released": store.release_identity_publication(spec_id="demo", operation_id="pub", completion_payload="done")
+    with sqlite3.connect(tmp_path / DATABASE) as connection:
+        connection.execute("DELETE FROM publication_intents WHERE operation_id='pub'")
+        connection.execute("DELETE FROM operations WHERE operation_id='pub'")
+    before = state(tmp_path)
+    actions = [lambda: store.identity_publication(spec_id="demo", operation_id="pub"),
+               lambda: store.prepare_identity_publication(spec_id="demo", operation_id="pub", request=source_request()),
+               store.audit]
+    if phase != "prepared": actions.append(lambda: store.source_context(spec_id="demo", context_id="run"))
+    for action in actions:
+        with pytest.raises(IdentityStoreError): action()
+        assert state(tmp_path) == before
+
+
+@pytest.mark.parametrize("damage", ["source-less-request", "extra-key", "wrong-publication", "wrong-child-receipts"])
+def test_source_acceptance_helper_revalidates_complete_application_before_writes(tmp_path, damage):
+    from harness import element_identity_source_store as sources
+    from harness.element_identity_publication import PublicationIntentRequest
+    store, registration = seed_empty(tmp_path)
+    request = source_request()
+    preparation = store.prepare_identity_publication(spec_id="demo", operation_id="pub", request=request)
+    application = {"version": "2", "publication": preparation, "operations": [],
+                   "sources": {**registration, "operation_id": "pub", "sequence": "1"}}
+    if damage == "source-less-request": request = PublicationIntentRequest("a" * 64, "opaque recovery")
+    if damage == "extra-key": application["unexpected"] = "value"
+    if damage == "wrong-publication": application["publication"] = {**preparation, "operation_id": "other"}
+    if damage == "wrong-child-receipts": application["operations"] = [{"method": "lifecycle", "operation_id": "invented", "receipt": []}]
+    before = state(tmp_path)
+    with pytest.raises(IdentityStoreError):
+        with store._transaction(write=True) as connection:
+            sources.accept(connection, store, "demo", "pub", request, application)
+    assert state(tmp_path) == before
+
+
+def test_mixed_source_head_read_never_scans_historical_child_tables(tmp_path):
+    from harness import element_identity_source_store as sources
+    store, _, request, _ = mixed_seed(tmp_path)
+    store.prepare_identity_publication(spec_id="demo", operation_id="pub", request=request)
+    application = store.apply_identity_publication(spec_id="demo", operation_id="pub")
+    store.release_identity_publication(spec_id="demo", operation_id="pub", completion_payload="done")
+    historical = {"entities", "revisions", "lifecycle_lineage", "lifecycle_receipts", "lifecycle_heads",
+                  "reference_claims", "issue_occurrences", "binding_receipts", "reservations", "counters"}
+    with store._transaction() as connection:
+        def deny_history(action, table, *_):
+            return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_READ and table in historical else sqlite3.SQLITE_OK
+        connection.set_authorizer(deny_history)
+        for _ in range(3): assert sources.read(connection, store, "demo", "run") == application["sources"]
+        for query, parameters in ((sources._HEAD, ("demo", "run")),
+                                 ("SELECT * FROM publication_intents WHERE operation_id=?", ("pub",)),
+                                 ("SELECT operation_id,publication_id,method,digest FROM publication_operation_claims WHERE publication_id=?", ("pub",))):
+            plan = " ".join(row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + query, parameters))
+            assert "SEARCH" in plan and "SCAN" not in plan and "TEMP B-TREE" not in plan
+
+
+@pytest.mark.parametrize("damage", ["preparation", "operations", "completion", "plan"])
+def test_source_head_structural_parent_checks_survive_recomputed_local_hashes(tmp_path, damage):
+    store, _ = seed_empty(tmp_path)
+    application = accepted(store)
+    with sqlite3.connect(tmp_path / DATABASE) as connection:
+        if damage in {"preparation", "operations"}:
+            if damage == "preparation": application["publication"]["operation_id"] = "other"
+            else: application["operations"] = [{"method": "lifecycle", "operation_id": "other", "receipt": []}]
+            encoded = canonical(application)
+            digest = hashlib.sha256(encoded.encode("ascii")).hexdigest()
+            connection.execute("UPDATE publication_intents SET application_receipt=?,application_receipt_sha256=?", (encoded, digest))
+            connection.execute("UPDATE source_publications SET application_sha256=?", (digest,))
+        elif damage == "completion": connection.execute("UPDATE publication_intents SET completion_payload_sha256='bad'")
+        else:
+            from harness.element_identity_store import _digest
+            plan = '{}'
+            plan_hash = hashlib.sha256(plan.encode("ascii")).hexdigest()
+            request = connection.execute("SELECT request FROM publication_intents").fetchone()[0]
+            connection.execute("UPDATE publication_intents SET plan=?,plan_sha256=?", (plan, plan_hash))
+            connection.execute("UPDATE operations SET digest=? WHERE operation_id='pub'", (_digest(["identity_publication", "demo", "pub", request, plan_hash]),))
+    before = state(tmp_path)
+    with pytest.raises(IdentityStoreError): store.source_context(spec_id="demo", context_id="run")
+    assert state(tmp_path) == before
+
+
 def capture(project, transaction_id="6" * 32):
     from harness.squad_publication import SquadPublicationTransaction
     from harness.squad_source_baseline_codec import encode_initial_publication_sources

@@ -668,7 +668,11 @@ independent pointer to match the indexed highest accepted row. Missing pointed
 rows, highest-row deletion, pointer-only rewind/clearing, premature acceptance,
 or cross-context pointers fail without repair or fallback to registration.
 Exact context/parent lookups use primary keys; head reads validate the current row
-and its immediate retained predecessor without recursive history replay. Full
+and its immediate retained predecessor without recursive history replay or reads
+of historical identity child tables. They validate indexed parent/child ownership,
+the closed application envelope and preparation binding, and source/state/digest
+associations. Full historical child-effect reconstruction remains in explicit
+journal reads/retries and full authority audits. Full
 audits validate every chain, contiguous sequence increments, original registration
 digests, parent/source associations, and highest heads. Recomputed local hashes
 cannot make a source plan disagree with its retained request or predecessor.

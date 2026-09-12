@@ -110,8 +110,8 @@ def read(connection, store, spec_id, context_id):
         return None
     highest = _head_pointer(connection, context)
     if highest is not None:
-        from harness import element_identity_publication_store as publications
-        publications._load(connection, store, spec_id, highest["publication_id"])
+        _, request = _parent(connection, highest["publication_id"])
+        return validate_plan(connection, store, spec_id, highest["publication_id"], request)
     return _receipt(connection, context, highest)
 
 
@@ -135,6 +135,13 @@ def _derived(request):
 
 
 def _parent(connection, publication_id):
+    """Indexed ownership and structural receipt checks, without child-history scans.
+
+    Full child effects remain the journal read/retry/audit owner's responsibility.
+    Reuse its pure plan/request/preparation validators, not its history loader.
+    """
+    from harness import element_identity_publication_store as publications
+
     parent = connection.execute("SELECT * FROM publication_intents WHERE operation_id=?", (publication_id,)).fetchone()
     if parent is None:
         raise ValueError("source publication parent is missing")
@@ -146,6 +153,45 @@ def _parent(connection, publication_id):
             "identity_publication", parent["spec_id"], authority._digest([
                 "identity_publication", parent["spec_id"], publication_id, parent["request"], parent["plan_sha256"]]))):
         raise ValueError("source parent operation is damaged")
+    plan = publications._stored_json(parent["plan"])
+    publications._plan_shape(plan, parent["spec_id"])
+    children = publications._children(request, parent["spec_id"])
+    expected_claims = {(op.operation_id, publication_id, op.method, digest) for op, _, _, digest in children}
+    claims = {tuple(row) for row in connection.execute(
+        "SELECT operation_id,publication_id,method,digest FROM publication_operation_claims WHERE publication_id=?",
+        (publication_id,))}
+    if (claims != expected_claims or any(op.operation_id == publication_id for op, _, _, _ in children)
+            or connection.execute(publications._CLAIM, (publication_id,)).fetchone()):
+        raise ValueError("source parent ownership claims are damaged")
+    if not any(op.method == "lifecycle" for op, _, _, _ in children) and plan != {"revisions": [], "lineage": []}:
+        raise ValueError("source parent has an unexpected lifecycle plan")
+    preparation = publications._preparation(connection, parent)
+    if parent["state"] == "prepared":
+        if any(parent[key] is not None for key in ("application_receipt", "application_receipt_sha256", "completion_payload", "completion_payload_sha256")):
+            raise ValueError("source parent has premature receipts")
+    elif parent["state"] in {"applied", "released"}:
+        application = publications._stored_json(parent["application_receipt"])
+        keys = {"version", "publication", "operations"} | ({"sources"} if request.sources is not None else set())
+        if (type(application) is not dict or set(application) != keys
+                or application["version"] != ("2" if request.sources is not None else "1")
+                or application["publication"] != preparation or type(application["operations"]) is not list
+                or len(application["operations"]) != len(request.operations)
+                or _hash(parent["application_receipt"]) != parent["application_receipt_sha256"]):
+            raise ValueError("source parent application envelope is damaged")
+        for result, op in zip(application["operations"], request.operations):
+            if (type(result) is not dict or set(result) != {"method", "operation_id", "receipt"}
+                    or result["method"] != op.method or result["operation_id"] != op.operation_id
+                    or type(result["receipt"]) is not list or any(type(item) is not dict for item in result["receipt"])):
+                raise ValueError("source parent child receipt envelope is damaged")
+        if parent["state"] == "applied":
+            if parent["completion_payload"] is not None or parent["completion_payload_sha256"] is not None:
+                raise ValueError("source parent has premature completion")
+        else:
+            text(parent["completion_payload"], "completion_payload")
+            if hashlib.sha256(parent["completion_payload"].encode("utf-8")).hexdigest() != parent["completion_payload_sha256"]:
+                raise ValueError("source parent completion digest is damaged")
+    else:
+        raise ValueError("source parent state is invalid")
     return parent, request
 
 
@@ -243,10 +289,18 @@ def prepare(connection, store, spec_id, publication_id, request):
 def accept(connection, store, spec_id, publication_id, request, application):
     _require(connection, spec_id, publication_id)
     request = decode_publication_request(encode_publication_request(request))
+    _request_parent(connection, spec_id, publication_id, request)
     if request.sources is None:
         return
     receipt = validate_plan(connection, store, spec_id, publication_id, request)
-    if application.get("sources") != receipt or application.get("version") != "2":
+    from harness import element_identity_publication_store as publications
+    # Reuse the journal's read-only receipt validation; it remains the sole
+    # child writer and the sole parent application-receipt persistence owner.
+    row, _, plan, children = publications._load(connection, store, spec_id, publication_id, effects=False)
+    if row["state"] != "prepared":
+        raise ValueError("source acceptance requires its prepared parent")
+    expected = publications._application(connection, store, row, plan, children, source_receipt=receipt)
+    if type(application) is not dict or authority._json(application) != authority._json(expected):
         raise ValueError("source application receipt differs from plan")
     head = read(connection, store, spec_id, request.sources.context_id)
     if head["operation_id"] != request.sources.expected_operation_id:
