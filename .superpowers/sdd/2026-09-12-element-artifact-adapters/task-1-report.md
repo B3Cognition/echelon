@@ -193,3 +193,123 @@ Exit 0 with no output.
 None. The documented limitation is intentional: artifacts with diagnostics are
 not eligible for future managed publication, but enforcement and live rollout
 remain later checkpoints.
+
+---
+
+## Fix round 1/5 — parser review findings
+
+Status: DONE. Fix implementation commit: `cb2eece6` (`fix: close identity
+artifact parser gaps`). This remains a parser-only checkpoint and does not yet
+enforce publication.
+
+### Findings addressed
+
+1. Lexicon REQ/AC headers now validate the complete supported label rather than
+   accepting a family prefix and silently skipping the remainder. Every
+   grammar-valid unsupported label receives `unsupported_lexicon_id` at its
+   exact source span.
+2. Source alignment for grammar-validated Lexicon blocks now accepts the same
+   leading horizontal whitespace as the existing grammar, preserving exact
+   indented block and label spans.
+3. Canonical task `req=` and `depends=` values are registered as relation
+   regions before range extraction. Valid intervals are emitted once with the
+   field relation; invalid intervals are diagnosed and their endpoints cannot
+   reappear independently.
+4. Four-space continuation paragraphs and nested lists owned by a list item
+   stay active for references, while deeper indented code and standalone
+   indented code remain inactive.
+5. HTML comments and fences are processed as one lexical state machine, so a
+   fence delimiter inside a comment cannot open a fence or hide later source;
+   comment markers inside fences likewise remain inert.
+6. Supported nested ID bullets are retained as child declarations, and
+   overlapping heading/bullet blocks select the innermost declaration as the
+   reference owner. Genuinely ambiguous indented ID headings remain diagnostic
+   and cannot silently attach a child reference to the parent.
+7. Explicit ID-bearing headings that fail supported syntax, including missing
+   colons and unsupported Unicode suffixes, receive
+   `unsupported_declaration` and are excluded from bare-reference extraction.
+
+### TDD RED evidence
+
+Tests were added for all seven findings before production changes.
+
+Command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py tests/unit/test_element_artifact_lexicon.py -q
+```
+
+Expected pre-fix output (exit 1):
+
+```text
+........FF.....F...............FF.FF....................FF...            [100%]
+FAILED tests/unit/test_element_artifacts.py::test_list_owned_four_space_continuations_are_active_but_indented_code_is_not
+FAILED tests/unit/test_element_artifacts.py::test_fence_delimiter_inside_html_comment_cannot_hide_later_active_source
+FAILED tests/unit/test_element_artifacts.py::test_task_metadata_ranges_are_single_relation_aware_intervals
+FAILED tests/unit/test_element_artifacts.py::test_valid_nested_bullet_declaration_has_innermost_reference_ownership
+FAILED tests/unit/test_element_artifacts.py::test_nested_heading_reference_uses_innermost_declaration_owner
+FAILED tests/unit/test_element_artifacts.py::test_unsupported_explicit_headings_are_diagnostic_not_references[### U-001 Question without colon\n-U-001]
+FAILED tests/unit/test_element_artifacts.py::test_unsupported_explicit_headings_are_diagnostic_not_references[### U-001\xe9: Unsupported suffix\n-U-001\xe9]
+FAILED tests/unit/test_element_artifact_lexicon.py::test_every_grammar_valid_unsupported_req_or_ac_label_is_diagnostic
+FAILED tests/unit/test_element_artifact_lexicon.py::test_valid_indented_lexicon_blocks_preserve_declarations_and_boundaries
+9 failed, 52 passed in 0.33s
+```
+
+The original brief's ambiguous-boundary guarantee was also retained with a
+separate RED after valid nested bullets became supported:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py::test_ambiguous_or_malformed_id_bearing_bullets_are_diagnostic -q
+.F                                                                       [100%]
+FAILED ...::test_ambiguous_or_malformed_id_bearing_bullets_are_diagnostic[...ambiguous_block_boundary]
+1 failed, 1 passed in 0.20s
+```
+
+### GREEN evidence
+
+Focused adapter suites:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py tests/unit/test_element_artifact_lexicon.py -q
+..............................................................           [100%]
+62 passed in 0.27s
+```
+
+Original requested adapter/compatibility command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_element_artifacts.py tests/unit/test_element_artifact_lexicon.py tests/unit/test_tasks_canonical_contract.py tests/unit/test_lexicon_parser.py tests/unit/test_requirement_projection.py tests/unit/test_issue_identity.py -q
+........................................................................ [ 74%]
+.........................                                                [100%]
+97 passed in 1.52s
+```
+
+Source hygiene:
+
+```text
+git diff --check
+```
+
+Exit 0 with no output.
+
+### Files changed in fix round 1
+
+- `src/harness/element_artifact_markdown.py`
+- `src/harness/element_artifact_lexicon.py`
+- `tests/unit/test_element_artifacts.py`
+- `tests/unit/test_element_artifact_lexicon.py`
+- `docs/element-identity-artifacts.md`
+- `.superpowers/sdd/2026-09-12-element-artifact-adapters/task-1-report.md`
+
+### Self-review and concerns
+
+- Rechecked all seven reviewer probes against the final code paths, including
+  range blocking order, Lexicon full matches, exact indented source slices,
+  comment/fence precedence, list-relative indentation, overlapping owners, and
+  malformed-heading exclusion spans.
+- Confirmed valid non-range task metadata retains `requires`/`depends`, legacy
+  range behavior remains unexpanded, and actual indented code remains outside
+  authority.
+- Confirmed the changes do not touch stores, publication, producers, CLI,
+  installation, or the parent-only planning commit.
+- Concerns: none.
