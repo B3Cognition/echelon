@@ -252,6 +252,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   checks. Real interrupted promotion and commit uncertainty are tested. These
   are explicit observation contexts, not managed-run/namespace authentication,
   dependency completeness, semantic approval or live completion enforcement.
+- Immutable managed-spec genesis registration: implemented in `0daa82c1` and
+  independently reviewed with no findings. Ten-module checkpoint: 759 passed,
+  one unchanged capacity case excluded; the final fresh-only amendment passed
+  124 managed tests. Enrollment binds the actual namespace, first run and
+  original accepted source operation/hash. It rejects historical specs even
+  when only an import operation survives, while exact retries retain genesis
+  after later source/identity history. This explicit inactive API does not yet
+  protect runtime metadata, bind later run transitions or enable producers.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
