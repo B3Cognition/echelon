@@ -122,6 +122,7 @@ def _setup(
     files: dict[str, str | bytes],
     *,
     depth: str = "standard",
+    schema_version: int = 2,
 ) -> tuple[DiscoveryBoundary, str, dict, ObjectStore]:
     snapshot, partition = _fixture(tmp_path, files)
     objects = ObjectStore(tmp_path / "objects")
@@ -139,8 +140,154 @@ def _setup(
         for path, payload in sorted(files.items())
         if isinstance(payload, str) and payload
     )
-    binding_id = boundary.prepare(selectors)
+    binding_id = boundary.prepare(selectors, schema_version=schema_version)
     return boundary, binding_id, json.loads(boundary.provider_bytes(binding_id)), objects
+
+
+@pytest.mark.unit
+def test_schema_3_discovery_context_freezes_exact_analysis_domain_targets(
+    tmp_path: Path,
+) -> None:
+    boundary, _binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "def handle(): return 'ok'\n",
+        },
+        schema_version=3,
+    )
+    source = boundary.partition_authority.sources[0]
+
+    assert context["schema_version"] == 3
+    assert context["analysis_domain_targets"] == [
+        {
+            "key": domain.domain_key,
+            "source_relative_root": domain.source_relative_root,
+        }
+        for domain in source.domains
+    ]
+    assert context["category_depth_applicability"] == EXPECTED_DEPTH_MATRIX
+
+
+@pytest.mark.unit
+def test_schema_3_rejects_domains_outside_frozen_analysis_targets(
+    tmp_path: Path,
+) -> None:
+    boundary, binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "Deployment stack\n",
+            "src/stack.yml": "services:\n  app: {}\n",
+        },
+        schema_version=3,
+    )
+    assert context["analysis_domain_targets"] == []
+    evidence_id = context["evidence"][0]["projection_id"]
+    proposal = {
+        "schema_version": 2,
+        "kind": "discovery_proposal",
+        "source_id": "api",
+        "domains": [{
+            "key": "invented",
+            "description": "Invented target",
+            "evidence_ids": [evidence_id],
+        }],
+        "subjects": [],
+        "inventory": [],
+        "obligations": [],
+        "questions": [],
+    }
+
+    with pytest.raises(DiscoveryError, match="discovery-domain-target-closure"):
+        boundary.admit(
+            binding_id,
+            canonical_json_bytes(proposal),
+        )
+
+
+@pytest.mark.unit
+def test_schema_3_accepts_exact_frozen_analysis_target_keys(
+    tmp_path: Path,
+) -> None:
+    boundary, binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "def handle(): return 'ok'\n",
+        },
+        depth="deep",
+        schema_version=3,
+    )
+    from tests.unit.test_re_v2_knowledge_activation import _candidate
+
+    target = context["analysis_domain_targets"][0]["key"]
+    proposal = _candidate(context)
+    proposal["domains"][0]["key"] = target
+    for row in (*proposal["subjects"], *proposal["obligations"]):
+        if row["target"] == "behavior":
+            row["target"] = target
+
+    receipt_id = boundary.admit(binding_id, canonical_json_bytes(proposal))
+
+    assert boundary.read_proposal(binding_id, receipt_id)["domains"][0]["key"] == target
+
+
+@pytest.mark.unit
+def test_schema_3_rejects_supporting_only_domain_target_evidence(
+    tmp_path: Path,
+) -> None:
+    boundary, binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "def handle(): return 'ok'\n",
+        },
+        depth="deep",
+        schema_version=3,
+    )
+    from tests.unit.test_re_v2_knowledge_activation import _candidate
+
+    target = context["analysis_domain_targets"][0]["key"]
+    proposal = _candidate(context)
+    proposal["domains"][0].update(
+        key=target,
+        evidence_ids=[_projection_ids(context)["README.md"]],
+    )
+    for row in (*proposal["subjects"], *proposal["obligations"]):
+        if row["target"] == "behavior":
+            row["target"] = target
+
+    with pytest.raises(DiscoveryError, match="discovery-domain-target-evidence"):
+        boundary.admit(binding_id, canonical_json_bytes(proposal))
+
+
+@pytest.mark.unit
+def test_schema_3_rejects_inventory_owner_on_wrong_primary_target(
+    tmp_path: Path,
+) -> None:
+    boundary, binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "def handle(): return 'ok'\n",
+        },
+        depth="deep",
+        schema_version=3,
+    )
+    from tests.unit.test_re_v2_knowledge_activation import _candidate
+
+    target = context["analysis_domain_targets"][0]["key"]
+    proposal = _candidate(context)
+    proposal["domains"][0]["key"] = target
+    for row in (*proposal["subjects"], *proposal["obligations"]):
+        if row["target"] == "behavior":
+            row["target"] = target
+    next(
+        row for row in proposal["inventory"] if row["path"] == "README.md"
+    )["owner"] = "handler"
+
+    with pytest.raises(DiscoveryError, match="discovery-target-ownership"):
+        boundary.admit(binding_id, canonical_json_bytes(proposal))
 
 
 def _empty_repository_setup(

@@ -24,11 +24,16 @@ class _ReadyBackend:
     def __call__(self, _agent, context, _reservation):
         value = json.loads(context)
         self.calls.append(value["kind"])
-        payload = (
-            _candidate(value)
-            if value["kind"] == "untrusted_discovery_context"
-            else _review_v2(value)
-        )
+        if value["kind"] == "untrusted_discovery_context":
+            payload = _candidate(value)
+            if value.get("schema_version") == 3:
+                target = value["analysis_domain_targets"][0]["key"]
+                payload["domains"][0]["key"] = target
+                for row in (*payload["subjects"], *payload["obligations"]):
+                    if row["target"] == "behavior":
+                        row["target"] = target
+        else:
+            payload = _review_v2(value)
         return ProviderReply(
             canonical_json_bytes(payload),
             NormalizedUsageV1(

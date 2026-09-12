@@ -267,7 +267,8 @@ def _authenticated(proof, objects, l3, evidence):
     proposal_id = request['proposal_receipt_id']
     proposal = boundary.read_proposal(progress.binding_id, proposal_id)
     receipt = _json(objects, proposal_id)
-    if receipt['schema_version'] != 2 or proposal['schema_version'] != 2 or binding['schema_version'] != 2:
+    if (receipt['schema_version'] != 2 or proposal['schema_version'] != 2
+            or binding['schema_version'] not in {2, 3}):
         raise KnowledgeActivationError('category-aware-captured-proposal-required')
     review_boundary = DiscoveryReviewBoundary(boundary)
     receipt = review_boundary.read_review(progress.binding_id, proposal_id, applied['receipt_id'])
@@ -309,11 +310,37 @@ def _derive(proof, objects, l3, evidence):
         if targets[key].target_content_id != projections[key].target_content_id:
             raise KnowledgeActivationError('reviewed-target-content-mismatch')
     mapping, mappings = {}, []
+    exact_domain_targets = None
+    if context.get('schema_version') == 3:
+        exact_domain_targets = {
+            row['key'] for row in context['analysis_domain_targets']
+        }
+        if exact_domain_targets != {
+            key[1] for key in targets if key[0] == 'domain'
+        }:
+            raise KnowledgeActivationError('reviewed-target-closure-mismatch')
     for row in [{'key': 'source', 'evidence_ids': [i for s in proposal['subjects'] if s['target'] == 'source' for i in s['evidence_ids']]}, *proposal['domains']]:
         ids = mapped(tuple(sorted(set(row['evidence_ids']))))
-        matches = [('source', source)] if row['key'] == 'source' else [key for key, p in projections.items()
-            if key[0] == 'domain' and ids and set(ids).issubset(_members(p))
-            and set(ids).intersection(p.primary_shard_ids + p.primary_empty_receipt_ids + p.primary_nontext_disposition_ids)]
+        if row['key'] == 'source':
+            matches = [('source', source)]
+        elif exact_domain_targets is not None:
+            key = ('domain', row['key'])
+            projection = projections.get(key)
+            matches = [key] if (
+                row['key'] in exact_domain_targets
+                and projection is not None
+                and ids
+                and set(ids).issubset(_members(projection))
+                and set(ids).intersection(
+                    projection.primary_shard_ids
+                    + projection.primary_empty_receipt_ids
+                    + projection.primary_nontext_disposition_ids
+                )
+            ) else []
+        else:
+            matches = [key for key, p in projections.items()
+                if key[0] == 'domain' and ids and set(ids).issubset(_members(p))
+                and set(ids).intersection(p.primary_shard_ids + p.primary_empty_receipt_ids + p.primary_nontext_disposition_ids)]
         if len(matches) != 1 or matches[0] in mapping.values():
             raise KnowledgeActivationError('ambiguous-or-unmapped-reviewed-domain')
         key = matches[0]

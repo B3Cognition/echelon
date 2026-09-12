@@ -233,7 +233,7 @@ def _initial_binding(boundary: DiscoveryBoundary, source) -> str:  # type: ignor
             for record in records
         )
         try:
-            return boundary.prepare(selectors)
+            return boundary.prepare(selectors, schema_version=3)
         except DiscoveryError as exc:
             if str(exc) != "discovery-context-bound":
                 raise
@@ -326,6 +326,7 @@ def create_or_resume_reviewed_analysis(
             ),
             objects,
             quarantine,
+            options.selection.domain_keys or None,
         )
         binding = _initial_binding(boundary, selected_sources[source_id])
         phases.append((DiscoveryAcquisition(paths, boundary, binding), boundary))

@@ -464,7 +464,7 @@ class DiscoveryReviewBoundary:
             and projection["text"].strip("*\n\r\t ")
         }
         safe_context = review_context["safe_discovery_context"]
-        if (safe_context.get("schema_version") != 2
+        if (safe_context.get("schema_version") not in {2, 3}
                 or safe_context.get("category_depth_applicability")
                 != category_depth_applicability()):
             raise DiscoveryReviewAdmissionError(

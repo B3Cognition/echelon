@@ -15,12 +15,19 @@ repaired without reparsing it as authority. The ordinary
 context contains selected source/depth, originating obligation, screened inventory
 and evidence, required source/domain categories, and recorded evidence outcomes.
 Never supply a checkout path, raw inventory mapping or private receipt.
-Schema-2 context includes the exact `category_depth_applicability` object generated
+Schema-2 and schema-3 contexts include the exact `category_depth_applicability` object generated
 from the controller's canonical protocol-2.8 policy. Its `quick`, `standard` and
 `deep` entries each contain `domain` and `source` objects with exact `required` and
 `outside_requested_depth` category arrays. Select only the entry named by `depth`;
 do not reconstruct a second matrix in prose or provider logic. Historical schema-1
 contexts retain their original field set and canonical identity.
+Schema-3 additionally includes `analysis_domain_targets`, the exact selected
+controller target keys and their source-relative execution roots. A proposal must
+contain every supplied key once and no other domain key. The roots constrain
+execution and evidence ownership; they do not assert behavioral folder boundaries.
+An empty array means the source has no selected domain target: propose no domains
+and place behavioral subjects on `source`. Historical schema-2 contexts retain
+their byte identity and evidence-derived activation behavior.
 
 Freeze this phase contract together with the rendered neutral role as the
 controller's `agent_bytes`. Freeze the provider/model/execution contract in the
@@ -75,6 +82,9 @@ For `kind: discovery_proposal`, also include:
 - `schema_version: 2` and `source_id` exactly as supplied.
 
 - `domains`: objects with `key`, `description`, `evidence_ids` (at most 256).
+  In schema-3 context, keys exactly equal `analysis_domain_targets`; use each once
+  and invent none. If that supplied array is empty, `domains` is empty and
+  behavioral subjects target `source`.
 - `subjects`: objects with `key`, `target` (domain key or `source`), `description`,
   `category_ids`, and `evidence_ids` (at most 1,024). Each proposed domain needs
   an evidence-supported subject. `category_ids` must be nonempty and contain only

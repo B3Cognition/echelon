@@ -50,9 +50,9 @@ def _candidate(context, *, unknown=False, deployment=False):
 
 
 def activation_fixture(tmp_path, *, unknown=False, deployment=False, partial=False, legacy=False,
-                       name_only=False, extra_source_files=None, multiple=False, depth='deep', exclude_empty=False,
+                       name_only=False, exact_target=False, extra_source_files=None, multiple=False, depth='deep', exclude_empty=False,
                        shared_owner=None, inherited_canary=None, account_policy=None, initial_expansion=False,
-                       prepared=None):
+                       prepared=None, binding_schema=2):
     workspace, intent, parent, options = prepared or _preparation_fixture(tmp_path, extra_source_files=extra_source_files)
     if multiple:
         from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
@@ -123,7 +123,7 @@ def activation_fixture(tmp_path, *, unknown=False, deployment=False, partial=Fal
                           min(r.byte_count, 3) if partial and r.source_relative_path.startswith('src/') else r.byte_count)
                       for r in options.workspace_partition.sources[0].files
                       if not (initial_expansion and r.source_relative_path.startswith('src/')))
-    binding = boundary.prepare(selectors)
+    binding = boundary.prepare(selectors, schema_version=binding_schema)
     acquisition = DiscoveryAcquisition(paths, boundary, binding)
     from harness.re_v2.knowledge_accounting import KnowledgeProviderContract
     contract = KnowledgeProviderContract('codex', 'fixture-model', content_digest(b'scripted-configured-capture'),
@@ -160,10 +160,14 @@ def activation_fixture(tmp_path, *, unknown=False, deployment=False, partial=Fal
             next(row for row in candidate['inventory'] if row['path'] == 'README.md')['owner'] = owner
         if exclude_empty:
             next(row for row in candidate['inventory'] if row['path'] == 'empty.png')['owner'] = None
-        if name_only:
+        if name_only or exact_target:
             key = next(t.target_id for t in parent.targets if t.target_kind == 'domain')
-            candidate['domains'][0].update(key=key,
-                evidence_ids=next(s['evidence_ids'] for s in candidate['subjects'] if s['key'] == 'composition'))
+            candidate['domains'][0]['key'] = key
+            if name_only:
+                candidate['domains'][0]['evidence_ids'] = next(
+                    s['evidence_ids'] for s in candidate['subjects']
+                    if s['key'] == 'composition'
+                )
             for row in candidate['subjects'] + candidate['obligations']:
                 if row['target'] == 'behavior':
                     row['target'] = key
@@ -366,12 +370,53 @@ def test_reviewed_deployment_records_no_domain_with_exact_dispositions(tmp_path)
 
 
 @pytest.mark.unit
+def test_schema_3_reviewed_source_without_domain_targets_activates(tmp_path):
+    acquisition, account, review, l3, evidence, _ = activation_fixture(
+        tmp_path, deployment=True, binding_schema=3
+    )
+
+    root = _activation().activate_reviewed_discovery(
+        acquisition, account, review, l3, evidence
+    )
+    bundle = _activation().load_reviewed_discovery(
+        root, acquisition.objects, l3, evidence
+    )
+
+    assert not [
+        row for row in bundle.subject_catalog.subjects
+        if row.target_kind == 'domain'
+    ]
+    assert any(
+        row.disposition == 'reviewed-no-domain'
+        for row in bundle.target_mappings
+    )
+
+
+@pytest.mark.unit
 def test_name_equality_does_not_authorize_a_domain_mapping(tmp_path):
     acquisition, account, review, l3, evidence, _ = activation_fixture(tmp_path, name_only=True)
     before = _files(acquisition.objects)
     with pytest.raises(ValueError, match='unmapped'):
         _activation().activate_reviewed_discovery(acquisition, account, review, l3, evidence)
     assert _files(acquisition.objects) == before
+
+
+@pytest.mark.unit
+def test_schema_3_exact_target_contract_authorizes_domain_mapping(tmp_path):
+    acquisition, account, review, l3, evidence, _ = activation_fixture(
+        tmp_path, exact_target=True, binding_schema=3
+    )
+
+    root = _activation().activate_reviewed_discovery(
+        acquisition, account, review, l3, evidence
+    )
+    bundle = _activation().load_reviewed_discovery(
+        root, acquisition.objects, l3, evidence
+    )
+
+    domains = [row for row in bundle.target_mappings if row.target_kind == 'domain']
+    assert len(domains) == 1
+    assert domains[0].discovered_target == domains[0].target_id
 
 
 @pytest.mark.unit

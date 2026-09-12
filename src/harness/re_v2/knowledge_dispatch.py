@@ -66,6 +66,19 @@ def _repair_requirement(reason_code: str) -> str:
             "of the listed subjects' combined evidence, and intersect every listed "
             "subject's evidence_ids."
         ),
+        "invalid-discovery-domain-target-closure": (
+            "The domains array must contain every analysis_domain_targets key "
+            "exactly once and no other key. When analysis_domain_targets is empty, "
+            "return an empty domains array and attach behavioral subjects to source."
+        ),
+        "invalid-discovery-domain-target-evidence": (
+            "Each domain and its subjects must cite only evidence inside that exact "
+            "analysis target, and each domain row must cite primary target evidence."
+        ),
+        "invalid-discovery-target-ownership": (
+            "Each owned inventory path must be assigned to a subject on its frozen "
+            "primary analysis target; source-supporting paths use source subjects."
+        ),
     }
     return requirements.get(
         reason_code,

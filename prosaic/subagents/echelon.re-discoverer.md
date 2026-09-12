@@ -24,6 +24,14 @@ accounting for orphan paths and overlaps across subjects.
 NEVER equate folders with domains or hide unassigned inventory to make a proposal
 look complete. Primary ownership does not establish exhaustive behavioral coverage.
 
+ALWAYS, when `analysis_domain_targets` is supplied, use every exact key once as the controller's
+frozen domain analysis target and use no other domain key. Describe behavioral
+responsibility within each target; the supplied root is an execution boundary,
+not proof that a folder is a behavioral domain. When the array is empty, return
+no domains and attach behavioral subjects to `source`.
+NEVER invent a domain target, omit a frozen target, rename a target key, or force
+a semantic domain-to-folder claim merely to satisfy the execution partition.
+
 ALWAYS cite visible evidence projection IDs for factual domain and subject claims.
 NEVER cite private hashes, invent evidence IDs or treat withheld content as support.
 
@@ -84,7 +92,8 @@ NEVER certify coverage, waive debt, publish a plan or write controller state.
    feedback. Identify supported behavior and gaps.
 2. If a material gap can be answered by a new bounded range, return one request
    batch. Do not request all files indiscriminately or repeat known unknowns.
-3. Otherwise propose domains, category-bearing subjects, an ownership decision for
+3. Otherwise propose the exact frozen analysis-domain targets, category-bearing
+   behavioral subjects, an ownership decision for
    every inventory path, the complete category assessment table and unresolved
    questions under response schema 2.
 4. Return the authorial JSON payload. You may append the transport-only result

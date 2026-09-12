@@ -57,6 +57,9 @@ DISCOVERY_REPAIRABLE_REASONS = frozenset({
     "invalid-discovery-ownership",
     "invalid-discovery-question",
     "invalid-discovery-response",
+    "invalid-discovery-domain-target-closure",
+    "invalid-discovery-domain-target-evidence",
+    "invalid-discovery-target-ownership",
     "invalid-discovery-subject",
     "invalid-discovery-subject-category",
     "invalid-discovery-text",
@@ -177,6 +180,7 @@ class DiscoveryBoundary:
         self, snapshot: CapturedSnapshot, partition: WorkspacePartitionCatalogV1,
         source_id: str, depth: str, origin_obligation_id: str,
         objects: ObjectStore, quarantine: ObjectStore,
+        selected_domain_keys: tuple[str, ...] | None = None,
     ) -> None:
         safe_id(source_id, "source")
         digest_value(origin_obligation_id, "origin")
@@ -193,11 +197,27 @@ class DiscoveryBoundary:
         self._files = next(source.files for source in partition.sources if source.source_id == source_id)
         self._source_ids = tuple(source.source_id for source in partition.sources)
         self._partition = partition
+        self._selected_domain_keys = selected_domain_keys
 
     def run_authority(self):
         """Frozen snapshot/partition and declared sources; account may select a subset."""
         return {"snapshot_id": self._snapshot_id, "partition_id": self._partition_id,
                 "security_policy_id": security_policy_id(), "source_ids": list(self._source_ids)}
+
+    def _analysis_domain_contract(self):
+        source = next(
+            source for source in self._partition.sources
+            if source.source_id == self._source_id
+        )
+        selected = (
+            set(self._selected_domain_keys)
+            if self._selected_domain_keys is not None else None
+        )
+        return {
+            domain.domain_key: domain
+            for domain in source.domains
+            if selected is None or domain.domain_key in selected
+        }
 
     @classmethod
     def from_catalog(cls, catalog, partition, selection, source_id, depth, origin, objects):
@@ -215,6 +235,7 @@ class DiscoveryBoundary:
         result._files = next(source.files for source in partition.sources if source.source_id == source_id)
         result._source_ids = tuple(source.source_id for source in partition.sources)
         result._partition = partition
+        result._selected_domain_keys = selection.domain_keys or None
         return result
 
     @property
@@ -223,7 +244,7 @@ class DiscoveryBoundary:
         return self._partition
 
     def _context(self, selectors, *, persist=True, schema_version=2):
-        if type(schema_version) is not int or schema_version not in {1, 2}:
+        if type(schema_version) is not int or schema_version not in {1, 2, 3}:
             raise DiscoveryError("invalid-discovery-context-version")
         if not isinstance(selectors, tuple) or len(selectors) > 64:
             raise DiscoveryError("discovery-evidence-bound")
@@ -255,8 +276,16 @@ class DiscoveryBoundary:
             "inventory": sorted(inventory, key=lambda r: r["path"]), "evidence": evidence,
             "required_categories": {"source": list(SOURCE_CATEGORIES), "domain": list(DOMAIN_CATEGORIES)},
         }
-        if schema_version == 2:
+        if schema_version in {2, 3}:
             context_value["category_depth_applicability"] = category_depth_applicability()
+        if schema_version == 3:
+            context_value["analysis_domain_targets"] = [
+                {
+                    "key": domain.domain_key,
+                    "source_relative_root": domain.source_relative_root,
+                }
+                for domain in self._analysis_domain_contract().values()
+            ]
         context = canonical_json_bytes(context_value)
         if len(context) > 262_144:
             raise DiscoveryError("discovery-context-bound")
@@ -593,6 +622,30 @@ class DiscoveryBoundary:
                 "evidence_ids": refs(row["evidence_ids"], visible_only=True, required=True),
             }
 
+        if context.get("schema_version") == 3:
+            expected_domain_keys = {
+                row["key"] for row in context["analysis_domain_targets"]
+            }
+            if set(domains) != expected_domain_keys:
+                raise DiscoveryError("invalid-discovery-domain-target-closure")
+            contract = self._analysis_domain_contract()
+            for key, row in domains.items():
+                domain = contract[key]
+                root = domain.source_relative_root
+                primary_paths = {
+                    relative if root == "." else f"{root}/{relative}"
+                    for relative in domain.owned_domain_relative_paths
+                }
+                member_paths = primary_paths | set(
+                    domain.supporting_source_relative_paths
+                )
+                evidence_paths = {
+                    projections[item]["path"] for item in row["evidence_ids"]
+                }
+                if (not evidence_paths.issubset(member_paths)
+                        or not evidence_paths.intersection(primary_paths)):
+                    raise DiscoveryError("invalid-discovery-domain-target-evidence")
+
         targets = {"source", *domains}
         subjects = {}
         for raw in _rows(proposal["subjects"], 1024):
@@ -628,6 +681,23 @@ class DiscoveryBoundary:
                for key in domains):
             raise DiscoveryError("subjectless-discovery-domain")
 
+        if context.get("schema_version") == 3:
+            contract = self._analysis_domain_contract()
+            for subject in subjects.values():
+                if subject["target"] == "source":
+                    continue
+                domain = contract[subject["target"]]
+                root = domain.source_relative_root
+                member_paths = {
+                    relative if root == "." else f"{root}/{relative}"
+                    for relative in domain.owned_domain_relative_paths
+                } | set(domain.supporting_source_relative_paths)
+                if any(
+                    projections[item]["path"] not in member_paths
+                    for item in subject["evidence_ids"]
+                ):
+                    raise DiscoveryError("invalid-discovery-domain-target-evidence")
+
         inventory = {}
         inventory_context = {row["path"]: row for row in context["inventory"]}
         for raw in _rows(proposal["inventory"]):
@@ -643,6 +713,20 @@ class DiscoveryBoundary:
             }
         if set(inventory) != set(inventory_context):
             raise DiscoveryError("incomplete-discovery-inventory")
+
+        if context.get("schema_version") == 3:
+            primary_target_by_path = {}
+            for key, domain in self._analysis_domain_contract().items():
+                root = domain.source_relative_root
+                for relative in domain.owned_domain_relative_paths:
+                    path = relative if root == "." else f"{root}/{relative}"
+                    primary_target_by_path[path] = key
+            for path, row in inventory.items():
+                if row["owner"] is None:
+                    continue
+                expected_target = primary_target_by_path.get(path, "source")
+                if subjects[row["owner"]]["target"] != expected_target:
+                    raise DiscoveryError("invalid-discovery-target-ownership")
 
         subject_membership = {}
         for target in targets:

@@ -24,6 +24,13 @@ ALWAYS derive your assessment from the visible behavior and evidence boundaries.
 NEVER accept a directory-derived domain, invented behavior or unsupported absence
 merely because the candidate has valid references or all expected headings.
 
+ALWAYS, when supplied, verify that candidate domains are exactly the nested safe context's
+`analysis_domain_targets` keys and judge the described behavior within those
+frozen execution targets. When that array is empty, require an empty domains array
+and review behavioral subjects on `source`.
+NEVER treat an execution root as behavioral proof, accept an invented target key,
+or reject a sound source-level subject merely because no domain target was frozen.
+
 ALWAYS assess every proposed domain and subject and account for every inventory
 path, including orphan files and late-file behavior outside the excerpts.
 NEVER omit inconvenient inventory or declare partially inspected or redacted code

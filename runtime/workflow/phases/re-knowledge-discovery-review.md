@@ -12,12 +12,17 @@ The existing RE controller supplies only the bytes returned by
 authenticated screened discovery context, normalized candidate and deterministic
 review obligations. Do not supply producer conversations, reasoning transcripts,
 private evidence mappings, local paths or earlier reviewer verdicts.
-For schema 2, the nested safe discovery context carries the exact canonical
+For schema 2 and schema 3, the nested safe discovery context carries the exact canonical
 `category_depth_applicability` object: `quick`, `standard` and `deep` each contain
 `domain` and `source` objects with exact `required` and `outside_requested_depth`
 arrays. The reviewer applies the entry selected by the nested `depth`; it must not
 derive or guess an independent matrix. Historical schema-1 context bytes remain
 unchanged and do not acquire this field.
+Schema-3 also carries the exact `analysis_domain_targets` execution contract.
+Review candidate domain-key closure against that array while independently judging
+behavioral descriptions and evidence. An empty target array requires source-level
+behavioral subjects rather than invented domains. Historical schema-2 identities
+and evidence-derived activation remain unchanged.
 
 Use a fresh independent reviewer invocation. Bind the rendered neutral role and
 this phase contract, provider/model, candidate, context and response in the same
