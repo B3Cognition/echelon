@@ -4,7 +4,7 @@ No filesystem access, authority creation, commits, or transaction ownership.
 The marker/user_version retain format 1; metadata versions the database schema.
 """
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 _CANONICAL = "{0} NOT GLOB '*[^0-9]*' AND ({0} = '0' OR {0} GLOB '[1-9]*')"
 ALLOCATION_SCHEMA = {
     "metadata": "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
@@ -58,7 +58,34 @@ LIFECYCLE_SCHEMA = {
     "lifecycle_receipts": "CREATE TABLE lifecycle_receipts (operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id), "
         "receipt TEXT NOT NULL, receipt_sha256 TEXT NOT NULL) WITHOUT ROWID",
 }
-SCHEMA = ALLOCATION_SCHEMA | LIFECYCLE_SCHEMA
+SCHEMA_V2 = ALLOCATION_SCHEMA | LIFECYCLE_SCHEMA
+BINDING_SCHEMA = {
+    "reference_claims": "CREATE TABLE reference_claims (operation_id TEXT NOT NULL REFERENCES operations(operation_id), "
+        "entry_index TEXT NOT NULL CHECK (" + _CANONICAL.format("entry_index") + " AND entry_index != '0'), "
+        "spec_id TEXT NOT NULL, source_path TEXT NOT NULL, source_sha256 TEXT NOT NULL, source_anchor TEXT NOT NULL, "
+        "target_id TEXT NOT NULL, target_revision TEXT, relation TEXT NOT NULL, payload_sha256 TEXT NOT NULL, "
+        "PRIMARY KEY (operation_id, entry_index), "
+        "FOREIGN KEY (spec_id, target_id) REFERENCES entities(spec_id, element_id), "
+        "FOREIGN KEY (spec_id, target_id, target_revision) REFERENCES revisions(spec_id, element_id, revision)) WITHOUT ROWID",
+    "reference_sources": "CREATE INDEX reference_sources ON reference_claims "
+        "(spec_id, source_path, source_sha256, operation_id, length(entry_index), entry_index)",
+    "reference_operations": "CREATE INDEX reference_operations ON reference_claims "
+        "(operation_id, length(entry_index), entry_index)",
+    "issue_occurrences": "CREATE TABLE issue_occurrences (operation_id TEXT NOT NULL REFERENCES operations(operation_id), "
+        "entry_index TEXT NOT NULL CHECK (" + _CANONICAL.format("entry_index") + " AND entry_index != '0'), "
+        "spec_id TEXT NOT NULL, issue_id TEXT NOT NULL, issue_revision TEXT NOT NULL, report_id TEXT NOT NULL, "
+        "report_sha256 TEXT NOT NULL, display_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, "
+        "issue_fingerprint TEXT NOT NULL, payload_sha256 TEXT NOT NULL, PRIMARY KEY (operation_id, entry_index), "
+        "FOREIGN KEY (spec_id, issue_id) REFERENCES entities(spec_id, element_id), "
+        "FOREIGN KEY (spec_id, issue_id, issue_revision) REFERENCES revisions(spec_id, element_id, revision)) WITHOUT ROWID",
+    "occurrence_issues": "CREATE INDEX occurrence_issues ON issue_occurrences "
+        "(spec_id, issue_id, operation_id, length(entry_index), entry_index)",
+    "occurrence_operations": "CREATE INDEX occurrence_operations ON issue_occurrences "
+        "(operation_id, length(entry_index), entry_index)",
+    "binding_receipts": "CREATE TABLE binding_receipts (operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id), "
+        "receipt TEXT NOT NULL, receipt_sha256 TEXT NOT NULL) WITHOUT ROWID",
+}
+SCHEMA = SCHEMA_V2 | BINDING_SCHEMA
 
 
 def validate(connection, marker, *, allow_old=False):
@@ -67,26 +94,31 @@ def validate(connection, marker, *, allow_old=False):
     actual = {row[0]: row[1] for row in connection.execute(
         "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
     )}
-    if actual not in (ALLOCATION_SCHEMA, SCHEMA):
+    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA):
         raise ValueError("identity database schema or required indexes are malformed")
     metadata = dict(connection.execute("SELECT key, value FROM metadata"))
     expected = {key: str(value) for key, value in marker.items()}
-    old = actual == ALLOCATION_SCHEMA
-    if not old:
-        expected["schema_version"] = SCHEMA_VERSION
+    version = "1" if actual == ALLOCATION_SCHEMA else "2" if actual == SCHEMA_V2 else SCHEMA_VERSION
+    if version != "1":
+        expected["schema_version"] = version
     if metadata != expected:
         raise ValueError("authority marker and database identity/schema version do not match")
-    if old and not allow_old:
-        raise ValueError("allocation-only authority requires explicit IdentityStore.upgrade")
-    return "1" if old else SCHEMA_VERSION
+    if version != SCHEMA_VERSION and not allow_old:
+        raise ValueError(f"schema {version} authority requires explicit IdentityStore.upgrade")
+    return version
 
 
 def upgrade(connection):
     """Caller must validate the exact old schema/history inside its transaction."""
     if not connection.in_transaction:
         raise ValueError("schema upgrade requires a caller-owned transaction")
-    for statement in LIFECYCLE_SCHEMA.values():
+    version = connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+    if version is None:
+        for statement in LIFECYCLE_SCHEMA.values():
+            connection.execute(statement)
+        connection.execute("INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) "
+                           "SELECT spec_id,element_id,'imported',NULL FROM entities")
+    for statement in BINDING_SCHEMA.values():
         connection.execute(statement)
-    connection.execute("INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) "
-                       "SELECT spec_id,element_id,'imported',NULL FROM entities")
-    connection.execute("INSERT INTO metadata (key,value) VALUES ('schema_version',?)", (SCHEMA_VERSION,))
+    connection.execute("INSERT INTO metadata (key,value) VALUES ('schema_version',?) "
+                       "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (SCHEMA_VERSION,))

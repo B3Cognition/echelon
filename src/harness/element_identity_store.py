@@ -21,6 +21,8 @@ from uuid import UUID, uuid4
 from kernel.element_ids import decimal_to_int, format_element_id, int_to_decimal
 from harness import element_identity_schema as schema
 from harness import element_identity_lifecycle as lifecycle
+from harness import element_identity_bindings as bindings
+from harness import element_identity_binding_store as binding_store
 
 
 _VERSION = 1
@@ -253,8 +255,8 @@ class IdentityStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = _validate(connection, marker, allow_old=True)
-                cls._audit(connection, lifecycle_state=version != "1")
-                if version == "1":
+                cls._audit(connection, lifecycle_state=version != "1", binding_state=version == "3")
+                if version != schema.SCHEMA_VERSION:
                     schema.upgrade(connection)
                 _validate(connection, marker)
                 connection.commit()
@@ -651,12 +653,19 @@ class IdentityStore:
             raise IdentityStoreError("reservation history is inconsistent")
 
     @classmethod
-    def _audit(cls, connection, *, lifecycle_state):
+    def _audit(cls, connection, *, lifecycle_state, binding_state=False):
         """Full validation is restricted to explicit upgrade/restore."""
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise IdentityStoreError("database integrity check failed")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise IdentityStoreError("database has inconsistent foreign keys")
+        methods = {"reserve", "import"}
+        if lifecycle_state:
+            methods.add("lifecycle")
+        if binding_state:
+            methods.update(("reference_claims", "issue_occurrences"))
+        if any(row[0] not in methods for row in connection.execute("SELECT DISTINCT method FROM operations")):
+            raise IdentityStoreError("operation method is unsupported by this authority schema")
         cls._audit_counters(connection)
         if connection.execute(
             "SELECT 1 FROM operations LEFT JOIN reservations USING (operation_id) "
@@ -693,6 +702,45 @@ class IdentityStore:
                 cls._lineage(connection, *row)
             for row in connection.execute("SELECT operation_id,spec_id FROM operations WHERE method='lifecycle'"):
                 cls._receipt(connection, *row)
+        if binding_state:
+            binding_store.audit(connection, cls)
+
+    @_public
+    def record_reference_claims(self, *, spec_id: str, operation_id: str,
+                                claims: Sequence[bindings.ReferenceClaim]) -> tuple[dict, ...]:
+        """Retain declared source provenance without resolving a mutable file."""
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        payloads = bindings.request(claims, bindings.ReferenceClaim)
+        with self._transaction(write=True) as connection:
+            return binding_store.record(connection, self, "reference_claims", spec_id, operation_id, payloads)
+
+    @_public
+    def reference_claims(self, *, spec_id: str, source_path: str, source_sha256: str) -> tuple[dict, ...]:
+        """Read original claims plus current head metadata, never a gate verdict."""
+        lifecycle.text(spec_id, "spec_id")
+        bindings.source_path(source_path)
+        bindings.sha256(source_sha256)
+        with self._transaction() as connection:
+            return binding_store.read(connection, self, "reference_claims", spec_id, (source_path, source_sha256))
+
+    @_public
+    def record_issue_occurrences(self, *, spec_id: str, operation_id: str,
+                                 occurrences: Sequence[bindings.IssueOccurrence]) -> tuple[dict, ...]:
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        payloads = bindings.request(occurrences, bindings.IssueOccurrence)
+        with self._transaction(write=True) as connection:
+            return binding_store.record(connection, self, "issue_occurrences", spec_id, operation_id, payloads)
+
+    @_public
+    def issue_occurrences(self, *, spec_id: str, issue_id: str) -> tuple[dict, ...]:
+        lifecycle.text(spec_id, "spec_id")
+        bindings.issue_label(issue_id)
+        with self._transaction() as connection:
+            self._high_water(connection, spec_id, "ISS")
+            self._head(connection, spec_id, issue_id)
+            return binding_store.read(connection, self, "issue_occurrences", spec_id, (issue_id,))
 
     @_public
     def high_water(self, *, spec_id: str, kind: str) -> str:
@@ -742,13 +790,13 @@ class IdentityStore:
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            cls._audit(source, lifecycle_state=version != "1")
+            cls._audit(source, lifecycle_state=version != "1", binding_state=version == "3")
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")
             with _database(directory / _DATABASE) as target:
                 source.backup(target)
-                if version == "1":
+                if version != schema.SCHEMA_VERSION:
                     target.execute("BEGIN IMMEDIATE")
                     try:
                         schema.upgrade(target)

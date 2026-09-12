@@ -1,4 +1,4 @@
-# Element identity allocation and lifecycle storage
+# Element identity allocation, lifecycle, and binding storage
 
 `harness.element_identity_store.IdentityStore` is an inactive library. It is not
 wired into spec producers, providers, artifact adapters, evidence, or squad
@@ -13,8 +13,9 @@ The workspace must already exist. State lives in `.echelon/identity/`:
 - `authority.json`: marker format version, workspace UUID, and authority epoch UUID.
 - `registry.sqlite3`: matching authority metadata, operation receipts, counters,
   reservation ranges, entities, lifecycle heads, immutable content revisions,
-  direct lineage, and lifecycle receipts. Database schema version is separate
-  metadata (`schema_version=2`); marker format and SQLite `user_version` remain 1.
+  direct lineage, immutable reference claims, issue occurrences, and receipts.
+  Database schema version is separate metadata (`schema_version=3`); marker
+  format and SQLite `user_version` remain 1.
 
 The authority directory is created exclusively with mode `0700`; new sensitive
 files use `0600`. Existing workspace and `.echelon` directory permissions are not
@@ -43,7 +44,8 @@ assert ids == ("AC-000001", "AC-000002")
 
 `reserve` accepts AC, FR, NFR, ISS, U, A, and T. Each `(spec_id, kind)` has an
 independent counter. An operation ID is unique across the entire authority,
-including imports and lifecycle changes. Reusing it with the same complete request returns the original
+including imports, lifecycle changes, reference claims, and issue occurrences.
+Reusing it with the same complete request returns the original
 range; changing count, kind, spec, or operation type fails. A reservation creates
 no entity, and `lookup` returns `None` for its labels. Once committed, every claim
 remains reserved, including abandoned work and terminated callers.
@@ -107,7 +109,7 @@ changes, stale revisions, and invalid final successors reject the entire batch.
 No lineage, head update, or receipt escapes rollback. The result is a tuple of
 fresh dictionaries containing `element_id`, `revision`, `status`, and `lineage`.
 An identical retry returns the original durable receipt even after later changes.
-Conflicting reuse of the global operation ID fails across all three APIs.
+Conflicting reuse of the global operation ID fails across all record APIs.
 
 First assessed revision is the decimal string `"1"`. Revision arithmetic uses the
 same unbounded Python integer conversion as allocation, storing canonical decimal
@@ -128,22 +130,98 @@ coherent rewrites of the entire authority by someone with direct database access
 
 The library does not establish semantic continuity. Supplying the same subject
 string does not prove that rewritten prose describes the same thing. Future
-publication still requires semantic review and allowed edit scope, typed artifact
-adapters, revision-bound references/evidence, issue occurrences, publication
+publication still requires semantic review and allowed edit scope, integration of
+typed artifact adapters and revision-bound claims/occurrences, publication
 intents/receipts, graph/memory history, and bounded discovery repair. Consumers
 must reject transitions they cannot represent before publication. This library
 does not perform graph writes, provider routing, or canonical file publication.
 
+## Immutable references and issue occurrences
+
+`harness.element_identity_bindings` defines two frozen request types. Every field
+is a scalar string except the explicitly nullable reference revision:
+
+- `ReferenceClaim(source_path, source_sha256, source_anchor, target_id,
+  target_revision, relation)`: the source path is canonical spec-relative POSIX
+  syntax, without empty segments, traversal, absolute paths, backslashes or NUL.
+  The lowercase SHA256 digest identifies declared source bytes. The nonblank
+  anchor is an immutable controller-supplied locator within those bytes. Relation
+  is exactly `reference`, `requires`, `depends`, or `evidence`. The target uses an
+  existing exact supported label in the same spec. A non-null revision is a
+  positive canonical decimal string identifying an existing historical assessed
+  revision, including a terminal revision. `None` explicitly means unassessed or
+  legacy; it never means the current revision.
+- `IssueOccurrence(issue_id, issue_revision, report_id, report_sha256, display_id,
+  title, body)`: the durable issue and historical display IDs are exact ISS
+  labels. The immutable nonblank report provenance ID and lowercase SHA256 are
+  retained separately. The issue must exist in the same spec, and title/body must
+  exactly equal the immutable subject and retained content of its specified
+  historical **active** revision. Historical active revisions remain usable after
+  retirement. A different display label is accepted only as the caller's explicit
+  mapping; no heuristic matching, merging, or implicit ISS allocation occurs.
+
+`store.record_reference_claims(spec_id=..., operation_id=..., claims=(...))` and
+`store.record_issue_occurrences(spec_id=..., operation_id=..., occurrences=(...))`
+atomically retain complete ordered batches. Empty batches, duplicate identical
+entries, malformed types, additional fields, mutable nested containers, missing
+targets, and inconsistent historical bindings fail without effects. An occurrence
+fingerprint is calculated with the existing `issue_fingerprint(title, body)`;
+callers cannot supply one as authority. The existing resolution fingerprint guard
+is unchanged: resolving an older occurrence does not certify changed repair or
+evidence content in a later occurrence.
+
+Record results are tuples of detached dictionaries containing every original
+request field, plus `spec_id`, `operation_id`, and `entry_index` (canonical decimal
+strings starting at `"1"`). Occurrences additionally contain `issue_fingerprint`.
+These durable receipts contain no current-state metadata. Identical retries
+return the original receipt after revisions, retirement, restart, or restore.
+Conflicting reuse of an operation ID across any record method or spec fails.
+A separate operation can retain a reassessed claim to a different revision;
+it cannot replace the earlier claim. The future controller owns authorization
+to reassess.
+
+`store.reference_claims(spec_id=..., source_path=..., source_sha256=...)` retains
+the original fields and adds `target_status` and
+`target_revision_matches_current`. The latter is true only for an explicit
+revision equal to the current **active** head. Unassessed, stale, retired and
+superseded targets are false, including a claim pointing at the terminal head's
+exact revision. This metadata is not a `verified`, `passed`, or semantic-gate
+verdict. `store.issue_occurrences(spec_id=..., issue_id=...)` returns original
+historical content and fingerprints. Both reads sort by `(operation_id, numeric
+entry_index)`; this is deterministic ordering, not claimed chronology.
+
+Rows bind their full canonical payload digest, including method, spec, operation,
+and entry index. Global operation digests bind the entire ordered request, and
+durable receipts bind every associated record. Reads and retries authenticate
+these bindings using indexed source/issue/operation access and existing indexed
+target, namespace-counter and lifecycle checks. Full audits detect missing or
+orphan record/receipt associations. No routine path scans all historical records.
+`element_identity_binding_store` receives only the existing store's connection;
+it never opens files, commits, reserves IDs, or starts a second transaction.
+
+Source hashes, anchors, and report provenance are declarations, not proof that
+the caller holds or reviewed a file. The APIs never resolve anchors against live
+files or infer replacement anchors after edits. A future publication transaction
+must authenticate staged bytes and reviewer provenance and enforce allowed scope
+and semantic correctness. These inactive records are historical foundations;
+recording a hash or matching a current revision does not activate publication or
+establish a completion gate.
+
 ## Explicit schema upgrade
 
-`IdentityStore.upgrade(workspace)` recognizes only the exact reviewed allocation
-schema and original metadata, or the current schema. Ordinary `open` on the older
-format reports that explicit upgrade is required and does not mutate storage.
+`IdentityStore.upgrade(workspace)` recognizes only exact reviewed schemas 1
+(allocation), 2 (lifecycle), and 3 (bindings), with their matching metadata.
+Ordinary `open` on schema 1 or 2 reports that explicit upgrade is required and
+does not mutate storage.
 Upgrade audits authority, integrity, foreign keys, retained numeric claims,
 reservation history and legacy import/reservation overlap inside one
-`BEGIN IMMEDIATE` transaction. It adds lifecycle tables and imported/null heads;
-allocation tables, exact labels, counters, reservations, operation bindings and
-UUIDs stay intact. A current-schema retry is an audited no-op. Interrupted DDL,
+`BEGIN IMMEDIATE` transaction. Schema 1 first gains lifecycle tables and
+imported/null heads. Both older schemas gain only the binding tables/indexes and
+schema metadata update; neither gains fabricated claims or occurrences. Exact
+labels, counters, reservations, lifecycle history, retry bindings and UUIDs stay
+intact. Current-schema audits retain shared entity label/kind/ordinal/subject
+checks; legacy reservation/import overlap rejection applies only to schema 1.
+A current-schema retry is an audited no-op. Interrupted DDL,
 data insertion, and schema metadata all roll back together. Missing or unknown
 state is never initialized or guessed. The schema helper owns DDL only on the
 caller's connection, with no file access or independent commit.
@@ -197,7 +275,7 @@ or reused as a fresh backup destination.
 `IdentityStore.restore(workspace, backup)` checks the completed manifest, strict
 metadata, absence of snapshot sidecars, digest, required schema, SQLite integrity,
 foreign keys, authority identity, counter/claim consistency, lifecycle history,
-head bindings, lineage and durable lifecycle receipts across all
+head bindings, lineage, binding records and durable receipts across all
 namespaces before creating destination state. This explicit restore audit may
 scan the snapshot to discover every namespace, including ones whose counters
 are missing. Digest verification and copying share a read transaction, so a concurrent SQLite writer
@@ -205,10 +283,11 @@ cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,
 operation receipts, counters, and reservations. It never merges or overwrites.
-A recognized allocation-only backup is validated before claiming destination
+A recognized schema 1 or 2 backup is validated before claiming destination
 state, then upgraded transactionally only in the fresh restored database. The
 backup itself is unchanged. Unknown schema versions fail before destination
-creation. Current backups retain all lifecycle tables and history.
+creation. Current backups retain lifecycle history, immutable claims, original
+receipts, report provenance and issue fingerprints.
 
 A backup is a point-in-time snapshot. Restoring an old snapshot cannot recover
 reservations committed after it. Quiesce the original authority and ensure the
@@ -221,9 +300,10 @@ overlapping future ordinals.
 
 ## Focused verification
 
-The unit contracts are in `tests/unit/test_element_identity_store.py` and
-`tests/unit/test_element_identity_lifecycle.py`, with a frozen reviewed v1 SQL
-fixture for migration compatibility. Process
+The unit contracts are in `tests/unit/test_element_identity_store.py`,
+`tests/unit/test_element_identity_lifecycle.py`, and
+`tests/unit/test_element_identity_bindings.py`, with frozen reviewed v1 and v2 SQL
+fixtures for migration compatibility. Process
 contention, committed-process termination, concurrent backup, lock timeout, and
 capacity checks and competing revisions from one baseline are in
 `tests/integration/test_element_identity_store.py`.
