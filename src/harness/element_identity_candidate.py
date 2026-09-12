@@ -10,7 +10,7 @@ from harness.element_artifacts import _validate_input
 SUPPORTED_ROLES = frozenset({"unknowns", "assumptions", "investigation", "evidence", "references"})
 IDENTITY_SUPPORTED_ROLES = SUPPORTED_ROLES | frozenset({
     "requirements", "tasks", "lexicon", "lexicon_projection", "glossary",
-    "evidence_inventory",
+    "evidence_inventory", "issues",
 })
 
 
@@ -84,7 +84,7 @@ _DISCOVERY_POLICY = _CandidatePolicy(
 )
 _IDENTITY_POLICY = _CandidatePolicy(
     "identity", IdentityEditScope, IDENTITY_SUPPORTED_ROLES,
-    ("U", "A", "FR", "NFR", "AC", "T"), frozenset({"U", "A"}), True,
+    ("U", "A", "FR", "NFR", "AC", "T", "ISS"), frozenset({"U", "A"}), True,
 )
 
 
@@ -144,15 +144,18 @@ def request(spec_id, artifacts, scope, changes):
     return _request(spec_id, artifacts, scope, changes, policy=_DISCOVERY_POLICY)
 
 
-def identity_request(spec_id, artifacts, scope, changes, projection_sources, evidence_inventories):
-    """Normalize the strict general request through its fixed six-family policy."""
+def identity_request(spec_id, artifacts, scope, changes, projection_sources, evidence_inventories,
+                     issue_reports):
+    """Normalize the strict general request through its fixed seven-family policy."""
     from harness.element_identity_bundle import _normalize
+    from harness import element_identity_issue_candidate as issues
 
     artifacts, scope, changes, affected = _request(
         spec_id, artifacts, scope, changes, policy=_IDENTITY_POLICY)
     projection_sources, evidence_inventories = _normalize(
         projection_sources, evidence_inventories)
-    return artifacts, scope, changes, affected, projection_sources, evidence_inventories
+    issue_reports = issues._normalize(issue_reports)
+    return artifacts, scope, changes, affected, projection_sources, evidence_inventories, issue_reports
 
 
 def _scope_diagnostics(
@@ -233,5 +236,5 @@ def _identity_scope_diagnostics(artifact, before, after, scope):
         after,
         scope,
         allow_nested=artifact.role == "requirements",
-        preserve_image_presence=artifact.role in {"glossary", "evidence_inventory"},
+        preserve_image_presence=artifact.role in {"glossary", "evidence_inventory", "issues"},
     )

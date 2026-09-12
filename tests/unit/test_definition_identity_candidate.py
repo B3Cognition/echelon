@@ -167,14 +167,16 @@ def test_issue_identity_can_be_an_existing_reference_target(tmp_path):
     assert result.references[0].target_id == "ISS-001"
 
 
-@pytest.mark.parametrize("role", ["issues", "invented"])
-def test_occurrence_and_unknown_roles_stay_unsupported(tmp_path, role):
+@pytest.mark.parametrize("role,expected", [
+    ("issues", "issue_report_context_missing"), ("invented", "unsupported_role"),
+])
+def test_issues_require_context_and_unknown_roles_stay_unsupported(tmp_path, role, expected):
     from harness.element_identity_store import IdentityStore
 
     store = IdentityStore.initialize(tmp_path)
     text = "### ISS-001: Observed issue\n" if role == "issues" else "FR-001\n"
     result = check(store, tmp_path, (("unsupported.md", role, text, text),))
-    assert diagnostic_codes(result) == {"unsupported_role"}
+    assert diagnostic_codes(result) == {expected}
 
 
 def test_projection_role_requires_an_explicit_source_association(tmp_path):
@@ -628,16 +630,19 @@ def test_general_wrapper_does_not_weaken_discovery_caption_preservation(tmp_path
     assert "subject_changed" in diagnostic_codes(result)
 
 
-def test_public_general_type_annotation_and_strict_scope_family(tmp_path):
+def test_public_general_type_annotation_and_issue_scope_require_context(tmp_path):
     from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
-    from harness.element_identity_store import IdentityStore, IdentityStoreError
+    from harness.element_identity_store import IdentityStore
 
     assert get_type_hints(IdentityStore.check_identity_candidate)["return"].__name__ == "IdentityCandidateCheck"
     store = IdentityStore.initialize(tmp_path)
-    with pytest.raises(IdentityStoreError, match="U/A/FR/NFR/AC/T"):
-        store.check_identity_candidate(
-            spec_id="demo", artifacts=(CandidateArtifact("issues.md", "issues", "ISS-001", "ISS-001"),),
-            scope=IdentityEditScope((), ("ISS-001",)))
+    text = "### ISS-001: Observed issue\nBody.\n"
+    original = logical_state(tmp_path)
+    result = store.check_identity_candidate(
+        spec_id="demo", artifacts=(CandidateArtifact("issues.md", "issues", text, text),),
+        scope=IdentityEditScope((), ("ISS-001",)))
+    assert diagnostic_codes(result) == {"issue_report_context_missing"}
+    assert logical_state(tmp_path) == original
 
 
 def test_general_wrapper_uses_one_query_only_transaction_and_snapshots_sequences(tmp_path, monkeypatch):

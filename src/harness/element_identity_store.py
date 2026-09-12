@@ -29,6 +29,7 @@ from harness.element_identity_candidate import (
     IdentityCandidateCheck, IdentityEditScope,
 )
 from harness.element_identity_bundle import EvidenceInventoryContext, LexiconProjectionSource
+from harness.element_identity_issue_candidate import IssueReportContext
 
 
 _VERSION = 1
@@ -670,19 +671,20 @@ class IdentityStore:
                                  changes: Sequence[lifecycle.LifecycleChange] = (),
                                  projection_sources: Sequence[LexiconProjectionSource] = (),
                                  evidence_inventories: Sequence[EvidenceInventoryContext] = (),
+                                 issue_reports: Sequence[IssueReportContext] = (),
                                  ) -> IdentityCandidateCheck:
-        """Check explicit captured definitions without publication effects."""
+        """Check captured definitions and explicit issue reports without publication effects."""
         from harness import element_identity_candidate as candidate
         from harness import element_identity_candidate_store as candidate_store
 
         (artifacts, scope, changes, affected, projection_sources,
-         evidence_inventories) = candidate.identity_request(
-            spec_id, artifacts, scope, changes, projection_sources, evidence_inventories)
+         evidence_inventories, issue_reports) = candidate.identity_request(
+            spec_id, artifacts, scope, changes, projection_sources, evidence_inventories, issue_reports)
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
             return candidate_store.check_identity(
                 connection, self, spec_id, artifacts, scope, changes, affected,
-                projection_sources, evidence_inventories)
+                projection_sources, evidence_inventories, issue_reports)
 
     @staticmethod
     def _validate_reservation(connection, row):

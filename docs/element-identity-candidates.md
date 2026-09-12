@@ -8,7 +8,8 @@ connected to this API. No canonical files are opened by the checker.
 
 `IdentityStore.check_identity_candidate` exposes the same read-only algorithm
 through the broader `IdentityEditScope`. It adds definition preflight for the six
-U/A/FR/NFR/AC/T families without weakening the discovery policy. The two exact
+U/A/FR/NFR/AC/T families and explicit ISS occurrence preflight without weakening
+the discovery policy. The two exact
 scope types select fixed internal policies; callers cannot override role,
 lifecycle-family, caption, or nesting rules.
 
@@ -56,12 +57,14 @@ inside otherwise valid source text are candidate diagnostics, not API errors.
 | `glossary` | Unsupported | Empty typed fact set with exact content hash | None; labels and URLs are opaque text |
 | `evidence_inventory` | Unsupported | Empty typed fact set with exact content hash | None; source IDs and locators are opaque text |
 | `investigation`, `evidence`, `references` | References only | References only | Adapter-recognized local references |
-| `issues`, unrecognized roles | Unsupported | Unsupported | None interpreted by the checker |
+| `issues` | Unsupported | Explicit report occurrences; never authoritative definitions | Issue-body references with the original report path/hash/span |
+| Unrecognized roles | Unsupported | Unsupported | None interpreted by the checker |
 
 Roles are never inferred from filenames. Unsupported roles produce
-`unsupported_role`. ISS may be an existing exact reference target, but issue
-occurrences are not definitions and ISS lifecycle effects are outside both scope
-policies. Native `lexicon` is authoritative; `lexicon_projection` is not a second
+`unsupported_role`. ISS may be an existing exact reference target. Its report
+occurrences are not definitions; explicit ISS lifecycle effects are supported
+only by the general wrapper with report context. Native `lexicon` is
+authoritative; `lexicon_projection` is not a second
 definition source. Naming duplicate authoritative definitions in two supported
 artifacts never makes the duplicate legal.
 
@@ -117,9 +120,10 @@ replacement, split, or merge.
 Retirement and supersession preserve exact prior content. Unchanged terminal
 declarations are retained history; scoped removal does not retire them again.
 
-Discovery lifecycle changes are limited to U/A. General lifecycle changes are
-limited to U/A/FR/NFR/AC/T. Every change must name a scoped declaration present in
-the bundle. The shared lifecycle planner runs on the same connection. A rejected
+Discovery lifecycle changes are limited to U/A. General lifecycle changes cover
+U/A/FR/NFR/AC/T/ISS. Every change must name a scoped, validated declaration or
+issue occurrence present in the bundle. The shared lifecycle planner runs once
+for the complete mixed-family batch on the same connection. A rejected
 batch yields `lifecycle_rejected` and prevents dependent projection and reference
 assessment; no partial projection is used.
 
@@ -131,6 +135,82 @@ subject and supplies exact new adapter content. Structural acceptance says
 nothing about semantic continuity; existing requirements, task, and Lexicon
 quality validators remain separate.
 
+## Explicit issue reports
+
+The general wrapper accepts `issue_reports: Sequence[IssueReportContext] = ()`.
+The immutable descriptor is exported from `harness.element_identity_issue_candidate`
+and contains `path`, `before_report_id`, `after_report_id`, `before_occurrences=()`,
+and `after_occurrences=()`. Both occurrence tuples use the existing exact
+`IssueOccurrence` type. Descriptor and nested sequences are snapshotted and
+scalar-validated before the single query-only transaction. Invalid types,
+paths, report-ID scalars and duplicate context paths raise `IdentityStoreError`.
+Empty and duplicate occurrence tuples are interpreted by candidate relationship
+checks, not by the binding API's nonempty write-batch policy.
+
+Each `issues` artifact requires explicit report context. A present report needs
+a nonblank report ID; an absent report needs `None` and no occurrences. A present
+report with zero typed declarations can have a report ID and an empty tuple.
+Missing context produces `issue_report_context_missing`; a missing/wrong-role
+target or disagreement with image presence produces `issue_report_mismatch`.
+These are blocking diagnostics, never implicit unbound review approval.
+
+Every typed occurrence maps one-to-one by display ID to an explicit descriptor.
+Report ID, SHA-256 of the complete original report, rendered caption/title and
+body must match exactly. The issue body is the typed declaration content after
+the first heading-line newline: it excludes the heading, preserves subsequent
+CRLF/Unicode/whitespace and the adapter-owned Resolution Guidance companion,
+and excludes report footers. Missing, extra or mismatched mappings and duplicate
+display or durable IDs within a report produce `issue_occurrence_mismatch`.
+The same durable issue may appear independently in different explicit reports.
+Occurrences never enter authoritative definition or numeric-ordinal maps.
+
+Before occurrences require exact retained binding payloads authenticated through
+the existing connection-owned binding reader and receipt validator. Every field
+must match; a fingerprint alone is insufficient. Missing exact provenance yields
+`unrecorded_issue_occurrence`. Damaged retained records, receipts or targets raise
+the existing integrity exception. A retained body interpretation that includes
+text outside the current typed block boundary rejects explicitly; it is never
+rewritten or re-fingerprinted. Historic local display labels may map to durable
+ISS IDs only through these exact retained records.
+
+Every managed after label must equal its canonical durable `issue_id`, including
+an existing identity's preserved legacy spelling. Reports cannot restart ISS
+numbering or reuse an old local label for a different canonical issue;
+`issue_display_identity_mismatch` blocks such mappings. New after occurrences
+must match the exact current/projected active revision, immutable subject/title
+and body, or receive `issue_revision_mismatch`.
+
+There is one historical exception: the complete after text, report ID and full
+occurrence tuple may equal the authenticated before image exactly. Those
+retained active-revision occurrences can remain visible after the current head
+advances or becomes terminal. Canonical after-label rules still apply. Changed
+bytes or attribution cannot use this exception to issue fresh stale evidence.
+Active proposed creations, revisions and transition successors independently
+require a matching projected-revision after occurrence (`issue_occurrence_missing`),
+even when an old report remains unchanged elsewhere. Retirement and supersession
+require explicit canonical element scope and a validated retained before
+occurrence. A scoped occurrence can disappear, or exact history can stay visible.
+
+Report omission does not retire an active issue or close a review obligation.
+The checker does not interpret PASS/FAIL, resolved/unresolved, or banzai
+eligibility. Original occurrences, source claims and fingerprint resolution
+history remain unchanged. `issue_identity.issue_fingerprint` and
+`matching_issue_resolution` retain their original behavior: meaningful evidence
+or repair-obligation changes cannot inherit an unrelated resolution, while
+presentation/status changes retain their existing fingerprint treatment.
+Revision-bound reference claims are an independent provenance check. A later
+managed quality gate must reconcile outstanding issues explicitly against the
+existing resolution ledger; this structural API cannot certify resolution.
+
+The role adapter's grammar remains unchanged. It recognizes digit-led ISS
+spellings, including supported legacy composites. A digit-free legacy heading
+such as `ISS-legacy` with an explicit occurrence rejects because there is no typed
+declaration to bind. With an empty occurrence tuple it remains unowned report
+text, subject to artifact/unowned permissions; a zero-diagnostic result does not
+prove report completeness. Managed producers and historical migration must
+reconcile unsupported source spellings explicitly before claiming complete
+managed coverage.
+
 ## Exact edit scope
 
 `DiscoveryEditScope(writable_paths, element_ids, unowned_text_paths=())` separates
@@ -140,7 +220,7 @@ paths must be writable. Every changed artifact must be writable; every introduce
 removed, or edited declaration and every lifecycle-affected identity must be in
 element scope. Read-only dependencies belong in the bundle, too.
 
-`IdentityEditScope` has the same three fields but accepts U/A/FR/NFR/AC/T labels.
+`IdentityEditScope` has the same three fields but accepts U/A/FR/NFR/AC/T/ISS labels.
 Nested requirement declarations must have source intervals that are disjoint or
 properly contained; crossing, identical, malformed, and out-of-bounds intervals
 are rejected. Discovery retains its original non-overlap rule.
@@ -152,6 +232,15 @@ glossary, inventory, and other text outside managed spans requires unowned-text
 permission. A projection may be introduced or removed without a second lifecycle
 event when its authoritative source identity is otherwise preserved, created, or
 retired correctly.
+
+Issue report scope uses full rendered occurrence blocks with their canonical
+IDs mapped from the explicit descriptors and their original spans/text intact.
+A historical display alias never grants permission for a different canonical
+issue. Multiple reports remain independently artifact-scoped. Report headings,
+footers and layout outside issue blocks require unowned-text permission;
+Resolution Guidance inside the typed block belongs to that issue. Creating or
+removing an empty report also requires writable and unowned-text permission,
+because image presence is distinct from an empty image.
 
 Unless unowned-text permission is explicit, text outside authorized declaration
 spans must remain exactly equal, including Unicode, CRLF, comments, and order.
@@ -213,9 +302,10 @@ authenticate the captured set and preimages, bind staged bytes and effects to
 durable intent/CAS, and decide required evidence gates. A detached check cannot
 authorize publication after concurrent registry or source changes.
 
-Qualified and interval reference resolution, issue occurrence authorization,
-historical import/audit tools, canonical and staged authentication, semantic
+Qualified and interval reference resolution, historical reconciliation/import
+tools, canonical and staged authentication, semantic
 review of changed derived wording, durable publication intents/receipts and CAS,
-producer integration, graph/memory consumers, bounded repair, combined provider
+managed report producer/resolution-gate integration, graph/memory consumers,
+bounded repair, combined provider
 simulation, and explicit rollout remain follow-on work. The general checker stays
 inactive and cannot authenticate completeness or authorize publication.

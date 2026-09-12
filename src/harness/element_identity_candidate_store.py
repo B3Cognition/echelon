@@ -13,6 +13,7 @@ from harness.element_identity_candidate import (
     _identity_scope_diagnostics, scope_diagnostics,
 )
 from harness import element_identity_bundle as bundle
+from harness import element_identity_issue_candidate as issues
 
 
 _EMPTY_CONTENT_SHA256 = hashlib.sha256(b"").hexdigest()
@@ -40,7 +41,7 @@ def _head(connection, store, spec_id, label):
 
 def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
           policy=_DISCOVERY_POLICY, result_factory=DiscoveryCandidateCheck,
-          projection_sources=(), evidence_inventories=()):
+          projection_sources=(), evidence_inventories=(), issue_reports=()):
     diagnostics, references, images = [], [], []
     definitions = {"before": {}, "after": {}}
     ordinals = {"before": {}, "after": {}}
@@ -78,13 +79,19 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
                 if ordinal is not None:
                     ordinals[image].setdefault((kind, ordinal), set()).add(entry.element_id)
         before, after = parsed_images
-        scope_checker = _identity_scope_diagnostics if policy.nested_requirement_spans else scope_diagnostics
-        diagnostics.extend(scope_checker(artifact, before, after, scope))
         images.append((artifact, before, after))
 
+    issue_occurrences = {"before": {}, "after": {}}
+    historic_issue_paths, issue_ids = set(), set()
     if policy is _IDENTITY_POLICY:
+        images, issue_occurrences, historic_issue_paths, issue_ids, issue_diagnostics = issues._prepare(
+            connection, store, spec_id, images, issue_reports)
+        diagnostics.extend(issue_diagnostics)
         diagnostics.extend(bundle._diagnostics(
             images, projection_sources, evidence_inventories))
+    scope_checker = _identity_scope_diagnostics if policy.nested_requirement_spans else scope_diagnostics
+    for artifact, before, after in images:
+        diagnostics.extend(scope_checker(artifact, before, after, scope))
 
     for image in ("before", "after"):
         for label, entries in definitions[image].items():
@@ -101,6 +108,7 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
     # rows can be candidate mistakes; inconsistent existing rows cannot. These
     # reads stay outside proposal-rejection catches and use the same connection.
     relevant = set(definitions["before"]) | set(definitions["after"]) | set(affected)
+    relevant.update(issue_ids)
     relevant.update(ref.target_id for _, _, parsed in images for ref in parsed.references
                     if ref.range_end_id is None)
     current = {}
@@ -144,8 +152,15 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
                          "caption change requires a new identity through an explicit transition")
 
     proposal_invalid = False
+    terminal_issues = {change.element_id for change in changes
+                       if type(change) is lifecycle.ElementRetirement and change.element_id.startswith("ISS-")}
+    terminal_issues.update(label for change in changes if type(change) is lifecycle.ElementTransition
+                           for label, _ in change.predecessors if label.startswith("ISS-"))
     for label in affected:
-        entries = definitions["before"].get(label, ()) or definitions["after"].get(label, ())
+        presence = issue_occurrences if label.startswith("ISS-") else definitions
+        entries = presence["before"].get(label, ())
+        if label not in terminal_issues:
+            entries = entries or presence["after"].get(label, ())
         path = entries[0][0] if entries else None
         if label.split("-", 1)[0] not in policy.supported_kinds:
             diagnose("unsupported_lifecycle_kind", path, label,
@@ -157,6 +172,9 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
             proposal_invalid = True
         if not entries:
             diagnose("lifecycle_without_artifact", None, label, "lifecycle identity lacks a captured declaration")
+            if label.startswith("ISS-") and label not in terminal_issues:
+                diagnose("issue_occurrence_missing", None, label,
+                         "projected active issue requires a matching after occurrence")
             proposal_invalid = True
     projected = {}
     if changes and not proposal_invalid:
@@ -200,8 +218,10 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
             for path, _ in entries:
                 diagnose("definition_removed", path, label, "active declaration removed without retirement or transition")
     for label, head in projected.items():
-        if head["status"] == "active" and label not in definitions["after"]:
+        if not label.startswith("ISS-") and head["status"] == "active" and label not in definitions["after"]:
             diagnose("definition_removed", None, label, "projected active identity requires an after declaration")
+
+    diagnostics.extend(issues._after_diagnostics(issue_occurrences, historic_issue_paths, current, projected))
 
     for artifact, _, after in images:
         claims = retained_claims.get(artifact.path, ())
@@ -231,8 +251,8 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
 
 
 def check_identity(connection, store, spec_id, artifacts, scope, changes, affected,
-                   projection_sources, evidence_inventories):
+                   projection_sources, evidence_inventories, issue_reports):
     return check(connection, store, spec_id, artifacts, scope, changes, affected,
                  policy=_IDENTITY_POLICY, result_factory=IdentityCandidateCheck,
                  projection_sources=projection_sources,
-                 evidence_inventories=evidence_inventories)
+                 evidence_inventories=evidence_inventories, issue_reports=issue_reports)
