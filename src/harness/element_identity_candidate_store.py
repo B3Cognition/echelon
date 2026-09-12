@@ -152,6 +152,12 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected, *,
                          "caption change requires a new identity through an explicit transition")
 
     proposal_invalid = False
+    for change in changes:
+        if (policy is _IDENTITY_POLICY and type(change) is lifecycle.ElementAdopt
+                and change.element_id.startswith("ISS-")):
+            diagnose("lifecycle_rejected", None, change.element_id,
+                     "candidate issue adoption cannot import unassessed history; explicit history preparation is required")
+            proposal_invalid = True
     terminal_issues = {change.element_id for change in changes
                        if type(change) is lifecycle.ElementRetirement and change.element_id.startswith("ISS-")}
     terminal_issues.update(label for change in changes if type(change) is lifecycle.ElementTransition

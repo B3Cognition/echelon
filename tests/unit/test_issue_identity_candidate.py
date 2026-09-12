@@ -622,3 +622,41 @@ def test_unrepresented_active_issue_creation_reports_missing_occurrence(tmp_path
                    ids=(LABEL, "ISS-000002"),
                    changes=(ElementCreate("ISS-000002", TITLE, BODY, "reserve"),))
     assert {"issue_occurrence_missing", "lifecycle_without_artifact"} <= codes(result)
+
+
+@pytest.mark.parametrize("mixed_family", [False, True])
+def test_candidate_cannot_adopt_unassessed_issue_history(tmp_path, mixed_family):
+    from harness.element_identity_lifecycle import ElementAdopt
+    store = IdentityStore.initialize(tmp_path)
+    label = "ISS-007"
+    store.import_identities(spec_id="demo", operation_id="import", definitions=((label, TITLE),))
+    report, entry = render(label), occurrence(label=label)
+    artifacts = (CandidateArtifact("issues.md", "issues", None, report),)
+    changes = (ElementAdopt(label, TITLE, BODY),)
+    ids, paths = (label,), ("issues.md",)
+    if mixed_family:
+        store.reserve(spec_id="demo", kind="FR", operation_id="requirements", count=1)
+        requirement = "- **FR-000001**: Stop at walls.\n"
+        artifacts += (CandidateArtifact("spec.md", "requirements", None, requirement),)
+        changes += (ElementCreate("FR-000001", "Movement", requirement, "requirements"),)
+        ids += ("FR-000001",)
+        paths += ("spec.md",)
+    result = check(store, tmp_path, None, report, (context(None, (entry,)),),
+                   artifacts=artifacts, changes=changes, ids=ids, writable=paths, unowned=paths)
+    assert "lifecycle_rejected" in codes(result)
+    assert store.lookup(spec_id="demo", element_id=label)["status"] == "imported"
+    assert store.lookup(spec_id="demo", element_id="FR-000001") is None
+
+
+def test_candidate_adoption_rejection_does_not_mask_issue_authority_damage(tmp_path):
+    from harness.element_identity_lifecycle import ElementAdopt
+    store = IdentityStore.initialize(tmp_path)
+    label = "ISS-007"
+    store.import_identities(spec_id="demo", operation_id="import", definitions=((label, TITLE),))
+    report, entry = render(label), occurrence(label=label)
+    with closing(sqlite3.connect(tmp_path / ".echelon/identity/registry.sqlite3")) as connection:
+        connection.execute("UPDATE counters SET high_water='0' WHERE kind='ISS'")
+        connection.commit()
+    with pytest.raises(IdentityStoreError, match="below retained numeric claims"):
+        check(store, tmp_path, None, report, (context(None, (entry,)),), ids=(label,),
+              changes=(ElementAdopt(label, TITLE, BODY),))
