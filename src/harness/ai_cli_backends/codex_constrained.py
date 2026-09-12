@@ -121,8 +121,11 @@ def prepare_constrained_request(
     max_input_bytes: int,
     max_capture_bytes: int,
     tool_policy: LlmToolPolicy,
+    screen_input: Callable[[bytes], bytes] | None = None,
 ) -> PreparedConstrainedRequest:
     """Validate and render one bounded, stdin-only native Codex request."""
+    if screen_input is not None and not callable(screen_input):
+        raise ConstrainedRequestError("invalid_request")
     if not _valid_request_shape(
         request,
         model=model,
@@ -145,7 +148,7 @@ def prepare_constrained_request(
         raise ConstrainedRequestError("invalid_request") from None
     if len(prompt_bytes) > max_input_bytes:
         raise ConstrainedRequestError("input_overflow")
-    if not _screen_identical(screen_output, prompt_bytes):
+    if not _screen_identical(screen_input or screen_output, prompt_bytes):
         raise ConstrainedRequestError("screen_rejected")
 
     command = build_llm_cli_command(

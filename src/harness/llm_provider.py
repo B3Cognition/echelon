@@ -247,6 +247,7 @@ class AICodingCliProvider:
         max_input_bytes: int,
         max_capture_bytes: int,
         timeout_ms: int | None = None,
+        screen_input: Callable[[bytes], bytes] | None = None,
     ) -> CliRunResult:
         """Run the selected backend's optional constrained operation only."""
         self.last_stdout = ""
@@ -283,6 +284,7 @@ class AICodingCliProvider:
                 screen_output=screen_output,
                 max_input_bytes=max_input_bytes,
                 max_capture_bytes=max_capture_bytes,
+                screen_input=screen_input,
             )
         self._record_result(result, metadata)
         return result

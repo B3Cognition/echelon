@@ -52,6 +52,7 @@ class ConstrainedPromptBackend(Protocol):
         screen_output: Callable[[bytes], bytes],
         max_input_bytes: int,
         max_capture_bytes: int,
+        screen_input: Callable[[bytes], bytes] | None = None,
     ) -> CliRunResult:
         ...
 

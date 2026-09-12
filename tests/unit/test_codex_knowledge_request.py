@@ -76,6 +76,7 @@ def _invoke_with_local_process(
     request: CliRunRequest | None = None,
     script: str | None = None,
     screen=None,
+    screen_input=None,
     max_input_bytes: int = 64 * 1024,
     max_capture_bytes: int = 64 * 1024,
     backend: CodexCliBackend | None = None,
@@ -99,6 +100,7 @@ def _invoke_with_local_process(
         screen_output=screen or (lambda value: value),
         max_input_bytes=max_input_bytes,
         max_capture_bytes=max_capture_bytes,
+        screen_input=screen_input,
     )
     return result, captured
 
@@ -490,6 +492,36 @@ def test_mixed_capture_retains_component_lower_bound_without_double_counting(
     assert result.stdout == "done"
     assert result.token_usage == want_total
     assert result.metadata["token_usage_status"] == "untrusted"
+
+
+def test_knowledge_request_uses_distinct_exact_input_and_output_screens(
+    tmp_path, monkeypatch
+) -> None:
+    def output_only(value: bytes) -> bytes:
+        if b"Synthetic knowledge request" in value:
+            raise ValueError("prompt is not provider output")
+        return value
+
+    result, _captured = _invoke_with_local_process(
+        tmp_path,
+        monkeypatch,
+        screen=output_only,
+        request=_request(tmp_path),
+        backend=_backend(),
+    )
+    assert result.exit_code == 125
+    assert result.metadata == {"failure_reason": "screen_rejected"}
+
+    result, _captured = _invoke_with_local_process(
+        tmp_path,
+        monkeypatch,
+        screen=output_only,
+        request=_request(tmp_path),
+        backend=_backend(),
+        screen_input=lambda value: value,
+    )
+    assert result.exit_code == 0
+    assert result.stdout == "done"
 
 
 @pytest.mark.parametrize("legacy_first", [True, False])

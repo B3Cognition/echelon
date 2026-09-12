@@ -91,6 +91,7 @@ class CodexCliBackend:
         screen_output: Callable[[bytes], bytes],
         max_input_bytes: int,
         max_capture_bytes: int,
+        screen_input: Callable[[bytes], bytes] | None = None,
     ) -> CliRunResult:
         """Run one opt-in bounded request through native Codex stdin."""
         try:
@@ -102,6 +103,7 @@ class CodexCliBackend:
                 max_input_bytes=max_input_bytes,
                 max_capture_bytes=max_capture_bytes,
                 tool_policy=self._config.llm.tool_policy,
+                screen_input=screen_input,
             )
         except ConstrainedRequestError as exc:
             return _screened_failure(exc.reason)

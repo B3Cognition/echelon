@@ -15,6 +15,7 @@ from harness.echelon_result_schema import (
     validate_echelon_result,
 )
 from harness.llm_provider import AICodingCliProvider
+from harness.llm_tool_policy import inject_llm_tool_policy_preamble
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.knowledge_accounting import KnowledgeProviderContract
 from harness.re_v2.knowledge_dispatch import ProviderReply
@@ -78,6 +79,7 @@ class KnowledgeLLMBackend:
         self._model = model
         self._screen_output = screen_output
         self._max_capture_bytes = max_capture_bytes
+        self._input_policy = deepcopy(config.llm.tool_policy)
         adapter_digest = content_digest({
             "schema_version": 1,
             "kind": "configured_knowledge_llm_adapter",
@@ -127,12 +129,18 @@ class KnowledgeLLMBackend:
             )
         try:
             prompt = _render_prompt(agent, context)
+            expected_input = inject_llm_tool_policy_preamble(
+                prompt, self._input_policy
+            ).encode("utf-8", errors="strict")
         except (UnicodeError, ValueError):
             return ProviderReply(
                 b"", NormalizedUsageV1("unavailable", None, {}),
                 "invalid-provider-result",
             )
         with tempfile.TemporaryDirectory(prefix="echelon-re-knowledge-") as cwd:
+            def exact_input(value: bytes) -> bytes:
+                return value if value == expected_input else b""
+
             result = self._provider.run_constrained_prompt_result(
                 cwd,
                 prompt,
@@ -141,6 +149,7 @@ class KnowledgeLLMBackend:
                 max_input_bytes=reservation.initial_input_tokens,
                 max_capture_bytes=self._max_capture_bytes,
                 timeout_ms=reservation.active_ms,
+                screen_input=exact_input,
             )
         usage = normalize_shared_provider_usage(
             result.token_usage,
