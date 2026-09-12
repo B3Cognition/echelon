@@ -310,6 +310,51 @@ compare them under descriptor and lock continuity before promotion. Partial-stat
 recovery, run-local versus published source association, managed-producer
 enforcement, graph/memory currentness and bounded repair remain outside this helper.
 
+## Guarded selected-source publication
+
+`PreparedSquadPublication.publish_sources(initial, ...)` is an opt-in physical
+publication boundary. It validates the retained original with the existing
+initial codec and final projection guard, then holds one descriptor-associated
+publication lock while using the same promotion loop as `publish()`. The
+original root and sealed stages remain pinned; guarded target reads, parent
+creation, replacement, deletion and directory durability checks use the retained
+project descriptor. Legacy `publish()` remains the default behavior.
+Existing target ancestors retain their descriptor/entry associations for the
+whole invocation; newly created or first traversed target parents join that
+owner before traversal descriptors close. No old membership or missing-entry
+pins are retained across authorized mutations. This inode association lasts
+only for the invocation; serialized originals have no inode authority across
+recovery calls. Read-only non-target source directories retain checked-capture
+semantics.
+
+Each short observation compares the complete explicitly selected source manifest
+against the original plus the authenticated ordered operation prefix. This
+includes hidden and binary members, file and directory modes, empty directories,
+individual files and absences. The sole extra intermediate shape is a contiguous
+canonical `0755` parent-directory prefix for the next unfinished write. It cannot
+authorize siblings, later-operation parents, temporary files or noncanonical
+directory modes. Unclassified damage remains blocked and recovery material is
+retained; this is not arbitrary interrupted-state repair.
+
+Trusted short `before_publish` and `after_publish` callbacks execute under that
+same lock with actual captured snapshots whose normal pins survive callback
+return and exit validation. The first callback follows source/seal validation;
+the second follows exact final validation. Both may repeat on retries and must
+have independently idempotent owner effects. Callback exceptions propagate;
+before-callback failure promotes nothing, while after-callback failure can leave
+all files published without reporting success. Hooks must not recurse into lock
+owners, run providers or perform broad or long-running work.
+
+The caller must separately authenticate the original capture, selection
+completeness, namespace/context, scope and semantic acceptance. A self-consistent
+snapshot that omits a dependency cannot reveal that omission to this method.
+These checks cover observation boundaries under a cooperating publisher lock;
+they do not detect every transient mutation restored between observations.
+The method creates no identity intent, releases no journal, discards no stage,
+and activates no controller, producer, graph, memory or provider path. A closed
+versioned source bundle and durable intent still belong under the existing
+SquadController completion owner before any live integration.
+
 ## Captured candidate source assembly
 
 `harness.element_identity_candidate_sources.assemble_candidate_sources` is an

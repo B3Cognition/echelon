@@ -41,11 +41,21 @@ def project_publication_source_manifest(
 ) -> SourceManifestSnapshot:
     """Project the exact selected-source metadata after every sealed operation."""
     encode_initial_publication_sources(initial)
+    return _transform_selected_sources(initial, len(initial.publication.operations))
+
+
+def _transform_selected_sources(
+    initial: PublicationSourcesSnapshot,
+    prefix: int,
+    *,
+    new_directories: tuple[str, ...] = (),
+) -> SourceManifestSnapshot:
+    """Internal transformation of a validated original; never an initial guard."""
 
     try:
         operations = tuple(
             (operation, _parts(operation.target))
-            for operation in initial.publication.operations
+            for operation in initial.publication.operations[:prefix]
         )
         tree_roots = tuple((tree, _parts(tree.path)) for tree in initial.trees)
         selected_files = tuple((item, _parts(item.path)) for item in initial.files)
@@ -70,6 +80,12 @@ def project_publication_source_manifest(
             directories = {item.path: item for item in tree.directories}
             files = {item.path: item for item in tree.files}
             exists = tree.exists
+            for path in new_directories:
+                if _is_at_or_below(_parts(path), root):
+                    exists = True
+                    directories.setdefault(path, ProjectDirectorySnapshot(
+                        path, publication.PUBLICATION_DIRECTORY_MODE,
+                    ))
             for operation, target in operations:
                 if not _is_at_or_below(target, root) or target == root:
                     continue

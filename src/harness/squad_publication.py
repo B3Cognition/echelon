@@ -578,7 +578,17 @@ def _target_image(
     relative: Path,
     *,
     invalid_code: str,
+    project_fd: int | None = None,
 ) -> dict[str, object]:
+    if project_fd is not None:
+        with ExitStack() as resources:
+            paths = _InspectionPaths(resources)
+            pinned = paths.current(project_fd, relative)
+            paths.verify()
+            if pinned is None:
+                return {"kind": "missing"}
+            return {"kind": "file", "sha256": pinned.sha256,
+                    "mode": stat.S_IMODE(pinned.identity[2])}
     _validate_existing_ancestors(
         project_root,
         relative,
@@ -645,14 +655,20 @@ def _open_parent_directory(
     relative: Path,
     *,
     create: bool,
+    project_fd: int | None = None,
+    guard: Callable[[], None] | None = None,
+    paths: _InspectionPaths | None = None,
 ) -> int:
-    current_fd = _open_directory(
+    current_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="target_drift",
         invalid_code="target_drift",
     )
+    next_fd: int | None = None
     try:
         for part in relative.parts[:-1]:
+            if guard is not None:
+                guard()
             try:
                 next_fd = os.open(
                     part,
@@ -685,10 +701,20 @@ def _open_parent_directory(
                     _raise("publish_io")
             except OSError:
                 _raise("target_drift")
+            if paths is not None:
+                retained_parent = os.dup(current_fd)
+                paths.resources.callback(os.close, retained_parent)
+                retained_child = os.dup(next_fd)
+                paths.resources.callback(os.close, retained_child)
+                paths.directories.append((retained_parent, part, retained_child, "target_drift"))
+                paths.verify()
             os.close(current_fd)
             current_fd = next_fd
+            next_fd = None
         return current_fd
     except BaseException:
+        if next_fd is not None:
+            os.close(next_fd)
         os.close(current_fd)
         raise
 
@@ -696,8 +722,9 @@ def _open_parent_directory(
 def _fsync_target_directory_chain(
     project_root: Path,
     relative: Path,
+    *, project_fd: int | None = None,
 ) -> None:
-    root_fd = _open_directory(
+    root_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="publish_io",
         invalid_code="publish_io",
@@ -715,8 +742,9 @@ def _fsync_target_directory_chain(
 def _fsync_existing_target_directory_chain(
     project_root: Path,
     relative: Path,
+    *, project_fd: int | None = None,
 ) -> None:
-    root_fd = _open_directory(
+    root_fd = os.dup(project_fd) if project_fd is not None else _open_directory(
         project_root,
         missing_code="publish_io",
         invalid_code="publish_io",
@@ -1724,6 +1752,7 @@ class PreparedSquadPublication:
     def _capture_inspection(
         self, paths: _InspectionPaths, filesystem_fd: int, project_fd: int,
         marker: PublicationMarker,
+        retained: tuple[PreparedSquadPublication, _PinnedTransaction] | None = None,
     ) -> tuple[PublicationSnapshot, _PinnedTransaction]:
         """Capture sealed images in a caller-owned scope without acquiring a lock."""
         from harness.squad_publication_snapshot import (
@@ -1734,10 +1763,14 @@ class PreparedSquadPublication:
             _image_descriptor,
         )
 
-        verified, pinned = _load_prepared_pinned(
-            self._project_root, self._squad_dir, marker
-        )
-        paths.resources.callback(pinned.close)
+        if retained is None:
+            verified, pinned = _load_prepared_pinned(
+                self._project_root, self._squad_dir, marker
+            )
+            paths.resources.callback(pinned.close)
+        else:
+            verified, pinned = retained
+            pinned.verify()
         paths.verify()
         squad_fd = paths.directory(
             filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
@@ -1846,6 +1879,9 @@ class PreparedSquadPublication:
         operation: dict[str, object],
         pinned: _PinnedRegular,
         transaction_fd: int,
+        *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
     ) -> None:
         relative = Path(str(operation["target"]))
         expected_preimage = dict(operation["preimage"])
@@ -1867,6 +1903,7 @@ class PreparedSquadPublication:
             self._project_root,
             relative,
             create=True,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         temporary_name: str | None = None
         try:
@@ -1876,6 +1913,8 @@ class PreparedSquadPublication:
                 expected_digest,
                 expected_mode,
             )
+            if guard is not None:
+                guard()
             if (
                 _target_image_at(parent_fd, relative.name)
                 != expected_preimage
@@ -1904,26 +1943,36 @@ class PreparedSquadPublication:
                 except OSError:
                     pass
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if (
             _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             != expected_postimage
         ):
             _raise("target_drift")
 
-    def _publish_delete(self, operation: dict[str, object]) -> None:
+    def _publish_delete(
+        self, operation: dict[str, object], *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
+    ) -> None:
         relative = Path(str(operation["target"]))
         expected_preimage = dict(operation["preimage"])
         parent_fd = _open_parent_directory(
             self._project_root,
             relative,
             create=False,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         try:
+            if guard is not None:
+                guard()
             if (
                 _target_image_at(parent_fd, relative.name)
                 != expected_preimage
@@ -1940,17 +1989,23 @@ class PreparedSquadPublication:
                 _raise("target_drift")
         finally:
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if _target_image(
             self._project_root,
             relative,
             invalid_code="target_drift",
+            **({} if project_fd is None else {"project_fd": project_fd}),
         ) != {"kind": "missing"}:
             _raise("target_drift")
 
     def _durably_accept_postimage(
         self,
         operation: dict[str, object],
+        *, project_fd: int | None = None,
+        guard: Callable[[], None] | None = None,
+        paths: _InspectionPaths | None = None,
     ) -> None:
         relative = Path(str(operation["target"]))
         expected_postimage = dict(operation["postimage"])
@@ -1959,16 +2014,19 @@ class PreparedSquadPublication:
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             ) != expected_postimage:
                 _raise("target_drift")
             _fsync_existing_target_directory_chain(
                 self._project_root,
                 relative,
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             if _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             ) != expected_postimage:
                 _raise("target_drift")
             return
@@ -1976,6 +2034,7 @@ class PreparedSquadPublication:
             self._project_root,
             relative,
             create=False,
+            **({} if project_fd is None else {"project_fd": project_fd}), guard=guard, paths=paths,
         )
         try:
             if (
@@ -2024,12 +2083,15 @@ class PreparedSquadPublication:
                 _raise("target_drift")
         finally:
             os.close(parent_fd)
-        _fsync_target_directory_chain(self._project_root, relative)
+        if guard is not None:
+            guard()
+        _fsync_target_directory_chain(self._project_root, relative, **({} if project_fd is None else {"project_fd": project_fd}))
         if (
             _target_image(
                 self._project_root,
                 relative,
                 invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
             )
             != expected_postimage
         ):
@@ -2069,48 +2131,160 @@ class PreparedSquadPublication:
                 marker,
             )
             try:
-                operations = list(verified._manifest["operations"])
                 pinned.verify()
                 authenticate_publication_prefix(
                     verified._project_root,
-                    operations,
+                    list(verified._manifest["operations"]),
                 )
-                for position, operation in enumerate(operations):
-                    self._run_fault_hook(fault_hook, position)
-                    pinned.verify()
-                    relative = Path(str(operation["target"]))
-                    current = _target_image(
-                        verified._project_root,
-                        relative,
-                        invalid_code="target_drift",
-                    )
-                    postimage = dict(operation["postimage"])
-                    if current == postimage:
-                        verified._durably_accept_postimage(operation)
-                        continue
-                    if current != dict(operation["preimage"]):
-                        _raise("target_drift")
-                    if operation["action"] == "write":
-                        staged_name = str(operation["staged"])
-                        verified._publish_write(
-                            operation,
-                            pinned.stages[staged_name],
-                            pinned.transaction_fd,
-                        )
-                    else:
-                        verified._publish_delete(operation)
-                self._run_fault_hook(fault_hook, len(operations))
-                pinned.verify()
-                for operation in operations:
-                    relative = Path(str(operation["target"]))
-                    if _target_image(
-                        verified._project_root,
-                        relative,
-                        invalid_code="target_drift",
-                    ) != dict(operation["postimage"]):
-                        _raise("target_drift")
+                verified._promote(pinned, fault_hook=fault_hook)
             finally:
                 pinned.close()
+
+    def _promote(
+        self, pinned: _PinnedTransaction, *,
+        fault_hook: Callable[[int], None] | None,
+        project_fd: int | None = None,
+        boundary: Callable[[], object] | None = None,
+        verify_owner: Callable[[], None] | None = None,
+        target_paths: _InspectionPaths | None = None,
+    ) -> None:
+        """The sole promotion loop; the caller owns the lock and sealed stages."""
+        operations = list(self._manifest["operations"])
+        kwargs = ({} if project_fd is None else {
+            "project_fd": project_fd, "guard": verify_owner, "paths": target_paths,
+        })
+        for position, operation in enumerate(operations):
+            self._run_fault_hook(fault_hook, position)
+            if boundary is not None:
+                boundary()
+            pinned.verify()
+            if verify_owner is not None:
+                verify_owner()
+            relative = Path(str(operation["target"]))
+            current = _target_image(
+                self._project_root, relative, invalid_code="target_drift",
+                **({} if project_fd is None else {"project_fd": project_fd}),
+            )
+            if current == dict(operation["postimage"]):
+                self._durably_accept_postimage(operation, **kwargs)
+            elif current != dict(operation["preimage"]):
+                _raise("target_drift")
+            elif operation["action"] == "write":
+                self._publish_write(
+                    operation, pinned.stages[str(operation["staged"])],
+                    pinned.transaction_fd, **kwargs,
+                )
+            else:
+                self._publish_delete(operation, **kwargs)
+            if verify_owner is not None:
+                verify_owner()
+            if boundary is not None:
+                boundary()
+        self._run_fault_hook(fault_hook, len(operations))
+        if boundary is not None:
+            boundary()
+        pinned.verify()
+        for operation in operations:
+            if _target_image(
+                self._project_root, Path(str(operation["target"])),
+                invalid_code="target_drift", **({} if project_fd is None else {"project_fd": project_fd}),
+            ) != dict(operation["postimage"]):
+                _raise("target_drift")
+
+    def publish_sources(
+        self, initial: PublicationSourcesSnapshot, *,
+        before_publish: Callable[[PublicationSourcesSnapshot], None] | None = None,
+        after_publish: Callable[[PublicationSourcesSnapshot], None] | None = None,
+        fault_hook: Callable[[int], None] | None = None,
+    ) -> PublicationSourcesSnapshot:
+        """Opt in to selected-source progress checks under the publisher lock.
+
+        The caller authenticates the original selection and owns any durable
+        intent. Hooks are trusted, short, non-recursive and independently
+        idempotent; their exceptions propagate without reporting success.
+        """
+        from harness.squad_source_guard import _validate_source_progress
+        from harness.squad_source_manifest import snapshot_source_manifest
+        from harness.squad_source_projection import project_publication_source_manifest
+        from harness.squad_source_snapshot import (
+            PublicationSourcesSnapshot, _capture_project_path, _capture_project_tree,
+        )
+
+        final_manifest = project_publication_source_manifest(initial)
+        if any(hook is not None and not callable(hook)
+               for hook in (before_publish, after_publish, fault_hook)):
+            _raise("manifest_invalid")
+        marker = self._inspection_marker()
+        with _project_inspection_scope(self._project_root) as scope:
+            owner_paths, filesystem_fd, project_fd = scope
+            verified, pinned = _load_prepared_pinned(self._project_root, self._squad_dir, marker)
+            owner_paths.resources.callback(pinned.close)
+            # Keep the squad and every stage ancestor bound for the entire call.
+            squad_fd = owner_paths.directory(
+                filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt",
+            )
+            if _directory_identity(os.fstat(squad_fd)) != _directory_identity(os.fstat(pinned.squad_fd)):
+                _raise("stage_corrupt")
+            for name in pinned.stages:
+                owner_paths.directory(pinned.transaction_fd, Path(name).parts[:-1], code="stage_corrupt")
+            # Invocation-local ancestor identity, without absence or membership
+            # pins that would reject authorized parent creation and replacement.
+            for operation in verified._manifest["operations"]:
+                current_fd = project_fd
+                for name in Path(operation["target"]).parts[:-1]:
+                    try:
+                        os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        break
+                    except OSError:
+                        _raise("target_drift")
+                    current_fd = owner_paths.directory(
+                        current_fd, (name,), code="target_drift",
+                    )
+
+            def verify_owner() -> None:
+                owner_paths.verify()
+                pinned.verify()
+                for operation in verified._manifest["operations"]:
+                    if operation["action"] == "write" and stat.S_IMODE(
+                        pinned.stages[operation["staged"]].identity[2]
+                    ) != operation["postimage"]["mode"]:
+                        _raise("stage_corrupt")
+
+            def capture(
+                hook: Callable[[PublicationSourcesSnapshot], None] | None = None,
+                *, final: bool = False,
+            ) -> PublicationSourcesSnapshot:
+                verify_owner()
+                with ExitStack() as resources:
+                    paths = _InspectionPaths(resources)
+                    observed, _ = self._capture_inspection(
+                        paths, filesystem_fd, project_fd, marker, (verified, pinned),
+                    )
+                    trees = tuple(_capture_project_tree(paths, project_fd, item.path) for item in initial.trees)
+                    files = tuple(_capture_project_path(paths, project_fd, item.path) for item in initial.files)
+                    snapshot = PublicationSourcesSnapshot(observed, trees, files)
+                    paths.verify()
+                    verify_owner()
+                    _validate_source_progress(initial, snapshot)
+                    if final and (snapshot_source_manifest(trees=trees, files=files) != final_manifest
+                                  or any(op.current != op.postimage for op in observed.operations)):
+                        _raise("target_drift")
+                    if hook is not None:
+                        hook(snapshot)
+                    # Callback observations retain all pins until successful exit.
+                    verify_owner()
+                    paths.verify()
+                    return snapshot
+
+            capture(before_publish)
+            verified._promote(
+                pinned, fault_hook=fault_hook, project_fd=project_fd,
+                boundary=capture, verify_owner=verify_owner, target_paths=owner_paths,
+            )
+            result = capture(after_publish, final=True)
+            verify_owner()
+            return result
 
     def discard(self) -> None:
         _require_secure_posix()
