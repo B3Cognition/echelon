@@ -9,6 +9,8 @@
 - Tested implementation commit: `a095707a5712ac6a7bf1cbfd2c09cd748210b739`
 - Tested implementation tree: `6b017001cca8d57fc69cdc45310c81e544afec91`
 - Later code amendments after the covering run: none
+- Later test-only amendment: `d543818145a7c73344f75a3f90af865cbe318943`
+- Final focused-tested tree after that amendment: `0d693bf48a67a39c9fa69a66407b49b8e123597b`
 - Root-owned `.superpowers/sdd/2026-09-12-managed-context-authentication/progress.md` remained dirty and was neither edited nor committed by this implementer.
 
 ## Implementation
@@ -79,7 +81,14 @@ Actual outcomes, in order:
 1 failed, 30 passed in 3.15s
 ```
 
-The failure was test setup: attempting a second managed enrollment on the same authority was rejected by existing global managed auditing. The test was narrowed to two real registered source contexts/specs while retaining one managed genesis; no production change was made.
+The failure was test setup: the attempted second enrollment used distinct
+spec/context/source/operation identifiers but accidentally reused `run_id="first"`.
+The base schema intentionally declares `managed_identity_specs.run_id TEXT NOT
+NULL UNIQUE`, so the bounded registration error enforced the existing global
+run-ID uniqueness contract. This was not a failure of two managed specs using
+distinct run IDs. The first correction narrowed the case to two registered
+source contexts/specs while retaining one managed genesis; no production change
+was made.
 
 ```text
 ...............................                                          [100%]
@@ -137,6 +146,31 @@ Output:
 ```
 
 No full-unit, controller, capacity, live-provider, installation, post-commit, or other covering-suite repeat was run.
+
+### Post-covering test-only amendment
+
+After root requested exact clarification of the earlier setup failure, the
+two-context/spec test was strengthened to enroll both managed specs with distinct
+run IDs (`demo`/`first` and `other`/`second`), verify each independently, and
+retain the cross-context substitution rejection. This changed tests only; the
+implementation and schema were untouched. Commit and tree are listed above.
+The earlier 470-test result is therefore the pre-amendment covering code point,
+not relabeled as evidence for this amendment.
+
+Focused command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest tests/unit/test_element_identity_managed_context.py -q
+```
+
+Output:
+
+```text
+........................................                                 [100%]
+40 passed in 3.67s
+```
+
+No broad suite was repeated after this test-only amendment, as directed.
 
 ## Coverage added
 
