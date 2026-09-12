@@ -1025,19 +1025,25 @@ def _open_or_create_control_directory(
 
 
 @contextmanager
-def _publication_exclusivity(project_root: Path) -> Iterator[None]:
+def _publication_exclusivity(
+    project_root: Path, *, expected_project_fd: int | None = None,
+) -> Iterator[None]:
     """Serialize project-wide Echelon target prechecks and mutations."""
 
     identity = str(
         (project_root / _PUBLICATION_LOCK_RELATIVE).absolute()
     )
     with controller_lock_order("publication", identity):
-        with _publication_exclusivity_ordered(project_root):
+        with _publication_exclusivity_ordered(
+            project_root, expected_project_fd=expected_project_fd
+        ):
             yield
 
 
 @contextmanager
-def _publication_exclusivity_ordered(project_root: Path) -> Iterator[None]:
+def _publication_exclusivity_ordered(
+    project_root: Path, *, expected_project_fd: int | None = None,
+) -> Iterator[None]:
     _require_secure_posix()
     project_fd = _open_directory(
         project_root,
@@ -1049,6 +1055,15 @@ def _publication_exclusivity_ordered(project_root: Path) -> Iterator[None]:
     lock_fd: int | None = None
     created = False
     try:
+        if expected_project_fd is not None:
+            # Borrow the inspector's retained root; only project_fd is ours to close.
+            try:
+                actual_identity = _directory_identity(os.fstat(project_fd))
+                expected_identity = _directory_identity(os.fstat(expected_project_fd))
+            except OSError:
+                _raise("publish_io")
+            if actual_identity != expected_identity:
+                _raise("target_drift")
         echelon_fd = _open_or_create_control_directory(
             project_fd,
             _PUBLICATION_CONTROL_DIRECTORY.parts[0],
@@ -1667,8 +1682,10 @@ class PreparedSquadPublication:
             project_fd = paths.directory(
                 filesystem_fd, project.parts[1:], code="target_drift"
             )
-            with _publication_exclusivity(self._project_root):
-                # Bind the acquired lock to the root retained before acquisition.
+            with _publication_exclusivity(
+                self._project_root, expected_project_fd=project_fd
+            ):
+                # Reject path replacement while acquiring the descriptor-bound lock.
                 paths.verify()
                 verified, pinned = _load_prepared_pinned(
                     self._project_root, self._squad_dir, marker

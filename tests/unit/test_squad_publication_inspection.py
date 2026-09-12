@@ -333,10 +333,10 @@ def test_root_replacement_during_lock_acquisition_rejects_before_sealed_load(
         (moved / "spec.md").rename(project / "spec.md")
 
     @contextmanager
-    def replace_during_acquisition(root):
+    def replace_during_acquisition(root, **kwargs):
         if interval == "before-acquisition":
             replace_root()
-        with original_lock(root):
+        with original_lock(root, **kwargs):
             if interval == "after-acquisition":
                 replace_root()
             yield
@@ -355,6 +355,65 @@ def test_root_replacement_during_lock_acquisition_rejects_before_sealed_load(
     # The old and replacement lock contexts both remain usable after rejection.
     with original_lock(moved):
         pass
+    with original_lock(project):
+        pass
+
+
+@pytest.mark.parametrize("restore_at", ["after-root-open", "after-lock-acquisition"])
+def test_transient_root_swap_cannot_bind_inspection_to_replacement_lock(
+    tmp_path, monkeypatch, restore_at,
+):
+    project, _, prepared, _ = _prepared(tmp_path)
+    original_lock = publication._publication_exclusivity
+    original_open = publication._open_directory
+    original_load = publication._load_prepared_pinned
+    moved = project.with_name(project.name + "-original")
+    replacement = project.with_name(project.name + "-replacement")
+    opened = set()
+    loads = []
+
+    def restore_original():
+        if moved.exists():
+            project.rename(replacement)
+            moved.rename(project)
+
+    def record_open(path, **kwargs):
+        fd = original_open(path, **kwargs)
+        opened.add(fd)
+        if Path(path) == project and restore_at == "after-root-open":
+            restore_original()
+        return fd
+
+    @contextmanager
+    def transient_swap(root, **kwargs):
+        project.rename(moved)
+        project.mkdir()
+        try:
+            with original_lock(root, **kwargs):
+                restore_original()
+                yield
+        finally:
+            restore_original()
+
+    def record_load(*args):
+        loads.append(args)
+        return original_load(*args)
+
+    monkeypatch.setattr(publication, "_open_directory", record_open)
+    monkeypatch.setattr(publication, "_publication_exclusivity", transient_swap)
+    monkeypatch.setattr(publication, "_load_prepared_pinned", record_load)
+    with pytest.raises(PublicationError, match="^target_drift$"):
+        with prepared.inspect():
+            pytest.fail("original root escaped while replacement root was locked")
+    assert loads == []
+    assert (project / "spec.md").read_bytes() == b"before"
+    assert not (project / ".echelon").exists()
+    assert not (replacement / ".echelon").exists()
+    assert opened
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    # The normal lock owner remains usable after identity validation fails.
     with original_lock(project):
         pass
 
@@ -401,6 +460,58 @@ def test_root_pins_close_when_publication_lock_acquisition_fails(
         with pytest.raises(OSError):
             os.fstat(fd)
     assert (project / "spec.md").read_bytes() == b"before"
+
+
+@pytest.mark.parametrize("outcome", ["success", "mismatch", "actual-stat", "expected-stat"])
+def test_lock_root_identity_validation_closes_owned_but_not_borrowed_fd(
+    tmp_path, monkeypatch, outcome,
+):
+    project, _, _, _ = _prepared(tmp_path)
+    expected_root = project
+    if outcome == "mismatch":
+        expected_root = project / "other-root"
+        expected_root.mkdir()
+    expected_fd = publication._open_directory(
+        expected_root, missing_code="publish_io", invalid_code="publish_io"
+    )
+    original_open = publication._open_directory
+    original_fstat = os.fstat
+    opened = set()
+    actual_root_fds = set()
+
+    def record_open(path, **kwargs):
+        fd = original_open(path, **kwargs)
+        opened.add(fd)
+        if Path(path) == project:
+            actual_root_fds.add(fd)
+        return fd
+
+    def fail_validation_fstat(fd):
+        if outcome == "actual-stat" and fd in actual_root_fds:
+            raise OSError("injected opened-root stat failure")
+        if outcome == "expected-stat" and fd == expected_fd:
+            raise OSError("injected borrowed-root stat failure")
+        return original_fstat(fd)
+
+    monkeypatch.setattr(publication, "_open_directory", record_open)
+    monkeypatch.setattr(os, "fstat", fail_validation_fstat)
+    try:
+        if outcome == "success":
+            with publication._publication_exclusivity(project, expected_project_fd=expected_fd):
+                assert original_fstat(expected_fd).st_ino == project.stat().st_ino
+        else:
+            code = "target_drift" if outcome == "mismatch" else "publish_io"
+            with pytest.raises(PublicationError, match=f"^{code}$"):
+                with publication._publication_exclusivity(project, expected_project_fd=expected_fd):
+                    pytest.fail("root validation failure escaped")
+            assert not (project / ".echelon").exists()
+        assert original_fstat(expected_fd).st_ino == expected_root.stat().st_ino
+        assert opened and actual_root_fds
+        for fd in opened:
+            with pytest.raises(OSError):
+                original_fstat(fd)
+    finally:
+        os.close(expected_fd)
 
 
 def test_caller_exception_propagates_and_lock_releases(tmp_path):
