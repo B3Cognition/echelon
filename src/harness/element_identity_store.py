@@ -686,6 +686,28 @@ class IdentityStore:
                 connection, self, spec_id, artifacts, scope, changes, affected,
                 projection_sources, evidence_inventories, issue_reports)
 
+    @_public
+    def audit(self) -> dict:
+        """Validate the complete current authority and report its snapshot."""
+        tables = (
+            "counters", "operations", "reservations", "entities", "revisions",
+            "lifecycle_heads", "lifecycle_lineage", "lifecycle_receipts",
+            "reference_claims", "issue_occurrences", "binding_receipts",
+        )
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            self._audit(connection, lifecycle_state=True, binding_state=True)
+            counts = {
+                table: _decimal(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                for table in tables
+            }
+            return {
+                "report_version": 1,
+                "authority": dict(self._marker),
+                "database_schema_version": schema.SCHEMA_VERSION,
+                "table_counts": counts,
+            }
+
     @staticmethod
     def _validate_reservation(connection, row):
         first, last, count = (_integer(row[key]) for key in ("first_ordinal", "last_ordinal", "count"))
@@ -699,7 +721,7 @@ class IdentityStore:
 
     @classmethod
     def _audit(cls, connection, *, lifecycle_state, binding_state=False):
-        """Full validation is restricted to explicit upgrade/restore."""
+        """Fully validate an explicitly audited, upgraded, or restored authority."""
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise IdentityStoreError("database integrity check failed")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:

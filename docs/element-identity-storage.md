@@ -31,6 +31,58 @@ An open checks the small schema and metadata, not every entity. A missing,
 unreadable, or malformed authority raises `IdentityStoreError`, a `ValueError`.
 Callers must stop allocation on that error; inventing IDs is not a fallback.
 
+## Explicit administration and audit
+
+The authority has a separate, explicit administration entry point. Every path is
+required; the commands never default to the current directory, discover a ledger
+from documents, or modify the main Echelon CLI:
+
+```text
+python -m harness.element_identity_admin initialize --workspace PATH
+python -m harness.element_identity_admin audit --workspace PATH
+python -m harness.element_identity_admin upgrade --workspace PATH
+python -m harness.element_identity_admin backup --workspace PATH --destination PATH
+python -m harness.element_identity_admin restore --workspace PATH --backup PATH
+python -m harness.element_identity_admin import-labels --workspace PATH --input PATH
+```
+
+Only `initialize` claims a new authority. `audit`, `backup`, and `import-labels`
+open an existing current-schema authority; `upgrade` is the only command that
+upgrades a recognized older schema, and `restore` retains the fresh-destination
+and completed whole-ledger backup rules described below. A failed command prints
+no success object. A successful audit prints its report; every other successful
+command prints only an acknowledgement of the completed storage operation.
+
+`IdentityStore.audit()` performs the complete existing counter, entity,
+lifecycle, reference, occurrence, receipt, foreign-key, and SQLite integrity
+checks within one query-only read snapshot. Its report contains the authenticated
+authority marker, current database schema version, and canonical decimal row
+counts for the fixed authority data tables. It does not repair data, create
+receipts or checkpoints, initialize directories, or upgrade old state. Audit
+integrity means that the ledger is internally consistent; it does not establish
+semantic correctness, approved evidence, current publication, or managed
+readiness.
+
+`import-labels` accepts only an explicitly selected UTF-8 JSON document:
+
+```json
+{"schema_version":1,"spec_id":"demo","operation_id":"history-import-1","definitions":[{"element_id":"U-005","subject":"Largest-step collision behavior"}]}
+```
+
+This command delegates one atomic, idempotent subject-only import to the existing
+authority. It preserves exact published labels, including padded labels such as
+`FR-001` and composite historical IDs. It does not scan Markdown, infer IDs from
+filenames, allocate from document maxima, import evidence or occurrences, or
+invent lifecycle revisions. Imported labels remain `imported` and unassessed
+until a separate explicit lifecycle and historical reconciliation process. Label
+reservation claims unused new identities; historical adoption reconciles an
+existing label and its meaning. They are deliberately different operations.
+
+Backup is a complete point-in-time ledger copy for fresh-destination restore,
+not permission to run two independently writable clones. Audit is likewise a
+storage integrity operation, not activation of the still-inactive managed
+identity rollout.
+
 ```python
 from pathlib import Path
 from harness.element_identity_store import IdentityStore
