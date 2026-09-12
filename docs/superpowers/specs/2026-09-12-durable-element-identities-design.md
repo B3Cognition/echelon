@@ -118,6 +118,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   regressions bind the acquired lock to the retained root descriptor. This
   does not supply original bytes after promotion, complete unchanged dependency
   capture, semantic authority or a durable identity intent.
+- Strict request recovery codec: implemented in `5a85aedf` and independently
+  reviewed with no findings. Exact four-module compatibility suite: 259 passed.
+  Lifecycle/reference/issue payloads reconstruct immutable requests using the
+  existing validators and unchanged digest bytes; malformed JSON, nested shapes
+  and numeric coercions reject. Reopened-store retries preserve original receipts
+  after later history. Decoding is not semantic, adoption or publication authority
+  and does not persist or activate a durable intent.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
