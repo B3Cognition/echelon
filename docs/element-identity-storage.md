@@ -272,6 +272,44 @@ recapture under the existing guarded scope, and compare against that authority
 while coordinating source, ledger and graph completion. No accepted-source head,
 schema, provider API or controller activation is introduced here.
 
+## Expected final publication source projection
+
+`harness.squad_source_projection.project_publication_source_manifest(initial)`
+is an inactive, pure projection from one validated initial joint publication/source
+capture to the exact selected-source fingerprint expected after every sealed
+operation succeeds. It first applies the existing initial source-baseline encoder
+as its pre-promotion and structural guard. It does not manufacture an initial
+capture from a partial or final observation, and it preserves the guard's bounded
+publication failure.
+
+Projection is component-relative and cannot expand the explicit selection. Exact
+writes replace selected file images with their sealed postimage and bytes; exact
+deletes make explicitly selected files missing. Within a selected tree, writes add
+their file and only absent directory ancestors down through the selected root.
+Those newly required directories use `PUBLICATION_DIRECTORY_MODE`, the existing
+publisher's `0755` mode for directories it successfully creates; existing directory
+objects and modes remain unchanged. Deletes remove only the exact regular file and
+retain directories. Missing no-op deletes create nothing, absent trees remain
+absent unless a write below them creates their root, and empty directories, hidden
+files, binary content, empty content and permission distinctions remain represented.
+The existing source-manifest factory owns final canonicalization and hashing.
+
+A write at or above a selected tree root, or strictly above or below an explicitly
+selected file, is rejected because the resulting regular-file/directory shape could
+not be captured as selected. Component-prefix siblings and operations outside every
+selected source do not affect the result. This check says nothing about whether an
+outside operation had valid ownership, review or write scope.
+
+The projection performs no capture, publication, parsing, persistence, clock,
+randomness, provider or network work. It predicts only a successful final state: it
+does not authenticate the seal or selection, classify an interrupted prefix, make
+interference recoverable, compare a fresh observation, or authorize completion.
+A later completion owner must bind expected and observed fingerprints to durable
+namespace, accepted-source, candidate-review and sealed-publication authority and
+compare them under descriptor and lock continuity before promotion. Partial-state
+recovery, run-local versus published source association, managed-producer
+enforcement, graph/memory currentness and bounded repair remain outside this helper.
+
 ## Captured candidate source assembly
 
 `harness.element_identity_candidate_sources.assemble_candidate_sources` is an

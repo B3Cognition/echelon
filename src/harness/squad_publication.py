@@ -33,6 +33,7 @@ _PUBLICATION_LOCK_NAME = "publication.lock"
 _PUBLICATION_LOCK_RELATIVE = (
     _PUBLICATION_CONTROL_DIRECTORY / _PUBLICATION_LOCK_NAME
 )
+PUBLICATION_DIRECTORY_MODE = 0o755
 _MANIFEST_NAME = "manifest.json"
 _TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -669,7 +670,7 @@ def _open_parent_directory(
                         _directory_open_flags(),
                         dir_fd=current_fd,
                     )
-                    os.fchmod(next_fd, 0o755)
+                    os.fchmod(next_fd, PUBLICATION_DIRECTORY_MODE)
                     os.fsync(next_fd)
                 except FileExistsError:
                     try:
