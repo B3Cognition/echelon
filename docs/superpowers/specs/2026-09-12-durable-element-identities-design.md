@@ -94,14 +94,22 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   disappearances and issue correspondence needs. Unsupported explicit headings
   and bullets now reject rather than silently disappear. This report is not
   authenticated history reconciliation. A reproduced bare-reference limitation
-  (`FR-001.other` / `FR-001-extra` read as `FR-001`) remains a blocker for complete
-  reference enforcement; local filename and sentence-punctuation compatibility
-  require an explicit lexical/locator contract before that gap is closed.
+  (`FR-001.other` / `FR-001-extra` read as `FR-001`) required the subsequent
+  explicit lexical/locator checkpoint below.
 - Lifecycle transaction composition: implemented in `ca663b9e` and independently
   reviewed with no findings. Exact eight-module compatibility suite: 426 passed.
   Lifecycle and evidence/issue writers now share one caller-owned transaction;
   rollback, visibility and original retry receipts are tested against real
   SQLite. This does not authenticate historical sources or canonical publication.
+- Whole reference-token classification: implemented in `d86093ca`, corrected in
+  `9febb653`, and independently reviewed. Final seven-module compatibility suite:
+  1,532 passed. Unsupported whole labels, URI/path qualifications and malformed
+  intervals now retain diagnostic spans instead of leaking local prefixes.
+  Existing artifact tests pass unchanged, including local investigation filename
+  anchors. The bounded lexical contract separates literal dots from sentence
+  punctuation and treats ambiguous URI-style prefixes conservatively. Qualified
+  resolution, interval application and authenticated historical reconciliation
+  remain explicit unsupported integrations, not guessed successes.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
