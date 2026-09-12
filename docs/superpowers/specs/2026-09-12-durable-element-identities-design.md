@@ -319,6 +319,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   publication and actual final captures agree. This is explicitly a partial
   structure, not a complete graph or accepted source/semantic observation;
   captured external domains and runtime integration remain required.
+- Captured memory graph contribution: implemented in `2303891f` and
+  independently reviewed with no findings. Eight-module covering suite: 542
+  passed; EOF-only cleanup passed two named regressions. Shared transformations
+  preserve native drawer keys, exact receipts and partial-row behavior across
+  all three memory domains. Explicit returned/exception observation origin
+  preserves the distinct legacy unavailable RE reports without changing wire
+  fields or audit policy. Real native-planner parity and retained-history
+  composition are tested. Supplied observations are not authenticated current
+  storage; complete external selection, acquisition and sealing remain required.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
