@@ -85,6 +85,7 @@ def test_live_incomplete_reviewed_work_is_running_not_terminally_blocked(tmp_pat
     context, *_ = reconciliation_fixture(tmp_path)
     status = protocol_28_status_document(context.run_dir)
     assert status['status'] == 'running'
+    assert status['workflow_state'] == 'analyzing'
     assert 'blocked' not in status['banner'].lower()
     assert status['post_l4'] == {'synthesis': 'not run', 'publication': 'not run'}
 

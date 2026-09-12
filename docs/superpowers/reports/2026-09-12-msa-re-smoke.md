@@ -101,13 +101,34 @@ remain an explicit conflict or unknown. It does not authorize a false PASS or
 convert repeated contradiction into debt. The capability is frozen-contract
 gated, so historical runs reconstruct their original context byte-for-byte.
 
-The focused reconciliation, status, role, refresh, and end-to-end suite passed 52
+The focused reconciliation, status, role, refresh, and end-to-end suite passed 53
 tests after this repair. The stopped MSA run replays under the checkout reader and
 now recommends `echelon re refresh --source caic-msa-jenkins --depth standard`.
-A new paid attempt remains separate live evidence; this report does not claim that
-the strengthened real-model reconciliation has yet completed the standard refresh.
+
+That exact command was then exercised as a third immutable standard-depth attempt:
+
+- Root request: `re-20260912-164205-941436`
+- Reviewed analysis: `re-20260912-164205-941436-analysis`
+- Workspace synthesis: `re-20260912-170955-181039`
+- Analysis: 4/4 slices accepted, including two bounded verifier-driven repairs
+- Reconciliation: passed; the prior contradiction/evidence-support exhaustion did
+  not recur
+- Synthesis: 6/6 artifacts generated with no failed attempts
+- Publication: generation 2, complete and available for full-quality consumption
+- Source repository: clean after publication, with zero stashes
+
+One malformed producer response was rejected and retried within the bounded
+contract before the analysis completed. The live refresh also exposed two status
+projection defects: active reviewed work was mislabeled as `synthesizing`, and a
+valid synthesis child authenticated through refresh-merge authority was rejected
+as rebound when status was requested from its reviewed-analysis parent. Status now
+keeps nonterminal reviewed work in `analyzing` and accepts either direct parentage
+or an already-authenticated refresh authority that points exactly to the analysis
+run and manifest. The completed analysis now replays as `complete` with its
+generation-2 publication reported as `published_complete`.
 
 Observed conservative analysis charges were 2,307,328 tokens for the first
-standard attempt and 3,970,077 for the second. Including the successful quick
-analysis and synthesis, the smoke consumed 11,294,696 conservative tokens,
-well below the approved 100,000,000-token aggregate ceiling.
+standard attempt, 3,970,077 for the second, and 4,100,361 for the successful
+third attempt. Generation-2 synthesis charged 1,572,864 tokens. Including the
+successful quick analysis and synthesis, the smoke consumed 16,967,921
+conservative tokens, well below the approved 100,000,000-token aggregate ceiling.

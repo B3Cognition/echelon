@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,55 @@ from tests.unit.test_re_v2_protocol_28_lifecycle import (
     _RepairThenPassBackend,
 )
 from tests.unit.test_re_v2_protocol_28_preparation import _accepted_debt_fixture
+
+
+@pytest.mark.unit
+def test_reviewed_status_authenticates_refresh_merge_parent_lineage() -> None:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.knowledge_refresh import KnowledgeRefreshMergeAuthorityV1
+    from harness.re_v2.protocol_28.status import (
+        _synthesis_parent_matches_reviewed_analysis,
+    )
+
+    digest = lambda label: content_digest(label.encode())
+    analysis = SimpleNamespace(
+        inputs=SimpleNamespace(
+            manifest=SimpleNamespace(
+                run_id='re-reviewed-analysis',
+                identity=digest('reviewed-manifest'),
+            )
+        )
+    )
+    refresh = KnowledgeRefreshMergeAuthorityV1(
+        1,
+        digest('refresh-plan'),
+        1,
+        're-prior-synthesis',
+        digest('prior-parent'),
+        're-reviewed-analysis',
+        digest('reviewed-manifest'),
+        (digest('accepted-source'),),
+        (('repo-a', 'reanalyzed'),),
+    )
+    child = SimpleNamespace(
+        inputs=SimpleNamespace(
+            manifest=SimpleNamespace(
+                parent_run_id='re-reviewed-analysis',
+                parent_manifest_hash=refresh.identity,
+            ),
+            parent_authority=SimpleNamespace(_refresh_authority=refresh),
+        )
+    )
+
+    assert _synthesis_parent_matches_reviewed_analysis(child, analysis)
+
+    rebound = replace(
+        refresh,
+        fresh_parent_manifest_hash=digest('other-reviewed-manifest'),
+    )
+    child.inputs.manifest.parent_manifest_hash = rebound.identity
+    child.inputs.parent_authority._refresh_authority = rebound
+    assert not _synthesis_parent_matches_reviewed_analysis(child, analysis)
 
 
 @pytest.mark.unit

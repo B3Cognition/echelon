@@ -174,13 +174,16 @@ def _reviewed_document(context, state, events):
         'complete-with-limitations': 'COMPLETE WITH LIMITATIONS — accepted inherited or independently reviewed dependency debt is retained.'}
     manifest = context.inputs.manifest
     post_l4 = _reviewed_post_l4(context)
-    workflow_state = (
-        'needs-attention'
-        if blocker
-        else ('complete-with-limitations' if limitations else 'complete')
-        if str(post_l4['publication']).startswith('published_')
-        else 'synthesizing'
-    )
+    if blocker:
+        workflow_state = 'needs-attention'
+    elif not state.terminal:
+        workflow_state = 'analyzing'
+    elif str(post_l4['publication']).startswith('published_'):
+        workflow_state = 'complete-with-limitations' if limitations else 'complete'
+    elif post_l4['synthesis'] == 'complete':
+        workflow_state = 'publishing'
+    else:
+        workflow_state = 'synthesizing'
     return {'run_id': manifest.run_id, 'engine': manifest.engine, 'engine_protocol_version': '2.8',
         'run_mode': manifest.run_mode, 'status': state.lifecycle_state, 'source_snapshot_id': manifest.source_snapshot_id,
         'partition_manifest_id': manifest.partition_manifest_id, 'revision_id': active.manifest.revision_id,
@@ -263,7 +266,7 @@ def _reviewed_post_l4(context):
     manifest = child.inputs.manifest
     if manifest.parent_run_id != context.inputs.manifest.run_id:
         return not_run
-    if manifest.parent_manifest_hash != context.inputs.manifest.identity:
+    if not _synthesis_parent_matches_reviewed_analysis(child, context):
         raise Protocol28StatusError("published synthesis child parent authority is rebound")
 
     events = child.events.replay()
@@ -311,6 +314,25 @@ def _reviewed_post_l4(context):
         "publication": f"published_{publication.input_quality}",
         "run_id": child_run_id,
     }
+
+
+def _synthesis_parent_matches_reviewed_analysis(child, context) -> bool:
+    """Accept direct or authenticated refresh lineage to this analysis."""
+    from harness.re_v2.knowledge_refresh import KnowledgeRefreshMergeAuthorityV1
+
+    child_manifest = child.inputs.manifest
+    analysis_manifest = context.inputs.manifest
+    if child_manifest.parent_run_id != analysis_manifest.run_id:
+        return False
+    if child_manifest.parent_manifest_hash == analysis_manifest.identity:
+        return True
+    refresh = getattr(child.inputs.parent_authority, "_refresh_authority", None)
+    return (
+        isinstance(refresh, KnowledgeRefreshMergeAuthorityV1)
+        and child_manifest.parent_manifest_hash == refresh.identity
+        and refresh.fresh_run_id == analysis_manifest.run_id
+        and refresh.fresh_parent_manifest_hash == analysis_manifest.identity
+    )
 
 
 def _inherited_debt_status(context):
