@@ -260,6 +260,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   when only an import operation survives, while exact retries retain genesis
   after later source/identity history. This explicit inactive API does not yet
   protect runtime metadata, bind later run transitions or enable producers.
+- Managed identity state preservation: implemented in `91a4c48a`, corrected in
+  `e5130edc`, and independently reviewed. Five-module plus named simulated
+  controller checkpoint: 912 passed; final exception-normalization correction:
+  354 covering tests passed. The existing writer preserves immutable genesis
+  through same-run initialization and rejects provider/routing replacement or
+  removal before changing state or backup. Real fresh/manual controller paths,
+  guided/semi/banzai modes, CAS and interrupted writes are covered. This field
+  still needs registry authentication and independent runtime selection; external
+  deletion, subsequent runs and physical source ownership are not certified.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
