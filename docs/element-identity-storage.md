@@ -44,14 +44,108 @@ python -m harness.element_identity_admin upgrade --workspace PATH
 python -m harness.element_identity_admin backup --workspace PATH --destination PATH
 python -m harness.element_identity_admin restore --workspace PATH --backup PATH
 python -m harness.element_identity_admin import-labels --workspace PATH --input PATH
+python -m harness.element_identity_admin inventory-history --input PATH
 ```
 
 Only `initialize` claims a new authority. `audit`, `backup`, and `import-labels`
 open an existing current-schema authority; `upgrade` is the only command that
 upgrades a recognized older schema, and `restore` retains the fresh-destination
 and completed whole-ledger backup rules described below. A failed command prints
-no success object. A successful audit prints its report; every other successful
-command prints only an acknowledgement of the completed storage operation.
+no success object. Successful audit and historical inventory commands print their
+reports; other successful commands print an acknowledgement of the completed
+storage operation.
+
+### Read-only historical inventory
+
+The pure API is
+harness.element_identity_history.inventory_history(request: object) -> dict.
+HistoryInventoryError identifies malformed explicitly supplied inputs. The
+inventory-history command reads only its named strict UTF-8 JSON input and
+prints the deterministic report directly. It has no workspace argument and
+discovers no authority, Git history, directories, current artifact files or
+registry maxima. Duplicate JSON object keys, malformed JSON/Unicode and invalid
+input shapes return exit 2 with concise stderr and no report. Exit 0 means an
+inventory was produced, including a report containing conflicts.
+
+Input has exactly these keys at every level:
+
+~~~json
+{"schema_version":1,"spec_id":"demo","snapshots":[{"snapshot_id":"before","artifacts":[{"path":"unknowns.md","role":"unknowns","text":"### U-005: Collision\nInvestigate.\n"},{"path":"evidence.md","role":"evidence","text":"U-005 needs evidence.\n"}]},{"snapshot_id":"after","artifacts":[{"path":"unknowns.md","role":"unknowns","text":""},{"path":"evidence.md","role":"evidence","text":"U-005 needs evidence.\n"}]}]}
+~~~
+
+The schema version is integer 1 (not a boolean). Spec and unique snapshot IDs
+are nonblank UTF-8 strings without NUL. Snapshot and artifact arrays are nonempty.
+Every snapshot explicitly captures the same unique canonical relative POSIX
+path/role set. Roles are the existing adapter roles: unknowns, assumptions,
+requirements, tasks, issues, lexicon, lexicon_projection, investigation,
+evidence, and references. Text is an exact UTF-8/NUL-free string or null:
+null captures absence; empty text captures a present document. Present Lexicon
+is validated by its existing native grammar, including empty documents; absent
+Lexicon skips grammar parsing. No glossary or inventory JSON grammar is inferred.
+
+The report's exact top-level fields are report_version: 1, spec_id,
+input_sha256, coverage: "declared_snapshots_only",
+source_authentication: "caller_supplied", assessment: "unassessed",
+snapshots, and conflicts. Snapshot order is caller-declared history order,
+not authenticated Git chronology. Artifacts sort by path; the digest binds
+validated input encoded as canonical JSON with sorted keys, compact separators
+and ASCII escaping, artifacts sorted by path and snapshot order retained.
+No timestamps or external state enter the digest.
+
+Each snapshot contains only snapshot_id and artifacts. Each artifact reports
+path, role, present, content_sha256 (null for absence), declarations,
+references, and diagnostics. Source facts preserve parser order. Declarations
+contain element_id, kind, disposition, caption, span, label_span,
+and content_sha256 for the exact typed declaration content. Spans are character
+offsets start/end plus one-based line, preserving CRLF and Unicode source.
+Raw declaration bodies are not printed. ISS occurrences also report
+typed_fingerprint, computed with the existing issue fingerprint function from
+the parsed caption and exact typed body after the first heading newline. This
+uses the adapter's Resolution Guidance and footer boundaries. It is a newly
+computed typed-body fingerprint, not an authenticated old resolution fingerprint
+or closure transfer. Repeated display IDs and identical fingerprints retain all
+source occurrences; projections never become authoritative entities.
+
+References contain target_id, range_end_id, owner_id, relation, span,
+and assessment: "unassessed". Even a unique local target supplies no assessed
+revision, current head or verification certification. Diagnostics retain their
+original code, span, and detail. Visible explicit unsupported declarations
+are diagnostics, rather than disappearing or becoming shorter references.
+Markdown active-source exclusions and successful identity grammars are retained.
+This checkpoint does not cover every unsupported bare-reference spelling:
+for example, the existing reference grammar can read FR-001.other or
+FR-001-extra as the bare target FR-001 without a diagnostic. Ordinary sentence
+punctuation and investigation/U-001.md references also retain their existing
+interpretation. The inventory does not add a suffix heuristic or namespace
+resolver; reference/namespace reconciliation remains required before activation.
+
+Every conflict has exactly code, element_ids, locations, and detail.
+Locations contain snapshot_id, path, artifact_sha256, and span; missing
+definition locations use the explicitly captured following artifact hash
+(null when absent) and null span. Exact published label strings remain intact.
+
+| Conflict | Meaning |
+| --- | --- |
+| artifact_diagnostic | A parser diagnostic is retained, with its original code/detail and source location. |
+| invalid_identity_label | A parsed label fails strict lifecycle validation, including ordinal zero; it remains a fact but cannot supply resolvable authority. |
+| duplicate_definition | Multiple authoritative declarations use an exact label within one snapshot. |
+| padding_alias | Distinct numeric spellings claim the same family/positive ordinal anywhere in the supplied history. Opaque composites are not numeric aliases. |
+| definition_changed | An exact authoritative label has different typed content hashes. All variants remain available for explicit lifecycle/semantic reconciliation; this does not claim every edit changed the subject. |
+| definition_missing | A definition disappears in the immediately following captured snapshot. Introduction or movement between captured files is not retirement. |
+| issue_mapping_required | Every ISS display-label group requires explicit durable-issue mapping, including single occurrences, identical fingerprints and bare issue references. |
+| unresolved_reference | A supported bare target lacks authoritative declaration in its own snapshot. Other snapshots, projections and prose mentions cannot resolve it. |
+| ambiguous_reference | Duplicate declarations or historical numeric aliases prevent a unique target interpretation. |
+| unsupported_reference_range | The typed interval is retained without expanding it into allocated identities or resolving only one endpoint. |
+
+Parser diagnostics and conflicts coexist: the inventory is not a publication
+gate, historical import/adoption, semantic approval, automatic reconciliation or
+activation. It cannot authenticate completeness, historical quotations or Git
+chronology, resolve unknown grammar/qualified references, merge competing
+allocations, or relabel retained evidence as proof of new content. It writes no
+report file or authority state. Explicit authenticated historical reconciliation,
+lifecycle application, publication receipts and managed producer review remain
+separate required work. No inventory authorizes resuming the stopped run or
+bootstrapping authority from its latest files.
 
 `IdentityStore.audit()` performs the complete existing counter, entity,
 lifecycle, reference, occurrence, receipt, foreign-key, and SQLite integrity

@@ -608,12 +608,14 @@ def test_issue_parser_diagnostics_and_interval_policy_are_preserved(tmp_path):
 
 
 @pytest.mark.parametrize("explicit_occurrence", [False, True])
-def test_digit_free_legacy_heading_is_not_a_managed_parser_declaration(tmp_path, explicit_occurrence):
+def test_digit_free_legacy_heading_blocks_even_empty_occurrence_mapping(tmp_path, explicit_occurrence):
     store = IdentityStore.initialize(tmp_path)
     report = render("ISS-legacy")
     entries = (occurrence(label="ISS-legacy"),) if explicit_occurrence else ()
     result = check(store, tmp_path, None, report, (context(None, entries),), ids=("ISS-legacy",))
-    assert codes(result) == ({"issue_occurrence_mismatch"} if explicit_occurrence else set())
+    assert "unsupported_declaration" in codes(result)
+    if explicit_occurrence:
+        assert "issue_occurrence_mismatch" in codes(result)
 
 
 def test_unrepresented_active_issue_creation_reports_missing_occurrence(tmp_path):

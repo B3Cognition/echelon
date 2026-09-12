@@ -12,6 +12,51 @@ from harness.element_artifacts import parse_identity_artifact
 
 
 FIXTURES = Path("tests/fixtures/element_identity/discovery")
+pytestmark = pytest.mark.unit
+
+
+def test_opaque_issue_heading_is_diagnostic_not_empty_report():
+    from harness.element_artifacts import parse_identity_artifact
+    text = "### ISS-legacy: Collision\nBody\n"
+    result = parse_identity_artifact(path="issues.md", role="issues", text=text)
+    assert not result.declarations
+    assert not result.references
+    assert [d.code for d in result.diagnostics] == ["unsupported_declaration"]
+    span = result.diagnostics[0].span
+    assert text[span.start:span.end] == "ISS-legacy"
+
+
+@pytest.mark.parametrize("family", ["AC", "FR", "NFR", "ISS", "U", "A", "T"])
+@pytest.mark.parametrize("suffix", ["legacy", "old.name", "old-name", "a_b", "001.legacy", "001-legacy", "001é"])
+@pytest.mark.parametrize("shape", ["### {id}: Caption", "- {id}: Caption", "- **{id}**: Caption", "- `{id}`: Caption", "- **{id}** Caption", "- `{id}` Caption"])
+def test_unsupported_explicit_labels_keep_exact_span_without_shorter_reference(family, suffix, shape):
+    label = f"{family}-{suffix}"
+    text = "Résumé ⚡\r\n" + shape.format(id=label) + "\r\n"
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert not result.declarations
+    assert not result.references
+    assert [d.code for d in result.diagnostics] == ["unsupported_declaration"]
+    span = result.diagnostics[0].span
+    assert (text[span.start:span.end], span.line) == (label, 2)
+
+
+@pytest.mark.parametrize("wrapped", ["---\n{line}\n---\n", "```\n{line}\n```\n", "    {line}\n", "<!-- {line} -->\n", "> {line}\n"])
+def test_unsupported_declarations_in_inactive_sources_are_ignored(wrapped):
+    result = parse_identity_artifact(path="issues.md", role="issues", text=wrapped.format(line="### ISS-legacy: Caption"))
+    assert not result.declarations and not result.references and not result.diagnostics
+
+
+def test_unsupported_indented_heading_retains_ambiguous_boundary_and_plain_prose_is_reference():
+    text = "  ### ISS-legacy: Caption\n- FR-001 is mentioned here\n"
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [d.code for d in result.diagnostics] == ["ambiguous_block_boundary"]
+    assert [r.target_id for r in result.references] == ["FR-001"]
+
+
+def test_supported_numeric_composite_issue_heading_is_unchanged():
+    result = parse_identity_artifact(path="issues.md", role="issues", text="### ISS-099legacy: Caption\nBody\n")
+    assert [d.element_id for d in result.declarations] == ["ISS-099legacy"]
+    assert not result.diagnostics
 
 
 def _codes(result) -> set[str]:

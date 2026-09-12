@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from harness.element_identity_store import IdentityStore, IdentityStoreError
+from harness.element_identity_history import HistoryInventoryError, inventory_history
 
 
 class _InputError(ValueError):
@@ -34,6 +35,8 @@ def _parser() -> argparse.ArgumentParser:
     import_labels = commands.add_parser("import-labels")
     import_labels.add_argument("--workspace", required=True, type=Path)
     import_labels.add_argument("--input", required=True, type=Path)
+    history = commands.add_parser("inventory-history")
+    history.add_argument("--input", required=True, type=Path)
     return parser
 
 
@@ -46,7 +49,7 @@ def _unique_object(pairs):
     return value
 
 
-def _import_request(path: Path) -> tuple[str, str, tuple[tuple[str, str], ...]]:
+def _read_request(path: Path):
     with path.open("r", encoding="utf-8") as stream:
         try:
             request = json.load(stream, object_pairs_hook=_unique_object)
@@ -54,6 +57,11 @@ def _import_request(path: Path) -> tuple[str, str, tuple[tuple[str, str], ...]]:
             raise
         except ValueError as error:
             raise _InputError(f"invalid import JSON: {error}") from error
+    return request
+
+
+def _import_request(path: Path) -> tuple[str, str, tuple[tuple[str, str], ...]]:
+    request = _read_request(path)
     if type(request) is not dict or set(request) != {
         "schema_version", "spec_id", "operation_id", "definitions",
     }:
@@ -83,7 +91,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run one explicitly selected identity authority administration operation."""
     arguments = _parser().parse_args(argv)
     try:
-        if arguments.command == "initialize":
+        if arguments.command == "inventory-history":
+            _write_result(inventory_history(_read_request(arguments.input)))
+            return 0
+        elif arguments.command == "initialize":
             IdentityStore.initialize(arguments.workspace)
         elif arguments.command == "audit":
             _write_result(IdentityStore.open(arguments.workspace).audit())
@@ -102,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 operation_id=operation_id,
                 definitions=definitions,
             )
-    except (IdentityStoreError, OSError, UnicodeError, json.JSONDecodeError, _InputError) as error:
+    except (IdentityStoreError, HistoryInventoryError, OSError, UnicodeError, json.JSONDecodeError, _InputError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     _write_result({"command": arguments.command, "completed": True})

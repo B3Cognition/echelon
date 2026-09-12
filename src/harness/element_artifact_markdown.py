@@ -26,17 +26,18 @@ _HEADING_RE = re.compile(
     re.ASCII,
 )
 _ANY_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>.*?)[ \t]*$")
+_DECLARATION_LABEL = r"(?:AC|FR|NFR|ISS|U|A|T)-[A-Za-z0-9][^\s:*`]*"
 _LOOSE_HEADING_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<marks>#{1,6})[ \t]+"
-    r"(?P<id>(?:(?:AC|FR|NFR|ISS|U|A)-[0-9][^\s:]*|"
-    r"T-(?:[0-9][^\s:]*|S[0-9][^\s:]*)))(?P<rest>.*)$"
+    rf"(?P<id>{_DECLARATION_LABEL})(?P<rest>.*)$"
 )
 _BULLET_RE = re.compile(
     rf"^(?P<indent>[ \t]*)(?P<marker>[-*+])[ \t]+(?P<open>\*\*|`)?(?P<id>{_ID_CORE})(?P<close>\*\*|`)?[ \t]*:[ \t]*(?P<caption>.*?)[ \t]*$",
     re.ASCII,
 )
 _LOOSE_BULLET_RE = re.compile(
-    rf"^(?P<indent>[ \t]*)[-*+][ \t]+(?P<wrap>\*\*|`)(?P<id>{_ID_CORE})(?P=wrap)(?P<rest>.*)$"
+    rf"^(?P<indent>[ \t]*)[-*+][ \t]+(?P<wrap>\*\*|`)?"
+    rf"(?P<id>{_DECLARATION_LABEL})(?(wrap)(?P=wrap))(?P<rest>.*)$"
 )
 _TASK_LIKE_RE = re.compile(rf"^- \[[ xX]\][ \t]+(?P<id>T-{_TASK_VALUE})\b")
 _ANY_TASK_LIKE_RE = re.compile(r"^- \[[ xX]\][ \t]+(?P<id>T-[A-Za-z0-9_-]+)\b")
@@ -421,17 +422,12 @@ def _declarations(
         loose_bullet = _LOOSE_BULLET_RE.match(body)
         if loose_bullet is not None and bullet is None:
             rest = loose_bullet.group("rest").lstrip()
-            code = None
-            detail = None
-            if not rest.startswith(":"):
-                code = "unsupported_declaration"
-                detail = "ID-bearing bullet does not use the supported declaration syntax"
-            if code is not None:
+            if loose_bullet.group("wrap") or rest.startswith(":"):
                 label_start = line.start + loose_bullet.start("id")
                 diagnostics.append(ArtifactDiagnostic(
-                    code,
+                    "unsupported_declaration",
                     _span(label_start, label_start + len(loose_bullet.group("id")), line_starts),
-                    detail,
+                    "ID-bearing bullet does not use the supported declaration syntax",
                 ))
 
     declarations.sort(key=lambda item: item.span.start)
