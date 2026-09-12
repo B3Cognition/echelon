@@ -102,3 +102,36 @@ Output: `297 passed in 2.60s`, exit 0, no warnings. This was the only three-modu
 **Self-review:** read the complete amended production/test diff. The copied slice starts immediately before each target-current traversal and ends immediately afterward, excluding stage ancestors and subsequently captured source-only directories. Existing parent entry and child descriptors are duplicated, never reopened from an unbound root, and each successful duplicate is immediately registered on the original owner for exceptional cleanup. Missing and file pins stay in the short scope, so normal target writes and canonical parent creation remain possible. Existing descriptor cleanup, callback, process-lock and inspection tests are covered by the 297-test run. `git diff --check` before the covering run produced no output and exit 0; `git diff --cached --check` also completed with no output and exit 0 before commit. Source dependency completeness and cross-invocation inode authority remain explicit caller limitations. No unresolved correctness concern is known; root owns fresh scoped re-review.
 
 Changed files in this fix: `src/harness/squad_publication.py`, `tests/unit/test_squad_source_guard.py`, and this report. Root plans/ledgers and the untracked next-phase source-manifest wire-validation plan remain untouched.
+
+## Fix round 2 — bounded ownership of distinct target ancestor associations
+
+FIX_BASE: `dc4a4964bf186ae5984f03f79ad61563a7cf3ebb`.
+The fresh scoped review marked the original lifetime finding addressed, but found one new Important issue in the handoff: every checked capture duplicated all target ancestors into the invocation owner again, producing quadratic long-lived descriptor growth with operation count. No operation cap or new policy was authorized or added.
+
+**Actual bounded regression RED before production edits:**
+
+`/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_guard.py::test_repeated_captures_publish_eight_targets_under_bounded_descriptor_limit`
+
+Output: `1 failed in 0.37s`, exit 1. An isolated spawned child with `RLIMIT_NOFILE=256` attempted eight valid shared-stage writes under one existing parent and returned `('PublicationError', 'target_drift')` instead of the expected actual final source receipt. Preparation and initial source capture were real; no filesystem drift was injected. Only the child sets its soft descriptor limit; parent/session limits remain untouched. Root received the actual RED result before production changed.
+
+**Narrow implementation:** `_InspectionPaths.retain_directory` indexes retained target associations by the parent device/inode and entry name. A known entry must have the same child identity and still pass its original descriptor/entry verification; it returns the original retained child descriptor without allocating another pair. A new entry duplicates parent and child once, immediately registers each duplicate for cleanup, and retains that original pair. The method never overwrites a prior association. Initial target traversal now uses temporary traversal descriptors and the same distinct-association owner; capture handoffs and mutation traversal also call it. No missing-entry, regular-file or membership pins gain invocation lifetime. Public inspectors and legacy publication do not invoke the new retention path.
+
+The old partial-parent-pin exhaustion test was updated to inject failure during the second descriptor duplication in the new shared retention helper. It still asserts cleanup of the first successful duplicate and no promoted targets. This is a change of fault-injection location after the ownership operation moved, not a weakening of its behavior assertion.
+
+**Focused GREEN:** the exact bounded regression command above produced `1 passed in 0.33s`, exit 0. The child returned the actual final file paths, bytes and modes for all eight targets; parent-side checks independently confirmed all eight published contents and retained stage material. This is a bounded resource-limit test, not an unlimited-capacity claim.
+
+**Substitution/cleanup checks:**
+
+`/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_guard.py -k 'parent_pin_descriptor or identical_target_ancestor or first_captured_parent'`
+
+Output: `4 passed, 70 deselected in 0.25s`, exit 0. Existing and publisher-created target-ancestor substitutions, the first-captured-parent boundary regression and partial duplicate cleanup remain enforced.
+
+**One covering run:**
+
+`/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_guard.py tests/unit/test_squad_publication_inspection.py tests/unit/test_squad_publication_sources.py`
+
+Output: `298 passed in 2.70s`, exit 0, no warnings. No broad, capacity, live/provider, installation or postcommit test repeats were run; no subagents were dispatched. The isolated OS child is the explicitly authorized location for the bounded resource-limit regression.
+
+**Self-review:** reviewed the complete amended source/test diff and traced all three ownership entry points through the shared retention helper. Long-lived target descriptors are now proportional to distinct retained parent/name associations, rather than number of capture passes; short captured files/directories still consume resources proportional to the current capture, and no universal capacity guarantee is claimed. Existing bindings are verified, compared and reused without replacement, so deduplication cannot silently adopt a new child at the same original parent/name. Every new duplicate is registered before the next allocation; BaseException cleanup remains caller-owned. Root/stage owners, sole promotion loop, callback order and public inspection defaults remain unchanged. `git diff --check` before the covering run returned no output and exit 0. Final staged diff checking is completed before commit. No unresolved correctness concern is known; fresh scoped re-review remains root-owned.
+
+Changed files: `src/harness/squad_publication.py`, `tests/unit/test_squad_source_guard.py`, and this report. Root plans/ledgers and the untracked next-phase codec plan remain untouched.

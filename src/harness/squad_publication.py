@@ -702,11 +702,7 @@ def _open_parent_directory(
             except OSError:
                 _raise("target_drift")
             if paths is not None:
-                retained_parent = os.dup(current_fd)
-                paths.resources.callback(os.close, retained_parent)
-                retained_child = os.dup(next_fd)
-                paths.resources.callback(os.close, retained_child)
-                paths.directories.append((retained_parent, part, retained_child, "target_drift"))
+                paths.retain_directory(current_fd, part, next_fd, code="target_drift")
                 paths.verify()
             os.close(current_fd)
             current_fd = next_fd
@@ -1575,11 +1571,35 @@ class _InspectionPaths:
     def __init__(self, resources: ExitStack) -> None:
         self.resources = resources
         self.directories: list[tuple[int, str, int, str]] = []
+        self.retained_directories: dict[tuple[int, int, str], tuple[int, int]] = {}
         self.missing: list[tuple[int, str, str]] = []
         self.files: list[tuple[int, _PinnedRegular, str]] = []
         self.memberships: list[
             tuple[int, tuple[str, ...], tuple[int, int, int], str]
         ] = []
+
+    def retain_directory(self, parent: int, name: str, child: int, *, code: str) -> int:
+        """Own one distinct borrowed association without adopting a substitute."""
+        try:
+            parent_stat = os.fstat(parent)
+            key = (parent_stat.st_dev, parent_stat.st_ino, name)
+            existing = self.retained_directories.get(key)
+            if existing is not None:
+                retained_parent, retained_child = existing
+                if _directory_identity(os.fstat(child)) != _directory_identity(os.fstat(retained_child)):
+                    _raise(code)
+                _verify_directory_entry(retained_parent, name, retained_child)
+                return retained_child
+            _verify_directory_entry(parent, name, child)
+            retained_parent = os.dup(parent)
+            self.resources.callback(os.close, retained_parent)
+            retained_child = os.dup(child)
+            self.resources.callback(os.close, retained_child)
+            self.directories.append((retained_parent, name, retained_child, code))
+            self.retained_directories[key] = (retained_parent, retained_child)
+            return retained_child
+        except (OSError, PublicationError):
+            _raise(code)
 
     @staticmethod
     def _entry_names(directory_fd: int, *, code: str) -> tuple[str, ...]:
@@ -1800,11 +1820,7 @@ class PreparedSquadPublication:
                 # Preserve exactly its target ancestor bindings before the short
                 # capture closes; missing, file and membership pins stay local.
                 for parent, name, child, code in paths.directories[first_directory:]:
-                    retained_parent = os.dup(parent)
-                    target_paths.resources.callback(os.close, retained_parent)
-                    retained_child = os.dup(child)
-                    target_paths.resources.callback(os.close, retained_child)
-                    target_paths.directories.append((retained_parent, name, retained_child, code))
+                    target_paths.retain_directory(parent, name, child, code=code)
             if current is None:
                 descriptor = PublicationImageDescriptor("missing", None, None)
                 content = None
@@ -2242,17 +2258,20 @@ class PreparedSquadPublication:
             # Invocation-local ancestor identity, without absence or membership
             # pins that would reject authorized parent creation and replacement.
             for operation in verified._manifest["operations"]:
-                current_fd = project_fd
-                for name in Path(operation["target"]).parts[:-1]:
-                    try:
-                        os.stat(name, dir_fd=current_fd, follow_symlinks=False)
-                    except FileNotFoundError:
-                        break
-                    except OSError:
-                        _raise("target_drift")
-                    current_fd = owner_paths.directory(
-                        current_fd, (name,), code="target_drift",
-                    )
+                with ExitStack() as resources:
+                    paths = _InspectionPaths(resources)
+                    current_fd = project_fd
+                    for name in Path(operation["target"]).parts[:-1]:
+                        try:
+                            os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                        except FileNotFoundError:
+                            break
+                        except OSError:
+                            _raise("target_drift")
+                        child = paths.directory(current_fd, (name,), code="target_drift")
+                        current_fd = owner_paths.retain_directory(
+                            current_fd, name, child, code="target_drift",
+                        )
 
             def verify_owner() -> None:
                 owner_paths.verify()

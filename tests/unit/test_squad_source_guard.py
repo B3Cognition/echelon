@@ -531,24 +531,24 @@ def test_stage_mode_damage_blocks_even_already_post_retry(tmp_path, already_post
 
 def test_parent_pin_descriptor_exhaustion_closes_partial_ownership(tmp_path, monkeypatch):
     project, prepared, initial, _, targets = _prepared(tmp_path)
-    original_parent, original_dup = publication._open_parent_directory, os.dup
+    original_retain, original_dup = publication._InspectionPaths.retain_directory, os.dup
     duplicates = []
-    def open_parent(*args, **kwargs):
+    def retain_directory(*args, **kwargs):
         count = 0
         def duplicate(fd):
             nonlocal count
-            if sys._getframe(1).f_code.co_name != "_open_parent_directory":
+            if sys._getframe(1).f_code.co_name != "retain_directory":
                 return original_dup(fd)
             count += 1
-            if count == 3: raise OSError("injected descriptor exhaustion")
+            if count == 2: raise OSError("injected descriptor exhaustion")
             result = original_dup(fd); duplicates.append(result); return result
         with monkeypatch.context() as patch:
             patch.setattr(os, "dup", duplicate)
-            return original_parent(*args, **kwargs)
-    monkeypatch.setattr(publication, "_open_parent_directory", open_parent)
+            return original_retain(*args, **kwargs)
+    monkeypatch.setattr(publication._InspectionPaths, "retain_directory", retain_directory)
     with pytest.raises((OSError, PublicationError)):
         prepared.publish_sources(initial)
-    assert len(duplicates) == 2
+    assert len(duplicates) == 1
     for fd in duplicates:
         with pytest.raises(OSError): os.fstat(fd)
     assert [(project / t).read_bytes() for t in targets] == [b"before"] * 2
@@ -681,3 +681,57 @@ def test_read_only_source_directory_keeps_checked_capture_lifetime(tmp_path):
     _assert_final(project, initial, final, targets)
     assert list(source.iterdir()) == []
     assert (project / "previous-read-only-source").stat().st_ino == original_inode
+
+
+def _publish_with_descriptor_limit(project, squad, marker, initial, connection):
+    import resource
+
+    try:
+        prepared = publication.load_prepared_publication(Path(project), Path(squad), marker)
+        _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard < 256:
+            connection.send(("unsupported-hard-limit", hard))
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (256, hard))
+        final = prepared.publish_sources(initial)
+        connection.send(("published", [(item.path, item.content, item.image.mode)
+                                        for item in final.trees[0].files]))
+    except BaseException as error:
+        connection.send((type(error).__name__, str(error)))
+    finally:
+        connection.close()
+
+
+def test_repeated_captures_publish_eight_targets_under_bounded_descriptor_limit(tmp_path):
+    project = tmp_path.resolve()
+    squad = project / "runs/spec-test"
+    squad.mkdir(parents=True)
+    (project / "specs").mkdir()
+    transaction = SquadPublicationTransaction.begin(project, squad, "9" * 32)
+    stage = transaction.build_path("shared")
+    stage.write_bytes(b"after"); stage.chmod(0o640)
+    targets = tuple(Path(f"specs/value-{index}") for index in range(8))
+    for target in targets:
+        (project / target).write_bytes(b"before")
+        transaction.add_write(target, stage, owned_paths={target})
+    prepared = transaction.seal()
+    with prepared.inspect_sources(tree_paths=("specs",)) as initial:
+        pass
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    process = context.Process(target=_publish_with_descriptor_limit,
+                              args=(str(project), str(squad), prepared.marker, initial, child))
+    try:
+        process.start(); child.close()
+        assert parent.poll(10), "bounded publisher did not finish"
+        outcome = parent.recv()
+        process.join(10)
+        assert process.exitcode == 0
+        if outcome[0] == "unsupported-hard-limit":
+            pytest.skip("child hard descriptor limit is below 256")
+        assert outcome == ("published", [(target.as_posix(), b"after", 0o640) for target in targets])
+        assert [(project / target).read_bytes() for target in targets] == [b"after"] * 8
+        assert stage.exists()
+    finally:
+        if process.is_alive(): process.terminate(); process.join(10)
+        parent.close(); child.close()
