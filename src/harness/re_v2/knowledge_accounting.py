@@ -37,6 +37,7 @@ class KnowledgeDispatchPolicy:
     active_ms_limit: int
     max_source_turns: int
     max_discovery_repairs: int | None = None
+    max_review_revisions: int | None = None
 
     def __post_init__(self):
         for value in (
@@ -52,6 +53,15 @@ class KnowledgeDispatchPolicy:
             )
         ):
             raise DiscoveryError("invalid-discovery-repair-limit")
+        if (
+            self.max_review_revisions is not None
+            and (
+                type(self.max_review_revisions) is not int
+                or self.max_review_revisions < 0
+                or self.max_review_revisions >= self.max_source_turns
+            )
+        ):
+            raise DiscoveryError("invalid-discovery-review-revision-limit")
 
 
 def _policy_dict(policy: KnowledgeDispatchPolicy) -> dict[str, int]:
@@ -62,6 +72,8 @@ def _policy_dict(policy: KnowledgeDispatchPolicy) -> dict[str, int]:
     }
     if policy.max_discovery_repairs is not None:
         result["max_discovery_repairs"] = policy.max_discovery_repairs
+    if policy.max_review_revisions is not None:
+        result["max_review_revisions"] = policy.max_review_revisions
     return result
 
 
@@ -191,7 +203,29 @@ class _DispatchState:
             first, last = self.dispatches[previous[0]], self.applied.get(previous[-1])
             if any(request[key] != first[key] for key in ("scope_id", "agent_id", "reservation")):
                 return "discovery-dispatch-authority-mismatch"
-            if last is None or last["state"] not in {"evidence_ready", "repair_ready"}:
+            if last is None:
+                return "discovery-dispatch-not-ready"
+            if last["state"] == "proposal_ready":
+                source_history = self.sources.get(request["source_id"], [])
+                predecessor = source_history[-1] if source_history else None
+                review = self.applied.get(predecessor)
+                review_request = self.dispatches.get(predecessor, {})
+                if (
+                    self.dispatch_kinds.get(predecessor) != "review"
+                    or review is None
+                    or review["state"] != "revision_required"
+                    or review_request.get("producer_dispatch_id") != previous[-1]
+                ):
+                    return "discovery-dispatch-not-ready"
+                revisions = sum(
+                    self.applied.get(item, {}).get("state") == "revision_required"
+                    for item in self.review_sources.get(request["source_id"], [])
+                )
+                if revisions > self.opening["policy"].get(
+                    "max_review_revisions", 0
+                ):
+                    return "discovery-review-revision-limit"
+            elif last["state"] not in {"evidence_ready", "repair_ready"}:
                 return "discovery-dispatch-not-ready"
             if last["state"] == "repair_ready":
                 repairs = sum(
@@ -226,6 +260,11 @@ class _DispatchState:
             return "discovery-review-authority-mismatch"
         if request["agent_id"] == producer["agent_id"]:
             return "discovery-review-agent-not-distinct"
+        if any(
+            self.dispatches[item].get("producer_dispatch_id") == producer_id
+            for item in self.review_sources.get(source, [])
+        ):
+            return "discovery-review-already-recorded"
         return None
 
     def consume(self, record, objects):

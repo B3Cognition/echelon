@@ -61,6 +61,7 @@ _DISCOVERY_RESERVATION_TOKENS = 262_144
 _DISCOVERY_RESERVATION_ACTIVE_MS = 1_800_000
 _DISCOVERY_MAX_SOURCE_TURNS = 6
 _DISCOVERY_MAX_REPAIRS = 2
+_DISCOVERY_MAX_REVIEW_REVISIONS = 1
 
 
 class KnowledgeCreationError(RuntimeError):
@@ -374,6 +375,7 @@ def create_or_resume_reviewed_analysis(
             options.active_ms_limit,
             _DISCOVERY_MAX_SOURCE_TURNS,
             _DISCOVERY_MAX_REPAIRS,
+            _DISCOVERY_MAX_REVIEW_REVISIONS,
         ),
         contract,
         authority,
@@ -389,9 +391,11 @@ def create_or_resume_reviewed_analysis(
             acquisition, account, discovery_agent, backend, reservation
         )
         while True:
-            produced = producer.step()
-            if produced.state in {"evidence_ready", "repair_ready"}:
-                continue
+            while True:
+                produced = producer.step()
+                if produced.state in {"evidence_ready", "repair_ready"}:
+                    continue
+                break
             if produced.state != "proposal_ready":
                 return KnowledgeCreationResultV1(
                     options.request_run_id,
@@ -399,18 +403,20 @@ def create_or_resume_reviewed_analysis(
                     None,
                     produced.reason_code or produced.state,
                 )
-            break
-        reviewer = DiscoveryReviewController(
-            producer, review_agent, backend, reservation
-        )
-        reviewed_result = reviewer.step()
-        if reviewed_result.state != "review_ready":
-            return KnowledgeCreationResultV1(
-                options.request_run_id,
-                "needs-attention",
-                None,
-                reviewed_result.reason_code or reviewed_result.state,
+            reviewer = DiscoveryReviewController(
+                producer, review_agent, backend, reservation
             )
+            reviewed_result = reviewer.step()
+            if reviewed_result.state == "revision_required":
+                continue
+            if reviewed_result.state != "review_ready":
+                return KnowledgeCreationResultV1(
+                    options.request_run_id,
+                    "needs-attention",
+                    None,
+                    reviewed_result.reason_code or reviewed_result.state,
+                )
+            break
         root = activate_reviewed_discovery(
             acquisition, account, reviewer, l3, evidence
         )

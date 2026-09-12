@@ -49,6 +49,80 @@ class _ReadyBackend:
         )
 
 
+class _RevisionBackend(_ReadyBackend):
+    def __call__(self, _agent, context, _reservation):
+        value = json.loads(context)
+        self.calls.append(value["kind"])
+        if value["kind"] in {
+            "untrusted_discovery_context",
+            "untrusted_discovery_review_revision_context",
+        }:
+            discovery = (
+                value
+                if value["kind"] == "untrusted_discovery_context"
+                else value["safe_discovery_context"]
+            )
+            payload = _candidate(discovery)
+            if discovery.get("schema_version") == 3:
+                target = discovery["analysis_domain_targets"][0]["key"]
+                payload["domains"][0]["key"] = target
+                for row in (*payload["subjects"], *payload["obligations"]):
+                    if row["target"] == "behavior":
+                        row["target"] = target
+        else:
+            payload = _review_v2(value)
+            if self.calls.count("untrusted_discovery_review_context") == 1:
+                payload["verdict"] = "revise"
+                payload["subjects"][0]["verdict"] = "revise"
+                payload["findings"] = [{
+                    "target": "source",
+                    "reason_class": "ownership",
+                    "rationale": "Replace the candidate with corrected ownership.",
+                    "evidence_ids": payload["subjects"][0]["evidence_ids"],
+                }]
+        return ProviderReply(
+            canonical_json_bytes(payload),
+            NormalizedUsageV1(
+                "trusted_exact",
+                20,
+                {
+                    "input_tokens": 10,
+                    "cached_input_tokens": 0,
+                    "reasoning_output_tokens": 0,
+                    "visible_output_tokens": 10,
+                },
+            ),
+        )
+
+
+class _RevisionRepairBackend(_RevisionBackend):
+    def __call__(self, agent, context, reservation):
+        value = json.loads(context)
+        if value["kind"] == "untrusted_discovery_review_revision_context":
+            self.calls.append(value["kind"])
+            return ProviderReply(
+                b'{"not":"a discovery proposal"}',
+                NormalizedUsageV1("unavailable", None, {}),
+            )
+        if value["kind"] == "untrusted_discovery_repair_context":
+            assert value["independent_review_feedback"]["outcome"] == (
+                "revision_required"
+            )
+            discovery = value["safe_discovery_context"]
+            payload = _candidate(discovery)
+            target = discovery["analysis_domain_targets"][0]["key"]
+            payload["domains"][0]["key"] = target
+            for row in (*payload["subjects"], *payload["obligations"]):
+                if row["target"] == "behavior":
+                    row["target"] = target
+            self.calls.append(value["kind"])
+            return ProviderReply(
+                canonical_json_bytes(payload),
+                NormalizedUsageV1("unavailable", None, {}),
+            )
+        return super().__call__(agent, context, reservation)
+
+
 def _options(tmp_path, backend):
     from harness.re_v2.knowledge_creation import ReviewedAnalysisCreationOptions
 
@@ -119,6 +193,49 @@ def test_fresh_creation_reopen_is_idempotent_and_makes_no_provider_calls(tmp_pat
 
     assert second == first
     assert tuple(backend.calls) == calls
+
+
+@pytest.mark.unit
+def test_fresh_creation_routes_one_review_revision_back_to_producer(tmp_path):
+    from harness.re_v2.knowledge_creation import create_or_resume_reviewed_analysis
+
+    backend = _RevisionBackend()
+    options = _options(tmp_path, backend)
+    workspace = tmp_path / "workspace"
+
+    result = create_or_resume_reviewed_analysis(workspace, options)
+
+    assert result.state == "ready"
+    assert backend.calls == [
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_context",
+        "untrusted_discovery_review_revision_context",
+        "untrusted_discovery_review_context",
+    ]
+    request_dir = workspace / "runs" / options.request_run_id / "v2"
+    rows = [json.loads(line) for line in (request_dir / "knowledge-dispatch.jsonl").read_text().splitlines()]
+    assert [row["type"] for row in rows].count("review_reserved") == 2
+
+
+@pytest.mark.unit
+def test_fresh_creation_repairs_revised_candidate_and_authenticates_activation(
+    tmp_path,
+):
+    from harness.re_v2.knowledge_creation import create_or_resume_reviewed_analysis
+
+    backend = _RevisionRepairBackend()
+    options = _options(tmp_path, backend)
+
+    result = create_or_resume_reviewed_analysis(tmp_path / "workspace", options)
+
+    assert result.state == "ready"
+    assert backend.calls == [
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_context",
+        "untrusted_discovery_review_revision_context",
+        "untrusted_discovery_repair_context",
+        "untrusted_discovery_review_context",
+    ]
 
 
 @pytest.mark.unit

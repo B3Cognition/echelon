@@ -98,6 +98,109 @@ class DiscoveryStep:
     reason_code: str | None = None
 
 
+def build_review_revision_context(boundary, objects, state, review_dispatch_id):
+    """Rebuild the only producer context authorized by a revise receipt."""
+    from harness.re_v2.knowledge_discovery_review import DiscoveryReviewBoundary
+
+    review_request = state.dispatches[review_dispatch_id]
+    review_application = state.applied[review_dispatch_id]
+    producer_id = review_request["producer_dispatch_id"]
+    producer_request = state.dispatches[producer_id]
+    producer_application = state.applied[producer_id]
+    if (
+        state.dispatch_kinds.get(review_dispatch_id) != "review"
+        or review_application["state"] != "revision_required"
+        or producer_application["state"] != "proposal_ready"
+        or review_request["proposal_receipt_id"]
+        != producer_application["receipt_id"]
+    ):
+        raise DiscoveryError("invalid-discovery-review-revision")
+    review_boundary = DiscoveryReviewBoundary(boundary)
+    review = review_boundary.read_review(
+        producer_request["binding_id"],
+        producer_application["receipt_id"],
+        review_application["receipt_id"],
+    )
+    if review["outcome"] != "revision_required":
+        raise DiscoveryError("invalid-discovery-review-revision")
+    proposal = boundary.read_proposal(
+        producer_request["binding_id"], producer_application["receipt_id"]
+    )
+    revision = _load(objects.read_blob(producer_request["revision_id"]))
+    safe_context = _load(objects.read_blob(revision["context_id"]))
+    return canonical_json_bytes({
+        "schema_version": 1,
+        "kind": "untrusted_discovery_review_revision_context",
+        "safe_discovery_context": safe_context,
+        "previous_candidate": proposal,
+        "independent_review_feedback": {
+            "outcome": review["outcome"],
+            "findings": review["findings"],
+        },
+        "revision_requirement": (
+            "Return one complete replacement discovery proposal that addresses "
+            "every independent review finding and still satisfies the original "
+            "safe discovery context. Do not return a patch or commentary."
+        ),
+    })
+
+
+def build_discovery_repair_context(
+    boundary, objects, state, dispatch_id, *, schema_version=2
+):
+    """Rebuild one deterministic producer-admission repair context."""
+    request = state.dispatches[dispatch_id]
+    capture = state.captures[dispatch_id]
+    applied = state.applied[dispatch_id]
+    feedback = _load(objects.read_blob(applied["receipt_id"]))
+    if (
+        applied["state"] != "repair_ready"
+        or feedback.get("kind") != "discovery_repair_feedback"
+        or feedback.get("binding_id") != request["binding_id"]
+        or feedback.get("revision_id") != request["revision_id"]
+        or feedback.get("context_id") != request["context_id"]
+        or feedback.get("authorial_response_id") != capture["output_id"]
+        or feedback.get("reason_code") not in DISCOVERY_REPAIRABLE_REASONS
+    ):
+        raise DiscoveryError("invalid-discovery-repair-feedback")
+    revision = _load(objects.read_blob(request["revision_id"]))
+    boundary.provider_bytes(request["binding_id"])
+    base = _load(objects.read_blob(revision["context_id"]))
+    governing = _load(objects.read_blob(request["context_id"]))
+    review_fields = {}
+    if governing.get("kind") == "untrusted_discovery_review_revision_context":
+        if governing.get("safe_discovery_context") != base:
+            raise DiscoveryError("invalid-discovery-repair-feedback")
+        review_fields = {
+            "independent_review_feedback": governing[
+                "independent_review_feedback"
+            ],
+            "revision_requirement": governing["revision_requirement"],
+        }
+    candidate_bytes = objects.read_blob(capture["output_id"])
+    if schema_version == 1:
+        candidate_field = {"previous_candidate": _load(candidate_bytes)}
+    elif schema_version == 2:
+        try:
+            candidate_text = candidate_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raise DiscoveryError("invalid-discovery-repair-feedback") from None
+        candidate_field = {"previous_candidate_text": candidate_text}
+    else:
+        raise DiscoveryError("invalid-discovery-repair-feedback")
+    return canonical_json_bytes({
+        "schema_version": schema_version,
+        "kind": "untrusted_discovery_repair_context",
+        "safe_discovery_context": base,
+        **candidate_field,
+        **review_fields,
+        "deterministic_feedback": {
+            "reason_code": feedback["reason_code"],
+            "requirement": _repair_requirement(feedback["reason_code"]),
+        },
+    })
+
+
 def _capture_dispatch(account, screen_output, backend, agent_bytes, context,
                       reservation, dispatch_id):
     """Invoke one already-reserved dispatch and durably capture its outcome."""
@@ -174,44 +277,21 @@ class DiscoveryController:
             self.fault_hook(point)
 
     def _repair_context(self, state, dispatch_id, *, schema_version=2):
-        request = state.dispatches[dispatch_id]
-        capture = state.captures[dispatch_id]
-        applied = state.applied[dispatch_id]
-        feedback = _load(self.account.objects.read_blob(applied["receipt_id"]))
-        if (
-            applied["state"] != "repair_ready"
-            or feedback.get("kind") != "discovery_repair_feedback"
-            or feedback.get("binding_id") != request["binding_id"]
-            or feedback.get("revision_id") != request["revision_id"]
-            or feedback.get("context_id") != request["context_id"]
-            or feedback.get("authorial_response_id") != capture["output_id"]
-            or feedback.get("reason_code") not in DISCOVERY_REPAIRABLE_REASONS
-        ):
-            raise DiscoveryError("invalid-discovery-repair-feedback")
-        revision = _load(self.account.objects.read_blob(request["revision_id"]))
-        self.acquisition.boundary.provider_bytes(request["binding_id"])
-        base = _load(self.account.objects.read_blob(revision["context_id"]))
-        candidate_bytes = self.account.objects.read_blob(capture["output_id"])
-        if schema_version == 1:
-            candidate_field = {"previous_candidate": _load(candidate_bytes)}
-        elif schema_version == 2:
-            try:
-                candidate_text = candidate_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                raise DiscoveryError("invalid-discovery-repair-feedback") from None
-            candidate_field = {"previous_candidate_text": candidate_text}
-        else:
-            raise DiscoveryError("invalid-discovery-repair-feedback")
-        return canonical_json_bytes({
-            "schema_version": schema_version,
-            "kind": "untrusted_discovery_repair_context",
-            "safe_discovery_context": base,
-            **candidate_field,
-            "deterministic_feedback": {
-                "reason_code": feedback["reason_code"],
-                "requirement": _repair_requirement(feedback["reason_code"]),
-            },
-        })
+        return build_discovery_repair_context(
+            self.acquisition.boundary,
+            self.account.objects,
+            state,
+            dispatch_id,
+            schema_version=schema_version,
+        )
+
+    def _review_revision_context(self, state, review_dispatch_id):
+        return build_review_revision_context(
+            self.acquisition.boundary,
+            self.account.objects,
+            state,
+            review_dispatch_id,
+        )
 
     @_closed_errors
     def step(self) -> DiscoveryStep:
@@ -226,6 +306,7 @@ class DiscoveryController:
             source = self.acquisition.opening["evidence_scope"]["source_id"]
             history = state.discovery_sources.get(source, [])
             repair_parent = None
+            review_revision_parent = None
             if history:
                 first = state.dispatches[history[0]]
                 if (first["scope_id"] != content_digest(self.acquisition.opening)
@@ -241,6 +322,23 @@ class DiscoveryController:
                 applied = state.applied[last]
                 if applied["state"] == "repair_ready":
                     repair_parent = last
+                elif applied["state"] == "proposal_ready":
+                    source_history = state.sources.get(source, [])
+                    candidate = source_history[-1] if source_history else None
+                    review = state.applied.get(candidate)
+                    review_request = state.dispatches.get(candidate, {})
+                    if (
+                        state.dispatch_kinds.get(candidate) == "review"
+                        and review is not None
+                        and review["state"] == "revision_required"
+                        and review_request.get("producer_dispatch_id") == last
+                        and self.account.opening["policy"].get(
+                            "max_review_revisions", 0
+                        ) > 0
+                    ):
+                        review_revision_parent = candidate
+                    else:
+                        return self._result(applied)
                 elif applied["state"] != "evidence_ready":
                     return self._result(applied)
             self.acquisition._recover_locked()
@@ -252,6 +350,15 @@ class DiscoveryController:
                     return DiscoveryStep(
                         "blocked", reason_code="discovery-repair-context-bound"
                     )
+            elif review_revision_parent is not None:
+                context = self._review_revision_context(
+                    state, review_revision_parent
+                )
+                if len(context) > self.reservation.initial_input_tokens:
+                    return DiscoveryStep(
+                        "blocked",
+                        reason_code="discovery-review-revision-context-bound",
+                    )
             # This offline contract freezes byte-upper-bound accounting, not an
             # exact tokenizer. This is a necessary lower bound; the backend must
             # additionally fit its complete framing in that same reservation.
@@ -260,7 +367,8 @@ class DiscoveryController:
             request = {"source_id": source, "scope_id": content_digest(self.acquisition.opening),
                        "agent_id": content_digest(self.agent_bytes), "binding_id": progress.binding_id,
                        "revision_id": progress.revision_id, "context_id": content_digest(context),
-                       "reservation": asdict(self.reservation), "turn": len(history) + 1}
+                       "reservation": asdict(self.reservation),
+                       "turn": len(state.sources.get(source, [])) + 1}
             refusal = state.refusal(request)
             if refusal:
                 return DiscoveryStep("blocked", reason_code=refusal)
@@ -297,11 +405,28 @@ class DiscoveryController:
             if index is None or index == 0:
                 raise DiscoveryError("discovery-dispatch-context-mismatch")
             previous = source_history[index - 1]
-            expected = self._repair_context(state, previous)
-            if request["context_id"] != content_digest(expected):
-                # Compatibility for repair requests reserved before schema 2
-                # made rejected JSON opaque instead of reparsing it.
-                expected = self._repair_context(state, previous, schema_version=1)
+            previous_application = state.applied.get(previous)
+            if previous_application is not None and previous_application["state"] == "repair_ready":
+                expected = self._repair_context(state, previous)
+                if request["context_id"] != content_digest(expected):
+                    # Compatibility for repair requests reserved before schema 2
+                    # made rejected JSON opaque instead of reparsing it.
+                    expected = self._repair_context(state, previous, schema_version=1)
+            elif previous_application is not None and previous_application["state"] == "proposal_ready":
+                review_id = next(
+                    (
+                        item
+                        for item in reversed(state.sources.get(request["source_id"], []))
+                        if state.dispatch_kinds.get(item) == "review"
+                        and state.dispatches[item].get("producer_dispatch_id") == previous
+                    ),
+                    None,
+                )
+                if review_id is None:
+                    raise DiscoveryError("discovery-dispatch-context-mismatch")
+                expected = self._review_revision_context(state, review_id)
+            else:
+                raise DiscoveryError("discovery-dispatch-context-mismatch")
         if (
             request["context_id"] != content_digest(expected)
             or self.account.objects.read_blob(request["context_id"]) != expected

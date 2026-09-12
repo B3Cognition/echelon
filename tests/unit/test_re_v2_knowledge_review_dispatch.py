@@ -145,6 +145,106 @@ def test_review_uses_shared_account_and_only_review_context_once(tmp_path):
 
 
 @pytest.mark.unit
+def test_revision_receipt_authorizes_one_replacement_and_fresh_review(tmp_path):
+    def replacement(context_bytes):
+        context = json.loads(context_bytes)
+        if (
+            context["kind"] == "untrusted_discovery_context"
+            and len(context["evidence"]) == 1
+        ):
+            return importlib.import_module(
+                "tests.unit.test_re_v2_knowledge_dispatch"
+            )._evidence(context_bytes)
+        safe = context.get("safe_discovery_context", context)
+        proposal = importlib.import_module(
+            "tests.unit.test_re_v2_knowledge_discovery"
+        )._proposal(safe)
+        if context["kind"] == "untrusted_discovery_review_revision_context":
+            proposal["subjects"][0]["evidence_ids"] = [
+                row["projection_id"] for row in safe["evidence"]
+            ]
+            for row in proposal["inventory"]:
+                row["owner"] = "runner"
+                row["reason"] = "The complete evidence assigns this path."
+        return canonical_json_bytes(proposal)
+
+    producer, account, _, producer_calls = _controller(
+        tmp_path,
+        tokens=700_000,
+        turns=6,
+        review_revisions=1,
+        backend=replacement,
+    )
+    evidence = producer.step()
+    first = producer.step()
+    review_calls = []
+    first_review = _reviewer(producer, account, review_calls).step()
+
+    replacement_result = producer.step()
+
+    def ready_review(context):
+        payload = json.loads(_valid_review(context, verdict="ready"))
+        by_path = {
+            row["projection"]["path"]: row["projection_id"]
+            for row in context["safe_discovery_context"]["evidence"]
+        }
+        for row in payload["inventory"]:
+            row["evidence_ids"] = [by_path[row["path"]]]
+        return canonical_json_bytes(payload)
+
+    ready_reviewer = _reviewer(
+        producer,
+        account,
+        review_calls,
+        backend=ready_review,
+    )
+    second_review = ready_reviewer.step()
+
+    assert evidence.state == "evidence_ready"
+    assert first.state == "proposal_ready"
+    assert first_review.state == "revision_required"
+    assert replacement_result.state == "proposal_ready"
+    assert second_review.state == "review_ready", second_review
+    assert [row["kind"] for row in producer_calls] == [
+        "untrusted_discovery_context",
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_revision_context",
+    ]
+    assert len(review_calls) == 2
+    assert account.status().charged_tokens == 500_000
+
+
+@pytest.mark.unit
+def test_review_revision_limit_closes_before_another_provider_call(tmp_path):
+    def replacement(context_bytes):
+        context = json.loads(context_bytes)
+        safe = context.get("safe_discovery_context", context)
+        return canonical_json_bytes(importlib.import_module(
+            "tests.unit.test_re_v2_knowledge_discovery"
+        )._proposal(safe))
+
+    producer, account, _, producer_calls = _controller(
+        tmp_path,
+        tokens=600_000,
+        turns=6,
+        review_revisions=1,
+        backend=replacement,
+    )
+    assert producer.step().state == "proposal_ready"
+    review_calls = []
+    assert _reviewer(producer, account, review_calls).step().state == "revision_required"
+    assert producer.step().state == "proposal_ready"
+    assert _reviewer(producer, account, review_calls).step().state == "revision_required"
+
+    result = producer.step()
+
+    assert result.reason_code == "discovery-review-revision-limit"
+    assert len(producer_calls) == 2
+    assert len(review_calls) == 2
+    assert account.status().charged_tokens == 400_000
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("tokens", "turns", "reason"),
     [(150_000, 3, "budget-exhausted"), (500_000, 1, "discovery-turn-limit")],

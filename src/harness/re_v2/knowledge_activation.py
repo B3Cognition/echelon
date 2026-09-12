@@ -15,9 +15,13 @@ from typing import Mapping
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_acquisition import DiscoveryAcquisition, _AcquisitionProtocol
 from harness.re_v2.knowledge_accounting import KnowledgeDispatchAccount, _DispatchProtocol
-from harness.re_v2.knowledge_discovery import DiscoveryBoundary
+from harness.re_v2.knowledge_discovery import DiscoveryBoundary, DiscoveryError
 from harness.re_v2.knowledge_discovery_review import DiscoveryReviewBoundary
-from harness.re_v2.knowledge_dispatch import DiscoveryController
+from harness.re_v2.knowledge_dispatch import (
+    DiscoveryController,
+    build_discovery_repair_context,
+    build_review_revision_context,
+)
 from harness.re_v2.knowledge_evidence import security_policy_id
 from harness.re_v2.knowledge_review_dispatch import DiscoveryReviewController
 from harness.re_v2.ledger import LedgerRecord, ReV2LedgerError
@@ -261,8 +265,40 @@ def _authenticated(proof, objects, l3, evidence):
             or request['producer_dispatch_id'] != state.discovery_sources[scope['source_id']][-1]):
         raise KnowledgeActivationError('active-reviewed-revision-required')
     producer = state.dispatches[request['producer_dispatch_id']]
-    if (objects.read_blob(producer['context_id']) != objects.read_blob(acquisition.context_id)
-            or producer['revision_id'] != progress.revision_id):
+    producer_context = objects.read_blob(producer['context_id'])
+    base_context = objects.read_blob(acquisition.context_id)
+    if producer_context != base_context:
+        producers = state.discovery_sources[scope['source_id']]
+        if len(producers) < 2 or producers[-1] != request['producer_dispatch_id']:
+            raise KnowledgeActivationError('reviewed-producer-context-mismatch')
+        predecessor = producers[-2]
+        predecessor_application = state.applied.get(predecessor)
+        expected_contexts = []
+        if predecessor_application is not None and predecessor_application['state'] == 'repair_ready':
+            expected_contexts.append(build_discovery_repair_context(
+                boundary, objects, state, predecessor, schema_version=2
+            ))
+            try:
+                legacy_repair = build_discovery_repair_context(
+                    boundary, objects, state, predecessor, schema_version=1
+                )
+            except DiscoveryError:
+                pass
+            else:
+                expected_contexts.append(legacy_repair)
+        elif predecessor_application is not None and predecessor_application['state'] == 'proposal_ready':
+            revision_review_id = next((
+                item for item in reversed(state.sources[scope['source_id']])
+                if state.dispatch_kinds.get(item) == 'review'
+                and state.dispatches[item].get('producer_dispatch_id') == predecessor
+            ), None)
+            if revision_review_id is not None:
+                expected_contexts.append(build_review_revision_context(
+                    boundary, objects, state, revision_review_id
+                ))
+        if producer_context not in expected_contexts:
+            raise KnowledgeActivationError('reviewed-producer-context-mismatch')
+    if producer['revision_id'] != progress.revision_id:
         raise KnowledgeActivationError('reviewed-producer-context-mismatch')
     proposal_id = request['proposal_receipt_id']
     proposal = boundary.read_proposal(progress.binding_id, proposal_id)

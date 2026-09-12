@@ -70,8 +70,19 @@ class DiscoveryReviewController:
             state = self.account._state()
             source = self.acquisition.opening["evidence_scope"]["source_id"]
             reviews = state.review_sources.get(source, [])
-            if reviews:
-                dispatch_id = reviews[-1]
+            producers = state.discovery_sources.get(source, [])
+            latest_producer = producers[-1] if producers else None
+            matching_review = next(
+                (
+                    item
+                    for item in reversed(reviews)
+                    if state.dispatches[item].get("producer_dispatch_id")
+                    == latest_producer
+                ),
+                None,
+            )
+            if matching_review is not None:
+                dispatch_id = matching_review
                 self._authenticate_request(state, state.dispatches[dispatch_id])
                 if dispatch_id not in state.captures:
                     return DiscoveryStep("blocked", reason_code="dispatch-outcome-indeterminate")
@@ -93,7 +104,6 @@ class DiscoveryReviewController:
             if state.usage().reservation_breached:
                 return DiscoveryStep("blocked", reason_code="reservation-exceeded")
 
-            producers = state.discovery_sources.get(source, [])
             if not producers:
                 return DiscoveryStep("blocked", reason_code="discovery-review-proposal-required")
             producer_id = producers[-1]

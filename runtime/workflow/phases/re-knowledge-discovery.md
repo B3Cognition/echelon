@@ -10,7 +10,10 @@ Supply only the committed `untrusted_discovery_context` bytes authenticated by
 `DiscoveryAcquisition`, or a controller-authenticated
 `untrusted_discovery_repair_context` containing that safe context, the prior
 screened candidate as opaque UTF-8 text and one closed deterministic admission
-reason. Opaque retention allows duplicate-field and otherwise invalid JSON to be
+reason, or a controller-authenticated
+`untrusted_discovery_review_revision_context` containing the safe context, the
+normalized prior candidate, and the independent review's bounded findings.
+Opaque retention allows duplicate-field and otherwise invalid JSON to be
 repaired without reparsing it as authority. The ordinary
 context contains selected source/depth, originating obligation, screened inventory
 and evidence, required source/domain categories, and recorded evidence outcomes.
@@ -39,6 +42,12 @@ remain terminal. A repair call uses the same source, snapshot, acquisition revis
 role, provider, reservation and aggregate account, and asks for one complete
 replacement payload. Historical accounts without that frozen field retain zero
 repair turns.
+Fresh accounts may also freeze a positive reviewer-revision ceiling. A valid
+`revision_required` receipt authorizes one complete producer replacement followed
+by a fresh independent review, using the same immutable source authority,
+provider, reservation and aggregate account. The durable source-turn and
+reviewer-revision ceilings prevent producer/reviewer cycling; historical accounts
+without the field retain no automatic reviewer revision.
 The backend screens the complete response (including the transport envelope)
 before returning authorial JSON bytes and normalized usage to the controller.
 
@@ -143,8 +152,12 @@ so reopen never resets it and terminal `discovery-repair-limit` never invokes th
 provider again.
 The internal `DiscoveryReviewController.step()` may review that committed staged
 proposal using a separate role/context and the same run-wide account. Review also
-consumes the source-turn ceiling. Repeating discovery after this handoff returns
-the staged producer result; it does not start another producer call or reset work.
+consumes the source-turn ceiling. A valid `revision_required` result may route one
+bounded replacement through the producer when the account explicitly permits it;
+the replacement then requires a new independent review. Reopening reconstructs
+this lineage from committed proposal and review receipts and does not replay paid
+calls. When the frozen reviewer-revision allowance is exhausted,
+`discovery-review-revision-limit` is terminal and no provider call is made.
 `blocked` reports a fixed reason and retains charges/capture. Repeating an unknown
 dispatch or a terminal invalid/no-progress response never invokes a provider again.
 
