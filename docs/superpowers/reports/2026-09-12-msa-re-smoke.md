@@ -52,3 +52,45 @@ The fixes were committed as `6791ef76`, `bc2c0d0b`, and `ac6003bc`. The final sy
 ## Conclusion
 
 This smoke meets the functional acceptance target for one fresh, single-source, quick-depth Codex run: discovery, reviewed analysis, reconciliation, synthesis, publication, replay/resume, and downstream consumption all worked without modifying the source repository. It is evidence for the implementation, not a substitute for the separate multi-workspace and refresh trial gate.
+
+## Standard-Depth Refresh Follow-up
+
+A subsequent `echelon re refresh --depth standard` correctly planned the
+depth change, created a fresh reviewed-analysis child, and expanded the source
+plan from three to four slices. The first attempt accepted all four slices and
+then exposed an exact-closure defect before synthesis: the refresh merge kept
+both the superseded and replacement overview payload for the reanalyzed source,
+while its catalog selected only the replacement. The refresh now prunes that
+payload closure to exactly the catalog's selected object hashes and fails closed
+if a selected payload is absent. The fixes were committed as `00ce2265` and
+`5c42f775`; the focused refresh/CLI suite passed 127 tests after the repair.
+
+The installed repair was exercised in a second immutable refresh attempt:
+
+- Root request: `re-20260912-143733-805667`
+- Reviewed analysis: `re-20260912-143733-805667-analysis`
+- Analysis: 4/4 slices accepted, including two bounded verifier-driven repairs
+- Terminal state: needs attention at reviewed source reconciliation
+- Reason: `unchanged-reconciliation-outcome`
+- Publication: unchanged at generation 1; no partial generation was published
+- Source repository: clean after the run, with zero stashes
+
+This stop is a genuine bounded semantic outcome, not a resource or transport
+failure. Both reconciliation attempts independently retained failed
+`contradictions` and `evidence-support` checks. The provider changed its
+candidate, but could not resolve those checks from the frozen evidence. The
+current reviewed protocol-2.8 workflow therefore stops safely instead of
+looping or silently converting unresolved contradictions into debt.
+
+The follow-up also identifies a remaining product gap: `echelon re resume`
+supports immutable L3 guidance successors, but does not yet support a blocked
+reviewed protocol-2.8 knowledge-analysis run. Its current L3-only error is
+accurate at the protocol boundary but does not provide a continuation for this
+ordinary refresh workflow. A reviewed-analysis guidance/debt successor needs a
+separate explicit authority design; it must not reopen this immutable run or
+downgrade contradictory evidence into dependency debt.
+
+Observed conservative analysis charges were 2,307,328 tokens for the first
+standard attempt and 3,970,077 for the second. Including the successful quick
+analysis and synthesis, the smoke consumed 11,294,696 conservative tokens,
+well below the approved 100,000,000-token aggregate ceiling.
