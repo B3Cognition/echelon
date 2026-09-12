@@ -97,7 +97,11 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   (`FR-001.other` / `FR-001-extra` read as `FR-001`) remains a blocker for complete
   reference enforcement; local filename and sentence-punctuation compatibility
   require an explicit lexical/locator contract before that gap is closed.
-  Transaction composition for lifecycle/evidence updates is the next checkpoint.
+- Lifecycle transaction composition: implemented in `ca663b9e` and independently
+  reviewed with no findings. Exact eight-module compatibility suite: 426 passed.
+  Lifecycle and evidence/issue writers now share one caller-owned transaction;
+  rollback, visibility and original retry receipts are tested against real
+  SQLite. This does not authenticate historical sources or canonical publication.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
