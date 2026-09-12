@@ -876,6 +876,43 @@ orphan record/receipt associations. No routine path scans all historical records
 `element_identity_binding_store` receives only the existing store's connection;
 it never opens files, commits, reserves IDs, or starts a second transaction.
 
+### Exact proposed reference source matching
+
+`harness.element_identity_reference_sources.validate_reference_claim_sources(
+artifacts, claims)` is a pure, inactive source-side preflight for proposed
+`ReferenceClaim` values. It snapshots and strictly revalidates the supplied
+candidate artifacts and claims, then compares each claim only with its named
+artifact's supplied `after_text`. A missing postimage is distinct from a present
+empty file. The claim's lowercase digest must equal the SHA-256 of the exact UTF-8
+postimage bytes; neither `before_text` nor a current workspace file is a fallback.
+The helper performs no filesystem, database, provider, clock or network access.
+
+For a claimed source with a supported identity role, the existing typed artifact
+parser runs once. Glossary and evidence-inventory sources retain their established
+empty-fact behavior. A claim matches only an exact
+`(span:<start>:<end>, target_id, relation)` triple emitted by that parser. Spans
+are parser code-point offsets and retain exact spelling; padded, negative,
+non-span or otherwise fabricated anchors are not normalized. Declaration labels,
+masked code/comments and unsupported qualified or partial tokens are not source
+facts. Supported literal IDs inside inline code retain their exact inner spans.
+Range references remain unsupported and are never reduced to their first
+endpoint. Unclaimed artifacts are structurally validated but are not parsed or
+given semantic diagnostics. Existing historical claims and their anchor schemes
+are neither loaded nor rewritten.
+
+An empty diagnostic result establishes only that these proposed claims agree with
+the supplied postimage syntax and bytes. It does not establish that the selected
+sources are complete, that an `evidence` relation proves anything, or that prose
+semantically assesses a target. Different claimed target revisions, including
+`None`, are intentionally source-compatible because source matching cannot decide
+revision meaning. The complementary target-side
+`store.validate_projected_bindings(...)` must still validate target existence,
+revision and lifecycle state, and an actual read-only semantic reviewer must
+validate meaning. A future completion owner must also authenticate complete
+physical before/postimage capture, preserve the accepted baseline through
+publication and recovery, revalidate currentness, and combine all checks before
+granting publication, graph, memory or completion authority.
+
 ### Projected binding storage preflight
 
 `store.validate_projected_bindings(spec_id=..., changes=..., claims=...,

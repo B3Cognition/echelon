@@ -51,6 +51,7 @@ def parse_lexicon_source(text: str, role: str):
 
     declarations: list[ElementDeclaration] = []
     diagnostics: list[ArtifactDiagnostic] = []
+    excluded_reference_spans: list[tuple[int, int]] = []
     disposition = "definition" if role == "lexicon" else "projection"
     starts = [index for index, line in enumerate(lines) if _ANY_BLOCK_RE.match(line.body)]
     for index, line in enumerate(lines):
@@ -69,12 +70,14 @@ def parse_lexicon_source(text: str, role: str):
                 "unsupported_lexicon_id", label_span,
                 f"{block_type} cannot declare managed label {element_id}",
             ))
+            excluded_reference_spans.append((label_span.start, label_span.end))
             continue
         if block_type not in {"REQ", "AC"} and _MANAGED_ID_RE.fullmatch(element_id):
             diagnostics.append(ArtifactDiagnostic(
                 "unexpected_definition", label_span,
                 f"{block_type} blocks cannot declare managed label {element_id}",
             ))
+            excluded_reference_spans.append((label_span.start, label_span.end))
             continue
         if block_type not in {"REQ", "AC"}:
             continue
@@ -93,7 +96,8 @@ def parse_lexicon_source(text: str, role: str):
 
     active = bytearray(b"\1" * len(text))
     references, reference_diagnostics = _references(
-        text, "references", line_starts, active, declarations
+        text, "references", line_starts, active, declarations,
+        excluded_spans=excluded_reference_spans,
     )
     references = [_lexicon_relation(reference, lines) for reference in references]
     diagnostics.extend(reference_diagnostics)

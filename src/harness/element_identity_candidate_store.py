@@ -1,12 +1,9 @@
 """Identity checks on one caller-owned read transaction; no writes or verdicts."""
 
-import hashlib
-
 from harness import element_identity_binding_store as binding_store
 from harness import element_identity_lifecycle as lifecycle
 from harness import element_identity_lifecycle_store as lifecycle_store
 from harness import element_identity_store as authority
-from harness.element_artifacts import ParsedIdentityArtifact, parse_identity_artifact
 from harness.element_identity_candidate import (
     CandidateDiagnostic, CandidateReferenceState, DiscoveryCandidateCheck,
     IdentityCandidateCheck, _DISCOVERY_POLICY, _IDENTITY_POLICY,
@@ -14,18 +11,7 @@ from harness.element_identity_candidate import (
 )
 from harness import element_identity_bundle as bundle
 from harness import element_identity_issue_candidate as issues
-
-
-_EMPTY_CONTENT_SHA256 = hashlib.sha256(b"").hexdigest()
-
-
-def _parse_image(artifact, text):
-    if text is None:
-        return ParsedIdentityArtifact(
-            artifact.path, artifact.role, _EMPTY_CONTENT_SHA256, (), (), ())
-    if artifact.role in {"glossary", "evidence_inventory"}:
-        return bundle._empty_fact_image(path=artifact.path, role=artifact.role, text=text)
-    return parse_identity_artifact(path=artifact.path, role=artifact.role, text=text)
+from harness.element_identity_reference_sources import _parse_image
 
 
 def _head(connection, store, spec_id, label):

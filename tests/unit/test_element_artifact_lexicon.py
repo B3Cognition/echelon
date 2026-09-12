@@ -128,6 +128,39 @@ def test_every_grammar_valid_unsupported_req_or_ac_label_is_diagnostic():
     ]
 
 
+@pytest.mark.parametrize("role", ["lexicon", "lexicon_projection"])
+def test_diagnosed_header_labels_do_not_hide_real_body_references(role):
+    text = (
+        "ARTIFACT: SPEC\r\nTITLE: Café ⚡\r\n\r\n"
+        "REQ: AC-000001\r\nGIVEN: a condition\r\nWHEN: an event\r\n"
+        "THEN: See AC-000001 and FR-FOO\r\n\r\n"
+        "RULE: FR-009\r\nIF: a condition\r\n"
+        "THEN: See T-000001 and AC-WORD\r\n"
+    )
+    result = parse_identity_artifact(
+        path="requirements.lexicon.md", role=role, text=text
+    )
+    assert not result.declarations
+    assert [
+        (item.code, item.span.start, item.span.end, item.span.line,
+         text[item.span.start:item.span.end])
+        for item in result.diagnostics
+    ] == [
+        ("unsupported_lexicon_id", 38, 47, 4, "AC-000001"),
+        ("unsupported_reference", 109, 115, 7, "FR-FOO"),
+        ("unexpected_definition", 125, 131, 9, "FR-009"),
+        ("unsupported_reference", 173, 180, 11, "AC-WORD"),
+    ]
+    assert [
+        (item.target_id, item.relation, item.span.start, item.span.end,
+         item.span.line, text[item.span.start:item.span.end])
+        for item in result.references
+    ] == [
+        ("AC-000001", "reference", 95, 104, 7, "AC-000001"),
+        ("T-000001", "reference", 160, 168, 11, "T-000001"),
+    ]
+
+
 def test_valid_indented_lexicon_blocks_preserve_declarations_and_boundaries():
     text = (
         "ARTIFACT: SPEC\nTITLE: Indented\n\n"
