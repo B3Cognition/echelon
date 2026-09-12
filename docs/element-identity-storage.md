@@ -66,6 +66,33 @@ the integration owners. Rejected candidates remain diagnostics and cannot update
 canonical artifacts, graphs or memory. Published labels, including `FR-001` and
 historical composite IDs, retain their exact spelling.
 
+## Strict request recovery codec
+
+`harness.element_identity_request_codec` is a pure, inactive compatibility helper
+for exact existing immutable request payloads. `encode_request(method, entries)`
+first re-runs the existing lifecycle or binding request validator, then emits the
+same canonical ASCII JSON bytes used by operation digest serialization: sorted
+keys, compact separators, and ASCII escaping. The payload is the existing array,
+without an envelope, version, inferred method, or changed digest input. Labels,
+IDs, revisions, CRLF, Unicode, and whitespace remain strings with their exact
+published spelling.
+
+`decode_request(method, payload)` accepts only the explicit methods `lifecycle`,
+`reference_claims`, and `issue_occurrences`. It uses closed class maps and exact
+dataclass field sets, rejects duplicate keys, numeric and non-finite JSON tokens,
+and reconstructs transition predecessor and successor collections as detached
+tuples of frozen values. Existing constructors and batch validators remain the
+schema authority. Decoding supports `ElementAdopt` only for recovery compatibility;
+it does not authorize adoption in a managed candidate.
+
+Successful decoding proves request shape only. The codec performs no filesystem,
+database, network, provider, or store calls and creates no persisted envelope.
+It establishes no namespace ownership, reservation or head validity, source
+authenticity, semantic approval, pending intent, publication acceptance, or
+receipt authority. Existing store transactions and future controllers retain
+those responsibilities; accepting bytes alone grants no adoption or publication
+authority.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.
