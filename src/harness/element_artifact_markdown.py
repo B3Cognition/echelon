@@ -26,8 +26,13 @@ _HEADING_RE = re.compile(
     re.ASCII,
 )
 _ANY_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>.*?)[ \t]*$")
+_LOOSE_HEADING_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<marks>#{1,6})[ \t]+"
+    r"(?P<id>(?:(?:AC|FR|NFR|ISS|U|A)-[0-9][^\s:]*|"
+    r"T-(?:[0-9][^\s:]*|S[0-9][^\s:]*)))(?P<rest>.*)$"
+)
 _BULLET_RE = re.compile(
-    rf"^(?P<marker>[-*+])[ \t]+(?P<open>\*\*|`)?(?P<id>{_ID_CORE})(?P<close>\*\*|`)?[ \t]*:[ \t]*(?P<caption>.*?)[ \t]*$",
+    rf"^(?P<indent>[ \t]*)(?P<marker>[-*+])[ \t]+(?P<open>\*\*|`)?(?P<id>{_ID_CORE})(?P<close>\*\*|`)?[ \t]*:[ \t]*(?P<caption>.*?)[ \t]*$",
     re.ASCII,
 )
 _LOOSE_BULLET_RE = re.compile(
@@ -83,8 +88,13 @@ def parse_markdown_source(text: str, role: str):
         text, role, lines, line_starts, active
     )
     diagnostics.extend(declaration_diagnostics)
+    unsupported_spans = [
+        (diagnostic.span.start, diagnostic.span.end)
+        for diagnostic in declaration_diagnostics
+        if diagnostic.code in {"ambiguous_block_boundary", "unsupported_declaration"}
+    ]
     references, reference_diagnostics = _references(
-        text, role, line_starts, active, declarations
+        text, role, line_starts, active, declarations, unsupported_spans
     )
     diagnostics.extend(reference_diagnostics)
     diagnostics.extend(_duplicate_diagnostics(declarations))
@@ -127,6 +137,23 @@ def _visible_body(line: _Line, active: bytearray) -> str:
     )
 
 
+def _owned_list_continuation(index: int, lines: list[_Line]) -> bool:
+    body = lines[index].body
+    if body.startswith("\t"):
+        return False
+    indentation = len(body) - len(body.lstrip(" "))
+    if indentation < 4 or indentation >= 6:
+        return False
+    for candidate in reversed(lines[:index]):
+        if not candidate.body.strip():
+            continue
+        candidate_indent = len(candidate.body) - len(candidate.body.lstrip(" "))
+        if candidate_indent >= indentation:
+            continue
+        return re.match(r"^[ ]{0,3}[-*+][ \t]+", candidate.body) is not None
+    return False
+
+
 def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
     active = bytearray(b"\1" * len(text))
     diagnostics: list[ArtifactDiagnostic] = []
@@ -151,6 +178,7 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
         first_available = close + 1
 
     in_fence: tuple[str, int, int] | None = None
+    in_comment: int | None = None
     for index, line in enumerate(lines[first_available:], start=first_available):
         if in_fence is not None:
             char, length, _opener = in_fence
@@ -158,15 +186,43 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
             if re.fullmatch(rf"[ ]{{0,3}}{re.escape(char)}{{{length},}}[ \t]*", line.body):
                 in_fence = None
             continue
-        if line.body and not _is_active(active, line.start, line.start + len(line.body)):
+
+        body_end = line.start + len(line.body)
+        cursor = line.start
+        if in_comment is not None:
+            close = text.find("-->", cursor, body_end)
+            if close < 0:
+                _mark_inactive(active, line.start, line.end)
+                continue
+            _mark_inactive(active, line.start, close + 3)
+            in_comment = None
+            cursor = close + 3
+        while cursor < body_end:
+            opener = text.find("<!--", cursor, body_end)
+            if opener < 0:
+                break
+            close = text.find("-->", opener + 4, body_end)
+            if close < 0:
+                _mark_inactive(active, opener, line.end)
+                in_comment = opener
+                break
+            _mark_inactive(active, opener, close + 3)
+            cursor = close + 3
+
+        visible = _visible_body(line, active)
+        if not visible.strip():
             continue
-        fence = _FENCE_OPEN_RE.match(line.body)
+        fence = _FENCE_OPEN_RE.match(visible)
         if fence is not None:
             delimiter = fence.group("delim")
             in_fence = (delimiter[0], len(delimiter), line.start)
             _mark_inactive(active, line.start, line.end)
             continue
-        if re.match(r"^[ ]{0,3}>", line.body) or line.body.startswith("\t") or line.body.startswith("    "):
+        if (
+            re.match(r"^[ ]{0,3}>", visible)
+            or visible.startswith("\t")
+            or (visible.startswith("    ") and not _owned_list_continuation(index, lines))
+        ):
             _mark_inactive(active, line.start, line.end)
 
     if in_fence is not None:
@@ -175,26 +231,11 @@ def _active_source(text: str, lines: list[_Line], line_starts: list[int]):
             "unterminated_fence", _span(opener, len(text), line_starts),
             "fenced code opener has no matching closing delimiter",
         ))
-
-    cursor = 0
-    while True:
-        start = text.find("<!--", cursor)
-        if start < 0:
-            break
-        cursor = start + 4
-        if not _is_active(active, start, start + 4):
-            continue
-        end_marker = text.find("-->", start + 4)
-        if end_marker < 0:
-            _mark_inactive(active, start, len(text))
-            diagnostics.append(ArtifactDiagnostic(
-                "unterminated_comment", _span(start, len(text), line_starts),
-                "HTML comment opener has no closing delimiter",
-            ))
-            break
-        end = end_marker + 3
-        _mark_inactive(active, start, end)
-        cursor = end
+    if in_comment is not None:
+        diagnostics.append(ArtifactDiagnostic(
+            "unterminated_comment", _span(in_comment, len(text), line_starts),
+            "HTML comment opener has no closing delimiter",
+        ))
     return active, diagnostics
 
 
@@ -238,6 +279,24 @@ def _declarations(
             ))
             continue
 
+        loose_heading = _LOOSE_HEADING_RE.match(body)
+        if loose_heading is not None:
+            label_start = line.start + loose_heading.start("id")
+            label_end = line.start + loose_heading.end("id")
+            code = (
+                "ambiguous_block_boundary"
+                if loose_heading.group("indent")
+                else "unsupported_declaration"
+            )
+            diagnostics.append(ArtifactDiagnostic(
+                code,
+                _span(label_start, label_end, line_starts),
+                "indented ID-bearing heading has ambiguous declaration ownership"
+                if loose_heading.group("indent")
+                else "ID-bearing heading does not use the supported declaration syntax",
+            ))
+            continue
+
         bullet = _BULLET_RE.match(body)
         if bullet is not None:
             element_id = bullet.group("id")
@@ -253,7 +312,9 @@ def _declarations(
                     f"{element_id} bullet cannot define an element in role {role}",
                 ))
                 continue
-            block_end = _indented_block_end(index, lines)
+            block_end = _indented_block_end(
+                index, lines, len(bullet.group("indent"))
+            )
             declarations.append(ElementDeclaration(
                 element_id, kind, bullet.group("caption"), text[line.start:block_end],
                 _span(line.start, block_end, line_starts), label_span, "definition",
@@ -261,7 +322,7 @@ def _declarations(
 
         task_like = _TASK_LIKE_RE.match(body)
         if task_like is not None and role == "tasks":
-            block_end = _indented_block_end(index, lines)
+            block_end = _indented_block_end(index, lines, 0)
             block = text[line.start:block_end]
             parsed = parse_task_rows(body + "\n")
             label_start = line.start + task_like.start("id")
@@ -314,14 +375,11 @@ def _declarations(
             ))
 
         loose_bullet = _LOOSE_BULLET_RE.match(body)
-        if loose_bullet is not None:
+        if loose_bullet is not None and bullet is None:
             rest = loose_bullet.group("rest").lstrip()
             code = None
             detail = None
-            if loose_bullet.group("indent") and rest.startswith(":"):
-                code = "ambiguous_block_boundary"
-                detail = "nested declaration-shaped bullet has ambiguous identity ownership"
-            elif not loose_bullet.group("indent") and not rest.startswith(":"):
+            if not rest.startswith(":"):
                 code = "unsupported_declaration"
                 detail = "ID-bearing bullet does not use the supported declaration syntax"
             if code is not None:
@@ -363,14 +421,15 @@ def _heading_end(
     return lines[-1].end if lines else 0
 
 
-def _indented_block_end(index: int, lines: list[_Line]) -> int:
+def _indented_block_end(index: int, lines: list[_Line], base_indent: int) -> int:
     end = lines[index].end
     pending_blanks: list[_Line] = []
     for candidate in lines[index + 1:]:
         if not candidate.body.strip():
             pending_blanks.append(candidate)
             continue
-        if candidate.body.startswith((" ", "\t")):
+        indentation = len(candidate.body) - len(candidate.body.lstrip(" \t"))
+        if indentation > base_indent:
             if pending_blanks:
                 end = pending_blanks[-1].end
                 pending_blanks.clear()
@@ -386,10 +445,16 @@ def _references(
     line_starts: list[int],
     active: bytearray,
     declarations: list[ElementDeclaration],
+    excluded_spans: list[tuple[int, int]] | None = None,
 ):
     references: list[ElementReference] = []
     diagnostics: list[ArtifactDiagnostic] = []
-    blocked = [(declaration.label_span.start, declaration.label_span.end) for declaration in declarations]
+    relation_regions = _task_relation_regions(text, declarations)
+    blocked = [
+        (declaration.label_span.start, declaration.label_span.end)
+        for declaration in declarations
+    ]
+    blocked.extend(excluded_spans or ())
 
     for pattern in (_QUALIFIED_PATH_RE, _QUALIFIED_SCOPE_RE):
         for match in pattern.finditer(text):
@@ -415,9 +480,12 @@ def _references(
             and decimal_to_int(first_numeric.group("number")) <= decimal_to_int(last_numeric.group("number"))
         )
         if valid:
+            relation, owner_id = _reference_context(
+                match.start(), match.end(), relation_regions, role, declarations
+            )
             references.append(ElementReference(
                 first, last, _span(match.start(), match.end(), line_starts),
-                _owner_id(match.start(), declarations), _default_relation(role),
+                owner_id, relation,
             ))
         else:
             diagnostics.append(ArtifactDiagnostic(
@@ -434,34 +502,15 @@ def _references(
             "range separator requires a supported endpoint",
         ))
 
-    relation_spans: list[tuple[int, int]] = []
-    for declaration in declarations:
-        if declaration.kind != "T":
-            continue
-        first_line_end = text.find("\n", declaration.span.start, declaration.span.end)
-        if first_line_end < 0:
-            first_line_end = declaration.span.end
-        row = text[declaration.span.start:first_line_end].rstrip("\r")
-        for field, relation in (("req", "requires"), ("depends", "depends")):
-            field_match = re.search(rf"\b{field}=(?P<value>[A-Za-z0-9_,.-]+)", row)
-            if field_match is None:
-                continue
-            value_start = declaration.span.start + field_match.start("value")
-            value_end = declaration.span.start + field_match.end("value")
-            relation_spans.append((value_start, value_end))
-            for item in _ID_RE.finditer(text, value_start, value_end):
-                references.append(ElementReference(
-                    item.group(0), None, _span(item.start(), item.end(), line_starts),
-                    declaration.element_id, relation,
-                ))
-    blocked.extend(relation_spans)
-
     for match in _ID_RE.finditer(text):
         if not _is_active(active, match.start(), match.end()) or _overlaps(match.start(), match.end(), blocked):
             continue
+        relation, owner_id = _reference_context(
+            match.start(), match.end(), relation_regions, role, declarations
+        )
         references.append(ElementReference(
             match.group(0), None, _span(match.start(), match.end(), line_starts),
-            _owner_id(match.start(), declarations), _default_relation(role),
+            owner_id, relation,
         ))
     references.sort(key=lambda item: (item.span.start, item.span.end))
     return references, diagnostics
@@ -471,11 +520,54 @@ def _overlaps(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
     return any(start < other_end and end > other_start for other_start, other_end in spans)
 
 
-def _owner_id(offset: int, declarations: list[ElementDeclaration]) -> str | None:
+def _task_relation_regions(
+    text: str, declarations: list[ElementDeclaration]
+) -> list[tuple[int, int, str, str]]:
+    regions: list[tuple[int, int, str, str]] = []
     for declaration in declarations:
-        if declaration.span.start <= offset < declaration.span.end:
-            return declaration.element_id
-    return None
+        if declaration.kind != "T":
+            continue
+        first_line_end = text.find("\n", declaration.span.start, declaration.span.end)
+        if first_line_end < 0:
+            first_line_end = declaration.span.end
+        row = text[declaration.span.start:first_line_end].rstrip("\r")
+        for field, relation in (("req", "requires"), ("depends", "depends")):
+            field_match = re.search(
+                rf"\b{field}=(?P<value>[A-Za-z0-9_,.-]+)", row
+            )
+            if field_match is None:
+                continue
+            regions.append((
+                declaration.span.start + field_match.start("value"),
+                declaration.span.start + field_match.end("value"),
+                relation,
+                declaration.element_id,
+            ))
+    return regions
+
+
+def _reference_context(
+    start: int,
+    end: int,
+    relation_regions: list[tuple[int, int, str, str]],
+    role: str,
+    declarations: list[ElementDeclaration],
+) -> tuple[str, str | None]:
+    for region_start, region_end, relation, owner_id in relation_regions:
+        if region_start <= start and end <= region_end:
+            return relation, owner_id
+    return _default_relation(role), _owner_id(start, declarations)
+
+
+def _owner_id(offset: int, declarations: list[ElementDeclaration]) -> str | None:
+    owners = [
+        declaration
+        for declaration in declarations
+        if declaration.span.start <= offset < declaration.span.end
+    ]
+    if not owners:
+        return None
+    return max(owners, key=lambda item: (item.span.start, -item.span.end)).element_id
 
 
 def _kind(element_id: str) -> str:

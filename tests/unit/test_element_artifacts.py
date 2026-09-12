@@ -182,6 +182,26 @@ def test_inactive_markdown_regions_cannot_declare_or_reference_authority():
     assert not result.diagnostics
 
 
+def test_list_owned_four_space_continuations_are_active_but_indented_code_is_not():
+    text = (
+        "- **FR-001**: Parent.\n"
+        "    continuation AC-001\n"
+        "        code example U-999\n"
+    )
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [(reference.target_id, reference.owner_id) for reference in result.references] == [
+        ("AC-001", "FR-001")
+    ]
+
+
+def test_fence_delimiter_inside_html_comment_cannot_hide_later_active_source():
+    text = "<!--\n```markdown\n-->\n### U-001: Actual question\n"
+    result = parse_identity_artifact(path="unknowns.md", role="unknowns", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == ["U-001"]
+    assert not result.references
+    assert not result.diagnostics
+
+
 def test_inline_html_comments_hide_only_the_comment_not_active_source_around_it():
     text = (
         "### U-001: Active question <!-- U-999 -->\n"
@@ -231,6 +251,33 @@ def test_task_rows_reuse_canonical_metadata_and_own_subordinate_blocks():
     ]
     assert "INFRA" not in {r.target_id for r in result.references}
     _assert_exact_slices(text, result)
+
+
+def test_task_metadata_ranges_are_single_relation_aware_intervals():
+    forward = (
+        "- [ ] T-001 complexity=standard phase=core "
+        "req=FR-001..FR-003 depends=T-001..T-002\n"
+        "  **Title:** Implement an interval\n"
+    )
+    result = parse_identity_artifact(path="tasks.md", role="tasks", text=forward)
+    assert [
+        (item.target_id, item.range_end_id, item.relation)
+        for item in result.references
+    ] == [
+        ("FR-001", "FR-003", "requires"),
+        ("T-001", "T-002", "depends"),
+    ]
+    assert not result.diagnostics
+
+    reversed_text = forward.replace("FR-001..FR-003", "FR-003..FR-001")
+    reversed_result = parse_identity_artifact(
+        path="tasks.md", role="tasks", text=reversed_text
+    )
+    assert [
+        (item.target_id, item.range_end_id, item.relation)
+        for item in reversed_result.references
+    ] == [("T-001", "T-002", "depends")]
+    assert "invalid_range" in _codes(reversed_result)
 
 
 @pytest.mark.parametrize(
@@ -352,7 +399,7 @@ def test_unsupported_unicode_suffix_cannot_create_a_shorter_reference():
         ("- **FR-001** Statement without a colon\n", "unsupported_declaration"),
         (
             "- **FR-001**: Parent requirement.\n"
-            "  - **AC-001**: Nested declaration-shaped criterion.\n",
+            "  ### AC-001: Ambiguous nested heading.\n",
             "ambiguous_block_boundary",
         ),
     ],
@@ -360,6 +407,35 @@ def test_unsupported_unicode_suffix_cannot_create_a_shorter_reference():
 def test_ambiguous_or_malformed_id_bearing_bullets_are_diagnostic(text: str, code: str):
     result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
     assert code in _codes(result)
+
+
+def test_valid_nested_bullet_declaration_has_innermost_reference_ownership():
+    text = (
+        "- **FR-001**: Parent requirement.\n"
+        "  - **AC-001**: Nested criterion.\n"
+        "    Uses U-001.\n"
+    )
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == [
+        "FR-001",
+        "AC-001",
+    ]
+    assert [(reference.target_id, reference.owner_id) for reference in result.references] == [
+        ("U-001", "AC-001")
+    ]
+    assert not result.diagnostics
+
+
+def test_nested_heading_reference_uses_innermost_declaration_owner():
+    text = "## FR-001: Parent\n### AC-001: Child\nUse U-001.\n"
+    result = parse_identity_artifact(path="spec.md", role="requirements", text=text)
+    assert [declaration.element_id for declaration in result.declarations] == [
+        "FR-001",
+        "AC-001",
+    ]
+    assert [(reference.target_id, reference.owner_id) for reference in result.references] == [
+        ("U-001", "AC-001")
+    ]
 
 
 def test_qualified_cross_spec_references_are_diagnostic_not_local_bare_ids():
@@ -377,6 +453,26 @@ def test_qualified_cross_spec_references_are_diagnostic_not_local_bare_ids():
         "specs/002-other/spec.md#FR-001",
         "002-other::FR-002",
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "label"),
+    [
+        ("### U-001 Question without colon\n", "U-001"),
+        ("### U-001é: Unsupported suffix\n", "U-001é"),
+    ],
+)
+def test_unsupported_explicit_headings_are_diagnostic_not_references(
+    text: str, label: str
+):
+    result = parse_identity_artifact(path="unknowns.md", role="unknowns", text=text)
+    assert not result.declarations
+    assert not result.references
+    assert [diagnostic.code for diagnostic in result.diagnostics] == [
+        "unsupported_declaration"
+    ]
+    diagnostic = result.diagnostics[0]
+    assert text[diagnostic.span.start : diagnostic.span.end] == label
 
 
 @pytest.mark.parametrize(

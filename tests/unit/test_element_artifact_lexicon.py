@@ -106,6 +106,53 @@ def test_unsupported_legacy_lexicon_labels_do_not_disappear():
     assert "unsupported_lexicon_id" in _codes(result)
 
 
+def test_every_grammar_valid_unsupported_req_or_ac_label_is_diagnostic():
+    text = (
+        "ARTIFACT: SPEC\nTITLE: Unsupported labels\n\n"
+        "REQ: FR-FOO\nGIVEN: a condition\nWHEN: an event\n"
+        "THEN: the system MUST act\n\n"
+        "AC: AC-WORD\nGIVEN: a condition\nWHEN: an event\n"
+        "THEN: an outcome is visible\n"
+    )
+    result = parse_identity_artifact(
+        path="requirements.lexicon.md", role="lexicon", text=text
+    )
+    assert not result.declarations
+    assert [diagnostic.code for diagnostic in result.diagnostics] == [
+        "unsupported_lexicon_id",
+        "unsupported_lexicon_id",
+    ]
+    assert [text[item.span.start : item.span.end] for item in result.diagnostics] == [
+        "FR-FOO",
+        "AC-WORD",
+    ]
+
+
+def test_valid_indented_lexicon_blocks_preserve_declarations_and_boundaries():
+    text = (
+        "ARTIFACT: SPEC\nTITLE: Indented\n\n"
+        "  REQ: FR-001\n  GIVEN: a condition\n  WHEN: an event\n"
+        "  THEN: the system MUST act\n\n"
+        "  AC: AC-001\n  GIVEN: a condition\n  WHEN: an event\n"
+        "  THEN: the result is visible\n"
+    )
+    result = parse_identity_artifact(
+        path="requirements.lexicon.md", role="lexicon", text=text
+    )
+    assert [
+        (declaration.element_id, declaration.caption)
+        for declaration in result.declarations
+    ] == [
+        ("FR-001", "the system MUST act"),
+        ("AC-001", "the result is visible"),
+    ]
+    assert result.declarations[0].content.startswith("  REQ: FR-001\n")
+    assert result.declarations[0].content.endswith("\n\n")
+    assert result.declarations[1].content.startswith("  AC: AC-001\n")
+    assert not result.references
+    assert not result.diagnostics
+
+
 def test_lexicon_definition_duplicates_are_retained_in_source_order():
     duplicate = VALID + (
         "\nREQ: FR-000001\nGIVEN: another player\nWHEN: movement repeats\n"

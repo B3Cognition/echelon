@@ -35,14 +35,18 @@ Heading blocks end at the next heading of the same or higher level. The known
 `### Resolution Guidance` companion remains inside an issue occurrence, while
 an unrelated same-level heading and report footer remain outside it. ID bullets
 and task rows own indented continuation content and internal blank lines, but
-not the next nonblank unindented block.
+not the next nonblank block at their own indentation. A supported nested ID
+bullet is a child declaration as well as part of its parent's exact source
+block; references in overlapping blocks use the innermost declaration owner.
 
 HTML comments, frontmatter, matching backtick or tilde fences, blockquotes, and
-indented code do not carry declaration or reference authority. Inline code
-remains active, so a local path such as `investigation/U-001.md` retains the
-exact `U-001` reference. Numeric ranges use one interval reference and are
-never expanded. Task `req=` and `depends=` references are classified as
-`requires` and `depends`; `INFRA`, `UNMAPPED`, and `none` are metadata
+indented code do not carry declaration or reference authority. Four-space
+continuation paragraphs and nested lists owned by a list item remain active;
+deeper indented code does not. Inline code remains active, so a local path such
+as `investigation/U-001.md` retains the exact `U-001` reference. Numeric ranges
+use one interval reference and are never expanded. Task `req=` and `depends=`
+ranges retain that field's `requires` or `depends` relation and are never split
+into endpoint references. `INFRA`, `UNMAPPED`, and `none` are metadata
 sentinels rather than element IDs. Investigation and evidence references have
 the `evidence` relation, but that relation does not verify evidence or bind it
 to any revision.

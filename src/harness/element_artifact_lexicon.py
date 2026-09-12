@@ -15,6 +15,7 @@ from harness.element_artifacts import (
 )
 from harness.element_artifact_markdown import (
     _ID_CORE,
+    _NUMERIC_OR_COMPOSITE,
     _duplicate_diagnostics,
     _lines,
     _references,
@@ -22,16 +23,16 @@ from harness.element_artifact_markdown import (
 )
 
 
-_BLOCK_RE = re.compile(
-    rf"^(?P<type>REQ|AC|ERROR|RULE|INPUT|CLAIM|EVIDENCE|LIMIT|TBR):[ \t]*(?P<id>{_ID_CORE})[ \t]*$",
-    re.ASCII,
+_ANY_BLOCK_RE = re.compile(
+    r"^[ \t]*(?:REQ|AC|ERROR|RULE|INPUT|CLAIM|EVIDENCE|LIMIT|TBR):"
 )
-_ANY_BLOCK_RE = re.compile(r"^(?:REQ|AC|ERROR|RULE|INPUT|CLAIM|EVIDENCE|LIMIT|TBR):")
 _GRAMMAR_BLOCK_RE = re.compile(
-    r"^(?P<type>REQ|AC|ERROR|RULE|INPUT|CLAIM|EVIDENCE|LIMIT|TBR):[ \t]*(?P<id>[A-Za-z][A-Za-z0-9_-]*)[ \t]*$",
+    r"^[ \t]*(?P<type>REQ|AC|ERROR|RULE|INPUT|CLAIM|EVIDENCE|LIMIT|TBR):[ \t]*(?P<id>[A-Za-z][A-Za-z0-9_-]*)[ \t]*$",
     re.ASCII,
 )
 _MANAGED_ID_RE = re.compile(rf"^{_ID_CORE}$", re.ASCII)
+_REQ_ID_RE = re.compile(rf"^(?:FR|NFR)-{_NUMERIC_OR_COMPOSITE}$", re.ASCII)
+_AC_ID_RE = re.compile(rf"^AC-{_NUMERIC_OR_COMPOSITE}$", re.ASCII)
 
 
 def parse_lexicon_source(text: str, role: str):
@@ -53,7 +54,6 @@ def parse_lexicon_source(text: str, role: str):
     disposition = "definition" if role == "lexicon" else "projection"
     starts = [index for index, line in enumerate(lines) if _ANY_BLOCK_RE.match(line.body)]
     for index, line in enumerate(lines):
-        block_match = _BLOCK_RE.match(line.body)
         managed_match = _GRAMMAR_BLOCK_RE.match(line.body)
         if managed_match is None:
             continue
@@ -62,9 +62,8 @@ def parse_lexicon_source(text: str, role: str):
         label_start = line.start + managed_match.start("id")
         label_span = _span(label_start, label_start + len(element_id), line_starts)
         supported = (
-            (block_type == "REQ" and element_id.startswith(("FR-", "NFR-")))
-            or (block_type == "AC" and element_id.startswith("AC-"))
-        )
+            block_type == "REQ" and _REQ_ID_RE.fullmatch(element_id) is not None
+        ) or (block_type == "AC" and _AC_ID_RE.fullmatch(element_id) is not None)
         if block_type in {"REQ", "AC"} and not supported:
             diagnostics.append(ArtifactDiagnostic(
                 "unsupported_lexicon_id", label_span,
@@ -78,8 +77,6 @@ def parse_lexicon_source(text: str, role: str):
             ))
             continue
         if block_type not in {"REQ", "AC"}:
-            continue
-        if block_match is None:
             continue
         later_starts = [candidate for candidate in starts if candidate > index]
         block_end = lines[later_starts[0]].start if later_starts else len(text)
@@ -109,8 +106,9 @@ def _then_caption(lines, block_index: int, block_end: int) -> str:
     for line in lines[block_index + 1:]:
         if line.start >= block_end:
             break
-        if line.body.startswith("THEN:"):
-            return line.body[len("THEN:"):].strip()
+        body = line.body.lstrip(" \t")
+        if body.startswith("THEN:"):
+            return body[len("THEN:"):].strip()
     return ""
 
 
@@ -118,7 +116,9 @@ def _lexicon_relation(reference: ElementReference, lines) -> ElementReference:
     containing_line = next(
         (line for line in lines if line.start <= reference.span.start < line.end), None
     )
-    if containing_line is None or not containing_line.body.startswith("DEPENDS:"):
+    if containing_line is None or not containing_line.body.lstrip(" \t").startswith(
+        "DEPENDS:"
+    ):
         return reference
     return ElementReference(
         target_id=reference.target_id,
