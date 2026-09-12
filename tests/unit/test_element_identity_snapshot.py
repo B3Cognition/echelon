@@ -58,6 +58,20 @@ def record_digest(method, row):
     return hashlib.sha256(payload.encode("ascii")).hexdigest()
 
 
+def expected_revision(element_id, revision, subject, content, status, reason, operation_id):
+    return {
+        "spec_id": "demo",
+        "element_id": element_id,
+        "revision": revision,
+        "subject": subject,
+        "content": content,
+        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "status": status,
+        "reason": reason,
+        "operation_id": operation_id,
+    }
+
+
 def test_snapshot_retains_old_revision_and_evidence_after_retirement(tmp_path):
     store = IdentityStore.initialize(tmp_path)
     label, = store.reserve(spec_id="demo", kind="FR", operation_id="reserve", count=1)
@@ -185,54 +199,96 @@ def test_complete_lifecycle_lineage_and_binding_rows_retain_original_values(tmp_
         parse_int=lambda token: pytest.fail(f"numeric JSON token: {token}"),
         parse_float=lambda token: pytest.fail(f"numeric JSON token: {token}"),
     )
-    assert {row["kind"] for row in decoded["entities"]} == {"AC", "FR", "NFR", "ISS", "U", "A", "T"}
-    assert {row["element_id"] for row in decoded["entities"]}.issuperset({
-        "FR-001", "U-legacy", "NFR-composite.1", "ISS-old", "A-legacy", "T-S01",
-        "AC-legacy-999999",
-    })
-    imported = {row["element_id"]: row for row in decoded["entities"] if row["status"] == "imported"}
-    assert imported["FR-001"] == {
-        "spec_id": "demo", "element_id": "FR-001", "kind": "FR", "subject": "Legacy FR",
-        "ordinal": "1", "status": "imported", "revision": None,
-    }
-    assert next(row for row in decoded["entities"] if row["element_id"] == "U-legacy") == {
-        "spec_id": "demo", "element_id": "U-legacy", "kind": "U", "subject": "Legacy U",
-        "ordinal": None, "status": "active", "revision": "1",
-    }
-    nfr_revisions = [row for row in decoded["revisions"] if row["element_id"] == nfr_label]
-    assert nfr_revisions == [
-        {"spec_id": "demo", "element_id": nfr_label, "revision": "1", "subject": "Latency",
-         "content": "First latency body",
-         "content_sha256": hashlib.sha256(b"First latency body").hexdigest(),
-         "status": "active", "reason": None, "operation_id": "create-nfr"},
-        {"spec_id": "demo", "element_id": nfr_label, "revision": "2", "subject": "Latency",
-         "content": "Second latency body",
-         "content_sha256": hashlib.sha256(b"Second latency body").hexdigest(),
-         "status": "active", "reason": None, "operation_id": "revise-nfr"},
-        {"spec_id": "demo", "element_id": nfr_label, "revision": "3", "subject": "Latency",
-         "content": "Second latency body",
-         "content_sha256": hashlib.sha256(b"Second latency body").hexdigest(),
-         "status": "retired", "reason": "superseded constraint", "operation_id": "retire-nfr"},
+    assert decoded["entities"] == [
+        {"spec_id": "demo", "element_id": "A-legacy", "kind": "A",
+         "subject": "Legacy assumption", "ordinal": None, "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": ac_labels[0], "kind": "AC", "subject": "Root",
+         "ordinal": "1", "status": "superseded", "revision": "2"},
+        {"spec_id": "demo", "element_id": ac_labels[1], "kind": "AC", "subject": "Replacement",
+         "ordinal": "2", "status": "superseded", "revision": "2"},
+        {"spec_id": "demo", "element_id": ac_labels[2], "kind": "AC", "subject": "Left",
+         "ordinal": "3", "status": "superseded", "revision": "2"},
+        {"spec_id": "demo", "element_id": ac_labels[3], "kind": "AC", "subject": "Right",
+         "ordinal": "4", "status": "superseded", "revision": "2"},
+        {"spec_id": "demo", "element_id": "AC-legacy-999999", "kind": "AC",
+         "subject": "Legacy criterion", "ordinal": None, "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": "FR-001", "kind": "FR", "subject": "Legacy FR",
+         "ordinal": "1", "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": fr_label, "kind": "FR", "subject": "Merged",
+         "ordinal": "2", "status": "active", "revision": "1"},
+        {"spec_id": "demo", "element_id": issue_label, "kind": "ISS", "subject": "Broken arrows",
+         "ordinal": "1", "status": "retired", "revision": "3"},
+        {"spec_id": "demo", "element_id": "ISS-old", "kind": "ISS", "subject": "Legacy issue",
+         "ordinal": None, "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": nfr_label, "kind": "NFR", "subject": "Latency",
+         "ordinal": "1", "status": "retired", "revision": "3"},
+        {"spec_id": "demo", "element_id": "NFR-composite.1", "kind": "NFR",
+         "subject": "Opaque NFR", "ordinal": None, "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": "T-S01", "kind": "T", "subject": "Legacy task",
+         "ordinal": None, "status": "imported", "revision": None},
+        {"spec_id": "demo", "element_id": "U-legacy", "kind": "U", "subject": "Legacy U",
+         "ordinal": None, "status": "active", "revision": "1"},
     ]
-    assert all(set(row) == {
-        "spec_id", "element_id", "revision", "subject", "content", "content_sha256",
-        "status", "reason", "operation_id",
-    } for row in decoded["revisions"])
-    assert [
-        (row["predecessor_id"], row["predecessor_revision"], row["successor_id"],
-         row["successor_revision"], row["kind"], row["reason"], row["operation_id"])
-        for row in decoded["lineage"]
-    ] == [
-        (ac_labels[0], "1", ac_labels[1], "1", "replace", "replacement reason", "replace"),
-        (ac_labels[1], "1", ac_labels[2], "1", "split", "split reason", "split"),
-        (ac_labels[1], "1", ac_labels[3], "1", "split", "split reason", "split"),
-        (ac_labels[2], "1", fr_label, "1", "merge", "merge reason", "merge"),
-        (ac_labels[3], "1", fr_label, "1", "merge", "merge reason", "merge"),
+    assert decoded["revisions"] == [
+        expected_revision(ac_labels[0], "1", "Root", "Root body", "active", None, "create-ac"),
+        expected_revision(
+            ac_labels[0], "2", "Root", "Root body", "superseded", "replacement reason", "replace",
+        ),
+        expected_revision(
+            ac_labels[1], "1", "Replacement", "Replacement body", "active", None, "replace",
+        ),
+        expected_revision(
+            ac_labels[1], "2", "Replacement", "Replacement body", "superseded", "split reason", "split",
+        ),
+        expected_revision(ac_labels[2], "1", "Left", "Left body", "active", None, "split"),
+        expected_revision(
+            ac_labels[2], "2", "Left", "Left body", "superseded", "merge reason", "merge",
+        ),
+        expected_revision(ac_labels[3], "1", "Right", "Right body", "active", None, "split"),
+        expected_revision(
+            ac_labels[3], "2", "Right", "Right body", "superseded", "merge reason", "merge",
+        ),
+        expected_revision(fr_label, "1", "Merged", "Merged body", "active", None, "merge"),
+        expected_revision(
+            issue_label, "1", "Broken arrows", "Repair arrows.", "active", None, "create-iss",
+        ),
+        expected_revision(
+            issue_label, "2", "Broken arrows", "Repair arrows with proof.", "active", None, "revise-iss",
+        ),
+        expected_revision(
+            issue_label, "3", "Broken arrows", "Repair arrows with proof.", "retired", "fixed", "retire-iss",
+        ),
+        expected_revision(
+            nfr_label, "1", "Latency", "First latency body", "active", None, "create-nfr",
+        ),
+        expected_revision(
+            nfr_label, "2", "Latency", "Second latency body", "active", None, "revise-nfr",
+        ),
+        expected_revision(
+            nfr_label, "3", "Latency", "Second latency body", "retired",
+            "superseded constraint", "retire-nfr",
+        ),
+        expected_revision(
+            "U-legacy", "1", "Legacy U", "Assessed unknown body", "active", None, "adopt",
+        ),
     ]
-    assert all(set(row) == {
-        "spec_id", "predecessor_id", "predecessor_revision", "successor_id",
-        "successor_revision", "kind", "reason", "operation_id",
-    } for row in decoded["lineage"])
+    assert decoded["lineage"] == [
+        {"spec_id": "demo", "predecessor_id": ac_labels[0], "predecessor_revision": "1",
+         "successor_id": ac_labels[1], "successor_revision": "1", "kind": "replace",
+         "reason": "replacement reason", "operation_id": "replace"},
+        {"spec_id": "demo", "predecessor_id": ac_labels[1], "predecessor_revision": "1",
+         "successor_id": ac_labels[2], "successor_revision": "1", "kind": "split",
+         "reason": "split reason", "operation_id": "split"},
+        {"spec_id": "demo", "predecessor_id": ac_labels[1], "predecessor_revision": "1",
+         "successor_id": ac_labels[3], "successor_revision": "1", "kind": "split",
+         "reason": "split reason", "operation_id": "split"},
+        {"spec_id": "demo", "predecessor_id": ac_labels[2], "predecessor_revision": "1",
+         "successor_id": fr_label, "successor_revision": "1", "kind": "merge",
+         "reason": "merge reason", "operation_id": "merge"},
+        {"spec_id": "demo", "predecessor_id": ac_labels[3], "predecessor_revision": "1",
+         "successor_id": fr_label, "successor_revision": "1", "kind": "merge",
+         "reason": "merge reason", "operation_id": "merge"},
+    ]
 
     expected_claims = [row | {"payload_sha256": record_digest("reference_claims", row)}
                        for row in claim_receipt]
