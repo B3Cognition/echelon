@@ -85,8 +85,19 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   passed; malformed JSON decoder error correction: 36 admin tests passed.
   Query-only integrity reports and explicit initialize/upgrade/backup/restore/
   subject-only import operations do not activate managed identities or assess
-  imported history. The next checkpoint inventories explicitly supplied
-  historical snapshots and reports conflicts without guessing reconciliation.
+  imported history.
+- Historical identity inventory: implemented in `bd5f1be6`, corrected in
+  `bcaf569e`, and independently reviewed. Required compatibility suite: 736
+  passed; exact malformed-declaration spans and issue-range mapping correction:
+  704 covering tests passed. Explicit captured snapshots retain hashes, source
+  spans and unassessed references while reporting competing definitions,
+  disappearances and issue correspondence needs. Unsupported explicit headings
+  and bullets now reject rather than silently disappear. This report is not
+  authenticated history reconciliation. A reproduced bare-reference limitation
+  (`FR-001.other` / `FR-001-extra` read as `FR-001`) remains a blocker for complete
+  reference enforcement; local filename and sentence-punctuation compatibility
+  require an explicit lexical/locator contract before that gap is closed.
+  Transaction composition for lifecycle/evidence updates is the next checkpoint.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
