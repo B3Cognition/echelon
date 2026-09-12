@@ -105,6 +105,38 @@ def _has_ancestor(path: str, candidates: set[str]) -> bool:
     return any(Path(*parts[:length]).as_posix() in candidates for length in range(1, len(parts)))
 
 
+def _validate_tree_layout(
+    root: str,
+    exists: bool,
+    directory_paths: list[str],
+    file_paths: list[str],
+) -> None:
+    if directory_paths != sorted(directory_paths) or len(set(directory_paths)) != len(directory_paths):
+        _invalid()
+    if file_paths != sorted(file_paths) or len(set(file_paths)) != len(file_paths):
+        _invalid()
+    if not exists:
+        if directory_paths or file_paths:
+            _invalid()
+    else:
+        directory_set = set(directory_paths)
+        if directory_paths.count(root) != 1:
+            _invalid()
+        for path in directory_paths:
+            if not _is_at_or_below(path, root):
+                _invalid()
+            if path != root and Path(path).parent.as_posix() not in directory_set:
+                _invalid()
+        for path in file_paths:
+            if not _is_at_or_below(path, root) or Path(path).parent.as_posix() not in directory_set:
+                _invalid()
+        if set(file_paths) & directory_set:
+            _invalid()
+        all_paths = set(directory_paths) | set(file_paths)
+        if any(_has_ancestor(path, set(file_paths)) for path in all_paths):
+            _invalid()
+
+
 def _validate_targets(operations: tuple[PublicationOperationSnapshot, ...]) -> None:
     previous: str | None = None
     seen_parts: set[tuple[str, ...]] = set()
@@ -149,30 +181,7 @@ def _tree_value(tree: object) -> tuple[dict[str, object], dict[str, tuple[Public
         file_values.append({"path": path, "image": image})
         file_paths.append(path)
         observations[path] = (item.image, item.content)
-    if directory_paths != sorted(directory_paths) or len(set(directory_paths)) != len(directory_paths):
-        _invalid()
-    if file_paths != sorted(file_paths) or len(set(file_paths)) != len(file_paths):
-        _invalid()
-    if not tree.exists:
-        if directory_paths or file_paths:
-            _invalid()
-    else:
-        directory_set = set(directory_paths)
-        if directory_paths.count(root) != 1:
-            _invalid()
-        for path in directory_paths:
-            if not _is_at_or_below(path, root):
-                _invalid()
-            if path != root and Path(path).parent.as_posix() not in directory_set:
-                _invalid()
-        for path in file_paths:
-            if not _is_at_or_below(path, root) or Path(path).parent.as_posix() not in directory_set:
-                _invalid()
-        if set(file_paths) & directory_set:
-            _invalid()
-        all_paths = set(directory_paths) | set(file_paths)
-        if any(_has_ancestor(path, set(file_paths)) for path in all_paths):
-            _invalid()
+    _validate_tree_layout(root, tree.exists, directory_paths, file_paths)
     return (
         {
             "path": root,

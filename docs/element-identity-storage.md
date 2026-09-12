@@ -272,6 +272,54 @@ recapture under the existing guarded scope, and compare against that authority
 while coordinating source, ledger and graph completion. No accepted-source head,
 schema, provider API or controller activation is introduced here.
 
+## Selected source manifest wire validation
+
+`harness.squad_source_manifest_codec` is a pure, inactive representation boundary
+for the exact metadata wire already emitted by `snapshot_source_manifest`.
+`decode_source_manifest(payload)` accepts only the canonical ASCII version-1 JSON
+shape and returns a fresh existing `SourceManifestSnapshot` containing the
+unchanged payload and its lowercase, unprefixed SHA-256. It does not reconstruct
+source bytes, an initial publication capture, a publication snapshot or a receipt.
+`validate_source_manifest(snapshot)` requires the exact existing frozen snapshot
+type, decodes its payload, validates the supplied digest and returns the detached
+decoded value. The intentionally simple snapshot constructor remains unchanged.
+
+The decoder closes every object key set and requires exact JSON arrays and scalar
+types. It rejects duplicate keys, numeric or Boolean substitutes, unknown aliases,
+alternate versions, noncanonical whitespace, ordering, escaping, literal non-ASCII
+text and trailing data. Tree existence remains the exact strings `"true"` and
+`"false"`; modes remain canonical decimal permission strings; paths retain the
+existing exact project-relative UTF-8 grammar. File images contain only `kind`,
+`sha256` and `mode`. Present files require the publisher's lowercase SHA-256 rule
+and canonical mode range. Missing images require both null fields and are valid
+only for explicitly selected files, never for tree membership. There is no
+`content_base64` field in this metadata representation.
+
+Tree directory and file sequences retain the same sorted, unique, component-aware
+layout rules as initial source-baseline encoding. Both codecs call one shared
+private layout validator for absent-tree emptiness, root membership, explicit
+directory parents, path containment, collisions and regular-file ancestors. The
+initial codec still independently validates every exact dataclass, actual byte,
+hash and mode before that shared layout check; factoring the hierarchy rules does
+not weaken its pre-promotion byte-retention boundary.
+
+Both public wire functions normalize malformed JSON, Unicode, structure, type,
+mode, hash, path, selection and recursion failures to bounded
+`PublicationError("manifest_invalid")` without retaining untrusted exception
+context. They do not access the filesystem, SQLite, a provider, network, clock or
+randomness and do not mutate the payload or supplied snapshot.
+
+Canonical decoding is validation of a metadata claim, not authentication. A
+caller can replace a file SHA-256, canonically re-encode the payload and obtain a
+different self-consistent decoded fingerprint because this wire deliberately has
+no original bytes or accepted authority to compare. Such a value is not an
+accepted baseline, proof of actual-source integrity, publication permission or a
+provenance receipt. Durable accepted-source heads still require explicit
+namespace/spec/run/source context, compare-and-swap ownership and binding to the
+guarded publication receipt. No store/schema/source-head registration, capture,
+publisher, controller, provider, graph or producer path is added or activated by
+this codec.
+
 ## Expected final publication source projection
 
 `harness.squad_source_projection.project_publication_source_manifest(initial)`
