@@ -104,6 +104,14 @@ class AICodingCliProvider:
             )
         return self._constrained_execution_configuration_id
 
+    def constrained_model_for_tier(self, tier: str) -> str | None:
+        """Resolve a neutral model tier through the selected backend."""
+        resolver = getattr(self._backend, "model_for_tier", None)
+        if not callable(resolver):
+            return None
+        value = resolver(tier)
+        return value if isinstance(value, str) and value else None
+
     @property
     def capabilities(self) -> frozenset[ProviderCapability]:
         if self._cli == "openai-compatible":

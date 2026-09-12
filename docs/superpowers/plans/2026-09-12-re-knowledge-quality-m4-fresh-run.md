@@ -35,12 +35,12 @@
 - Test: `tests/unit/test_re_v2_knowledge_creation.py`
 - Test: `tests/integration/test_re_v2_knowledge_creation.py`
 
-- [ ] Write failing tests for a two-source fresh request using scripted provider replies. Exercise real snapshot capture, evidence screening, acquisition, discovery, independent review, activation, preparation, manifest-last publication, crash/replay, and exact-source closure.
-- [ ] Load the neutral discovery and review role plus phase contracts through `ProsaicPromptLoader`; derive the configured strong model through the shared provider mapping, with no direct Codex selection or fallback.
+- [x] Write failing tests for a two-source fresh request using scripted provider replies. Exercise real snapshot capture, evidence screening, acquisition, discovery, independent review, activation, preparation, manifest-last publication, crash/replay, and exact-source closure.
+- [x] Load the neutral discovery and review role plus phase contracts through `ProsaicPromptLoader`; derive the configured strong model through the shared provider mapping, with no direct Codex selection or fallback.
 - [ ] Construct one `KnowledgeDispatchAccount` for the logical request, one bounded acquisition/controller pair per selected source, and finite producer/reviewer repair turns. Reopening must reuse captured/applied work and must never reset attempts.
-- [ ] Persist a creation intent before provider dispatch and publish the reviewed protocol-2.8 child only after every source has reviewed authority. A malformed/unsafe result, unavailable provider, exhausted budget, or unsettled dispatch returns one closed reason and preserves recoverable state.
-- [ ] Transfer the discovery/review account exactly once into analysis resource authority. Ensure analysis, synthesis, and publication cannot each receive the original full ceiling independently.
-- [ ] Run `pytest -q tests/unit/test_re_v2_knowledge_creation.py tests/integration/test_re_v2_knowledge_creation.py tests/integration/test_re_v2_knowledge_revision_recovery.py`.
+- [x] Persist a creation intent before provider dispatch and publish the reviewed protocol-2.8 child only after every source has reviewed authority. A malformed/unsafe result, unavailable provider, exhausted budget, or unsettled dispatch returns one closed reason and preserves recoverable state.
+- [x] Transfer the discovery/review account exactly once into analysis resource authority. Ensure analysis cannot receive a fresh copy of the original ceiling; synthesis sharing is completed in Task 3.
+- [x] Run `pytest -q tests/unit/test_re_v2_knowledge_creation.py tests/integration/test_re_v2_knowledge_creation.py tests/integration/test_re_v2_knowledge_revision_recovery.py` (101 creation/LLM/recovery tests passed in the combined run).
 - [ ] Commit: `feat(re): create reviewed analysis from declared sources`.
 
 ## Task 3: Route the ordinary run and refresh journeys

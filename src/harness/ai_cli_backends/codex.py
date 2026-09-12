@@ -45,6 +45,12 @@ class CodexCliBackend:
         self._config = config
         self._bin = shutil.which("codex") or "codex"
 
+    def model_for_tier(self, tier: str) -> str | None:
+        """Resolve neutral Prosaic model intent inside the provider adapter."""
+        if not isinstance(tier, str):
+            return None
+        return _MODEL_TIER_TO_CODEX_MODEL.get(tier.strip().lower())
+
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
         return self._run_codex(request, use_final_message=True)
 

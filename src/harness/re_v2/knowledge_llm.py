@@ -42,19 +42,22 @@ class KnowledgeLLMBackend:
         self,
         config: HarnessConfig,
         *,
-        model: str,
+        model: str | None = None,
+        model_tier: str | None = None,
         screen_output: Callable[[bytes], bytes],
         max_capture_bytes: int,
     ) -> None:
         if (
             not isinstance(config, HarnessConfig)
-            or type(model) is not str
-            or not model
             or not callable(screen_output)
             or type(max_capture_bytes) is not int
             or max_capture_bytes <= 0
         ):
             raise KnowledgeLLMConfigurationError("invalid-knowledge-llm-configuration")
+        if (model is None) == (model_tier is None):
+            raise KnowledgeLLMConfigurationError(
+                "choose exactly one explicit model or neutral model tier"
+            )
         provider = AICodingCliProvider(deepcopy(config))
         capability_id = provider.constrained_execution_contract_id
         if capability_id is None:
@@ -62,6 +65,15 @@ class KnowledgeLLMBackend:
                 f"configured provider '{provider.provider_id}' lacks "
                 "constrained-execution capability"
             )
+        if model_tier is not None:
+            model = provider.constrained_model_for_tier(model_tier)
+            if model is None:
+                raise KnowledgeLLMConfigurationError(
+                    f"configured provider '{provider.provider_id}' cannot resolve "
+                    f"the neutral model tier '{model_tier}' for constrained execution"
+                )
+        if type(model) is not str or not model:
+            raise KnowledgeLLMConfigurationError("invalid-knowledge-llm-configuration")
         self._provider = provider
         self._model = model
         self._screen_output = screen_output

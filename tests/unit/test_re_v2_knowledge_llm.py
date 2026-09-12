@@ -120,6 +120,24 @@ def _configured_backend(config, boundary, *, model="gpt-5.6-sol", capture=262_14
     )
 
 
+@pytest.mark.unit
+def test_configured_backend_resolves_neutral_strong_tier_without_codex_wiring(
+    tmp_path,
+):
+    _phase, _paths, boundary, *_ = _phase_setup(tmp_path)
+    module = importlib.import_module("harness.re_v2.knowledge_llm")
+
+    backend = module.KnowledgeLLMBackend(
+        _config("codex"),
+        model_tier="strong",
+        screen_output=boundary.screen_output,
+        max_capture_bytes=262_144,
+    )
+
+    assert backend.contract.provider_id == "codex"
+    assert backend.contract.model_id == "gpt-5.6-sol"
+
+
 def _production_setup(tmp_path, monkeypatch, *, tokens=500_000):
     phase, paths, boundary, *_ = _phase_setup(tmp_path)
     backend = _configured_backend(_config(), boundary)
