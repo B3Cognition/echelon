@@ -1547,6 +1547,37 @@ class _InspectionPaths:
         self.directories: list[tuple[int, str, int, str]] = []
         self.missing: list[tuple[int, str, str]] = []
         self.files: list[tuple[int, _PinnedRegular, str]] = []
+        self.memberships: list[
+            tuple[int, tuple[str, ...], tuple[int, int, int], str]
+        ] = []
+
+    @staticmethod
+    def _entry_names(directory_fd: int, *, code: str) -> tuple[str, ...]:
+        try:
+            names = os.listdir(directory_fd)
+        except (OSError, TypeError, NotImplementedError):
+            _raise(code)
+        for name in names:
+            if type(name) is not str:
+                _raise("manifest_invalid")
+            try:
+                name.encode("utf-8")
+            except UnicodeError:
+                _raise("manifest_invalid")
+            relative = _normalize_relative_path(name)
+            if len(relative.parts) != 1:
+                _raise("manifest_invalid")
+        return tuple(sorted(names))
+
+    def membership(self, directory_fd: int, *, code: str) -> tuple[tuple[str, ...], int]:
+        """Retain the complete name set and original directory mode."""
+        try:
+            identity = _directory_identity(os.fstat(directory_fd))
+        except OSError:
+            _raise(code)
+        names = self._entry_names(directory_fd, code=code)
+        self.memberships.append((directory_fd, names, identity, code))
+        return names, stat.S_IMODE(identity[2])
 
     def directory(
         self, root_fd: int, parts: tuple[str, ...], *, code: str,
@@ -1622,6 +1653,36 @@ class _InspectionPaths:
             _verify_pinned_regular(
                 parent, pinned, missing_code=code, invalid_code=code
             )
+        for directory_fd, names, identity, code in self.memberships:
+            try:
+                current = _directory_identity(os.fstat(directory_fd))
+            except OSError:
+                _raise(code)
+            if current != identity or self._entry_names(directory_fd, code=code) != names:
+                _raise(code)
+
+
+@contextmanager
+def _project_inspection_scope(
+    project_root: Path,
+) -> Iterator[tuple[_InspectionPaths, int, int]]:
+    """Own retained root bindings and the existing descriptor-associated lock."""
+    _require_secure_posix()
+    with ExitStack() as resources:
+        paths = _InspectionPaths(resources)
+        filesystem_fd = _open_directory(
+            Path("/"), missing_code="publish_io", invalid_code="publish_io"
+        )
+        resources.callback(os.close, filesystem_fd)
+        project = _require_real_directory(project_root, code="manifest_invalid")
+        project_fd = paths.directory(
+            filesystem_fd, project.parts[1:], code="target_drift"
+        )
+        assert project_fd is not None
+        with _publication_exclusivity(project_root, expected_project_fd=project_fd):
+            # Includes replacement while acquiring the descriptor-bound lock.
+            paths.verify()
+            yield paths, filesystem_fd, project_fd
 
 
 def _read_pinned_bytes(pinned: _PinnedRegular, *, code: str) -> bytes:
@@ -1670,84 +1731,69 @@ class PreparedSquadPublication:
         expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
         if self._transaction_root != expected_root:
             _raise("manifest_invalid")
-        with ExitStack() as resources:
-            paths = _InspectionPaths(resources)
-            filesystem_fd = _open_directory(
-                Path("/"), missing_code="publish_io", invalid_code="publish_io"
+        with _project_inspection_scope(self._project_root) as scope:
+            paths, filesystem_fd, project_fd = scope
+            verified, pinned = _load_prepared_pinned(
+                self._project_root, self._squad_dir, marker
             )
-            resources.callback(os.close, filesystem_fd)
-            project = _require_real_directory(
-                self._project_root, code="manifest_invalid"
+            paths.resources.callback(pinned.close)
+            paths.verify()
+            squad_fd = paths.directory(
+                filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
             )
-            project_fd = paths.directory(
-                filesystem_fd, project.parts[1:], code="target_drift"
-            )
-            with _publication_exclusivity(
-                self._project_root, expected_project_fd=project_fd
-            ):
-                # Reject path replacement while acquiring the descriptor-bound lock.
-                paths.verify()
-                verified, pinned = _load_prepared_pinned(
-                    self._project_root, self._squad_dir, marker
+            assert project_fd is not None and squad_fd is not None
+            try:
+                squad_identity = _directory_identity(os.fstat(squad_fd))
+                pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
+            except OSError:
+                _raise("stage_corrupt")
+            if squad_identity != pinned_squad_identity:
+                _raise("stage_corrupt")
+            stage_bytes: dict[str, bytes] = {}
+            for name, stage in pinned.stages.items():
+                paths.directory(
+                    pinned.transaction_fd, Path(name).parts[:-1],
+                    code="stage_corrupt",
                 )
-                resources.callback(pinned.close)
-                paths.verify()
-                squad_fd = paths.directory(
-                    filesystem_fd, verified._squad_dir.parts[1:], code="stage_corrupt"
-                )
-                assert project_fd is not None and squad_fd is not None
-                try:
-                    squad_identity = _directory_identity(os.fstat(squad_fd))
-                    pinned_squad_identity = _directory_identity(os.fstat(pinned.squad_fd))
-                except OSError:
-                    _raise("stage_corrupt")
-                if squad_identity != pinned_squad_identity:
-                    _raise("stage_corrupt")
-                stage_bytes: dict[str, bytes] = {}
-                for name, stage in pinned.stages.items():
-                    paths.directory(
-                        pinned.transaction_fd, Path(name).parts[:-1],
-                        code="stage_corrupt",
+                stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
+            operations: list[PublicationOperationSnapshot] = []
+            for operation in verified._manifest["operations"]:
+                current = paths.current(project_fd, Path(operation["target"]))
+                if current is None:
+                    descriptor = PublicationImageDescriptor("missing", None, None)
+                    content = None
+                else:
+                    descriptor = PublicationImageDescriptor(
+                        "file", current.sha256, stat.S_IMODE(current.identity[2])
                     )
-                    stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
-                operations: list[PublicationOperationSnapshot] = []
-                for operation in verified._manifest["operations"]:
-                    current = paths.current(project_fd, Path(operation["target"]))
-                    if current is None:
-                        descriptor = PublicationImageDescriptor("missing", None, None)
-                        content = None
-                    else:
-                        descriptor = PublicationImageDescriptor(
-                            "file", current.sha256, stat.S_IMODE(current.identity[2])
-                        )
-                        content = _read_pinned_bytes(current, code="target_drift")
-                    postimage = _image_descriptor(operation["postimage"])
-                    post_bytes = (
-                        stage_bytes[operation["staged"]]
-                        if operation["action"] == "write" else None
-                    )
-                    if post_bytes is not None and (
-                        hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
-                    ):
-                        _raise("stage_corrupt")
-                    operations.append(PublicationOperationSnapshot(
-                        action=operation["action"], target=operation["target"],
-                        preimage=_image_descriptor(operation["preimage"]),
-                        postimage=postimage, current=descriptor,
-                        current_bytes=content, postimage_bytes=post_bytes,
-                    ))
-                snapshot = PublicationSnapshot(
-                    marker=marker,
-                    promoted_prefix=_authenticate_image_prefix(
-                        (op.preimage, op.postimage, op.current) for op in operations
-                    ),
-                    operations=tuple(operations),
+                    content = _read_pinned_bytes(current, code="target_drift")
+                postimage = _image_descriptor(operation["postimage"])
+                post_bytes = (
+                    stage_bytes[operation["staged"]]
+                    if operation["action"] == "write" else None
                 )
-                paths.verify()
-                pinned.verify()
-                yield snapshot
-                paths.verify()
-                pinned.verify()
+                if post_bytes is not None and (
+                    hashlib.sha256(post_bytes).hexdigest() != postimage.sha256
+                ):
+                    _raise("stage_corrupt")
+                operations.append(PublicationOperationSnapshot(
+                    action=operation["action"], target=operation["target"],
+                    preimage=_image_descriptor(operation["preimage"]),
+                    postimage=postimage, current=descriptor,
+                    current_bytes=content, postimage_bytes=post_bytes,
+                ))
+            snapshot = PublicationSnapshot(
+                marker=marker,
+                promoted_prefix=_authenticate_image_prefix(
+                    (op.preimage, op.postimage, op.current) for op in operations
+                ),
+                operations=tuple(operations),
+            )
+            paths.verify()
+            pinned.verify()
+            yield snapshot
+            paths.verify()
+            pinned.verify()
 
     def _publish_write(
         self,

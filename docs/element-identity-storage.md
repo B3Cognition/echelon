@@ -66,6 +66,57 @@ the integration owners. Rejected candidates remain diagnostics and cannot update
 canonical artifacts, graphs or memory. Published labels, including `FR-001` and
 historical composite IDs, retain their exact spelling.
 
+## Complete selected source-tree inspection boundary
+
+`harness.squad_source_snapshot.inspect_project_tree(project_root, tree_path)` is
+an inactive, read-only source-observation prerequisite. The caller explicitly
+selects one tree using an exact nonempty project-relative POSIX string. Empty
+paths, workspace-root aliases, dot/dot-dot components, backslashes and invalid
+encodings fail rather than normalize. Project roots retain the sealed inspector's
+existing real-directory validation, including supported relative `Path` inputs
+that validate to an absolute root. Symlinks do not grant access.
+
+`ProjectTreeSnapshot` contains the selected `path`, `exists`, and sorted tuples of
+frozen `ProjectDirectorySnapshot` and `ProjectFileSnapshot` values. Paths include
+the selected prefix. Directories include the root and all nested empty
+directories with exact permission modes. Files include every regular file,
+including hidden and non-Markdown files, with its exact bytes and existing
+`PublicationImageDescriptor` hash/mode. Binary, Unicode, CRLF, whitespace and empty
+content are preserved without truncation. A missing tree has `exists=False` and
+two empty tuples; a present empty tree has `exists=True` and its root directory.
+Missing trees and ancestors are never created.
+
+This reader and sealed inspection share one private owner for retained root
+descriptors, the existing publication lock, its borrowed expected-root descriptor
+association and immediate acquisition validation. Iterative no-follow traversal
+retains each directory and file identity and complete sorted directory membership.
+Directory/file/absence bindings, names, original directory modes and exact file
+images are checked before yielding and on normal exit. Additions, removals,
+renames, replacements, permission or content drift, and previously absent tree
+appearance invalidate successful capture. Unsupported entries and read/listing
+failures are rejected with bounded `PublicationError` codes, never skipped.
+Caller exceptions propagate unchanged, and all owned descriptors and the lock
+close on failure. Only initialization of the existing publication lock control
+path is an incidental filesystem effect.
+
+Success includes normal context exit. Keep the body short and controller-owned;
+do not run providers or recursively inspect, publish or discard inside it. These
+detached observations establish neither historical provenance nor semantic
+approval, a baseline reserved across provider execution, or canonical acceptance.
+There is no freshness claim after exit. A future controller must retain the
+successful before image, recapture and compare the complete tree before promotion,
+and bind the exact image set, edit scope and review to a durable intent.
+
+One selected tree does not cover all external semantic dependencies. Constitution,
+glossary and product inputs must be bound by a future complete-bundle owner under
+one coherent validation scope; sequential snapshots are not an atomic cross-tree
+read set. Candidate writing, provider dispatch, identity allocation/lifecycle/
+binding, controller routing, publication promotion and activation are unchanged.
+Existing Phase A completion transactions, candidate isolation and repair remain
+the integration owners. Rejected candidates stay diagnostic and cannot update
+canonical artifacts, graphs or memory. Published labels, including `FR-001` and
+historical composite IDs, remain exactly as published.
+
 ## Strict request recovery codec
 
 `harness.element_identity_request_codec` is a pure, inactive compatibility helper
