@@ -45,8 +45,12 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   storage/lifecycle/process tests: 258 passed, with one unchanged capacity case
   deselected. Preview shares application rules without mutating history or
   reserving a publication baseline.
-- Offline discovery candidate preflight: next checkpoint, using the sanitized
-  smoke fixtures and explicit edit scope. It will not activate publication.
+- Offline discovery candidate preflight: implemented in `547ecd03`, corrected
+  in `d5d73a1a`, and independently reviewed. Initial combined tests: 392 passed;
+  caption/subject correction: 182 covering tests passed. Sanitized smoke
+  reassignment/removal rejects without registry effects. Captured inputs are
+  not yet authenticated by publication, and structural checks are not semantic
+  approval. General requirement/task definition preflight is the next checkpoint.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
