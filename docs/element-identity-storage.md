@@ -970,6 +970,94 @@ document maxima. Independently advancing restored copies must not be merged or
 treated as one allocation authority; they share identity/epoch and can issue
 overlapping future ordinals.
 
+## Opt-in retained-history graph projection
+
+`echelon.spec_graph_identity.project_identity_history(graph, snapshot)` is a pure
+helper accepting exact `SpecArtifactGraph` and `IdentityHistorySnapshot` values.
+It returns a detached graph; it does not capture the store, read source files,
+query memory, write a graph, or activate any producer. Callers must independently
+authenticate the intended workspace/epoch authority and source graph. Canonical
+JSON, a self-consistent history hash, a matching label, and a ledger source path
+do not authenticate those associations or certify current source content.
+
+The helper checks the canonical ASCII snapshot hash, strict version-1 string
+fields and closed row shapes, namespace UUIDs, exact spec binding, entity and
+revision targets, head consistency, content/binding digests, issue fingerprints,
+and original lineage associations. It is a derived view, not a replacement for
+the capture API's full store audit or canonical-source and semantic review.
+Malformed inputs fail with a bounded `SpecGraphError` without modifying inputs.
+IDs, ordinals and revisions remain strings, including wide decimal values and
+legacy padding/composites; unrelated numeric graph metadata remains numeric.
+
+The retained Spec gains exactly:
+
+```json
+{"identity_projection":{"version":"1","workspace_uuid":"<uuid>","epoch_uuid":"<uuid>","history_sha256":"<snapshot.sha256>"}}
+```
+
+One required `GraphInput` has role `identity_history`, hash
+`sha256:<snapshot.sha256>` and path
+`identity://<workspace_uuid>/<epoch_uuid>/<URL-quoted-spec-id>`, with the spec ID
+quoted using `quote(spec_id, safe="")`. This is a virtual history observation,
+not a digest of mutable SQLite bytes. Global graph schema and node-projection
+versions remain unchanged; this component uses its own string version `"1"`.
+Rebuild from a fresh source graph and complete snapshot: an already projected
+graph, generated history keys/relationships, or conflicting virtual input path
+is rejected, rather than serving as a retry input.
+
+Existing `_scope_node_id` keys remain `task:<spec>:<T-label>` for tasks and
+`req:<spec>:<label>` otherwise. FR/NFR/AC map to Requirement, T to Task, U to
+Unknown, A to Assumption and ISS to Issue. All retained entities are represented,
+including terminal and imported entities absent from current Markdown. Each has
+an `identity` property with exactly `workspace_uuid`, `epoch_uuid`, `kind`,
+`ordinal`, `subject`, `status`, `revision`, and `rendered`. `rendered` means only
+that the entity node existed in the supplied graph. Original task-progress
+status and source properties remain intact. Added entities contain only their
+usual human label property (`requirement_id`, `task_id`, or `element_id`) and
+`identity`; source content/lines are not invented.
+
+Generated keys concatenate the following prefix with `_canonical_digest` of
+`[workspace_uuid, epoch_uuid, spec_id, ...suffix]`, without its `sha256:` prefix:
+
+| Node type | Key prefix | Suffix values |
+| --- | --- | --- |
+| ElementRevision | `identity-revision:` | `element_id`, `revision` |
+| ReferenceClaim | `identity-reference:` | `operation_id`, `entry_index` |
+| IssueOccurrence | `identity-occurrence:` | `operation_id`, `entry_index` |
+| IdentitySource | `identity-source:` | `source_path`, `source_sha256` |
+| IdentityReport | `identity-report:` | `report_id`, `report_sha256` |
+
+These keys exclude the changing whole-history hash and head status. Every
+revision/claim/occurrence retains its exact original row properties. Source and
+report nodes carry exactly `spec_id` plus their two suffix fields; identical
+provenance shares a node, but distinct occurrences are never collapsed.
+
+Relationships are Spec → `HAS_IDENTITY` → entity; entity → `HAS_REVISION` → each
+revision and `CURRENT_REVISION` → non-null head; predecessor active revision →
+`SUCCESSOR_REVISION` → successor active revision 1, with the complete original
+lineage row as edge properties. Terminal revisions remain separate history.
+Claims point through `REFERENCES_IDENTITY`, optional `ASSESSES_REVISION`, and
+`HAS_SOURCE`. Their additional `target_revision_matches_current` boolean is true
+only for an explicit revision equal to an active head; it makes no source
+freshness or completion claim. Occurrences point through `OCCURRENCE_OF`,
+`OBSERVES_REVISION`, and `HAS_REPORT`, preserving exact historical active issue
+content, display ID and fingerprint. Other generated edge properties are empty.
+
+Legacy `VERIFIED_BY` and `STORED_AS` edges touching managed entities retain
+endpoints and all properties, including any `complete` field, but gain
+`identity_assessment: "unassessed"`. Conflicting assessment metadata is rejected.
+Historical evidence is never relabeled proof of new content.
+
+**Live integration remains blocked:** existing builders, audits, reads and
+traversals do not yet implement this opt-in contract. No live producer may
+publish/use this output until adapters authenticate managed namespace/current
+history and source inputs, preserve direct bare-ID resolution, implement
+lifecycle-aware obligations/current verification, and support every typed
+impact relationship. The projection tag is not the immutable managed-spec/run
+feature snapshot. Source/semantic/recovery/completion integration, memory
+current-revision semantics, producer activation and bounded repair remain
+separate work; this helper makes no live audit or end-to-end publication claim.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
