@@ -115,12 +115,51 @@ revision, current head or verification certification. Diagnostics retain their
 original code, span, and detail. Visible explicit unsupported declarations
 are diagnostics, rather than disappearing or becoming shorter references.
 Markdown active-source exclusions and successful identity grammars are retained.
-This checkpoint does not cover every unsupported bare-reference spelling:
-for example, the existing reference grammar can read FR-001.other or
-FR-001-extra as the bare target FR-001 without a diagnostic. Ordinary sentence
-punctuation and investigation/U-001.md references also retain their existing
-interpretation. The inventory does not add a suffix heuristic or namespace
-resolver; reference/namespace reconciliation remains required before activation.
+The reference scanner classifies complete visible tokens. The supported numeric
+and composite grammar (including AC-001a, FR-001abc, T-S01 and unbounded decimal
+values) is unchanged. Identity-shaped tokens with unsupported spelling, including
+FR-001.other, FR-001-extra, FR-001_extra, Unicode or internal wrapper characters,
+and digit-free ISS-legacy, produce `unsupported_reference` over their exact
+spelling. They cannot produce shorter accepted targets. Embedded words such as
+NOTFR-001 are not references. This lexical grammar is narrower than the opaque
+registry envelope; unsupported historical identities remain reserved and opaque.
+
+Whitespace and prose/list/Markdown separators delimit mentions. Balanced enclosing
+backticks (with matching run lengths), stars and underscores are syntax; internal
+or unmatched wrapper-like characters remain token content. Outside inline code,
+exactly one final full stop is sentence punctuation: `See FR-001.` references
+FR-001. A literal final dot inside an inline-code span belongs to the label and
+is unsupported. Two dots remain interval syntax. Frontmatter, fenced and indented
+code, HTML comments and quoted blocks remain inactive. Source is never joined
+across exclusions or rewritten, and source hashes and Python-string offsets stay
+anchored to the caller's original image.
+
+The only implicit local filename shorthand is exactly
+`investigation/<supported-ID>.md`, plain or inside inline code. Its reference span
+is the ID substring. Bare U-001.md, other paths, leading `./`, traversal, absolute
+paths, foreign-spec prefixes, extra suffixes, queries, fragments, URIs and
+`scope::label` qualifications produce `unsupported_qualified_reference` over the
+complete locator, including when the basename is opaque. No basename lookup,
+path normalization, percent decoding or namespace resolution occurs.
+Any syntactically scheme-shaped prefix (`[A-Za-z][A-Za-z0-9+.-]*:`) followed
+immediately by non-whitespace content has URI precedence, including
+`urn:FR-001`, `mailto:FR-001@example.org` and ambiguous `Label:FR-001` or
+`FR-001:FR-002`. No scheme allowlist is guessed. Ordinary colon-delimited prose
+uses whitespace after the colon, as in `See: FR-001` and `FR-001: FR-002`.
+
+En dash, em dash, two dots and a whitespace-surrounded ASCII hyphen may form an
+unexpanded interval with exactly two complete, same-family numeric endpoints in
+nondecreasing order. Unsupported endpoints, composite endpoints, reversals,
+cross-family pairs, missing endpoints and chains produce `invalid_range` for the
+whole expression; qualification takes precedence as
+`unsupported_qualified_reference`. No shorter singleton escapes a rejected
+interval. An ASCII dash followed by prose, as in FR-001 - implementation note,
+leaves an ordinary singleton. Discovery and history consumers still block
+interval application and qualifications. This scanner is not a namespace
+resolver, historical-source authenticator or semantic assessor. Managed
+consumers remain inactive, and explicit historical reconciliation remains
+required before activation; stored labels and historical evidence are not
+renamed or relabeled as proof of new content.
 
 Every conflict has exactly code, element_ids, locations, and detail.
 Locations contain snapshot_id, path, artifact_sha256, and span; missing

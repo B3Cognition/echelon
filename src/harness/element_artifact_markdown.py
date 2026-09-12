@@ -6,8 +6,14 @@ import bisect
 import re
 from dataclasses import dataclass
 
-from kernel.element_ids import decimal_to_int
 from kernel.task_contract import parse_task_rows
+
+from harness.element_artifact_reference_tokens import (
+    _ID_CORE,
+    _NUMERIC_OR_COMPOSITE,
+    _TASK_VALUE,
+    scan_reference_tokens,
+)
 
 from harness.element_artifacts import (
     ArtifactDiagnostic,
@@ -17,10 +23,6 @@ from harness.element_artifacts import (
 )
 
 
-_NUMERIC_OR_COMPOSITE = r"[0-9]+(?:[A-Za-z][A-Za-z0-9_-]*)?"
-_TASK_VALUE = rf"(?:{_NUMERIC_OR_COMPOSITE}|S[0-9]{{2}}[A-Za-z]?)"
-_ID_CORE = rf"(?:(?:AC|FR|NFR|ISS|U|A)-{_NUMERIC_OR_COMPOSITE}|T-{_TASK_VALUE})"
-_ID_RE = re.compile(rf"(?<!\w){_ID_CORE}(?!\w)")
 _HEADING_RE = re.compile(
     rf"^(?P<marks>#{{1,6}})[ \t]+(?P<id>{_ID_CORE})[ \t]*:[ \t]*(?P<caption>.*?)[ \t]*$",
     re.ASCII,
@@ -48,19 +50,6 @@ _FENCE_OPEN_RE = re.compile(r"^[ ]{0,3}(?P<delim>`{3,}|~{3,})[^\r\n]*$")
 _LIST_MARKER_RE = re.compile(
     r"^(?P<indent> *)(?P<marker>[-*+])(?P<spacing>[ \t]{1,4})(?=\S)"
 )
-_QUALIFIED_PATH_RE = re.compile(
-    rf"(?<![\w.-])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+#{_ID_CORE}(?!\w)"
-)
-_QUALIFIED_SCOPE_RE = re.compile(
-    rf"(?<![\w.-])[A-Za-z0-9][A-Za-z0-9_.-]*::{_ID_CORE}(?!\w)"
-)
-_RANGE_PAIR_RE = re.compile(
-    rf"(?<!\w)(?P<first>{_ID_CORE})(?P<sep>[ \t]*(?:–|—|\.\.)[ \t]*|[ \t]+-[ \t]+)(?P<last>{_ID_CORE})(?!\w)"
-)
-_DANGLING_RANGE_RE = re.compile(
-    rf"(?<!\w)(?P<first>{_ID_CORE})(?P<sep>[ \t]*(?:–|—|\.\.)[ \t]*)(?!{_ID_CORE})"
-)
-_NUMERIC_ID_RE = re.compile(r"^(?P<kind>AC|FR|NFR|ISS|U|A|T)-(?P<number>[0-9]+)$", re.ASCII)
 
 _ROLE_KINDS = {
     "unknowns": frozenset({"U"}),
@@ -498,68 +487,19 @@ def _references(
     ]
     blocked.extend(excluded_spans or ())
 
-    for pattern in (_QUALIFIED_PATH_RE, _QUALIFIED_SCOPE_RE):
-        for match in pattern.finditer(text):
-            if not _is_active(active, match.start(), match.end()):
-                continue
-            blocked.append((match.start(), match.end()))
-            diagnostics.append(ArtifactDiagnostic(
-                "unsupported_qualified_reference", _span(match.start(), match.end(), line_starts),
-                "qualified cross-spec references require a future namespace resolver",
-            ))
-
-    for match in _RANGE_PAIR_RE.finditer(text):
-        if not _is_active(active, match.start(), match.end()) or _overlaps(match.start(), match.end(), blocked):
-            continue
-        blocked.append((match.start(), match.end()))
-        first = match.group("first")
-        last = match.group("last")
-        first_numeric = _NUMERIC_ID_RE.fullmatch(first)
-        last_numeric = _NUMERIC_ID_RE.fullmatch(last)
-        valid = (
-            first_numeric is not None and last_numeric is not None
-            and first_numeric.group("kind") == last_numeric.group("kind")
-            and decimal_to_int(first_numeric.group("number")) <= decimal_to_int(last_numeric.group("number"))
-        )
-        if valid:
-            relation, owner_id = _reference_context(
-                match.start(), match.end(), relation_regions, role, declarations
-            )
-            references.append(ElementReference(
-                first, last, _span(match.start(), match.end(), line_starts),
-                owner_id, relation,
-            ))
-        else:
-            diagnostics.append(ArtifactDiagnostic(
-                "invalid_range", _span(match.start(), match.end(), line_starts),
-                "ranges require nondecreasing same-kind numeric endpoints",
-            ))
-
-    for match in _DANGLING_RANGE_RE.finditer(text):
-        if not _is_active(active, match.start(), match.end()) or _overlaps(match.start(), match.end(), blocked):
-            continue
-        blocked.append((match.start(), match.end()))
-        diagnostics.append(ArtifactDiagnostic(
-            "invalid_range", _span(match.start(), match.end(), line_starts),
-            "range separator requires a supported endpoint",
-        ))
-
-    for match in _ID_RE.finditer(text):
-        if not _is_active(active, match.start(), match.end()) or _overlaps(match.start(), match.end(), blocked):
+    for token in scan_reference_tokens(text, active=active, excluded_spans=blocked):
+        span = _span(token.start, token.end, line_starts)
+        if token.diagnostic_code is not None:
+            diagnostics.append(ArtifactDiagnostic(token.diagnostic_code, span, token.detail))
             continue
         relation, owner_id = _reference_context(
-            match.start(), match.end(), relation_regions, role, declarations
+            token.start, token.end, relation_regions, role, declarations
         )
         references.append(ElementReference(
-            match.group(0), None, _span(match.start(), match.end(), line_starts),
+            token.target_id, token.range_end_id, span,
             owner_id, relation,
         ))
-    references.sort(key=lambda item: (item.span.start, item.span.end))
     return references, diagnostics
-
-
-def _overlaps(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
-    return any(start < other_end and end > other_start for other_start, other_end in spans)
 
 
 def _task_relation_regions(

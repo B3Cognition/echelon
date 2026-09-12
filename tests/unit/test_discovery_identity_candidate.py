@@ -78,6 +78,22 @@ def codes(result):
     return {entry.code for entry in result.diagnostics}
 
 
+def test_opaque_reference_to_existing_authority_rejects_without_sql_effect(tmp_path):
+    from harness.element_identity_candidate import CandidateArtifact
+
+    store = seeded(tmp_path)
+    original = logical_state(tmp_path)
+    text = "Résumé ⚡\r\nU-001.other\r\n"
+    result = check(store, tmp_path, extras=(
+        CandidateArtifact("notes.md", "references", text, text),
+    ))
+    assert codes(result) == {"unsupported_reference"}
+    assert any("before" in d.detail for d in result.diagnostics)
+    assert any("after" in d.detail for d in result.diagnostics)
+    assert not result.references
+    assert logical_state(tmp_path) == original
+
+
 @pytest.mark.parametrize("role,text,label", [
     ("unknowns", FIRST, "U-001"),
     ("assumptions", "### A-001: Browser support\nChrome.\n", "A-001"),

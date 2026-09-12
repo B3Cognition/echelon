@@ -35,6 +35,26 @@ def sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def test_opaque_reference_cannot_resolve_to_valid_historical_declaration():
+    text = "- FR-001: Move.\r\nRésumé ⚡\r\nFR-001.other\r\n"
+    request = request_for([artifact(text=text)])
+    before = deepcopy(request)
+    result = inventory(request)
+    assert request == before
+    assert (result["assessment"], result["source_authentication"]) == ("unassessed", "caller_supplied")
+    row, = result["snapshots"][0]["artifacts"]
+    assert row["declarations"][0]["element_id"] == "FR-001"
+    assert row["references"] == []
+    assert row["content_sha256"] == sha(text)
+    diagnostic, = row["diagnostics"]
+    assert diagnostic["code"] == "unsupported_reference"
+    span = diagnostic["span"]
+    assert (text[span["start"]:span["end"]], span["line"]) == ("FR-001.other", 3)
+    conflict, = result["conflicts"]
+    assert conflict["code"] == "artifact_diagnostic"
+    assert "unsupported_reference" in conflict["detail"]
+
+
 def test_removed_question_keeps_evidence_unassessed_and_unresolved():
     from harness.element_identity_history import inventory_history
     request = {"schema_version": 1, "spec_id": "demo", "snapshots": [
