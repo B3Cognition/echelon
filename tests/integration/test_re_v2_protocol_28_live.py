@@ -18,14 +18,21 @@ class _FileWritingProvider:
     def __init__(self, *, extra: bool = False) -> None:
         self.extra = extra
         self.calls = 0
+        self.filenames: list[str] = []
 
     def exec_agent(self, project_root: str, prompt: str, **_kwargs):  # type: ignore[no-untyped-def]
         self.calls += 1
-        filename = (
-            "exhaustive-verification.json"
-            if "exhaustive-verification.json" in prompt
-            else "exhaustive-evidence-slice.json"
+        filename = next(
+            candidate
+            for candidate in (
+                "knowledge-reconciliation-candidate.json",
+                "knowledge-reconciliation-review.json",
+                "exhaustive-verification.json",
+                "exhaustive-evidence-slice.json",
+            )
+            if candidate in prompt
         )
+        self.filenames.append(filename)
         Path(project_root, filename).write_bytes(canonical_json_bytes({"schema_version": 1}))
         if self.extra:
             Path(project_root, "extra.txt").write_text("forbidden", encoding="utf-8")
@@ -90,3 +97,31 @@ def test_shared_cli_backend_rejects_extra_candidate_file() -> None:
 
     assert result.result_kind == "provider_failure"
     assert result.raw_result == b""
+
+
+@pytest.mark.integration
+def test_shared_cli_backend_uses_reconciliation_specific_result_files() -> None:
+    provider = _FileWritingProvider()
+    backend = SquadCliProtocol28Backend(lambda: provider)  # type: ignore[arg-type]
+    reservation = DispatchReservationV1(10_000, 10_000, 1_000)
+
+    producer = backend.execute(
+        "producer",
+        _agent(),
+        b'{"kind":"knowledge-reconciliation","role":"producer"}\n',
+        b'{"type":"object"}\n',
+        reservation,
+    )
+    verifier = backend.execute(
+        "verifier",
+        _agent(),
+        b'{"kind":"knowledge-reconciliation","role":"verifier"}\n',
+        b'{"type":"object"}\n',
+        reservation,
+    )
+
+    assert producer.result_kind == verifier.result_kind == "provider_result"
+    assert provider.filenames == [
+        "knowledge-reconciliation-candidate.json",
+        "knowledge-reconciliation-review.json",
+    ]

@@ -25,9 +25,13 @@ _RESULT_CONTRACT = EchelonResultContract(
     allowed_verdicts=frozenset({"DONE"}),
     unexpected_state_updates="reject",
 )
-_FILE_BY_ROLE = {
+_SLICE_FILE_BY_ROLE = {
     "producer": "exhaustive-evidence-slice.json",
     "verifier": "exhaustive-verification.json",
+}
+_RECONCILIATION_FILE_BY_ROLE = {
+    "producer": "knowledge-reconciliation-candidate.json",
+    "verifier": "knowledge-reconciliation-review.json",
 }
 
 
@@ -56,21 +60,23 @@ class SquadCliProtocol28Backend:
         response_schema_bytes: bytes,
         reservation: DispatchReservationV1,
     ) -> L4DispatchResultV1:
-        if role not in _FILE_BY_ROLE:
+        if role not in _SLICE_FILE_BY_ROLE:
             raise Protocol28CliProviderError(f"unknown L4 role: {role!r}")
         artifact = decode_prosaic_agent_bytes(agent_bytes)
         try:
-            load_canonical_object(context_bytes, lambda value: value)
+            context = load_canonical_object(context_bytes, lambda value: value)
             load_canonical_object(response_schema_bytes, lambda value: value)
         except ValueError as exc:
             raise Protocol28CliProviderError(
                 "L4 CLI context or response schema is not canonical"
             ) from exc
+        filename = _result_filename(role, context)
         prompt = _render_prompt(
             artifact.body,
             role,
             context_bytes.decode("utf-8"),
             response_schema_bytes.decode("utf-8"),
+            filename,
         )
         if len(prompt.encode("utf-8")) > reservation.initial_input_tokens:
             raise Protocol28CliProviderError(
@@ -91,7 +97,7 @@ class SquadCliProtocol28Backend:
                 strict_result_envelope=True,
                 isolated_workspace=True,
             )
-            payload = _read_exact_result(root, role)
+            payload = _read_exact_result(root, filename)
         ended_at = _now()
         usage = normalize_shared_provider_usage(
             result.token_usage, result.token_usage_details
@@ -128,7 +134,17 @@ class SquadCliProtocol28Backend:
         return self._provider
 
 
-def _read_exact_result(root: Path, role: RoleV1) -> bytes | None:
+def _result_filename(role: RoleV1, context: object) -> str:
+    files = (
+        _RECONCILIATION_FILE_BY_ROLE
+        if isinstance(context, dict)
+        and context.get("kind") == "knowledge-reconciliation"
+        else _SLICE_FILE_BY_ROLE
+    )
+    return files[role]
+
+
+def _read_exact_result(root: Path, filename: str) -> bytes | None:
     try:
         entries = tuple(root.iterdir())
         metadata = entries[0].lstat() if len(entries) == 1 else None
@@ -136,7 +152,7 @@ def _read_exact_result(root: Path, role: RoleV1) -> bytes | None:
         return None
     if (
         metadata is None
-        or entries[0].name != _FILE_BY_ROLE[role]
+        or entries[0].name != filename
         or not stat.S_ISREG(metadata.st_mode)
         or metadata.st_size <= 0
     ):
@@ -147,8 +163,9 @@ def _read_exact_result(root: Path, role: RoleV1) -> bytes | None:
         return None
 
 
-def _render_prompt(body: str, role: RoleV1, context: str, schema: str) -> str:
-    filename = _FILE_BY_ROLE[role]
+def _render_prompt(
+    body: str, role: RoleV1, context: str, schema: str, filename: str
+) -> str:
     return (
         body
         + ("" if body.endswith("\n") else "\n")

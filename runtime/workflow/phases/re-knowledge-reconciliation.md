@@ -24,7 +24,9 @@ schema in the explicit workflow authorization; screen complete provider bytes be
 ordinary persistence. Retain indeterminate producer charges; release only the
 known never-started paired verifier through the existing resource machinery.
 
-Producer returns `KnowledgeReconciliationCandidateV1`; verifier returns
+Producer writes exactly `knowledge-reconciliation-candidate.json` containing
+`KnowledgeReconciliationCandidateV1`; verifier writes exactly
+`knowledge-reconciliation-review.json` containing
 `KnowledgeReconciliationReviewV1`. Both contain the exact seven checks enumerated by
 the supplied schema/context. Persist reviewed failure and its fingerprint before
 another permitted attempt. An unchanged outcome terminates without another call.
