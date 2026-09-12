@@ -1,0 +1,22 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-09-13-captured-spec-graph-structure.md
+
+## Preflight
+
+| Tasks | Shared interface or self-check | Result |
+| --- | --- | --- |
+| 1 / graph model | Existing GraphInput/GraphNode/GraphEdge/SpecArtifactGraph imports and class identities are widely used. | Keep models in spec_graph; new pure helpers import them, legacy readers use local helper imports to avoid initialization cycles. Verify both import orders; no model or wire move. |
+| 1 / shared projection | Existing build_spec_graph and six local helpers mix reads with transformations. | Extract node/edge/input construction once; keep legacy reads, helper signatures and external additions. A separate fragment is not a second complete graph builder. |
+| 1 / source observation | New projected source images expose complete selected bytes; factory validates exact snapshots. | Consume one exact spec-root tree through existing validation, without claiming selection/physical/semantic authority. Missing and empty trees can yield only a Spec node because this is not a complete graph. |
+| 1 / path mapping | Legacy graph keys use canonical specs/<spec-id>; authoring tree can live under runs. | Explicit spec_id + component-wise relative tree paths retain those canonical keys; no resolve/stat or staging path leakage. |
+| 1 / local versus external domains | Legacy policy adds evidence/linked RE; memory and topology need their own observations. | Fragment expressly covers only declared local policy/input/amendment/fulfillment structure. Existing legacy external policy/memory/RE/topology remains unchanged; do not invent receipts or complete-graph status. |
+| 1 / lifecycle | Existing legacy lifecycle is read from status/marker files. | Pure fragment receives one exact lifecycle observation; legacy reader still infers as before. This input is not authority. |
+| 1 / parsing | Existing canonical pure parser uses replacement UTF-8 and complete original stripped source lines; tasks/ledger/JSON use strict reads. | Preserve decoding, None/empty distinction and complete properties via shared existing parsers. Corrected plan's first setup assertion to exact source_file and full line before dispatch. |
+| 1 / ordering | Existing requirement parser sorts numerically; task graph loops source task rows. | Preserve existing source-row task order, not a new numeric task sort. Rendered graph sorting remains existing behavior. |
+| 1 / errors and ownership | Legacy reader exception contracts predate bounded new pure boundaries; graph properties contain mutable containers. | Normalize ordinary new-public-input failures after handlers without changing legacy errors. Separate calls detach mutable properties; bytes may safely share. |
+| 1 / first RED | Real existing canonical reader and secure spec-tree capture before new-module import. | Only intended missing-module failure accepted after full-row/actual-byte checks. No production before root notification; pure tests not POSIX-skipped. |
+| 1 / tests | Graph shared helpers affect identity overlay, traversal, audits and external domains. | Eight exact discovered modules once; no nonexistent test_spec_graph_query module. New tests require independent complete records plus legacy/captured/projected physical equality. |
+| 1 / overall design | Complete captured graph composition and runtime producer/repair enforcement still outstanding. | This is a testable local projection seam; no live activation, memory proof or complete graph sealing claim. |
+
+Root read approved design, AGENTS, complete spec_graph production module and relevant canonical parser, artifact registry lifecycle/public accessor, actual snapshot inspect signature and graph test inventory. No new product-policy ruling; this is shared transformation extraction within approved graph safety work. Previous projected-images step completed d5183dcd/b330d7a1 with369 covering passes and clean review; checkpoint05c7fbba. Reviewer confirmed full72-line brief169-line report1008-line diff in four nonoverlapping chunks, no truncation, unchanged-code reads or test reruns. Root retains artifacts until final whole-branch review and exhaustive rulings handoff.
+
+Astra/high selected for implementation and review because this coordinates the existing graph's shared local construction with Path adapters, compatibility across external observations, logical path mapping and mutable property ownership. One implementer, no child agents. Root writes plan/ledger only. No later task selected.
