@@ -1753,6 +1753,7 @@ class PreparedSquadPublication:
         self, paths: _InspectionPaths, filesystem_fd: int, project_fd: int,
         marker: PublicationMarker,
         retained: tuple[PreparedSquadPublication, _PinnedTransaction] | None = None,
+        *, target_paths: _InspectionPaths | None = None,
     ) -> tuple[PublicationSnapshot, _PinnedTransaction]:
         """Capture sealed images in a caller-owned scope without acquiring a lock."""
         from harness.squad_publication_snapshot import (
@@ -1792,7 +1793,18 @@ class PreparedSquadPublication:
             stage_bytes[name] = _read_pinned_bytes(stage, code="stage_corrupt")
         operations: list[PublicationOperationSnapshot] = []
         for operation in verified._manifest["operations"]:
+            first_directory = len(paths.directories)
             current = paths.current(project_fd, Path(operation["target"]))
+            if target_paths is not None:
+                # A checked capture may be the first traversal of a new parent.
+                # Preserve exactly its target ancestor bindings before the short
+                # capture closes; missing, file and membership pins stay local.
+                for parent, name, child, code in paths.directories[first_directory:]:
+                    retained_parent = os.dup(parent)
+                    target_paths.resources.callback(os.close, retained_parent)
+                    retained_child = os.dup(child)
+                    target_paths.resources.callback(os.close, retained_child)
+                    target_paths.directories.append((retained_parent, name, retained_child, code))
             if current is None:
                 descriptor = PublicationImageDescriptor("missing", None, None)
                 content = None
@@ -2260,6 +2272,7 @@ class PreparedSquadPublication:
                     paths = _InspectionPaths(resources)
                     observed, _ = self._capture_inspection(
                         paths, filesystem_fd, project_fd, marker, (verified, pinned),
+                        target_paths=owner_paths,
                     )
                     trees = tuple(_capture_project_tree(paths, project_fd, item.path) for item in initial.trees)
                     files = tuple(_capture_project_path(paths, project_fd, item.path) for item in initial.files)

@@ -617,3 +617,67 @@ def test_identical_target_ancestor_replacement_between_operations_is_rejected(tm
     else:
         assert not (project / targets[1]).exists()
         assert (moved / "value").read_bytes() == b"after"
+
+
+def test_first_captured_parent_stays_bound_before_mutation_traversal(tmp_path, monkeypatch):
+    import harness.squad_source_snapshot as sources
+
+    project, prepared, initial, stage, targets = _prepared(tmp_path, nested=True)
+    parent = project / "specs/a"
+    retained = project / "captured-parent"
+    captured_inodes = []
+    replacement_inodes = []
+    original_capture = sources._capture_project_tree
+    original_image = publication._target_image
+
+    def fault(position):
+        if position == 0:
+            parent.mkdir(mode=0o755)
+            parent.chmod(0o755)
+
+    def capture(*args):
+        tree = original_capture(*args)
+        if tree.path == "specs" and parent.exists():
+            assert any(directory.path == "specs/a" and directory.mode == 0o755
+                       for directory in tree.directories)
+            captured_inodes.append(parent.stat().st_ino)
+        return tree
+
+    def target_image(*args, **kwargs):
+        if captured_inodes and not replacement_inodes:
+            assert parent.stat().st_ino == captured_inodes[0]
+            parent.rename(retained)
+            parent.mkdir(mode=0o755)
+            parent.chmod(0o755)
+            replacement_inodes.append(parent.stat().st_ino)
+            assert replacement_inodes[0] != captured_inodes[0]
+            assert list(parent.iterdir()) == list(retained.iterdir()) == []
+        return original_image(*args, **kwargs)
+
+    monkeypatch.setattr(sources, "_capture_project_tree", capture)
+    monkeypatch.setattr(publication, "_target_image", target_image)
+    with pytest.raises(PublicationError, match="^target_drift$"):
+        prepared.publish_sources(initial, fault_hook=fault)
+    assert captured_inodes and replacement_inodes
+    assert retained.stat().st_ino == captured_inodes[0]
+    assert list(parent.iterdir()) == list(retained.iterdir()) == []
+    assert not any((project / target).exists() for target in targets)
+    assert stage.exists()
+
+
+def test_read_only_source_directory_keeps_checked_capture_lifetime(tmp_path):
+    project, prepared, initial, _, targets = _prepared(tmp_path)
+    source = project / "specs/empty"
+    original_inode = source.stat().st_ino
+
+    def fault(position):
+        if position == 1:
+            source.rename(project / "previous-read-only-source")
+            source.mkdir(mode=0o755)
+            source.chmod(stat.S_IMODE((project / "previous-read-only-source").stat().st_mode))
+            assert source.stat().st_ino != original_inode
+
+    final = prepared.publish_sources(initial, fault_hook=fault)
+    _assert_final(project, initial, final, targets)
+    assert list(source.iterdir()) == []
+    assert (project / "previous-read-only-source").stat().st_ino == original_inode

@@ -77,3 +77,28 @@ Reviewed the implementation diff and the complete new guard/tests. Found and fix
 Only the task's source modules, test module, documentation and this report are intended for commit. Root-owned plans/ledgers, including the next-phase source-manifest-wire-validation plan, remain untouched. No child agents or reviewers were dispatched; root owns independent review.
 
 The original capture, selected dependency completeness, namespace/context, semantic acceptance, managed-run authority and durable identity intent remain caller obligations. Callbacks may repeat on exact retry and must be independently idempotent. After-callback failure can leave all target files published without successful return. Recovery material is retained. This task does not activate any live integration.
+
+## Fix round 1 — first-captured target ancestor ownership
+
+FIX_BASE / original review HEAD: `1227855d17ec89c25ae64d7eac910ed14f67dbb1`.
+The independent review found one Important issue at `src/harness/squad_publication.py:2261`: a canonical new target parent first discovered by a checked capture retained only short-scope directory pins, so its identical-content/mode replacement between capture exit and mutation traversal could be adopted and published into. This enforces the existing Ruling 23; no plan or authority changes were made.
+
+**Real regression RED before production edits:**
+
+`/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_guard.py::test_first_captured_parent_stays_bound_before_mutation_traversal`
+
+Output: `1 failed in 0.23s`, exit 1. Failure: `Failed: DID NOT RAISE <class 'harness.squad_publication.PublicationError'>`. The real fault hook creates `specs/a` at `0755` at position 0. A real source-tree capture records that directory and inode A. Immediately before the shared loop's target-image read, the test renames A and creates an identical empty `0755` directory at the same path with inode B. Before the fix the publisher returned success. Root was notified of this RED before production changed. The capture wrapper returns the unchanged real snapshot; the test does not fabricate a successful observation.
+
+**Narrow fix:** `_capture_inspection` accepts an optional private `target_paths` owner supplied only by guarded publication. For each target's `paths.current` capture, it identifies only the newly traversed ancestor directory/entry associations and duplicates those descriptors into the original owner before the temporary capture closes. Each duplicate is registered for cleanup immediately. Source-only directory bindings, missing-entry pins, regular-file pins and membership pins are not copied. Normal capture exit verification still runs; original owner verification now detects the replacement before mutation. Public inspectors and legacy publication omit this optional owner and preserve their behavior.
+
+**Focused GREEN:** the exact RED command above then produced `1 passed in 0.17s`, exit 0. Assertions establish that inode A stays retained, inode B differs, both directories stay empty, no target is published, and stage recovery material remains. A further real control replaces an unrelated read-only source directory with identical contents/mode between operation boundaries and confirms successful exact final publication; this prevents blanket lifetime retention of all source directories.
+
+**One covering run for the amended code:**
+
+`/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_guard.py tests/unit/test_squad_publication_inspection.py tests/unit/test_squad_publication_sources.py`
+
+Output: `297 passed in 2.60s`, exit 0, no warnings. This was the only three-module covering run in the fix round. No whole suite, capacity, live/provider, installation, or postcommit test repetition occurred; no subagents were dispatched.
+
+**Self-review:** read the complete amended production/test diff. The copied slice starts immediately before each target-current traversal and ends immediately afterward, excluding stage ancestors and subsequently captured source-only directories. Existing parent entry and child descriptors are duplicated, never reopened from an unbound root, and each successful duplicate is immediately registered on the original owner for exceptional cleanup. Missing and file pins stay in the short scope, so normal target writes and canonical parent creation remain possible. Existing descriptor cleanup, callback, process-lock and inspection tests are covered by the 297-test run. `git diff --check` before the covering run produced no output and exit 0; `git diff --cached --check` also completed with no output and exit 0 before commit. Source dependency completeness and cross-invocation inode authority remain explicit caller limitations. No unresolved correctness concern is known; root owns fresh scoped re-review.
+
+Changed files in this fix: `src/harness/squad_publication.py`, `tests/unit/test_squad_source_guard.py`, and this report. Root plans/ledgers and the untracked next-phase source-manifest wire-validation plan remain untouched.
