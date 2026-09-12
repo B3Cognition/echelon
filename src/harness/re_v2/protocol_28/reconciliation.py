@@ -775,7 +775,14 @@ def authenticate_knowledge_record(objects, model, state):
         agent = objects.read_blob(active.authorization.reconciler_contract_id)
         if envelope.agent_contract_hash != content_digest(_role_agent(agent, model.role)):
             raise ValueError('reconciliation-agent-authority-mismatch')
-        supplied = json.loads(validate_provider_output(objects.read_blob(envelope.context_bundle_hash)))
+        maximum = context.inputs.exhaustive_policy.max_context_bytes + (
+            context.inputs.exhaustive_policy.max_candidate_output_bytes
+            if model.role == 'verifier'
+            else 0
+        )
+        supplied = json.loads(validate_provider_context(
+            objects.read_blob(envelope.context_bundle_hash), max_bytes=maximum
+        ))
         if supplied['work_item'] != json.loads(canonical_json_bytes(work.to_json_dict())) or supplied['role'] != model.role:
             raise ValueError('reconciliation-capture-context-mismatch')
         if model.role == 'producer':

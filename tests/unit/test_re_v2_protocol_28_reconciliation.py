@@ -147,6 +147,29 @@ def test_provider_reconciliation_set_order_is_normalized_before_authority(tmp_pa
 
 
 @pytest.mark.unit
+def test_reconciliation_replay_never_screens_context_as_provider_output(tmp_path, monkeypatch):
+    module = reconciliation_module()
+    validate_output = module.validate_provider_output
+
+    def output_only(payload):
+        decoded = json.loads(payload)
+        if decoded.get('kind') == 'knowledge-reconciliation':
+            raise AssertionError('provider context reached the provider-output validator')
+        return validate_output(payload)
+
+    monkeypatch.setattr(module, 'validate_provider_output', output_only)
+    context, *_ = reconciliation_fixture(tmp_path)
+
+    result = run_protocol_28_exhaustive(
+        context.run_dir,
+        lambda: KnowledgeBackend(),
+    )
+
+    assert result.state == "complete"
+    assert result.run_root_id is not None
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize('failure', ['cross-slice-call-chains', 'contradictions', 'evidence-support',
                                   'category-coverage', 'dependency-continuity', 'omitted-work', 'inherited-debt'])
 def test_reviewer_failure_is_durable_and_unchanged_fingerprint_stops_calls(tmp_path, failure):
