@@ -48,7 +48,12 @@ def _unique_object(pairs):
 
 def _import_request(path: Path) -> tuple[str, str, tuple[tuple[str, str], ...]]:
     with path.open("r", encoding="utf-8") as stream:
-        request = json.load(stream, object_pairs_hook=_unique_object)
+        try:
+            request = json.load(stream, object_pairs_hook=_unique_object)
+        except (_InputError, json.JSONDecodeError):
+            raise
+        except ValueError as error:
+            raise _InputError(f"invalid import JSON: {error}") from error
     if type(request) is not dict or set(request) != {
         "schema_version", "spec_id", "operation_id", "definitions",
     }:

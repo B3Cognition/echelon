@@ -290,6 +290,24 @@ def test_cli_import_rejects_invalid_utf8_without_writes(tmp_path):
     assert authority_files(workspace) == files_before
 
 
+def test_cli_import_rejects_decoder_value_error_without_traceback_or_writes(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    IdentityStore.initialize(workspace)
+    request = tmp_path / "invalid.json"
+    request.write_text(
+        '{"schema_version":' + "9" * 5000
+        + ',"spec_id":"demo","operation_id":"op","definitions":'
+        '[{"element_id":"U-1","subject":"s"}]}'
+    )
+    before = database_rows(workspace)
+    files_before = authority_files(workspace)
+    result = run_admin("import-labels", "--workspace", workspace, "--input", request)
+    assert_failed(result)
+    assert database_rows(workspace) == before
+    assert authority_files(workspace) == files_before
+
+
 def test_cli_requires_explicit_upgrade_before_audit_or_import(tmp_path):
     from tests.unit.test_element_identity_bindings import older_authority
 
