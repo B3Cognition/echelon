@@ -6,6 +6,8 @@ DONE. The requested inactive, pure selected-source observation fingerprint is
 implemented, documented, and covered without activating a controller, store,
 provider, publisher, accepted-source head, or schema.
 
+Implementation commit: `dcb18f54 feat: fingerprint selected source observations`.
+
 ## Implementation
 
 - Added frozen, slotted `SourceManifestSnapshot(payload, sha256)`.
@@ -176,11 +178,14 @@ stopped-smoke run was performed.
 - Detached output: source inputs remain unchanged across factory calls; later
   deliberate synthetic input mutation does not affect returned strings. The
   output is the exact frozen, slotted dataclass.
-- Mutation review: removing byte validation, mode/path projection, canonical order
-  enforcement, content removal, ASCII encoding, digesting, tuple/type enforcement,
-  or exception suppression would fail at least one focused test.
-- `git diff --check` is recorded immediately before commit after staging the exact
-  task files.
+- Static counterfactual mutation review (not executed mutation testing): removing
+  byte validation, mode/path projection, canonical order enforcement, content
+  removal, ASCII encoding, digesting, tuple/type enforcement, or exception
+  suppression is covered by at least one focused assertion.
+- After staging exactly the four task files, `git diff --cached --check` produced
+  no output and exited 0. `git status --short` showed only those four staged task
+  files plus the root-owned untracked expected-publication plan, which was left
+  untouched and excluded from the commit.
 
 ## Concerns
 
