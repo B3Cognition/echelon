@@ -21,7 +21,7 @@ def capture(connection, store, spec_id: str) -> IdentityHistorySnapshot:
     """Observe one spec's complete retained materialized history in a caller transaction."""
     lifecycle.text(spec_id, "spec_id")
     namespace = authority.IdentityStore._namespace(connection)
-    store._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True)
+    store._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True, managed_state=True)
 
     entity_order = (
         "e.kind,e.ordinal IS NULL,length(coalesce(e.ordinal,'')),"

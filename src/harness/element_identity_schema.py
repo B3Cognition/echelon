@@ -4,7 +4,7 @@ No filesystem access, authority creation, commits, or transaction ownership.
 The marker/user_version retain format 1; metadata versions the database schema.
 """
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 _CANONICAL = "{0} NOT GLOB '*[^0-9]*' AND ({0} = '0' OR {0} GLOB '[1-9]*')"
 ALLOCATION_SCHEMA = {
     "metadata": "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
@@ -118,7 +118,17 @@ SOURCE_SCHEMA = {
         "(spec_id,context_id,length(sequence),sequence) WHERE application_sha256 IS NOT NULL",
     "source_registration_specs": "CREATE INDEX source_registration_specs ON operations (spec_id,operation_id) WHERE method='source_context'",
 }
-SCHEMA = SCHEMA_V4 | SOURCE_SCHEMA
+SCHEMA_V5 = SCHEMA_V4 | SOURCE_SCHEMA
+MANAGED_SCHEMA = {
+    "managed_identity_specs": "CREATE TABLE managed_identity_specs (spec_id TEXT NOT NULL PRIMARY KEY, "
+        "run_id TEXT NOT NULL UNIQUE, context_id TEXT NOT NULL, "
+        "operation_id TEXT NOT NULL UNIQUE REFERENCES operations(operation_id), "
+        "request TEXT NOT NULL, request_sha256 TEXT NOT NULL, "
+        "FOREIGN KEY (spec_id,context_id) REFERENCES source_contexts(spec_id,context_id)) WITHOUT ROWID",
+    "managed_identity_operations": "CREATE INDEX managed_identity_operations ON operations "
+        "(spec_id,operation_id) WHERE method='managed_identity'",
+}
+SCHEMA = SCHEMA_V5 | MANAGED_SCHEMA
 
 
 def validate(connection, marker, *, allow_old=False):
@@ -127,12 +137,13 @@ def validate(connection, marker, *, allow_old=False):
     actual = {row[0]: row[1] for row in connection.execute(
         "SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
     )}
-    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA):
+    if actual not in (ALLOCATION_SCHEMA, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA):
         raise ValueError("identity database schema or required indexes are malformed")
     metadata = dict(connection.execute("SELECT key, value FROM metadata"))
     expected = {key: str(value) for key, value in marker.items()}
     version = ("1" if actual == ALLOCATION_SCHEMA else "2" if actual == SCHEMA_V2
-               else "3" if actual == SCHEMA_V3 else "4" if actual == SCHEMA_V4 else SCHEMA_VERSION)
+               else "3" if actual == SCHEMA_V3 else "4" if actual == SCHEMA_V4
+               else "5" if actual == SCHEMA_V5 else SCHEMA_VERSION)
     if version != "1":
         expected["schema_version"] = version
     if metadata != expected:
@@ -160,6 +171,9 @@ def upgrade(connection):
             connection.execute(statement)
     if version is None or version[0] in {"2", "3", "4"}:
         for statement in SOURCE_SCHEMA.values():
+            connection.execute(statement)
+    if version is None or version[0] in {"2", "3", "4", "5"}:
+        for statement in MANAGED_SCHEMA.values():
             connection.execute(statement)
     connection.execute("INSERT INTO metadata (key,value) VALUES ('schema_version',?) "
                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (SCHEMA_VERSION,))

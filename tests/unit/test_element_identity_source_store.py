@@ -414,7 +414,7 @@ def test_frozen_schema4_upgrade_restore_preserve_original_journal_bytes(tmp_path
         if phase != "prepared": assert candidate.apply_identity_publication(spec_id="demo", operation_id="legacy") == application
         if phase == "released": assert candidate.release_identity_publication(spec_id="demo", operation_id="legacy", completion_payload="done") == release
         assert (candidate.pending_identity_publication(spec_id="demo") is None) == (phase == "released")
-        assert candidate.audit()["database_schema_version"] == "5"
+        assert candidate.audit()["database_schema_version"] == "6"
 
 
 def test_frozen_schema4_rejects_version2_without_reading_source_tables(tmp_path):

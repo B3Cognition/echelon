@@ -32,6 +32,7 @@ from harness.element_identity_candidate import (
 from harness.element_identity_bundle import EvidenceInventoryContext, LexiconProjectionSource
 from harness.element_identity_issue_candidate import IssueReportContext
 from harness.element_identity_publication import PublicationIntentRequest
+from harness.element_identity_managed import ManagedIdentityRequest, encode_managed_identity_request
 
 if TYPE_CHECKING:
     from harness.element_identity_snapshot import IdentityHistorySnapshot
@@ -268,8 +269,9 @@ class IdentityStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = _validate(connection, marker, allow_old=True)
-                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5"},
-                           publication_state=version in {"4", "5"}, source_state=version == "5")
+                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6"},
+                           publication_state=version in {"4", "5", "6"}, source_state=version in {"5", "6"},
+                           managed_state=version == "6")
                 if version != schema.SCHEMA_VERSION:
                     schema.upgrade(connection)
                 _validate(connection, marker)
@@ -702,6 +704,32 @@ class IdentityStore:
                 connection, self, spec_id, artifacts, scope, changes, affected,
                 projection_sources, evidence_inventories, issue_reports)
 
+    def register_managed_identity(self, *, spec_id: str, operation_id: str,
+                                  request: ManagedIdentityRequest) -> dict:
+        """Explicitly enroll one fresh spec; no runtime enforcement is activated."""
+        from harness import element_identity_managed_store as managed_store
+
+        try:
+            lifecycle.text(spec_id, "spec_id")
+            lifecycle.text(operation_id, "operation_id")
+            encode_managed_identity_request(request)
+            with self._transaction(write=True) as connection:
+                return managed_store.register(connection, self, spec_id, operation_id, request)
+        except Exception:
+            raise IdentityStoreError("invalid managed identity authority or request") from None
+
+    def managed_identity(self, *, spec_id: str) -> dict | None:
+        """Return detached immutable genesis metadata, without identity-history scans."""
+        from harness import element_identity_managed_store as managed_store
+
+        try:
+            lifecycle.text(spec_id, "spec_id")
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                return managed_store.read(connection, self, spec_id)
+        except Exception:
+            raise IdentityStoreError("invalid managed identity authority or request") from None
+
     @_public
     def register_source_context(self, *, spec_id: str, context_id: str, operation_id: str,
                                 manifest: SourceManifestSnapshot) -> dict:
@@ -788,11 +816,11 @@ class IdentityStore:
             "lifecycle_heads", "lifecycle_lineage", "lifecycle_receipts",
             "reference_claims", "issue_occurrences", "binding_receipts",
             "publication_intents", "publication_operation_claims",
-            "source_contexts", "source_publications",
+            "source_contexts", "source_publications", "managed_identity_specs",
         )
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
-            self._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True)
+            self._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True, managed_state=True)
             counts = {
                 table: _decimal(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in tables
@@ -816,7 +844,7 @@ class IdentityStore:
             raise IdentityStoreError("reservation history is inconsistent")
 
     @classmethod
-    def _audit(cls, connection, *, lifecycle_state, binding_state=False, publication_state=False, source_state=False):
+    def _audit(cls, connection, *, lifecycle_state, binding_state=False, publication_state=False, source_state=False, managed_state=False):
         """Fully validate an explicitly audited, upgraded, or restored authority."""
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise IdentityStoreError("database integrity check failed")
@@ -831,6 +859,8 @@ class IdentityStore:
             methods.add("identity_publication")
         if source_state:
             methods.add("source_context")
+        if managed_state:
+            methods.add("managed_identity")
         if any(row[0] not in methods for row in connection.execute("SELECT DISTINCT method FROM operations")):
             raise IdentityStoreError("operation method is unsupported by this authority schema")
         cls._audit_counters(connection)
@@ -879,6 +909,10 @@ class IdentityStore:
             from harness import element_identity_source_store as source_store
 
             source_store.audit(connection, cls)
+        if managed_state:
+            from harness import element_identity_managed_store as managed_store
+
+            managed_store.audit(connection, cls)
 
     @_public
     def record_reference_claims(self, *, spec_id: str, operation_id: str,
@@ -928,7 +962,7 @@ class IdentityStore:
     def backup(self, destination: Path) -> None:
         """Write a dedicated online snapshot; only the final manifest completes it."""
         with self._transaction() as source:
-            self._audit(source, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True)
+            self._audit(source, lifecycle_state=True, binding_state=True, publication_state=True, source_state=True, managed_state=True)
             destination = _claim_directory(destination)
             database = destination / _DATABASE
             _write_new(database, b"")
@@ -966,8 +1000,9 @@ class IdentityStore:
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5"},
-                       publication_state=version in {"4", "5"}, source_state=version == "5")
+            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4", "5", "6"},
+                       publication_state=version in {"4", "5", "6"}, source_state=version in {"5", "6"},
+                       managed_state=version == "6")
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")

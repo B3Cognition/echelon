@@ -700,6 +700,62 @@ external-dependency changes require an authenticated owner transition, not an
 accepted-head overwrite. Historical reconciliation, bounded repair, revision-aware
 memory, and live/offline controller matrices remain separate work.
 
+## Immutable managed genesis registration (inactive schema 6)
+
+`register_managed_identity(spec_id=..., operation_id=..., request=...)` explicitly
+enrolls one fresh, unallocated spec. Its frozen `ManagedIdentityRequest` has exactly
+seven string fields: `workspace_uuid`, `epoch_uuid`, `run_id`, `context_id`,
+`spec_path`, `source_registration_operation_id`, and `source_manifest_sha256`.
+The pure codec uses canonical ASCII JSON with those fields and version string
+`"1"`; it rejects noncanonical UUIDs, paths, hashes, malformed text and wire shapes.
+The supplied namespace must equal the actual retained authority.
+
+The source context must already exist for this spec and still have its original
+sequence-0 head. Its original operation and manifest SHA must match the request.
+The original manifest must select `spec_path` as a tree root that exists, contains
+exactly its root directory entry, and contains no files. Existing valid root modes
+are retained; other selected trees/files may contain external dependencies. This
+fresh-enrollment check does not authenticate the completeness of source selection.
+The registration transaction audits the full existing authority before inserting
+its operation, then rejects any counters, reservations (including abandoned gaps),
+entities, lifecycle history, bindings, or identity publications for this spec.
+Retained non-source operations also reject enrollment, including an empty import
+or a legacy import whose entity rows have been removed.
+Other specs may have valid history. Existing or imported identities cannot be
+enrolled through this path, even when rendered files or active rows are empty.
+
+Schema 6 adds `managed_identity_specs`, one immutable row per spec with a globally
+unique run ID, and the partial `managed_identity_operations` index. Registration
+records one globally owned ordinary `managed_identity` operation with digest
+`_digest(["managed_identity", spec_id, operation_id, request_payload])`, atomically
+with its registry row. It allocates no IDs and creates no lifecycle, source
+acceptance, or publication effects. Common pending and permanent child ownership
+guards apply. There is no replacement, update, deletion, or implicit enrollment API.
+
+`managed_identity(spec_id=...)` returns a detached record containing version string
+`"1"`, the seven request fields, `spec_id`, and `operation_id`. Exact original
+operation/request retries return that record after later source acceptance,
+identity revisions, pending publications, and reopen. They validate the original
+source registration and its independently retained manifest hash; they do not
+require the current source head to remain initial or its current tree to be empty.
+Rehashing a changed original source manifest and its local operation still
+contradicts the genesis hash. Ordinary reads use indexed registry, operation, and
+source lookups without identity child-history scans. A missing registry row means
+`None` only when no retained managed operation for that spec indicates damage.
+Full audit, history capture, backup, upgrade, and restore validate registry rows
+and orphan operations. The materialized identity-history wire/digest is unchanged.
+These checks detect local contradictions, not coherent substitution of an older
+entire database.
+
+Version 1 identifies the fixed seven-family genesis contract. This is immutable
+first-run metadata, not an active-run pointer or an enforcement switch. No existing
+runtime is enrolled or activated. Future controller/producer integration must
+consume this record before dispatch/completion, prevent metadata removal or
+downgrade, bind subsequent run transitions explicitly, isolate candidates, and
+retain source/identity/graph recovery. Retarget, replay, manual and historical
+enrollment transitions require separate retained protocols. This task does not
+choose provider proposal formats, graph staging, or later run transitions.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.
@@ -709,8 +765,9 @@ The workspace must already exist. State lives in `.echelon/identity/`:
 - `registry.sqlite3`: matching authority metadata, operation receipts, counters,
   reservation ranges, entities, lifecycle heads, immutable content revisions,
   direct lineage, immutable reference claims, issue occurrences, publication
-  intents, permanent child-operation claims, source contexts/publications, and receipts.
-  Database schema version is separate metadata (`schema_version=5`); marker
+  intents, permanent child-operation claims, source contexts/publications,
+  managed genesis registrations, and receipts.
+  Database schema version is separate metadata (`schema_version=6`); marker
   format and SQLite `user_version` remain 1.
 
 The authority directory is created exclusively with mode `0700`; new sensitive
@@ -1274,20 +1331,23 @@ establish a completion gate.
 ## Explicit schema upgrade
 
 `IdentityStore.upgrade(workspace)` recognizes only exact reviewed schemas 1
-(allocation), 2 (lifecycle), 3 (bindings), 4 (publication journal), and 5 (source
-contexts), with matching metadata. Versions 1–4 remain frozen, including independent
-SQL fixtures and a literal schema-4 journal DDL test. Ordinary `open` on schema 1,
-2, 3, or 4 reports that explicit upgrade is required and
+(allocation), 2 (lifecycle), 3 (bindings), 4 (publication journal), 5 (source
+contexts), and 6 (managed genesis), with matching metadata. Versions 1–5 remain
+frozen, including independent SQL fixtures and literal schema-4/5 DDL tests.
+Ordinary `open` on schema 1, 2, 3, 4, or 5 reports that explicit upgrade is required and
 does not mutate storage.
 Upgrade audits authority, integrity, foreign keys, retained numeric claims,
 reservation history and legacy import/reservation overlap inside one
 `BEGIN IMMEDIATE` transaction. Schema 1 first gains lifecycle tables and
 imported/null heads. Versions 1/2 gain binding tables/indexes; versions 1/2/3
 gain the two publication tables and their two indexes. Versions 1–4 gain only the
-source tables/indexes. The metadata update adds
-no fabricated bindings, publication intents, child claims, or completion. Audit
+source tables/indexes; versions 1–5 also gain the empty managed table and index.
+The metadata update adds no fabricated bindings, publication intents, child
+claims, enrollment records, or completion. Audit
 dispatch validates lifecycle for versions 2+, bindings for 3+, and publication
-history for 4+, and source state for 5 before migration. Frozen schema-4 journal
+history for 4+, source state for 5+, and managed state for 6 before migration.
+Frozen schema-5 audits disable managed-table access and reject managed operations.
+Frozen schema-4 journal
 audits explicitly disable source-table access and reject version-2 source claims.
 Internal namespace validation recognizes frozen schema metadata for these audits;
 ordinary public open and transaction boundaries still require the current schema. Exact
@@ -1368,14 +1428,15 @@ cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,
 operation receipts, counters, and reservations. It never merges or overwrites.
-A recognized schema 1, 2, 3, or 4 backup is validated before claiming destination
+A recognized schema 1, 2, 3, 4, or 5 backup is validated before claiming destination
 state, then upgraded transactionally only in the fresh restored database. The
 backup itself is unchanged. Unknown schema versions fail before destination
 creation. Current backups retain lifecycle history, immutable claims, original
 receipts, report provenance and issue fingerprints. Schema-4 backups also retain
 every prepared/applied/released publication and all permanent child claims. Schema-5
 backups also retain and audit complete source contexts, source plans, acceptance
-receipts and independent head pointers. Restore
+receipts and independent head pointers. Schema-6 backups also retain and audit
+immutable managed genesis associations. Restore
 does not promote files, authenticate completion, or clear a pending guard.
 
 A backup is a point-in-time snapshot. Restoring an old snapshot cannot recover

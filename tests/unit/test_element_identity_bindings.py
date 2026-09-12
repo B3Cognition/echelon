@@ -486,9 +486,9 @@ def test_large_assessed_revision_is_bound_without_machine_integer_casts(tmp_path
 
 
 @pytest.mark.parametrize("version,method", [("1", "reference_claims"), ("2", "issue_occurrences"),
-                                           ("3", "identity_publication"), ("5", "unknown")])
+                                           ("3", "identity_publication"), ("6", "unknown")])
 def test_audit_rejects_operation_methods_that_cannot_belong_to_schema(tmp_path, version, method):
-    if version == "5":
+    if version == "6":
         seeded(tmp_path)
     else:
         older_authority(tmp_path, version)
