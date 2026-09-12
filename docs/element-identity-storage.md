@@ -530,6 +530,85 @@ integrity means that the ledger is internally consistent; it does not establish
 semantic correctness, approved evidence, current publication, or managed
 readiness.
 
+### Canonical materialized identity history observation
+
+`IdentityStore.identity_history(spec_id=...)` returns a frozen
+`IdentityHistorySnapshot(payload, sha256)`. It validates the exact nonblank,
+NUL-free UTF-8 spec ID before opening one query-only transaction, revalidates it
+inside the connection-owned capture, validates the current schema and namespace
+metadata on that same connection, and runs the existing full authority audit with
+lifecycle, binding, and publication state enabled. It then selects only the named
+spec's retained materialized rows. Corruption anywhere in the authority, including
+another spec, can therefore fail the observation. This is deliberately a
+full-authority audit observation, not a cheap per-ID read: its audit can scan all
+retained history even though selected-spec materialized rows use their existing
+indexed predicates. It makes no million-revision or per-spec-only complexity
+promise and does not change allocation costs or run on allocation paths.
+
+The payload is canonical ASCII JSON: object keys are sorted, separators are
+compact, and non-ASCII characters are escaped. `sha256` is the lowercase SHA-256
+of those exact ASCII bytes. The root contains exactly string `version="1"`,
+`workspace_uuid`, `epoch_uuid`, `spec_id`, and the arrays `entities`, `revisions`,
+`lineage`, `reference_claims`, and `issue_occurrences`. All IDs, ordinals,
+revisions, entry indexes, operation IDs, statuses, reasons, content, provenance,
+hashes, and fingerprints remain their exact stored TEXT or NULL values. JSON
+numbers, booleans, display renumbering, numeric coercion, current-reference flags,
+and inferred content are not introduced. An empty or not-yet-materialized spec,
+including a reservation-only spec, returns the actual namespace and spec with five
+empty arrays; no spec record is invented.
+
+The arrays contain:
+
+- `entities`: `spec_id`, `element_id`, `kind`, `subject`, `ordinal`, authenticated
+  head `status`, and head `revision` for every materialized entity, including
+  imported/unassessed, active, retired, and superseded rows. Unconsumed
+  reservations are absent; exact content remains in `revisions`.
+- `revisions`: every retained `spec_id`, `element_id`, `revision`, `subject`,
+  `content`, `content_sha256`, `status`, `reason`, and original `operation_id`.
+  Older and terminal bodies and their original associations are not replaced with
+  current-head values.
+- `lineage`: every retained `spec_id`, `predecessor_id`, `predecessor_revision`,
+  `successor_id`, `successor_revision`, `kind`, `reason`, and `operation_id`.
+- `reference_claims`: every retained `operation_id`, `entry_index`, `spec_id`,
+  `source_path`, `source_sha256`, `source_anchor`, `target_id`, nullable
+  `target_revision`, `relation`, and `payload_sha256`. Unassessed and older
+  assessed bindings remain historical facts.
+- `issue_occurrences`: every retained `operation_id`, `entry_index`, `spec_id`,
+  `issue_id`, `issue_revision`, `report_id`, `report_sha256`, `display_id`,
+  `title`, `body`, `issue_fingerprint`, and `payload_sha256`. Later issue changes
+  do not rewrite original occurrence content or fingerprints.
+
+Entities sort by kind, numeric-before-opaque ordinal, then ordinal length/text and
+exact label. Revisions follow that entity order and revision length/text. Lineage
+sorts by predecessor entity order, successor entity order, kind, and opaque
+operation ID. Both binding arrays sort by opaque operation ID and numeric
+entry-index length/text, preserving original per-operation receipt order. These
+orders support arbitrarily wide canonical decimals without fixed-width casts or a
+process-wide Python digit-limit change; they do not reinterpret opaque suffixes.
+
+The payload intentionally omits counters, unused reservations, general operation
+and receipt envelopes, publication intents and claims, prepared/released state,
+and completion data. Consequently unrelated-spec writes, selected-spec unused
+reservations, and publication state changes alone do not change it, while selected
+materialized lifecycle or binding changes do. The full backup remains the complete
+allocation and restore export; this observation must not be presented as a backup.
+Reading never releases a prepared or applied publication guard, certifies external
+completion, or writes, commits, rolls back, starts a nested transaction, or changes
+a PRAGMA in the connection-owned helper. A previously returned snapshot is a
+detached pair of immutable strings and does not gain post-transaction freshness.
+
+The snapshot constructor is only a value container. Provenance belongs to the
+validated capture that returned it; consumers must bind the value to their own
+source and intent context and verify the digest. The digest detects accidental
+byte differences but is not a signature or cryptographic tamper-resistance claim,
+and retained reference/occurrence records are not thereby semantically assessed.
+The shared connection-only namespace helper reads valid metadata from its caller's
+active transaction. Without the public store caller's marker association it cannot
+detect a coherently substituted valid namespace or certify which filesystem marker
+the caller intended. There is no externally supplied history decoder, authority
+importer, graph/memory/controller wiring, publication activation, or recovery
+bundle in this API.
+
 `import-labels` accepts only an explicitly selected UTF-8 JSON document:
 
 ```json

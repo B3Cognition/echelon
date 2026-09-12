@@ -39,16 +39,8 @@ def _require(connection, spec_id=_OMITTED, operation_id=_OMITTED):
         lifecycle.text(operation_id, "operation_id")
 
 
-def _namespace(connection):
-    metadata = dict(connection.execute("SELECT key,value FROM metadata"))
-    marker = authority._authority({"version": 1, "workspace_uuid": metadata.get("workspace_uuid"),
-                                   "epoch_uuid": metadata.get("epoch_uuid")})
-    authority._validate(connection, marker)
-    return {key: marker[key] for key in ("workspace_uuid", "epoch_uuid")}
-
-
 def _preparation(connection, row):
-    return {"version": "1", **_namespace(connection), "spec_id": row["spec_id"],
+    return {"version": "1", **authority.IdentityStore._namespace(connection), "spec_id": row["spec_id"],
             "operation_id": row["operation_id"], "request_sha256": row["request_sha256"],
             "plan_sha256": row["plan_sha256"]}
 
@@ -378,7 +370,7 @@ def pending(connection, store, spec_id):
 @authority._public
 def audit(connection, store):
     _require(connection)
-    _namespace(connection)
+    authority.IdentityStore._namespace(connection)
     operations = connection.execute("SELECT operation_id FROM publication_intents UNION "
         "SELECT publication_id FROM publication_operation_claims UNION "
         "SELECT operation_id FROM operations WHERE method='identity_publication'")

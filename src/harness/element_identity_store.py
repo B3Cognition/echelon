@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from kernel.element_ids import decimal_to_int, format_element_id, int_to_decimal
@@ -31,6 +32,9 @@ from harness.element_identity_candidate import (
 from harness.element_identity_bundle import EvidenceInventoryContext, LexiconProjectionSource
 from harness.element_identity_issue_candidate import IssueReportContext
 from harness.element_identity_publication import PublicationIntentRequest
+
+if TYPE_CHECKING:
+    from harness.element_identity_snapshot import IdentityHistorySnapshot
 
 
 _VERSION = 1
@@ -289,6 +293,17 @@ class IdentityStore:
             except BaseException:
                 connection.rollback()
                 raise
+
+    @staticmethod
+    def _namespace(connection) -> dict:
+        """Read and validate the authority namespace on a caller-owned transaction."""
+        if not connection.in_transaction:
+            raise IdentityStoreError("identity namespace requires an active caller transaction")
+        metadata = dict(connection.execute("SELECT key,value FROM metadata"))
+        marker = _authority({"version": 1, "workspace_uuid": metadata.get("workspace_uuid"),
+                             "epoch_uuid": metadata.get("epoch_uuid")})
+        _validate(connection, marker)
+        return {key: marker[key] for key in ("workspace_uuid", "epoch_uuid")}
 
     @staticmethod
     def _operation(connection, operation_id, method, spec_id, digest, *, _publication_id=None):
@@ -737,6 +752,16 @@ class IdentityStore:
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
             return publication_store.pending(connection, self, spec_id)
+
+    @_public
+    def identity_history(self, *, spec_id: str) -> IdentityHistorySnapshot:
+        """Capture canonical retained materialized history for one spec."""
+        from harness.element_identity_snapshot import capture
+
+        lifecycle.text(spec_id, "spec_id")
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            return capture(connection, self, spec_id)
 
     @_public
     def audit(self) -> dict:
