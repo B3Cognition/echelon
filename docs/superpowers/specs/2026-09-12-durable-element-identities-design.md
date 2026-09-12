@@ -295,6 +295,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and restore retain original receipt associations. Existing v1/v2 bytes and
   schema6 remain unchanged. This equality check does not authenticate graph
   derivation or activate a source/semantic/runtime/completion consumer.
+- Captured graph-input parsing: implemented in `f11c4f88` and independently
+  reviewed with no findings. Seven-module covering suite: 112 passed. Existing
+  requirement, deferral and fulfillment readers now share pure supplied-text
+  parsing paths, retaining legacy records, IDs, source lines, ordering and error
+  behavior. Real post-capture file changes and I/O tripwires verify independence
+  from mutable source reads. These are compatibility observations, not managed
+  validation or evidence proof; full captured-source graph assembly remains
+  outstanding and no live graph consumer is activated.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
