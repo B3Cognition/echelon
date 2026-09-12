@@ -137,3 +137,72 @@ Skills followed: `superpowers:test-driven-development` (including
 `writing-good-tests.md`) and `superpowers:verification-before-completion`, plus
 the full supplied implementer prompt and repository AGENTS.md. No subagents or
 reviewers were spawned.
+
+## Review fix round 1: discard managed-owner exception context
+
+Fix base: `91a4c48afd0b4c0f6cda18dd95f78b5e2c178d2d`. The reviewer identified that
+the initializer and sole-writer malformed-prior-JSON wrappers raised inside their
+`except ValueError` handlers. Although `from None` suppressed traceback display,
+`__context__` retained the original `JSONDecodeError`, including its untrusted
+`.doc`. The original 912-test covering evidence above belongs to the pre-fix
+code point and is not claimed as a covering run of this amendment.
+
+Verified the finding with real on-disk malformed JSON through both `initialize`
+and the locked `_save_unlocked` initialization path. The tests retain an existing
+backup and install backup/temp write tripwires, assert the same bounded
+`StateAdvanceError` path, and now require both `__context__` and `__cause__` to be
+absent. Each case also proves the legacy initializer still accepts unknown
+malformed prior JSON under its pre-existing policy.
+
+The same review of the new managed wrappers found the initializer's supplied
+record-validation wrapper retained its ValueError context. Added context/cause
+assertions to all five existing malformed initialization cases and corrected that
+wrapper too. Added three focused probes confirming the two parse paths and the
+record-validation path still propagate the identical BaseException without
+changing state or backup bytes. Unrelated legacy error wrappers were not changed.
+
+Actual RED before production correction:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_element_identity_state.py::test_managed_initialize_rejects_malformed_json_without_changing_legacy_policy tests/unit/test_element_identity_state.py::test_invalid_initialization_record_never_creates_state_or_backup tests/unit/test_element_identity_state.py::test_managed_owner_normalization_preserves_baseexception
+7 failed, 3 passed in 0.31s
+```
+
+Both real malformed-JSON paths failed the new assertion with
+`JSONDecodeError('Expecting value: line 1 column 29 (char 28)')` retained as
+`StateAdvanceError.__context__`. The five supplied-record cases failed with
+`ValueError('invalid managed identity record')` retained as context. The three
+BaseException cases passed. Root was notified before the production correction.
+
+Production correction: record parse failure with a boolean and raise each bounded
+managed error after leaving its handler. For supplied record validation, use
+`None` as the failed-validation sentinel and likewise raise after the handler.
+The exceptions caught, legacy parsing policy, state lock, initialization
+authority, bounded error text/path, and validation-before-write ordering remain
+unchanged. The pure validator and unrelated state errors needed no correction.
+
+Exact amended production/test code point: staged tree
+`f81c3347c1217c3ba521cd4c2186134c7b30ec97`, based on the fix base above. This report
+appendix was added after the covering run; no subsequent production/test edits
+were made. The single required amended covering run also supplies GREEN:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_element_identity_state.py tests/kernel/test_squad_state.py
+354 passed in 2.49s
+```
+
+Exit status 0, no skips or warnings. This was the only post-fix covering run; no
+912-test repeat, controller suite, full-unit, capacity, provider, install, or
+postcommit tests were run. Diff checks passed.
+
+Files amended: `src/harness/squad_state.py`,
+`tests/unit/test_element_identity_state.py`, and this report. Root's dirty
+`progress.md`, untracked `docs/superpowers/plans/2026-09-12-managed-context-authentication.md`,
+and ignored next-task workspace remain outside the commit.
+
+Self-review confirmed all three new managed-error wrappers now discard caught
+exception context, reject before backup/temp writes, and preserve BaseException
+and the explicit unknown-legacy JSON policy. No unresolved concern remains for
+this finding; previously documented activation and authority limitations remain.
+Used `superpowers:receiving-code-review`, the previously loaded TDD guidance, and
+verification-before-completion. No subagents or reviewers were spawned.

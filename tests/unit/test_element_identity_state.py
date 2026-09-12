@@ -135,6 +135,8 @@ def test_invalid_initialization_record_never_creates_state_or_backup(tmp_path, i
     with pytest.raises(StateAdvanceError) as caught:
         initialize(store, managed_identity=invalid)
     assert caught.value.json_path == "$.managed_identity"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
     assert durable_bytes(store) == {}
 
 
@@ -247,17 +249,62 @@ def test_retained_malformed_record_cannot_be_loaded_or_stripped(tmp_path, value)
         assert durable_bytes(store) == before
 
 
-def test_managed_initialize_rejects_malformed_json_without_changing_legacy_policy(tmp_path):
+@pytest.mark.parametrize("owner_path", ["initialize", "writer"])
+def test_managed_initialize_rejects_malformed_json_without_changing_legacy_policy(tmp_path, monkeypatch, owner_path):
+    import harness.squad_state as module
     from harness.squad_state import SquadStateStore, StateAdvanceError
     store = SquadStateStore(tmp_path)
-    store._path.write_text('{"unknown":')
+    store._path.write_text('{"private prior state text":')
+    store._path.with_suffix(".json.bak").write_text("existing backup")
     before = durable_bytes(store)
-    with pytest.raises(StateAdvanceError) as caught:
-        initialize(store, managed_identity=record())
+    def forbidden(*args, **kwargs):
+        pytest.fail("malformed prior JSON reached a write")
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "write_text", forbidden)
+        patch.setattr(module.tempfile, "mkstemp", forbidden)
+        with pytest.raises(StateAdvanceError) as caught:
+            if owner_path == "initialize":
+                initialize(store, managed_identity=record())
+            else:
+                with store._lock(exclusive=True):
+                    store._save_unlocked(
+                        {"run_id": "first", "spec_id": "demo", "managed_identity": record()},
+                        allow_managed_identity_initialization=True,
+                    )
     assert caught.value.json_path == "$.managed_identity"
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    assert "private" not in str(caught.value)
+    assert len(str(caught.value)) < 100
     assert durable_bytes(store) == before
     initialize(store)
     assert "managed_identity" not in store.load()
+
+
+@pytest.mark.parametrize("owner_path", ["initialize_parse", "writer_parse", "initialize_record"])
+def test_managed_owner_normalization_preserves_baseexception(tmp_path, monkeypatch, owner_path):
+    import harness.squad_state as module
+    store = module.SquadStateStore(tmp_path)
+    initialize(store)
+    before = durable_bytes(store)
+    class Stop(BaseException):
+        pass
+    sentinel = Stop()
+    def stop(*args, **kwargs):
+        raise sentinel
+    target = "validate_managed_identity_record" if owner_path == "initialize_record" else "loads_strict_json"
+    monkeypatch.setattr(module, target, stop)
+    with pytest.raises(Stop) as caught:
+        if owner_path.startswith("initialize"):
+            initialize(store, managed_identity=record())
+        else:
+            with store._lock(exclusive=True):
+                store._save_unlocked(
+                    {"run_id": "first", "spec_id": "demo", "managed_identity": record()},
+                    allow_managed_identity_initialization=True,
+                )
+    assert caught.value is sentinel
+    assert durable_bytes(store) == before
 
 
 def prepared_route(store, **kwargs):

@@ -2375,6 +2375,7 @@ class SquadStateStore:
         old_text: str | None = None
         if self._path.exists():
             old_text = self._path.read_text()
+            prior_state_invalid = False
             try:
                 old_state = loads_strict_json(old_text)
                 if type(old_state) is dict:
@@ -2384,12 +2385,15 @@ class SquadStateStore:
                 if type(old_revision) is int and old_revision >= 0:
                     previous_revision = old_revision
             except ValueError:
-                if MANAGED_IDENTITY_KEY in next_state:
-                    raise StateAdvanceError(
-                        "managed initialization requires readable prior state",
-                        json_path="$.managed_identity",
-                        validator="managed_identity",
-                    ) from None
+                prior_state_invalid = True
+            if prior_state_invalid and MANAGED_IDENTITY_KEY in next_state:
+                # Leaving the handler discards JSONDecodeError.doc as well as
+                # the displayed cause; legacy parse policy remains unchanged.
+                raise StateAdvanceError(
+                    "managed initialization requires readable prior state",
+                    json_path="$.managed_identity",
+                    validator="managed_identity",
+                ) from None
 
         _validate_managed_identity_write(
             current_state,
@@ -4360,21 +4364,25 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             # Preserve owned metadata during the existing controller reset under
             # this same lock. No registry/source access belongs in this owner.
+            prior_state_invalid = False
             try:
                 retained = _managed_identity_from_state(self._load_unlocked())
             except ValueError:
-                if managed_identity is not None:
-                    raise StateAdvanceError(
-                        "managed initialization requires readable prior state",
-                        json_path="$.managed_identity",
-                        validator="managed_identity",
-                    ) from None
+                prior_state_invalid = True
                 retained = None  # Preserve unknown malformed legacy behavior.
+            if prior_state_invalid and managed_identity is not None:
+                raise StateAdvanceError(
+                    "managed initialization requires readable prior state",
+                    json_path="$.managed_identity",
+                    validator="managed_identity",
+                ) from None
             selected = retained if managed_identity is None else managed_identity
             if selected is not None:
                 try:
                     selected = validate_managed_identity_record(selected)
                 except Exception:
+                    selected = None
+                if selected is None:
                     raise StateAdvanceError(
                         "invalid managed identity initialization",
                         json_path="$.managed_identity",
