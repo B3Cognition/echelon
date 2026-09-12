@@ -70,6 +70,8 @@ The snapshot deliberately does not contain original preimage bytes for an alread
 
 Successful inspection includes successful context exit, not merely receiving the yielded value. A caller that persists a pending intent inside the body must keep that intent pending if exit validation fails; this reader cannot roll back a separately committed database transaction. Do not mark publication/graph/completion successful from inside the body or add such effects to this task.
 
+Review clarification: retain the project-root chain before lock acquisition and bind the lock helper's actually opened project descriptor to that retained identity. Checking only that the original path is restored after acquiring the lock misses transient replacement (ABA). A narrow backwards-compatible optional internal lock-helper argument is allowed for this binding; retain the same owner, lock rank and default publish/discard behavior. No new lock or publication promotion behavior is introduced.
+
 **First regression before production edits:**
 
 ```python

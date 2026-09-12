@@ -110,6 +110,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   punctuation and treats ambiguous URI-style prefixes conservatively. Qualified
   resolution, interval application and authenticated historical reconciliation
   remain explicit unsupported integrations, not guessed successes.
+- Sealed publication inspection: implemented in `d610e2bf`, corrected in
+  `04f2d655` and `38dd7664`, and independently reviewed. Initial four-module
+  suite: 409 passed; final lock-association correction: 171 covering tests
+  passed. Immutable current/staged images share the existing lock and prefix
+  rules, including interrupted publication. Real root-swap and transient-swap
+  regressions bind the acquired lock to the retained root descriptor. This
+  does not supply original bytes after promotion, complete unchanged dependency
+  capture, semantic authority or a durable identity intent.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
