@@ -16454,6 +16454,29 @@ def _run_re_v2_continue(
             raise ValueError(
                 "semantic resource authorization is valid only for protocol 2.5"
             )
+        if _is_reviewed_analysis_run(run_dir):
+            from harness.config import load_config
+            from harness.re_v2.knowledge_workflow import run_knowledge_workflow
+            from harness.squad_provider import SquadCliProvider
+
+            _installed_re_runtime_or_exit(project_root)
+            config = load_config(project_root, squad_only=True)
+            depths = _reviewed_run_depths(run_dir)
+            frozen = tuple(sorted(set(depths.values())))
+            effective_depth = frozen[0] if len(frozen) == 1 else "mixed"
+            result = run_knowledge_workflow(
+                project_root,
+                run_dir.name,
+                lambda: SquadCliProvider(config),
+                token_limit=token_limit,
+                active_ms_limit=(
+                    time_limit_minutes * 60_000
+                    if time_limit_minutes is not None
+                    else None
+                ),
+            )
+            _render_re_knowledge_result("continue", effective_depth, result)
+            return
         from harness.config import load_config
         from harness.re_v2.protocol_28.lifecycle import continue_protocol_28_run
         from harness.re_v2.protocol_28.status import protocol_28_status_document
@@ -17178,16 +17201,23 @@ def _reviewed_run_depths(run_dir: Path) -> dict[str, str]:
 def _is_reviewed_analysis_run(run_dir: Path | None) -> bool:
     if run_dir is None:
         return False
-    import json
+    from harness.re_v2.protocol_28.context import load_protocol_28_run_context
+    from harness.re_v2.protocol_28.inputs import (
+        ReviewedProtocol28CreationInputs,
+        ValidatedReviewedProtocol28Inputs,
+    )
 
-    manifest = run_dir / "v2" / "run.json"
+    manifest = Path(run_dir) / "v2" / "run.json"
     if manifest.is_symlink() or not manifest.is_file():
         return False
     try:
-        value = json.loads(manifest.read_bytes())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        context = load_protocol_28_run_context(Path(run_dir).resolve())
+    except (OSError, RuntimeError, ValueError):
         raise ValueError("invalid active RE run manifest") from None
-    return isinstance(value, dict) and value.get("engine_protocol_version") == "2.8"
+    return isinstance(
+        context.inputs,
+        (ReviewedProtocol28CreationInputs, ValidatedReviewedProtocol28Inputs),
+    )
 
 
 def _render_re_knowledge_result(action: str, depth: str, result: object) -> None:

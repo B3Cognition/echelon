@@ -102,6 +102,58 @@ def test_normal_run_creates_reviewed_analysis_when_none_is_active(
 
 
 @pytest.mark.integration
+def test_continue_reviewed_analysis_resumes_full_configured_provider_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import echelon.cli as cli
+    import harness.config
+    import harness.re_v2.knowledge_workflow as workflow
+    import harness.re_v2.protocol_28.context as context_module
+    import harness.squad_provider
+
+    class ReviewedContext:
+        pass
+
+    run_dir = tmp_path / "runs" / "re-reviewed-analysis"
+    run_dir.mkdir(parents=True)
+    config = object()
+    provider = object()
+    calls = []
+    monkeypatch.setattr(context_module, "Protocol28RunContext", ReviewedContext)
+    monkeypatch.setattr(cli, "_re_v2_context", lambda _root, _run: ReviewedContext())
+    monkeypatch.setattr(cli, "_installed_re_runtime_or_exit", lambda _root: None)
+    monkeypatch.setattr(cli, "_is_reviewed_analysis_run", lambda _run: True)
+    monkeypatch.setattr(cli, "_reviewed_run_depths", lambda _run: {"api": "quick"})
+    monkeypatch.setattr(harness.config, "load_config", lambda *_a, **_k: config)
+    monkeypatch.setattr(
+        harness.squad_provider,
+        "SquadCliProvider",
+        lambda actual: provider if actual is config else pytest.fail("wrong config"),
+    )
+
+    def execute(root, run_id, provider_factory, *, token_limit, active_ms_limit):
+        calls.append((root, run_id, provider_factory(), token_limit, active_ms_limit))
+        return workflow.KnowledgeWorkflowResultV1(
+            run_id, "complete", "re-synthesis", 5, None
+        )
+
+    monkeypatch.setattr(workflow, "run_knowledge_workflow", execute)
+
+    cli._run_re_v2_continue(
+        run_dir,
+        token_limit=2_000_000,
+        time_limit_minutes=30,
+    )
+
+    assert calls == [
+        (tmp_path.resolve(), "re-reviewed-analysis", provider, 2_000_000, 1_800_000)
+    ]
+    output = capsys.readouterr().out
+    assert "continue completed" in output
+    assert "generation 5" in output
+
+
+@pytest.mark.integration
 def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
