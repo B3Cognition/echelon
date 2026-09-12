@@ -319,10 +319,10 @@ def test_glossary_and_evidence_inventory_are_deliberately_empty_fact_images():
 
 class _RecursiveSequence(Sequence):
     def __len__(self):
-        raise RecursionError("untrusted recursion " + "x" * 10_000)
+        raise RecursionError("UNTRUSTED_SENTINEL_" + "x" * 10_000)
 
     def __getitem__(self, index):
-        raise RecursionError("untrusted recursion " + "x" * 10_000)
+        raise RecursionError("UNTRUSTED_SENTINEL_" + "x" * 10_000)
 
 
 def test_request_containers_are_strict_sequences_and_errors_are_bounded():
@@ -343,6 +343,18 @@ def test_request_containers_are_strict_sequences_and_errors_are_bounded():
         with pytest.raises(ValueError) as captured:
             validate_reference_claim_sources(artifacts, claims)
         assert str(captured.value) == "invalid reference source validation request"
+
+
+def test_bounded_request_error_suppresses_untrusted_traceback_context():
+    import traceback
+
+    from harness.element_identity_reference_sources import validate_reference_claim_sources
+
+    with pytest.raises(ValueError) as captured:
+        validate_reference_claim_sources(_RecursiveSequence(), ())
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert "UNTRUSTED_SENTINEL_" not in rendered
+    assert len(rendered) < 1_000
 
 
 def test_exact_types_duplicates_canonical_paths_and_damaged_fields_are_rejected():

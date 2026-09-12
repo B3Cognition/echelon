@@ -60,8 +60,8 @@ def _normalize(artifacts, claims):
         if claims:
             bindings.request(claims, bindings.ReferenceClaim)
         return artifacts, claims
-    except (AttributeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
-        raise ValueError(_INVALID_REQUEST) from error
+    except (AttributeError, RecursionError, TypeError, UnicodeError, ValueError):
+        raise ValueError(_INVALID_REQUEST) from None
 
 
 def validate_reference_claim_sources(
