@@ -193,6 +193,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   interleaved ancestor/descendant targets. The retained snapshot remains a
   caller claim, not sealed-manifest authentication, accepted-source authority,
   semantic approval or complete publication recovery. No live wiring is enabled.
+- Exact proposed source-reference binding: implemented in `c19043b1`, corrected
+  in `3b535ed0`, and independently reviewed. The amended eight-module suite passed
+  1,513 tests; bounded-traceback fix coverage passed 51 source-validation tests.
+  Supplied postimage hashes and exact parser span/target/relation triples now
+  have a pure validator complementary to target-side preflight. A prior Lexicon
+  compatibility defect exposed by the original 1,510-pass/1-fail run was corrected
+  narrowly: rejected declaration labels no longer also become reference facts,
+  while real body references remain. No semantic approval, accepted-source
+  authentication or live publication enforcement is claimed.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
