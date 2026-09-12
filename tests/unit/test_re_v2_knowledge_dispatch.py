@@ -17,6 +17,17 @@ def _contract(name="scripted"):
     return KnowledgeProviderContract(name, "offline-fixture", content_digest({"adapter": name}))
 
 
+@pytest.mark.unit
+def test_repair_feedback_explains_depth_scoped_subject_categories():
+    from harness.re_v2.knowledge_dispatch import _repair_requirement
+
+    requirement = _repair_requirement("invalid-discovery-subject-category")
+
+    assert "category_ids" in requirement
+    assert "required" in requirement
+    assert "outside_requested_depth" in requirement
+
+
 def _controller(
     tmp_path, *, tokens=500_000, turns=3, repairs=None, backend=None, fault=None
 ):

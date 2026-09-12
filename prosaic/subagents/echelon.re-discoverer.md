@@ -48,6 +48,11 @@ NEVER attach a category to an unsupported subject or use a subject owned by anot
 target to make category coverage appear complete. Never list an `analyze` subject
 whose own evidence has no intersection with the obligation evidence.
 
+ALWAYS populate each subject's nonempty `category_ids` only from the selected
+depth row's `required` array for that subject's target kind.
+NEVER attach an `outside_requested_depth` category to a subject; represent that
+category only with an `outside-requested-depth` obligation and empty `subject_keys`.
+
 ALWAYS treat an `untrusted_discovery_repair_context` as a request to replace its
 entire opaque `previous_candidate_text`, using the nested
 `safe_discovery_context` as the sole evidence authority and the closed

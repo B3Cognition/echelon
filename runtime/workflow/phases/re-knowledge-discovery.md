@@ -77,7 +77,9 @@ For `kind: discovery_proposal`, also include:
 - `domains`: objects with `key`, `description`, `evidence_ids` (at most 256).
 - `subjects`: objects with `key`, `target` (domain key or `source`), `description`,
   `category_ids`, and `evidence_ids` (at most 1,024). Each proposed domain needs
-  an evidence-supported subject. Category IDs must belong to that target kind.
+  an evidence-supported subject. `category_ids` must be nonempty and contain only
+  the selected depth row's `required` categories for that target kind. Categories
+  listed under `outside_requested_depth` never appear on a subject.
 - `inventory`: exactly one object per inventory path: `path`, `owner` (subject key
   or null), `reason`. Unassigned paths remain visible for reconciliation.
 - `obligations`: exactly one object for every supplied source category at `source`

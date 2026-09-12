@@ -48,6 +48,32 @@ class DiscoveryBackend(Protocol):
     def __call__(self, agent: bytes, context: bytes, reservation: DispatchReservationV1) -> ProviderReply: ...
 
 
+def _repair_requirement(reason_code: str) -> str:
+    requirements = {
+        "invalid-discovery-subject-category": (
+            "Every subject category_ids array must be nonempty, unique, and contain "
+            "only categories from the selected depth's required array for that "
+            "subject target kind. Never put an outside_requested_depth category on "
+            "a subject; its obligation must instead have outside-requested-depth "
+            "disposition and empty subject_keys."
+        ),
+        "duplicate-discovery-field": (
+            "Return strict JSON in which every object key occurs exactly once. "
+            "Replace the entire payload instead of appending corrected duplicate keys."
+        ),
+        "unsupported-discovery-obligation": (
+            "For every analyze obligation, evidence_ids must be visible, be a subset "
+            "of the listed subjects' combined evidence, and intersect every listed "
+            "subject's evidence_ids."
+        ),
+    }
+    return requirements.get(
+        reason_code,
+        "Return one complete replacement payload satisfying the exact authorial "
+        "response contract; do not patch or extend the rejected payload.",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveryStep:
     state: str
@@ -166,12 +192,7 @@ class DiscoveryController:
             **candidate_field,
             "deterministic_feedback": {
                 "reason_code": feedback["reason_code"],
-                "requirement": (
-                    "Return a complete replacement payload satisfying the authorial "
-                    "response contract. For analyze obligations, evidence_ids must "
-                    "be visible, be a subset of the listed subjects' combined evidence, "
-                    "and intersect every listed subject's evidence_ids."
-                ),
+                "requirement": _repair_requirement(feedback["reason_code"]),
             },
         })
 
