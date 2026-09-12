@@ -28,6 +28,8 @@
 - Create `docs/element-identity-storage.md` documenting the library's authority, restore boundaries, and the fact that it is not yet wired into producers.
 - Consume `src/kernel/element_ids.py` from numeric compatibility; do not modify unrelated producers in this task.
 
+**Large-ordinal compatibility addendum:** The store's 5,001-digit regression exposes Python's configurable integer/string conversion limit in the shared formatter and numeric sorter. Extend `src/kernel/element_ids.py` and `tests/unit/test_element_ids.py` narrowly to support chunked decimal conversion without changing process-global settings. Keep one formatting authority: the store must always use `format_element_id`, not a large-value label-formatting fallback. Factor shared conversion where needed to avoid duplicating the chunking algorithm between the kernel and store; preserve existing validation and legacy-label sorting behavior. Test large formatting, numeric ordering, and unchanged global settings, in addition to existing six/seven/eight-digit cases.
+
 **Interfaces:**
 - `IdentityStoreError(ValueError)` is the fail-closed public error.
 - `IdentityStore.initialize(workspace: Path) -> IdentityStore`: explicitly create a fresh authority at `.echelon/identity`, fail if any existing authority state exists. Create an authority marker with version, workspace UUID and epoch UUID, plus `registry.sqlite3`; protect sensitive state with owner-only file permissions. An incomplete initialization blocks subsequent opens/initialization instead of silently starting over.
