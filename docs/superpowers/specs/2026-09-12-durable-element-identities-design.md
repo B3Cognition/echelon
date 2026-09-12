@@ -25,7 +25,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   The final million-record run measured 9.751 seconds to import and
   130,846,720 database bytes with indexed allocation/integrity checks.
   Detectable counter/history contradictions reject without counter repair.
-- Lifecycle foundation: implementation in progress, not active.
+- Lifecycle foundation: implemented and independently reviewed in `07573c2b`
+  and `779ed4ae`, not active. The lifecycle/allocation/formatter/process suite
+  passed 184 tests; the audit review fix passed 141 covering tests. One million
+  imported/unbound entities took 13.974 seconds and 168,841,216 database bytes
+  with the lifecycle schema; these are not one million assessed revisions.
+- Typed artifact adapters: next implementation checkpoint; no publication
+  enforcement is claimed from storage tests alone.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
