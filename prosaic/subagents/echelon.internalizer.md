@@ -150,7 +150,7 @@ These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
 4. If 0 decisions detected: null with "empty-denominator"
 
 **I-07 cross_reference_accuracy** [FR-013]
-1. Extract complete requirement ID citations from agent output: `/(?<![A-Z0-9-])(?:FR|NFR|AC|C)-\d{3,}(?![-A-Za-z0-9])/g` (preserve the cited label exactly; do not truncate a wider ID or accept a numeric prefix of a malformed token)
+1. Extract complete requirement ID citations from agent output: `/(?<![A-Z0-9-])(?:FR|NFR|AC|C)-(?:\d{3,}|\d{3}[a-z])(?![-A-Za-z0-9])/g` (preserve the cited label exactly; accept the existing three-digit lowercase legacy suffix, but do not truncate a wider ID or accept a numeric prefix of a malformed token)
 2. Build the valid ID set from spec.md
 3. For each citation, check: does this ID exist in the spec?
 4. Compute: `valid_citations / total_citations`

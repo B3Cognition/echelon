@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from codegen.decompose.task_queue import generate_task_ids
 from kernel.element_ids import element_id_sort_key, format_element_id
 
 
@@ -19,6 +20,11 @@ from kernel.element_ids import element_id_sort_key, format_element_id
 def test_format_grows_without_wrapping(ordinal: int, want: str) -> None:
     """A fixed output width must not wrap or reject growing ordinals."""
     assert format_element_id("AC", ordinal) == want
+
+
+def test_task_id_generator_uses_six_digit_minimum() -> None:
+    """A public producer must use the same minimum width as the formatter."""
+    assert generate_task_ids(3) == ["T-000001", "T-000002", "T-000003"]
 
 
 @pytest.mark.parametrize("prefix", ["FR", "NFR", "ISS", "U", "A", "T"])

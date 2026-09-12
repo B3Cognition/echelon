@@ -72,7 +72,23 @@ $ bash tests/integration/test-internalization-scoring.sh
 === Results: 34 passed, 0 failed ===
 ```
 
-The broader `tests/unit` run is still in progress at report creation. It reached 65% and had one failure around 47%; no full-suite pass is claimed. Its final result will be appended when available.
+The broader unit suite completed with one branch-wide pre-existing failure:
+
+```text
+$ /Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest -q tests/unit
+1 failed, 9139 passed in 1091.57s (0:18:11)
+
+FAILED tests/unit/test_prompt_contracts.py::test_primary_agent_prompt_rules_are_paired_in_fast_unit_suite
+```
+
+The isolated test reproduces the same failure (`1 failed in 0.18s`) for these four prompts:
+
+- `prosaic/subagents/echelon.delivery-code-reviewer.md`
+- `prosaic/subagents/echelon.delivery-spec-guard.md`
+- `prosaic/subagents/echelon.delivery-test-guardian.md`
+- `prosaic/subagents/echelon.delivery-implementer.md`
+
+All four were introduced by earlier branch commit `87345bca` and already lacked the required section at numeric baseline `9c9acd46`. The failing test/helper and four prompts are unchanged from `9c9acd46` through current HEAD (`git diff --quiet ...` exit `0`). This is a branch-wide pre-existing prompt-contract regression, not a numeric compatibility regression; no edits were made to those prompts in this task.
 
 ## Self-review
 
@@ -88,4 +104,13 @@ The broader `tests/unit` run is still in progress at report creation. It reached
 
 - This compatibility phase still derives review/reopen numbers from current documents. It is not durable, retry-safe identity authority and does not prevent subject reassignment.
 - Independent review is required before the controller marks phase 1 complete.
-- The outstanding broader unit result must be reported precisely; its current single failure is not yet classified.
+- The broader unit suite is not fully green because of the classified branch-wide prompt-contract regression above. It should be handled as a separate follow-up rather than folded into numeric compatibility.
+
+## Independent review fix round 1
+
+- RED: `$ .../python -m pytest -q tests/unit/test_element_ids.py::test_task_id_generator_uses_six_digit_minimum` -> `1 failed in 0.18s`; the producer returned `T-001` through `T-003`.
+- Fixed `generate_task_ids()` to delegate to `format_element_id()` and fixed INTERNALIZER I-07 prose to accept either open-ended bare numeric IDs or exactly three digits plus its existing lowercase legacy suffix, with full-token boundaries.
+- GREEN: `$ .../python -m pytest -q tests/unit/test_element_ids.py` -> `27 passed in 0.18s`.
+- The real generator test covers producer output at the minimum; code inspection confirms its delegation, and the existing formatter parametrization covers ordinals 1, 999999, 1000000, and 10000000 without constructing a ten-million-item list.
+- GREEN: `$ .../python -m pytest -q tests/unit/test_internalization_numeric_ids.py tests/unit/test_internalizer_templates.py tests/unit/test_kb_proposal_prompt_contracts.py tests/unit/test_prosaic_execution_policy.py tests/unit/test_role_contracts.py` -> `32 passed in 0.83s`.
+- The 18-minute whole-unit suite was not rerun for these two narrow fixes; its prior classified result remains `9139 passed, 1` pre-existing branch prompt-contract failure.

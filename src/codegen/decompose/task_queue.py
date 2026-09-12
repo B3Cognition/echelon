@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
+from kernel.element_ids import format_element_id
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -255,8 +257,8 @@ class TaskQueue:
 # ---------------------------------------------------------------------------
 
 def generate_task_ids(n: int, prefix: str = "T") -> list[str]:
-    """Generate n sequential task IDs: T-001, T-002, ... T-{n}."""
-    return [f"{prefix}-{i:03d}" for i in range(1, n + 1)]
+    """Generate n sequential task IDs with a six-digit minimum width."""
+    return [format_element_id(prefix, i) for i in range(1, n + 1)]
 
 
 # ---------------------------------------------------------------------------
