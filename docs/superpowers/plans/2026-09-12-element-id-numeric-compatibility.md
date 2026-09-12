@@ -68,6 +68,17 @@ def format_element_id(prefix: str, ordinal: int) -> str:
 - [ ] Verify focused tests, then the relevant projection, task, mapping, review, reopen, canonical inventory, graph, and memory test suites. Record exact commands/results and any failures. Run `git diff --check` and self-review for dropped full-match boundaries, mutated legacy IDs, accidental numeric caps, and untested producer changes.
 - [ ] Commit only task changes and write the implementation report with RED/GREEN evidence. Controller obtains an independent task review before marking phase 1 complete.
 
+## Task 2: repair the wider-suite delivery prompt contract regression
+
+**Files:** `prosaic/subagents/echelon.delivery-implementer.md`, `prosaic/subagents/echelon.delivery-code-reviewer.md`, `prosaic/subagents/echelon.delivery-spec-guard.md`, `prosaic/subagents/echelon.delivery-test-guardian.md`.
+
+The full unit run reports 9,139 passing tests and one failing `tests/unit/test_prompt_contracts.py::test_primary_agent_prompt_rules_are_paired_in_fast_unit_suite`. The four prompts already contain correctly paired rules but lack the standard section heading. This was introduced by earlier branch commit `87345bca`, before numeric compatibility.
+
+- [ ] Reproduce the existing failing test. Do not add a duplicate source-string test.
+- [ ] Add `## ALWAYS / NEVER Rules` before the first existing rule pair in each of the four prompts. Preserve all rule text, frontmatter, role boundaries, and harness-owned workflow control. No new routing instructions or roles.
+- [ ] Run `tests/unit/test_prompt_contracts.py`, `tests/kernel/test_prompt_references.py`, `tests/unit/test_prosaic_execution_policy.py`, and `tests/unit/test_delivery_slice_runner.py` with the configured interpreter; run `git diff --check`.
+- [ ] Commit only the four prompt corrections and record RED/GREEN evidence in the task report. Obtain a narrow independent review. Do not describe the earlier full-unit run as all passing; its one failure is corrected by these targeted checks.
+
 ## Follow-on phases (not completion claims)
 
 ### Compatibility audit addendum
