@@ -16,6 +16,10 @@ Callers provide `CandidateArtifact(path, role, before_text, after_text)` entries
 Paths use canonical relative POSIX syntax. Text is exact UTF-8 encodable source
 without NUL; `None` denotes an absent image and the empty string denotes an empty
 file. At least one image per artifact and one artifact per request are required.
+An absent image contributes an empty typed fact set without invoking its adapter;
+a present empty string is still parsed and may be invalid, as it is for native
+Lexicon. Creating or removing a whole Lexicon file also requires explicit
+unowned-text permission for its `ARTIFACT`/`TITLE` content outside declarations.
 All caller sequences are copied into tuples and validated before the transaction.
 Malformed requests raise `IdentityStoreError`; structural candidate defects are
 returned as diagnostics. Nonempty lifecycle batches use existing strict request

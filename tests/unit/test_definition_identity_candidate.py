@@ -424,6 +424,127 @@ def lexicon_requirement(*, dependency="FR-002"):
     )
 
 
+def native_lexicon_definition(label, wording="the system MUST move"):
+    return (
+        f"ARTIFACT: SPEC\nTITLE: Movement\n\nREQ: {label}\n"
+        "GIVEN: a player\nWHEN: movement is requested\n"
+        f"THEN: {wording}\n"
+    )
+
+
+def test_absent_lexicon_before_image_allows_exact_reserved_creation(tmp_path):
+    from harness.element_artifacts import parse_identity_artifact
+    from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
+    from harness.element_identity_lifecycle import ElementCreate
+    from harness.element_identity_store import IdentityStore
+
+    store = IdentityStore.initialize(tmp_path)
+    label, = store.reserve(spec_id="demo", kind="FR", operation_id="reserve", count=1)
+    after = native_lexicon_definition(label)
+    declaration, = parse_identity_artifact(
+        path="requirements.lexicon", role="lexicon", text=after).declarations
+    original = logical_state(tmp_path)
+
+    result = store.check_identity_candidate(
+        spec_id="demo",
+        artifacts=(CandidateArtifact("requirements.lexicon", "lexicon", None, after),),
+        scope=IdentityEditScope(
+            ("requirements.lexicon",), (label,), ("requirements.lexicon",)),
+        changes=(ElementCreate(label, "movement-subject", declaration.content, "reserve"),),
+    )
+
+    assert result.diagnostics == ()
+    assert logical_state(tmp_path) == original
+
+
+def test_absent_lexicon_after_image_allows_exact_retirement_removal(tmp_path):
+    from harness.element_identity_lifecycle import ElementRetirement
+
+    before = native_lexicon_definition("FR-001")
+    store = seed_artifacts(tmp_path, (("requirements.lexicon", "lexicon", before),), subjects={
+        "FR-001": "movement-subject",
+    })
+    result = check(store, tmp_path, (
+        ("requirements.lexicon", "lexicon", before, None),
+    ),
+        ids=("FR-001",),
+        writable=("requirements.lexicon",),
+        unowned=("requirements.lexicon",),
+        changes=(ElementRetirement("FR-001", "1", "No longer required"),),
+    )
+    assert result.diagnostics == ()
+
+
+def test_absent_lexicon_images_allow_exact_transition_between_files(tmp_path):
+    from harness.element_artifacts import parse_identity_artifact
+    from harness.element_identity_lifecycle import ElementCreate, ElementTransition
+
+    before = native_lexicon_definition("FR-001")
+    store = seed_artifacts(tmp_path, (("old.lexicon", "lexicon", before),), subjects={
+        "FR-001": "movement-subject",
+    })
+    successor, = store.reserve(spec_id="demo", kind="FR", operation_id="reserve", count=1)
+    after = native_lexicon_definition(successor, "the system MUST move with arrows")
+    declaration, = parse_identity_artifact(
+        path="new.lexicon", role="lexicon", text=after).declarations
+    transition = ElementTransition(
+        "replace", (("FR-001", "1"),),
+        (ElementCreate(successor, "arrow-subject", declaration.content, "reserve"),),
+        "Replaced movement requirement",
+    )
+    result = check(store, tmp_path, (
+        ("old.lexicon", "lexicon", before, None),
+        ("new.lexicon", "lexicon", None, after),
+    ),
+        ids=("FR-001", successor),
+        writable=("old.lexicon", "new.lexicon"),
+        unowned=("old.lexicon", "new.lexicon"),
+        changes=(transition,),
+    )
+    assert result.diagnostics == ()
+
+
+@pytest.mark.parametrize("empty_image", ["before", "after"])
+def test_present_empty_native_lexicon_image_remains_invalid(tmp_path, empty_image):
+    from harness.element_artifacts import parse_identity_artifact
+    from harness.element_identity_candidate import CandidateArtifact, IdentityEditScope
+    from harness.element_identity_lifecycle import ElementCreate, ElementRetirement
+    from harness.element_identity_store import IdentityStore
+
+    if empty_image == "before":
+        store = IdentityStore.initialize(tmp_path)
+        label, = store.reserve(spec_id="demo", kind="FR", operation_id="reserve", count=1)
+        after = native_lexicon_definition(label)
+        declaration, = parse_identity_artifact(
+            path="requirements.lexicon", role="lexicon", text=after).declarations
+        before = ""
+        changes = (ElementCreate(label, "movement-subject", declaration.content, "reserve"),)
+    else:
+        label = "FR-001"
+        before = native_lexicon_definition(label)
+        after = ""
+        store = seed_artifacts(tmp_path, (("requirements.lexicon", "lexicon", before),), subjects={
+            label: "movement-subject",
+        })
+        changes = (ElementRetirement(label, "1", "No longer required"),)
+    original = logical_state(tmp_path)
+
+    result = store.check_identity_candidate(
+        spec_id="demo",
+        artifacts=(CandidateArtifact("requirements.lexicon", "lexicon", before, after),),
+        scope=IdentityEditScope(
+            ("requirements.lexicon",), (label,), ("requirements.lexicon",)),
+        changes=changes,
+    )
+
+    assert any(
+        diagnostic.code == "invalid_lexicon"
+        and diagnostic.detail.startswith(f"{empty_image} ")
+        for diagnostic in result.diagnostics
+    )
+    assert logical_state(tmp_path) == original
+
+
 @pytest.mark.parametrize("target_state", ["active", "imported"])
 def test_native_lexicon_depends_uses_reachable_dependency_policy(tmp_path, target_state):
     from harness.element_identity_lifecycle import ElementAdopt
