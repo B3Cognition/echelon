@@ -392,12 +392,31 @@ def test_encode_rejects_unsorted_duplicate_and_overlapping_operation_targets():
         (second, first),
         (first, replace(second, target=first.target)),
         (replace(first, target="a"), replace(second, target="a/b")),
+        (
+            replace(first, target="a"),
+            replace(second, target="a-"),
+            replace(first, target="a/b"),
+        ),
         (replace(first, target="../escape"), second),
     )
     for operations in operation_sets:
         _assert_encode_invalid(replace(
             snapshot, publication=replace(snapshot.publication, operations=operations)
         ))
+
+
+def test_decode_rejects_interleaved_ancestor_and_descendant_operation_targets():
+    value = json.loads(EXPECTED_WIRE)
+    missing = {
+        "kind": "missing", "sha256": None, "mode": None, "content_base64": None,
+    }
+    value["publication"]["operations"] = [
+        {"action": "delete", "target": target, "preimage": missing, "postimage": missing}
+        for target in ("a", "a-", "a/b")
+    ]
+    value["trees"] = []
+    value["files"] = []
+    _assert_decode_invalid(_canonical_wire(value))
 
 
 def test_encode_rejects_malformed_tree_membership_and_source_selection():

@@ -107,7 +107,7 @@ def _has_ancestor(path: str, candidates: set[str]) -> bool:
 
 def _validate_targets(operations: tuple[PublicationOperationSnapshot, ...]) -> None:
     previous: str | None = None
-    previous_parts: tuple[str, ...] | None = None
+    seen_parts: set[tuple[str, ...]] = set()
     for operation in operations:
         if type(operation) is not PublicationOperationSnapshot:
             _invalid()
@@ -115,9 +115,13 @@ def _validate_targets(operations: tuple[PublicationOperationSnapshot, ...]) -> N
         target_parts = _parts(target)
         if previous is not None and target <= previous:
             _invalid()
-        if previous_parts is not None and target_parts[: len(previous_parts)] == previous_parts:
+        if any(
+            target_parts[:length] in seen_parts
+            for length in range(1, len(target_parts))
+        ):
             _invalid()
-        previous, previous_parts = target, target_parts
+        previous = target
+        seen_parts.add(target_parts)
 
 
 def _tree_value(tree: object) -> tuple[dict[str, object], dict[str, tuple[PublicationImageDescriptor, bytes]], set[str]]:
