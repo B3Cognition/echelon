@@ -177,6 +177,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   evidence and occurrences without reverse Spec fanout or successor lineage.
   Results preserve assessment metadata and do not certify current sources,
   invalidate workflow stages or activate live managed graph loading.
+- Remaining memory ID-width compatibility: corrected in `f68a49ea` and
+  independently reviewed with no findings. Two-module covering run: 80 passed;
+  subsequent test-only self-review additions: 19 focused checks passed.
+  The only production change removes a 512-character requirement-ID guard;
+  existing deterministic drawer keys, exact-write/readback checks and other
+  validation remain unchanged. Real parser/planner tests retain 5,000-digit
+  labels independently of existing body-content secret scrubbing. This does
+  not activate live memory or establish lifecycle/current-revision authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
