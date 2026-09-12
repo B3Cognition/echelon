@@ -272,37 +272,18 @@ def build_spec_graph(
     edges: list[GraphEdge] = []
     inputs: dict[str, GraphInput] = {}
 
-    spec_node_id = f"spec:{spec_id}"
-    nodes[spec_node_id] = GraphNode(
-        spec_node_id,
-        "Spec",
-        {
-            "spec_id": spec_id,
-            "path": _workspace_path(root, spec_dir),
-            "lifecycle": artifact_index.infer_lifecycle_stage(spec_dir),
-        },
-    )
+    from echelon.spec_graph_structure import _add_requirements, _add_spec
 
-    canonical_requirements = [
-        row
-        for row in extract_canonical_requirements(spec_dir)
-        if row.source_kind == "spec"
-    ]
-    requirement_ids = {row.id for row in canonical_requirements}
-    for row in canonical_requirements:
-        node_id = f"req:{spec_id}:{row.id}"
-        nodes[node_id] = GraphNode(
-            node_id,
-            "Requirement",
-            {
-                "requirement_id": row.id,
-                "category": _category_for(row.id),
-                "source_line": row.source_line,
-                "source_path": _workspace_path(root, spec_dir / "spec.md"),
-                "source_text": row.source_text,
-            },
-        )
-        edges.append(GraphEdge(spec_node_id, "HAS_REQUIREMENT", node_id, {}))
+    _add_spec(
+        spec_id, _workspace_path(root, spec_dir),
+        artifact_index.infer_lifecycle_stage(spec_dir), nodes,
+    )
+    rows = extract_canonical_requirements(spec_dir)
+    source_path = (
+        _workspace_path(root, spec_dir / "spec.md")
+        if any(row.source_kind == "spec" for row in rows) else ""
+    )
+    requirement_ids = _add_requirements(spec_id, source_path, rows, nodes, edges)
 
     _add_policy_artifacts(root, spec_dir, nodes, inputs)
     _add_tasks(root, spec_dir, requirement_ids, nodes, edges)
@@ -353,13 +334,11 @@ def _add_policy_artifacts(
     nodes: dict[str, GraphNode],
     inputs: dict[str, GraphInput],
 ) -> None:
+    from echelon.spec_graph_structure import _local_artifact_paths
+
     candidates: set[Path] = set()
-    for definition in getattr(artifact_index, "_ARTIFACTS"):
-        candidate = spec_dir / definition.path
-        if candidate.is_file():
-            candidates.add(candidate)
-    for name in ("manifest.json", "catalog.json", "traceability.json"):
-        candidate = spec_dir / "inputs" / name
+    for relative in _local_artifact_paths():
+        candidate = spec_dir / relative
         if candidate.is_file():
             candidates.add(candidate)
 
@@ -389,32 +368,15 @@ def _add_artifact(
     *,
     role: str | None = None,
 ) -> str:
+    from echelon.spec_graph_structure import _add_artifact_record
+
     workspace_path = _workspace_path(root, path)
-    node_id = f"artifact:{spec_dir.name}:{workspace_path}"
     resolved_role = role or _artifact_role(spec_dir, path)
     digest = _file_hash(path)
-    nodes[node_id] = GraphNode(
-        node_id,
-        "Artifact",
-        {
-            "path": workspace_path,
-            "role": resolved_role,
-            "hash": digest,
-            "mining_status": (
-                "mined"
-                if path.name in SUPPORTING_MEMORY_ARTIFACTS
-                or resolved_role in {"requirements-source", "verification-evidence"}
-                else "not-mined-by-policy"
-            ),
-        },
+    return _add_artifact_record(
+        spec_dir.name, workspace_path, path.name, digest, resolved_role,
+        _input_required(spec_dir, path), nodes, inputs,
     )
-    inputs[workspace_path] = GraphInput(
-        path=workspace_path,
-        hash=digest,
-        role=_input_role(resolved_role),
-        required=_input_required(spec_dir, path),
-    )
-    return node_id
 
 
 def _add_re_topology(
@@ -677,37 +639,9 @@ def _add_tasks(
     if not path.is_file():
         return
     markdown = path.read_text(encoding="utf-8")
-    validation = validate_tasks_markdown(markdown)
-    if not validation.valid:
-        raise SpecGraphError("invalid tasks.md: " + "; ".join(validation.errors))
-    progress = summarize_task_progress(markdown)
-    if not progress.valid:
-        raise SpecGraphError("invalid task progress: " + "; ".join(progress.errors))
-    for task in parse_task_rows(markdown):
-        node_id = f"task:{spec_dir.name}:{task.task_id}"
-        unresolved = sorted(
-            set(task.requirements) - requirement_ids - {"INFRA", "UNMAPPED"}
-        )
-        nodes[node_id] = GraphNode(
-            node_id,
-            "Task",
-            {
-                "task_id": task.task_id,
-                "status": progress.task_statuses.get(task.task_id, "PENDING"),
-                "phase": task.phase,
-                "target": task.target,
-                "unresolved_requirement_ids": unresolved,
-            },
-        )
-        for requirement_id in sorted(set(task.requirements).intersection(requirement_ids)):
-            edges.append(
-                GraphEdge(
-                    node_id,
-                    "IMPLEMENTS",
-                    f"req:{spec_dir.name}:{requirement_id}",
-                    {},
-                )
-            )
+    from echelon.spec_graph_structure import _add_task_text
+
+    _add_task_text(spec_dir.name, markdown, requirement_ids, nodes, edges)
 
 
 def _add_traceability(
@@ -721,37 +655,9 @@ def _add_traceability(
     if not path.is_file() or not catalog_path.is_file():
         return
     payload = _read_json_object(path, "product input traceability")
-    target = f"artifact:{spec_dir.name}:specs/{spec_dir.name}/inputs/catalog.json"
-    if target not in nodes:
-        return
-    rows = payload.get("requirements", [])
-    if not isinstance(rows, list):
-        raise SpecGraphError("product input traceability requirements must be a list")
-    input_units_by_requirement: dict[str, set[str]] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            raise SpecGraphError("product input traceability entry must be an object")
-        input_unit_id = str(row.get("input_unit_id") or "").strip()
-        spec_ids = row.get("spec_ids", [])
-        if not isinstance(spec_ids, list):
-            raise SpecGraphError("product input traceability spec_ids must be a list")
-        for requirement_id in sorted(
-            requirement_ids.intersection(str(value) for value in spec_ids)
-        ):
-            input_units_by_requirement.setdefault(requirement_id, set()).add(
-                input_unit_id
-            )
-    for requirement_id, input_unit_ids in sorted(
-        input_units_by_requirement.items()
-    ):
-        edges.append(
-            GraphEdge(
-                f"req:{spec_dir.name}:{requirement_id}",
-                "DERIVED_FROM",
-                target,
-                {"input_unit_ids": sorted(input_unit_ids)},
-            )
-        )
+    from echelon.spec_graph_structure import _add_traceability_payload
+
+    _add_traceability_payload(spec_dir.name, payload, requirement_ids, nodes, edges)
 
 
 def _add_deferrals(
@@ -760,29 +666,9 @@ def _add_deferrals(
     edges: list[GraphEdge],
 ) -> None:
     ledger = read_ledger(spec_dir)
-    for entry in ledger.entries:
-        node_id = f"deferral:{spec_dir.name}:{entry.entry_id}"
-        nodes[node_id] = GraphNode(
-            node_id,
-            "Deferral",
-            {
-                "entry_id": entry.entry_id,
-                "status": entry.status,
-                "selected_ids": list(entry.selected_ids),
-                "derived_task_ids": list(entry.derived_task_ids),
-                "reason": entry.reason,
-            },
-        )
-        if entry.status != "deferred":
-            continue
-        for selected_id in entry.selected_ids:
-            source = _scope_node_id(spec_dir.name, selected_id)
-            if source in nodes:
-                edges.append(GraphEdge(source, "DEFERRED_BY", node_id, {}))
-        for task_id in entry.derived_task_ids:
-            source = f"task:{spec_dir.name}:{task_id}"
-            if source in nodes:
-                edges.append(GraphEdge(source, "DEFERRED_BY", node_id, {}))
+    from echelon.spec_graph_structure import _add_deferral_records
+
+    _add_deferral_records(spec_dir.name, ledger, nodes, edges)
 
 
 def _add_amendments(
@@ -792,6 +678,10 @@ def _add_amendments(
     edges: list[GraphEdge],
     inputs: dict[str, GraphInput],
 ) -> None:
+    from echelon.spec_graph_structure import (
+        AMENDMENT_CONTROL_PATHS, _add_amendment_record,
+    )
+
     amendment_root = spec_dir / "amendments"
     if not amendment_root.is_dir():
         return
@@ -802,26 +692,10 @@ def _add_amendments(
         if not revision_dir.name.isdigit():
             continue
         revision = revision_dir.name
-        node_id = f"amendment:{spec_dir.name}:{revision}"
-        nodes[node_id] = GraphNode(
-            node_id,
-            "Amendment",
-            {
-                "revision": revision,
-                "path": _workspace_path(root, revision_dir),
-                "status": "promoted",
-            },
+        _add_amendment_record(
+            spec_dir.name, revision, _workspace_path(root, revision_dir), nodes, edges,
         )
-        edges.append(
-            GraphEdge(f"spec:{spec_dir.name}", "AMENDED_BY", node_id, {})
-        )
-        for relative in (
-            Path("change-request.md"),
-            Path("impact.md"),
-            Path("inputs/manifest.json"),
-            Path("inputs/catalog.json"),
-            Path("inputs/traceability.json"),
-        ):
+        for relative in AMENDMENT_CONTROL_PATHS:
             artifact = revision_dir / relative
             if artifact.is_file():
                 _add_artifact(
@@ -853,30 +727,11 @@ def _add_verified_ledger(
         inputs,
         role="verification-evidence",
     )
-    for row in read_verified_ledger(path).rows:
-        if row.requirement_id not in requirement_ids:
-            continue
-        edges.append(
-            GraphEdge(
-                f"req:{spec_dir.name}:{row.requirement_id}",
-                "VERIFIED_BY",
-                target,
-                {
-                    "verification_status": row.status,
-                    "evidence_refs": list(row.evidence_refs),
-                    "verified_commit": row.verified_commit,
-                    "verify_scope": row.verify_scope,
-                    "selected_evidence": list(row.selected_evidence),
-                    "receipt_refs": [dict(ref) for ref in row.receipt_refs],
-                    "candidate_content_fingerprint": (
-                        row.candidate_content_fingerprint
-                    ),
-                    "requirement_set_fingerprint": row.requirement_set_fingerprint,
-                    "contract_hash": row.contract_hash,
-                    "complete": row.status not in UNRESOLVED_STATUSES,
-                },
-            )
-        )
+    from echelon.spec_graph_structure import _add_verified_records
+
+    _add_verified_records(
+        spec_dir.name, read_verified_ledger(path), target, requirement_ids, edges,
+    )
 
 
 def _add_canonical_memory(
@@ -1394,21 +1249,9 @@ def _linked_re_artifacts(root: Path, spec_dir: Path) -> set[Path]:
 
 
 def _artifact_role(spec_dir: Path, path: Path) -> str:
-    if path.name == "spec.md" and path.parent == spec_dir:
-        return "requirements-source"
-    if path.name == "tasks.md" and path.parent == spec_dir:
-        return "task-source"
-    if path.name == "deferred-scope.json":
-        return "deferral-ledger"
-    if path.name == "verified-fulfillment-ledger.json":
-        return "verification-evidence"
-    if path.parent == spec_dir / "inputs":
-        return "product-input"
-    if path.name == "re-context.json" or path.is_relative_to(spec_dir.parents[1] / "re"):
-        return "reverse-engineering"
-    if path.name in SUPPORTING_MEMORY_ARTIFACTS:
-        return "supporting-context"
-    return "spec-artifact"
+    from echelon.spec_graph_structure import _artifact_role as artifact_role
+
+    return artifact_role(spec_dir, path)
 
 
 def _input_role(role: str) -> str:
@@ -1416,15 +1259,13 @@ def _input_role(role: str) -> str:
 
 
 def _input_required(spec_dir: Path, path: Path) -> bool:
-    if path.name == "spec.md" and path.parent == spec_dir:
-        return True
-    if path.name == "tasks.md" and path.parent == spec_dir:
-        return artifact_index.infer_lifecycle_stage(spec_dir) in {
-            "build",
-            "verified",
-            "landed",
-        }
-    return False
+    from echelon.spec_graph_structure import _artifact_required
+
+    lifecycle = (
+        artifact_index.infer_lifecycle_stage(spec_dir)
+        if path.name == "tasks.md" and path.parent == spec_dir else ""
+    )
+    return _artifact_required(spec_dir, path, lifecycle)
 
 
 def _scope_node_id(spec_id: str, item_id: str) -> str:

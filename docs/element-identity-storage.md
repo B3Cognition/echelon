@@ -1865,6 +1865,54 @@ existing typed candidate, source and identity checks before building or publishi
 a graph. No graph caller, producer, controller, provider, lifecycle or completion
 path is activated by these parsing boundaries.
 
+## Captured spec-local graph structure
+
+`build_spec_graph_structure(spec_id=..., tree=..., lifecycle=...)` consumes one
+explicit `ProjectTreeSnapshot` whose root is the spec itself. It validates the
+complete supplied image with `snapshot_source_manifest`, including membership,
+bytes, hashes and modes, and strips that physical root by path components. Local
+records use `specs/{spec_id}/...` regardless of where the spec was captured.
+The exact nonempty UTF-8 spec component preserves valid characters and digits;
+whitespace at either end, separators, control characters, `.` and `..` reject.
+The caller supplies one of `phase_a`, `build`, `verified`, or `landed` as a
+lifecycle observation. The builder does not reread lifecycle frontmatter.
+
+The frozen `SpecGraphStructure` value contains only `spec_id` and detached tuples
+of the existing `GraphInput`, `GraphNode`, and `GraphEdge` records. Construction
+owns mutable nested properties; the carrier itself does not validate manually
+assembled fragments. Missing and empty valid trees produce a Spec node with no
+file-derived records. Parser and validation failures at this public boundary
+become bounded `SpecGraphError` values without retained parser cause/context.
+The legacy Path readers preserve their existing absence, decoding and exception
+contracts and call the same pure transformations after their reads.
+
+The fragment covers spec-origin requirements, locally declared policy artifacts,
+the three product-input files, tasks and progress, traceability, deferrals,
+numeric amendment directories and their five control artifacts, and verified
+fulfillment links with their original provenance. A declared `re-context.json`
+is an artifact only; its links are not followed. The artifact registry remains
+the policy owner: for example, parsing a deferred-scope ledger does not itself
+add an Artifact record when that ledger is not a declared policy artifact.
+
+This is not a `SpecArtifactGraph`, a complete-source digest, graph sealing, or
+semantic/evidence acceptance. The manifest digest validates metadata consistency
+and is not acceptance. There is no generator version, memory receipt, or
+fabricated external-domain status in the fragment. The complete graph owner must
+still supply evidence-domain artifact discovery, supporting-memory additions,
+memory snapshots/planning/audits, attached RE, canonical workspace-source
+validation and topology before sealing. In the legacy full graph, later real
+memory enrichment still changes supporting artifact roles such as `tasks.md`.
+No live builder is switched to this fragment, and no runtime protocol is selected.
+
+The focused structural tests compare independent complete records and rendered
+test-container bytes, observe the actual full graph before memory enrichment,
+and compose a projected spec-root image with real sealed source publication and
+final physical capture. That publication test establishes deterministic local
+structure only; it does not publish a graph. Complete captured external inputs,
+source-selection/logical-mapping ownership, identity overlay, graph sealing and
+managed producer/runtime/semantic/completion/bounded-repair integration remain
+required before activation.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
