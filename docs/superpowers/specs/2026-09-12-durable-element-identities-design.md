@@ -185,6 +185,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   validation remain unchanged. Real parser/planner tests retain 5,000-digit
   labels independently of existing body-content secret scrubbing. This does
   not activate live memory or establish lifecycle/current-revision authority.
+- Initial source-baseline recovery codec: implemented in `1dcf8875`, corrected
+  in `4c292b84`, and independently reviewed. Exact four-module suite: 378 passed;
+  overlap fix covering module: 36 passed. Complete selected source bytes and
+  original target images survive partial promotion without reading changed files.
+  Strict canonical encoding rejects structural contradictions, including
+  interleaved ancestor/descendant targets. The retained snapshot remains a
+  caller claim, not sealed-manifest authentication, accepted-source authority,
+  semantic approval or complete publication recovery. No live wiring is enabled.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
