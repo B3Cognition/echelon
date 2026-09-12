@@ -1,6 +1,7 @@
 import builtins
 import hashlib
 import io
+import json
 import os
 import random
 import secrets
@@ -205,10 +206,14 @@ def test_projection_preserves_rich_membership_and_empty_directories():
         ),),
     )
     value = project_publication_source_manifest(initial)
+    payload = json.loads(value.payload)
+    files_by_path = {
+        item["path"]: item for item in payload["trees"][0]["files"]
+    }
 
     assert '"path":"source/.hidden"' in value.payload
     assert '"path":"source/crlf.md"' in value.payload
-    assert '"mode":"384"' in value.payload
+    assert files_by_path["source/crlf.md"]["image"]["mode"] == "384"
     assert '"path":"source/legacy.bin"' in value.payload
     assert '"path":"source/noop.bin"' in value.payload
     assert '"path":"source/remove-parent/remove.bin"' not in value.payload
