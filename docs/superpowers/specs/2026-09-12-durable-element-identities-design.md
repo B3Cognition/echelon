@@ -34,7 +34,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and `14bc922d`, and independently reviewed. Final adapter/compatibility run:
   101 tests passing. Sanitized smoke fixtures preserve the changed question
   captions and retained references. Parsing does not yet enforce publication.
-- Revision-bound reference claims and issue-occurrence storage: next checkpoint.
+- Revision-bound reference claims and issue-occurrence storage: implemented in
+  `7e5596a3` and independently reviewed with no findings, not active. Combined
+  storage/lifecycle/identity/process tests: 291 passed, with only the previously
+  measured million-record import test deselected because routine allocation
+  and import paths were unchanged. The binding-specific suite passed 92 tests.
+  Recorded provenance is not semantic verification or publication authority.
+- Read-only lifecycle preflight: next checkpoint, sharing existing lifecycle
+  rules without mutating history or reserving a publication baseline.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
