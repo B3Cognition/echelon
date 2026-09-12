@@ -1048,13 +1048,64 @@ endpoints and all properties, including any `complete` field, but gain
 `identity_assessment: "unassessed"`. Conflicting assessment metadata is rejected.
 Historical evidence is never relabeled proof of new content.
 
-**Live integration remains blocked:** existing builders, audits, reads and
-traversals do not yet implement this opt-in contract. No live producer may
-publish/use this output until adapters authenticate managed namespace/current
-history and source inputs, preserve direct bare-ID resolution, implement
-lifecycle-aware obligations/current verification, and support every typed
-impact relationship. The projection tag is not the immutable managed-spec/run
-feature snapshot. Source/semantic/recovery/completion integration, memory
+## Read-only identity graph selection and impact
+
+The existing `resolve_node_id(model, selector)` keeps exact complete node-key
+lookup first. For non-exact shorthand it next checks durable entity labels by
+their exact string property: Requirement/`requirement_id`, Task/`task_id`, and
+Unknown, Assumption or Issue/`element_id`. Matching is case-insensitive but does
+not truncate, remove numeric zeroes, coerce numbers, or infer labels from
+revision, claim or occurrence fields. One durable entity wins over repeated
+historical mentions. Two or more matching entities remain a bounded, sorted
+ambiguity even across specs or namespaces; terminal/imported entities receive
+no lower priority. Only when no entity matches does the prior suffix and
+arbitrary `*_id` fallback apply unchanged. Thus complete history keys remain
+selectable, while a repeated bare history display ID remains ambiguous rather
+than selecting a current, first or active record implicitly. A successful
+shorthand lookup says nothing about graph-source freshness or audit status.
+
+Default `impact` traversal extends the existing typed table with this exact
+conservative policy. `Entity` below independently means Requirement, Task,
+Unknown, Assumption and Issue:
+
+| Stored edge | Default directions |
+| --- | --- |
+| Spec --`HAS_IDENTITY`--> Entity | Spec to Entity only |
+| Entity --`HAS_REVISION`--> ElementRevision | both |
+| Entity --`CURRENT_REVISION`--> ElementRevision | both |
+| ElementRevision --`SUCCESSOR_REVISION`--> ElementRevision | predecessor to successor only |
+| ReferenceClaim --`REFERENCES_IDENTITY`--> Entity | both |
+| ReferenceClaim --`ASSESSES_REVISION`--> ElementRevision | both |
+| ReferenceClaim --`HAS_SOURCE`--> IdentitySource | both |
+| IssueOccurrence --`OCCURRENCE_OF`--> Issue | both |
+| IssueOccurrence --`OBSERVES_REVISION`--> ElementRevision | both |
+| IssueOccurrence --`HAS_REPORT`--> IdentityReport | both |
+
+This traversal exposes a potentially affected entity/history/evidence
+neighborhood. It preserves exact lifecycle, revision, current-match, assessment,
+fingerprint and provenance properties. It does not suppress terminal entities,
+retarget historical edges to a current revision, promote `unassessed` evidence,
+approve evidence, or invalidate controller stages. Controller invalidation must
+later compare the inputs actually bound to a stage. Omitting reverse Spec
+membership prevents one entity from reaching unrelated siblings through their
+common Spec; omitting reverse revision lineage prevents successors from
+automatically reopening predecessors. Existing `all_relations`, `neighbors`,
+`shortest_path`, deterministic breadth-first bounds, cycle handling and
+truncation retain their explicit semantics.
+
+Natural and explicit graph queries recognize Unknown, Assumption, Issue,
+ElementRevision, ReferenceClaim, IssueOccurrence, IdentitySource and
+IdentityReport by their lower-case singular/plural type names. Existing aliases
+remain unchanged; in particular `source` and `sources` still mean SourceRoot,
+not IdentitySource.
+
+**Live integration remains blocked:** the read-only supplied-model selector and
+traversal adapter does not load or publish managed graph history, authenticate a
+canonical source audit, or activate a producer. No live producer may publish/use
+this output until separate adapters authenticate managed namespace/current
+history and source inputs and implement lifecycle-aware obligations/current
+verification. The projection tag is not the immutable managed-spec/run feature
+snapshot. Source/semantic/recovery/completion integration, memory
 current-revision semantics, producer activation and bounded repair remain
 separate work; this helper makes no live audit or end-to-end publication claim.
 
