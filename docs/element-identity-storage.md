@@ -1099,6 +1099,25 @@ IdentityReport by their lower-case singular/plural type names. Existing aliases
 remain unchanged; in particular `source` and `sources` still mean SourceRoot,
 not IdentitySource.
 
+## Deterministic memory occurrence identity compatibility
+
+The inactive canonical memory planner and exact-write protocol accept every
+nonempty requirement ID string without a storage-width maximum. Published labels
+remain byte-for-byte strings, including `FR-001`, `FR-MP-006`, historical
+composite labels, six-digit ordinals, and ordinals wider than six digits. Six is
+only the minimum display width for newly allocated numeric labels; it is neither
+a storage width nor a maximum value. Memory planning does not normalize padding,
+coerce identifiers, allocate IDs, or interpret lifecycle state.
+
+The deterministic drawer ID continues to hash the exact canonical source hash,
+complete requirement label, and requirement-content hash using the existing
+schema-1 identity JSON. It therefore identifies an immutable source/content
+occurrence. It is not the durable registry entity, does not choose a current
+revision, and does not certify lifecycle authority or current verification.
+Accepting wider labels activates no memory writer, graph publisher, provider,
+producer, or controller path; live integration still requires the separate
+source, semantic, lifecycle, namespace, retrieval, and publication adapters.
+
 **Live integration remains blocked:** the read-only supplied-model selector and
 traversal adapter does not load or publish managed graph history, authenticate a
 canonical source audit, or activate a producer. No live producer may publish/use
