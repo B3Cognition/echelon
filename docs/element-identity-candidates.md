@@ -39,10 +39,15 @@ definitions across files and numeric-padding aliases are rejected. Intervals
 produce `unsupported_reference_range`, with no endpoint expansion or implied
 coverage of the interval. References never create entities.
 
-Definitions require a matching assessed baseline head, exact subject and content,
-and validated namespace and identity bindings. Imported-but-unassessed content
-cannot be adopted through this checker as a history import. New definitions
-require an exact reserved creation or a reserved transition successor. Active
+Definitions require a matching assessed baseline head, exact declaration content,
+and validated namespace and identity bindings. A rendered caption is distinct
+from the immutable registry subject: baseline authentication compares exact source
+content, and heading preservation compares the before and after U/A captions.
+The existing lifecycle planner separately preserves the registry subject.
+Imported-but-unassessed content cannot be adopted through this checker as a
+history import. New definitions
+require an exact reserved creation or a reserved transition successor, with exact
+projected content; their captions need not equal their registry subjects. Active
 content edits require matching lifecycle revisions; changing the U/A caption
 requires a new identity through an explicit replacement, split, or merge.
 Retirement and supersession preserve exact prior content. Unchanged terminal

@@ -102,21 +102,19 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
     for label, entries in definitions["before"].items():
         for path, entry in entries:
             head = current.get(label)
-            if head is None or head["revision"] is None or (
-                head["subject"], head["content"]
-            ) != (entry.caption, entry.content):
+            if head is None or head["revision"] is None or head["content"] != entry.content:
                 diagnose("baseline_identity_mismatch", path, label,
-                         "baseline requires exact assessed declaration content and subject")
+                         "baseline requires exact assessed declaration content")
 
-    # Caption reuse is independently visible from the validated prestate, even
-    # if a lifecycle proposal is rejected and no projection can be consulted.
+    # Rendered captions are separate from immutable registry subjects. Preserve
+    # before/after captions independently of lifecycle subject validation, even
+    # when a proposal is rejected and no projection can be consulted.
     for label, entries in definitions["after"].items():
-        head = current.get(label)
-        if head is not None:
-            for path, entry in entries:
-                if entry.caption != head["subject"]:
-                    diagnose("subject_changed", path, label,
-                             "caption change requires a new identity through an explicit transition")
+        before_entries = definitions["before"].get(label, ())
+        for path, entry in entries:
+            if any(entry.caption != old.caption for _, old in before_entries):
+                diagnose("subject_changed", path, label,
+                         "caption change requires a new identity through an explicit transition")
 
     proposal_invalid = False
     for label in affected:
@@ -159,8 +157,6 @@ def check(connection, store, spec_id, artifacts, scope, changes, affected):
             if head is None:
                 diagnose("unallocated_definition", path, label, "declaration has no materialized or projected identity")
                 continue
-            if entry.caption != head["subject"]:
-                diagnose("subject_changed", path, label, "caption change requires a new identity through an explicit transition")
             if entry.content != head["content"]:
                 code = "terminal_content_changed" if head["status"] in {"retired", "superseded"} else "definition_content_mismatch"
                 diagnose(code, path, label, "declaration differs from exact current or projected content")

@@ -49,13 +49,14 @@ FIRST = "### U-001: Café question\r\nOriginal body.\r\n"
 SECOND = "### U-002: Second question\r\nOther body.\r\n"
 
 
-def seeded(workspace, text=FIRST, role="unknowns"):
+def seeded(workspace, text=FIRST, role="unknowns", *, subject=None):
     store = IdentityStore.initialize(workspace)
     declarations = parse_identity_artifact(path="questions.md", role=role, text=text).declarations
     store.import_identities(spec_id="demo", operation_id="import", definitions=tuple(
-        (entry.element_id, entry.caption) for entry in declarations))
+        (entry.element_id, entry.caption if subject is None else subject) for entry in declarations))
     store.apply_lifecycle(spec_id="demo", operation_id="adopt", changes=tuple(
-        ElementAdopt(entry.element_id, entry.caption, entry.content) for entry in declarations))
+        ElementAdopt(entry.element_id, entry.caption if subject is None else subject, entry.content)
+        for entry in declarations))
     return store
 
 
@@ -88,6 +89,53 @@ def test_unchanged_and_authorized_same_caption_revision(tmp_path, role, text, la
     caption = "Café question" if role == "unknowns" else "Browser support"
     result = check(store, tmp_path, text, revised, role=role, ids=(label,), changes=(
         ElementRevision(label, "1", caption, revised),))
+    assert not result.diagnostics
+
+
+@pytest.mark.parametrize("role,label", [("unknowns", "U-001"), ("assumptions", "A-001")])
+@pytest.mark.parametrize("revise", [False, True], ids=["unchanged", "revision"])
+def test_caption_may_differ_from_immutable_registry_subject(tmp_path, role, label, revise):
+    before = f"### {label}: Rendered question\nOriginal body.\n"
+    subject = "controller-subject:question-one"
+    store = seeded(tmp_path, before, role, subject=subject)
+    after = before.replace("Original", "Updated") if revise else before
+    changes = (ElementRevision(label, "1", subject, after),) if revise else ()
+    result = check(store, tmp_path, before, after, role=role, ids=(label,), changes=changes)
+    assert not result.diagnostics
+    assert store.lookup(spec_id="demo", element_id=label)["subject"] == subject
+
+
+@pytest.mark.parametrize("role,label", [("unknowns", "U-001"), ("assumptions", "A-001")])
+@pytest.mark.parametrize("change_caption", [False, True], ids=["registry-subject", "rendered-caption"])
+def test_caption_and_registry_subject_are_independently_preserved(tmp_path, role, label, change_caption):
+    before = f"### {label}: Rendered question\nOriginal body.\n"
+    subject = "controller-subject:question-one"
+    store = seeded(tmp_path, before, role, subject=subject)
+    after = before.replace("Rendered question", "Different question") if change_caption else before
+    proposed_subject = subject if change_caption else "controller-subject:other-question"
+    result = check(store, tmp_path, before, after, role=role, ids=(label,), changes=(
+        ElementRevision(label, "1", proposed_subject, after),))
+    assert ("subject_changed" if change_caption else "lifecycle_rejected") in codes(result)
+    assert ("lifecycle_rejected" if change_caption else "subject_changed") not in codes(result)
+
+
+@pytest.mark.parametrize("role,kind", [("unknowns", "U"), ("assumptions", "A")])
+def test_reserved_creation_has_separate_caption_and_registry_subject(tmp_path, role, kind):
+    store = IdentityStore.initialize(tmp_path)
+    label, = store.reserve(spec_id="demo", kind=kind, operation_id="reserve", count=1)
+    after = f"### {label}: Rendered caption\nBody.\n"
+    result = check(store, tmp_path, None, after, role=role, ids=(label,), changes=(
+        ElementCreate(label, "controller-subject:new", after, "reserve"),))
+    assert not result.diagnostics
+
+
+def test_transition_successor_has_separate_caption_and_registry_subject(tmp_path):
+    store = seeded(tmp_path, subject="controller-subject:old")
+    label, = store.reserve(spec_id="demo", kind="U", operation_id="reserve", count=1)
+    after = f"### {label}: Replacement caption\nNew body.\n"
+    successor = ElementCreate(label, "controller-subject:new", after, "reserve")
+    result = check(store, tmp_path, after=after, ids=("U-001", label), changes=(
+        ElementTransition("replace", (("U-001", "1"),), (successor,), "New question"),))
     assert not result.diagnostics
 
 
