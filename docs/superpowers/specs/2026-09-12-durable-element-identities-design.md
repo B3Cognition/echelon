@@ -277,6 +277,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   associated accepted source head. It neither enrolls nor repairs authority.
   Runtime mode selection, removed-metadata detection, physical source freshness
   and publication/semantic completion remain separate required integrations.
+- Proposed materialized identity history: implemented in `34f4616b` and
+  independently reviewed with no findings. Nine-module covering suite: 656
+  passed. One query-only transaction overlays existing validated lifecycle and
+  binding plans on complete retained history; canonical bytes match actual
+  journal application, reopen and release. Old evidence retains its revision
+  target in real graph rendering. Preview requires new unclaimed operations
+  and no pending same-spec publication; it reserves no baseline and does not
+  authenticate graph sources or authorize publication. Graph/source/runtime
+  composition remains required before live activation.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
