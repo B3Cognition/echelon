@@ -378,3 +378,125 @@ def test_backup_with_sqlite_sidecars_is_not_a_completed_standalone_snapshot(tmp_
     with pytest.raises(IdentityStoreError):
         IdentityStore.restore(destination, backup)
     assert not (destination / ".echelon/identity").exists()
+
+
+def authority_rows(database):
+    """Capture all durable rows to detect repair, leaked receipts, or new claims."""
+    with sqlite3.connect(database) as connection:
+        return {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall()
+            for table in ("metadata", "counters", "operations", "reservations", "entities")
+        }
+
+
+def damage_counter(database, kind, value):
+    with sqlite3.connect(database) as connection:
+        if value is None:
+            connection.execute("DELETE FROM counters WHERE spec_id=? AND kind=?", ("001-demo", kind))
+        else:
+            connection.execute("UPDATE counters SET high_water=? WHERE spec_id=? AND kind=?",
+                               (value, "001-demo", kind))
+
+
+@pytest.mark.parametrize("counter", ["1", None])
+@pytest.mark.parametrize("action", ["reserve", "reserve_retry", "import", "lookup", "high_water"])
+def test_counter_below_reservations_fails_without_repair_or_new_claims(tmp_path, counter, action):
+    store = IdentityStore.initialize(tmp_path)
+    assert reserve(store, count=3) == ("AC-000001", "AC-000002", "AC-000003")
+    database = tmp_path / ".echelon/identity/registry.sqlite3"
+    damage_counter(database, "AC", counter)
+    before = authority_rows(database)
+    reopened = IdentityStore.open(tmp_path)
+    with pytest.raises(IdentityStoreError, match="counter.*retained"):
+        if action == "reserve":
+            reserve(reopened, operation_id="subsequent", count=1)
+        elif action == "reserve_retry":
+            reserve(reopened, count=3)
+        elif action == "import":
+            import_one(reopened, "AC-100", operation_id="new-import")
+        elif action == "lookup":
+            reopened.lookup(spec_id="001-demo", element_id="AC-000002")
+        else:
+            reopened.high_water(spec_id="001-demo", kind="AC")
+    assert authority_rows(database) == before
+
+
+@pytest.mark.parametrize("counter", ["9", None])
+@pytest.mark.parametrize("action", ["reserve", "import", "import_retry", "lookup", "high_water"])
+def test_counter_below_imports_uses_numeric_max_and_keeps_legacy_labels(tmp_path, counter, action):
+    store = IdentityStore.initialize(tmp_path)
+    definitions = [("FR-009", "nine"), ("FR-10", "ten"), ("FR-opaque-99999", "opaque")]
+    import_one(store, definitions=definitions)
+    database = tmp_path / ".echelon/identity/registry.sqlite3"
+    damage_counter(database, "FR", counter)
+    before = authority_rows(database)
+    reopened = IdentityStore.open(tmp_path)
+    with pytest.raises(IdentityStoreError, match="counter.*retained"):
+        if action == "reserve":
+            reserve(reopened, kind="FR", operation_id="subsequent", count=1)
+        elif action == "import":
+            import_one(reopened, "FR-100", operation_id="new-import")
+        elif action == "import_retry":
+            import_one(reopened, definitions=definitions)
+        elif action == "lookup":
+            reopened.lookup(spec_id="001-demo", element_id="FR-009")
+        else:
+            reopened.high_water(spec_id="001-demo", kind="FR")
+    assert authority_rows(database) == before
+    assert before["entities"] == [
+        ("001-demo", "FR-009", "FR", "nine", "9"),
+        ("001-demo", "FR-10", "FR", "ten", "10"),
+        ("001-demo", "FR-opaque-99999", "FR", "opaque", None),
+    ]
+
+
+def test_retained_reservation_maxima_compare_endpoints_numerically(tmp_path):
+    store = IdentityStore.initialize(tmp_path)
+    reserve(store, count=9)
+    reserve(store, operation_id="at-ten", count=1)
+    database = tmp_path / ".echelon/identity/registry.sqlite3"
+    damage_counter(database, "AC", "9")
+    before = authority_rows(database)
+    with pytest.raises(IdentityStoreError, match="counter.*retained"):
+        reserve(store, operation_id="must-not-reuse-ten", count=1)
+    assert authority_rows(database) == before
+
+
+def test_namespace_audit_uses_true_maximum_endpoint_not_maximum_range_start(tmp_path):
+    store = IdentityStore.initialize(tmp_path)
+    reserve(store, count=3)
+    reserve(store, operation_id="later", count=1)
+    database = tmp_path / ".echelon/identity/registry.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE reservations SET last_ordinal='100', count='100' WHERE operation_id='dispatch-1'")
+    before = authority_rows(database)
+    with pytest.raises(IdentityStoreError, match="counter.*retained"):
+        reserve(store, operation_id="after-corruption", count=1)
+    assert authority_rows(database) == before
+
+
+@pytest.mark.parametrize("source", ["reservations", "imports"])
+@pytest.mark.parametrize("counter", ["9", None])
+def test_restore_audits_retained_claims_before_creating_destination(tmp_path, source, counter):
+    import hashlib
+
+    store = IdentityStore.initialize(tmp_path)
+    if source == "reservations":
+        reserve(store, count=10)
+    else:
+        import_one(store, definitions=[("AC-009", "nine"), ("AC-10", "ten")])
+    backup = tmp_path / "backup"
+    store.backup(backup)
+    database = backup / "registry.sqlite3"
+    damage_counter(database, "AC", counter)
+    manifest = backup / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data["database_sha256"] = hashlib.sha256(database.read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(data))
+    before = authority_rows(database)
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    with pytest.raises(IdentityStoreError, match="counter.*retained"):
+        IdentityStore.restore(destination, backup)
+    assert not (destination / ".echelon").exists()
+    assert authority_rows(database) == before

@@ -137,11 +137,16 @@ def test_million_identity_capacity_uses_indexed_lookup_and_counter(tmp_path):
             ("SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
              "AND (first_length, first_ordinal) <= (?, ?) ORDER BY first_length DESC, first_ordinal DESC LIMIT 1",
              ("capacity", "AC", 7, "1000001")),
+            ("SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
+             "ORDER BY length(last_ordinal) DESC, last_ordinal DESC LIMIT 1", ("capacity", "AC")),
+            ("SELECT ordinal FROM entities WHERE spec_id=? AND kind=? AND ordinal IS NOT NULL "
+             "ORDER BY length(ordinal) DESC, ordinal DESC LIMIT 1", ("capacity", "AC")),
         ]
         for query, args in queries:
             plan = connection.execute("EXPLAIN QUERY PLAN " + query, args).fetchall()
             assert any("SEARCH" in row[3] and ("INDEX" in row[3] or "PRIMARY KEY" in row[3]) for row in plan), plan
             assert not any("SCAN" in row[3] for row in plan), plan
+            assert not any("TEMP B-TREE" in row[3] for row in plan), plan
     print(f"CAPACITY records=1000000 import_seconds={imported_seconds:.3f} "
           f"open_seconds={open_seconds:.6f} allocation_seconds={allocation_seconds:.6f} "
           f"database_bytes={database.stat().st_size}")

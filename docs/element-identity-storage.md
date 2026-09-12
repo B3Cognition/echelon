@@ -74,6 +74,14 @@ identity from fragments of composite labels.
 Mutation of the returned dictionary cannot change the stored binding. Revision,
 retirement, replacement/split/merge lineage, and publication are later work.
 
+Before a reservation, import, retry, lookup, or high-water read uses a namespace,
+the store compares its counter with the true numeric maxima of retained range
+endpoints and imported numeric ordinals. A missing counter with retained numeric
+claims, or a counter below those claims, fails explicitly. The operation does not
+repair the counter, reconstruct it from maxima, add a receipt, or alter claims.
+An ordinary open still checks only schema/metadata; it does not audit every
+namespace. A namespace is checked when used, and restore audits all namespaces.
+
 ## Transactions and filesystem boundaries
 
 Every operation uses a short-lived connection. Writes use `BEGIN IMMEDIATE`, a
@@ -83,7 +91,10 @@ process-global connection or in-memory allocation counter. Reservation ranges
 keep storage proportional to requests rather than reserved label count.
 Numeric import collision checks use an indexed predecessor range ordered by
 decimal length and text. Entity label/ordinal lookup and counter access are
-indexed. No SQL numeric casts or floating-point comparisons are used.
+indexed. Separate namespace/kind/decimal-length indexes locate true maximum
+reservation endpoints and imported ordinals with bounded seeks; validation does
+not scan entity tables or sort all claims. No SQL numeric casts or floating-point
+comparisons are used.
 
 Use a local filesystem with working SQLite locking and synchronization. Authority
 components, their parent path components, and SQLite sidecar paths must not be
@@ -95,6 +106,9 @@ independent allocation processes coordinate through SQLite.
 The marker binds authority UUIDs, not the latest database generation: manually
 substituting an older valid database from the same authority is not detected as
 rollback. Use the restore API and the adoption rules below; it rejects overwrites.
+This whole-authority rollback limit does not exempt detectable counter/history
+contradictions: lowered or missing counters with retained higher claims are
+rejected even if direct SQLite edits caused them.
 
 ## Backup and restore
 
@@ -108,8 +122,10 @@ or reused as a fresh backup destination.
 
 `IdentityStore.restore(workspace, backup)` checks the completed manifest, strict
 metadata, absence of snapshot sidecars, digest, required schema, SQLite integrity,
-foreign keys, and authority identity before creating destination state. Digest
-verification and copying share a read transaction, so a concurrent SQLite writer
+foreign keys, authority identity, and counter/claim consistency across all
+namespaces before creating destination state. This explicit restore audit may
+scan the snapshot to discover every namespace, including ones whose counters
+are missing. Digest verification and copying share a read transaction, so a concurrent SQLite writer
 cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,

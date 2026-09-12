@@ -46,11 +46,15 @@ _SCHEMA = {
         _CANONICAL.format("count") + " AND count != '0')) WITHOUT ROWID",
     "reservation_ranges": "CREATE UNIQUE INDEX reservation_ranges ON reservations "
         "(spec_id, kind, first_length, first_ordinal)",
+    "reservation_maxima": "CREATE INDEX reservation_maxima ON reservations "
+        "(spec_id, kind, length(last_ordinal), last_ordinal)",
     "entities": "CREATE TABLE entities (spec_id TEXT NOT NULL, element_id TEXT NOT NULL, "
         "kind TEXT NOT NULL, subject TEXT NOT NULL, ordinal TEXT CHECK (ordinal IS NULL OR (" +
         _CANONICAL.format("ordinal") + " AND ordinal != '0')), "
         "PRIMARY KEY (spec_id, element_id)) WITHOUT ROWID",
     "entity_ordinals": "CREATE UNIQUE INDEX entity_ordinals ON entities (spec_id, kind, ordinal)",
+    "entity_maxima": "CREATE INDEX entity_maxima ON entities "
+        "(spec_id, kind, length(ordinal), ordinal) WHERE ordinal IS NOT NULL",
 }
 
 
@@ -303,9 +307,32 @@ class IdentityStore:
 
     @staticmethod
     def _high_water(connection, spec_id, kind):
+        """Validate retained claims with indexed numeric maxima, never repair state."""
         row = connection.execute("SELECT high_water FROM counters WHERE spec_id=? AND kind=?",
                                  (spec_id, kind)).fetchone()
-        return _integer(row[0]) if row else 0
+        counter = _integer(row[0]) if row else 0
+        reservation = connection.execute(
+            "SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
+            "ORDER BY length(last_ordinal) DESC, last_ordinal DESC LIMIT 1", (spec_id, kind),
+        ).fetchone()
+        entity = connection.execute(
+            "SELECT ordinal FROM entities WHERE spec_id=? AND kind=? AND ordinal IS NOT NULL "
+            "ORDER BY length(ordinal) DESC, ordinal DESC LIMIT 1", (spec_id, kind),
+        ).fetchone()
+        for claim in (reservation, entity):
+            if claim is not None and (row is None or counter < _integer(claim[0])):
+                raise IdentityStoreError("counter is missing or below retained numeric claims")
+        return counter
+
+    @classmethod
+    def _audit_counters(cls, connection):
+        """Full namespace discovery is reserved for explicit restore verification."""
+        namespaces = connection.execute(
+            "SELECT spec_id, kind FROM counters UNION SELECT spec_id, kind FROM reservations "
+            "UNION SELECT spec_id, kind FROM entities WHERE ordinal IS NOT NULL"
+        )
+        for spec_id, kind in namespaces:
+            cls._high_water(connection, spec_id, kind)
 
     @staticmethod
     def _set_high_water(connection, spec_id, kind, number):
@@ -322,6 +349,7 @@ class IdentityStore:
             raise IdentityStoreError("count must be a positive integer")
         digest = _digest(["reserve", spec_id, kind, _decimal(count)])
         with self._transaction(write=True) as connection:
+            high_water = self._high_water(connection, spec_id, kind)
             if self._operation(connection, operation_id, "reserve", spec_id, digest):
                 row = connection.execute("SELECT * FROM reservations WHERE operation_id=?", (operation_id,)).fetchone()
                 if row is None or row["spec_id"] != spec_id or row["kind"] != kind or row["count"] != _decimal(count):
@@ -330,7 +358,7 @@ class IdentityStore:
                 if first <= 0 or _integer(row["last_ordinal"]) != first + count - 1:
                     raise IdentityStoreError("reservation range is malformed")
             else:
-                first = self._high_water(connection, spec_id, kind) + 1
+                first = high_water + 1
                 last = first + count - 1
                 first_text = _decimal(first)
                 connection.execute("INSERT INTO reservations VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -360,6 +388,10 @@ class IdentityStore:
             parsed.append((label, subject, kind, ordinal))
         digest = _digest(["import", spec_id, [(label, subject) for label, subject, _, _ in parsed]])
         with self._transaction(write=True) as connection:
+            high_water_by_kind = {
+                kind: self._high_water(connection, spec_id, kind)
+                for kind in {definition[2] for definition in parsed}
+            }
             if self._operation(connection, operation_id, "import", spec_id, digest):
                 return
             maxima = {}
@@ -387,7 +419,7 @@ class IdentityStore:
                     if alias:
                         raise IdentityStoreError("numeric ordinal already has a different exact label")
                     if kind not in maxima:
-                        maxima[kind] = self._high_water(connection, spec_id, kind)
+                        maxima[kind] = high_water_by_kind[kind]
                     maxima[kind] = max(maxima[kind], number)
                 connection.execute("INSERT INTO entities VALUES (?, ?, ?, ?, ?)",
                                    (spec_id, label, kind, subject, ordinal))
@@ -398,8 +430,9 @@ class IdentityStore:
     def lookup(self, *, spec_id: str, element_id: str) -> dict | None:
         """Copy an imported identity record; reservations are not entities."""
         _identifier(spec_id, "spec_id")
-        _parse_label(element_id)
+        kind, _ = _parse_label(element_id)
         with self._transaction() as connection:
+            self._high_water(connection, spec_id, kind)
             row = connection.execute("SELECT * FROM entities WHERE spec_id=? AND element_id=?",
                                      (spec_id, element_id)).fetchone()
             return dict(row) if row else None
@@ -456,6 +489,7 @@ class IdentityStore:
                 raise IdentityStoreError("backup database integrity check failed")
             if source.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise IdentityStoreError("backup database has inconsistent foreign keys")
+            cls._audit_counters(source)
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")
