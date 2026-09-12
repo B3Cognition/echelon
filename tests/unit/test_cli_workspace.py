@@ -406,6 +406,7 @@ def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
 
     assert (tmp_path / ".echelon/config.yml").read_text(encoding="utf-8") == "verify_command: pytest\n"
     assert "/.echelon/re/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/.echelon/re-v2/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.echelon/prosaic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-manifest.json" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-backups/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")

@@ -20411,6 +20411,7 @@ def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
     lines = existing.splitlines()
     required = (
         "/.echelon/re/",
+        "/.echelon/re-v2/",
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",
