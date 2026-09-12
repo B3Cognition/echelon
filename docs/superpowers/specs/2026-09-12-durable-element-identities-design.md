@@ -210,6 +210,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   composition accepts its after hash and rejects its retained before hash.
   Caller-input errors are bounded; snapshot validation remains separate.
   This inactive adapter does not establish accepted-source or semantic authority.
+- Selected-source observation fingerprint: implemented in `dcb18f54` and
+  independently reviewed. Exact four-module suite: 249 passed. The pure factory
+  validates retained byte/hash/mode and complete selected membership before
+  emitting a canonical metadata-only digest. Real initial/partial/final captures
+  and retry are distinguished without changing the initial-source guard.
+  Source ownership, accepted baseline persistence and coordinated publication
+  remain required; a supplied observation hash is not acceptance authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
