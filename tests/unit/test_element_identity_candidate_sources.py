@@ -375,6 +375,25 @@ def test_snapshot_errors_remain_publication_errors_and_input_tracebacks_are_boun
     assert caught.value.__cause__ is None
 
 
+def test_custom_sequence_runtime_failure_has_bounded_suppressed_traceback(tmp_path):
+    from harness.element_identity_candidate_sources import assemble_candidate_sources
+
+    snapshot = _simple_snapshot(tmp_path)
+
+    class RuntimeSequence(Sequence):
+        def __len__(self):
+            raise RuntimeError("UNTRUSTED-RUNTIME-" * 1000)
+
+        def __getitem__(self, index):
+            raise AssertionError(index)
+
+    with pytest.raises(ValueError, match="^invalid captured candidate source request$") as caught:
+        assemble_candidate_sources(snapshot, RuntimeSequence(), writable_paths=())
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "UNTRUSTED-RUNTIME-" not in rendered
+    assert caught.value.__cause__ is None
+
+
 def test_inputs_are_snapshotted_and_results_are_frozen_owned_tuples(tmp_path):
     from harness.element_identity_candidate_sources import CandidateSourceBinding, assemble_candidate_sources
 
@@ -481,6 +500,61 @@ def test_real_store_and_reference_checks_consume_assembled_exact_images_without_
     assert {item.code for item in validate_reference_claim_sources((evidence_artifact,), (stale,))} == {
         "reference_source_hash_mismatch",
     }
+
+
+def test_real_changed_evidence_claim_uses_after_hash_and_rejects_captured_before_hash(tmp_path):
+    from harness.element_artifacts import parse_identity_artifact
+    from harness.element_identity_bindings import ReferenceClaim
+    from harness.element_identity_candidate import CandidateDiagnostic
+    from harness.element_identity_candidate_sources import CandidateSourceBinding, assemble_candidate_sources
+    from harness.element_identity_reference_sources import validate_reference_claim_sources
+
+    project = tmp_path.resolve()
+    source_path = "specs/demo/evidence.md"
+    (project / source_path).parent.mkdir(parents=True)
+    before = "Before evidence: U-001.\r\n"
+    after = "Revised evidence for U-001.\r\n"
+    (project / source_path).write_bytes(before.encode("utf-8"))
+    prepared = _transaction(
+        project, (("write", source_path, after.encode("utf-8"), None),), "5" * 32,
+    )
+    with prepared.inspect_sources(file_paths=(source_path,)) as snapshot:
+        assembled = assemble_candidate_sources(
+            snapshot,
+            (CandidateSourceBinding(source_path, "evidence.md", "evidence"),),
+            writable_paths=(source_path,),
+        )
+
+    artifact, = assembled.artifacts
+    assert not assembled.diagnostics
+    assert (artifact.before_text, artifact.after_text) == (before, after)
+    before_sha256 = hashlib.sha256(artifact.before_text.encode("utf-8")).hexdigest()
+    parsed_after = parse_identity_artifact(
+        path=artifact.path, role=artifact.role, text=artifact.after_text,
+    )
+    reference, = parsed_after.references
+    assert before_sha256 == hashlib.sha256(before.encode("utf-8")).hexdigest()
+    assert parsed_after.content_sha256 == hashlib.sha256(after.encode("utf-8")).hexdigest()
+    assert before_sha256 != parsed_after.content_sha256
+
+    exact_after = ReferenceClaim(
+        artifact.path,
+        parsed_after.content_sha256,
+        f"span:{reference.span.start}:{reference.span.end}",
+        "U-001",
+        "1",
+        "evidence",
+    )
+    assert validate_reference_claim_sources((artifact,), (exact_after,)) == ()
+    stale_before = replace(exact_after, source_sha256=before_sha256)
+    assert validate_reference_claim_sources((artifact,), (stale_before,)) == (
+        CandidateDiagnostic(
+            "reference_source_hash_mismatch",
+            "evidence.md",
+            "U-001",
+            "claim source hash does not match supplied after image",
+        ),
+    )
 
 
 def test_retained_initial_assembly_survives_real_partial_fault_and_retry(tmp_path):

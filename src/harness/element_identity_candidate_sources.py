@@ -10,7 +10,6 @@ from harness.element_identity_candidate import (
     CandidateDiagnostic,
     IDENTITY_SUPPORTED_ROLES,
 )
-from harness.squad_publication import PublicationError
 from harness.squad_source_baseline_codec import encode_initial_publication_sources
 from harness.squad_source_snapshot import PublicationSourcesSnapshot, _source_path
 
@@ -96,7 +95,7 @@ def _normalize(
         if set(opaque_values) & set(source_paths):
             raise ValueError
         return binding_values, writable_values, opaque_values
-    except (AttributeError, PublicationError, RecursionError, TypeError, UnicodeError, ValueError):
+    except Exception:
         raise ValueError(_INVALID_INPUT) from None
 
 

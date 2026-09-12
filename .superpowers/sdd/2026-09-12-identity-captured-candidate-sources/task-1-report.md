@@ -177,3 +177,101 @@ Managed registration/schema/provider integration, durable intent/recovery,
 semantic review, and publication/ledger/graph/memory completion remain explicitly
 outside this task. A later caller must retain the complete physical snapshot and
 reject any returned diagnostics before treating the artifact tuple as successful.
+
+## Round 1/5 review fix report
+
+Fix base: `57b0d2cf9955df1017496c8431b96f918cef9af7`.
+
+### Changes
+
+- Broadened only the caller-controlled `_normalize` boundary to catch ordinary
+  `Exception` failures. Any custom `Sequence` snapshot/validation failure now
+  becomes the constant `ValueError("invalid captured candidate source request")`
+  with `from None`. `BaseException` cancellation/exit signals are not caught.
+- Kept `encode_initial_publication_sources(snapshot)` before and outside that
+  boundary, so initial snapshot `PublicationError` remains unchanged.
+- Preserved the original real-store smoke with unchanged evidence and added a
+  separate real sealed evidence write with distinct valid before/after contents.
+  The reference source validator accepts the actual assembled after-image hash
+  and rejects the actual retained before-image hash.
+
+### TDD RED — unbounded custom Sequence failure
+
+Command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_element_identity_candidate_sources.py::test_custom_sequence_runtime_failure_has_bounded_suppressed_traceback
+```
+
+Relevant output:
+
+```text
+E       RuntimeError: UNTRUSTED-RUNTIME-UNTRUSTED-RUNTIME-...
+tests/unit/test_element_identity_candidate_sources.py:385: RuntimeError
+1 failed in 0.20s
+```
+
+This was an actual production RED: a custom ordinary `Sequence.__len__` raised a
+caller-controlled `RuntimeError`, and the full repeated message escaped into the
+formatted pytest traceback. The real initial snapshot had already validated.
+
+### TDD GREEN — bounded normalization
+
+Command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_element_identity_candidate_sources.py::test_custom_sequence_runtime_failure_has_bounded_suppressed_traceback
+```
+
+Output:
+
+```text
+.                                                                        [100%]
+1 passed in 0.18s
+```
+
+The regression formats the raised `ValueError` traceback and proves the untrusted
+message is absent and the explicit cause is `None`.
+
+### Covering verification after amended code
+
+Command:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_element_identity_candidate_sources.py
+```
+
+Output:
+
+```text
+......................................                                   [100%]
+38 passed in 0.43s
+```
+
+Per the fix instructions, the five-module/full/million/live/provider/install and
+post-commit suites were not repeated.
+
+### Fault and fixture provenance
+
+- The unbounded-message RED used a synthetic custom caller `Sequence`, while its
+  `PublicationSourcesSnapshot` came from a real sealed publication inspection.
+- The changed-evidence composition coverage uses a real staged write, seal and
+  `inspect_sources` capture. Its `before_text` is the actual physical preimage and
+  its `after_text` is the distinct sealed stage content. Both hashes are computed
+  from those assembled strings; no unrelated synthetic stale digest is used.
+- The unchanged-evidence store/reference smoke remains present and unchanged,
+  preserving its separate retained-evidence coverage.
+
+### Round 1 self-review
+
+Executed review: the dedicated RuntimeError test demonstrated RED then GREEN, and
+the complete new test module passed 38/38 with pristine output. Static review:
+re-read the amended 91-line brief and inspected the fix diff from `57b0d2cf`; the
+new broad catch is confined to `_normalize`, cannot intercept initial snapshot
+validation, and does not catch `BaseException`. The added reference test proves
+before and after hashes differ before checking clean after-hash composition and
+the exact stale-before diagnostic. No existing codec, publisher, capture, parser,
+scope, store, authority, or reference-validator module was changed. The unrelated
+untracked selected-source-manifest plan remains untouched. Reviewer minors about
+docstring wording and deleted-slot/valid-empty coverage remain deferred to final
+triage as directed, not silently expanded into this fix loop.
