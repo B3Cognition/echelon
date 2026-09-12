@@ -250,9 +250,9 @@ def test_binding_reads_sort_numeric_entries_and_use_indexed_access(tmp_path):
             assert "TEMP B-TREE" not in plan
 
 
-def older_authority(path, version):
+def older_authority(path, version, *, store=None):
     """Freeze real retained data into the reviewed older DDL, never derived DDL."""
-    store = seeded(path)
+    store = store or seeded(path)
     store.import_identities(spec_id=SPEC, operation_id="old-import", definitions=(("FR-001", "Legacy"),))
     db = database(path)
     with sqlite3.connect(db) as source, sqlite3.connect(":memory:") as target:
@@ -261,8 +261,8 @@ def older_authority(path, version):
             rows = source.execute(f"SELECT * FROM {table}").fetchall()
             if table == "metadata":
                 rows = [(k, v) for k, v in rows if k != "schema_version"]
-                if version == "2":
-                    rows.append(("schema_version", "2"))
+                if version in {"2", "3"}:
+                    rows.append(("schema_version", version))
             if version == "1" and table in {"operations", "reservations", "entities", "counters"}:
                 # Allocation schema did not allow materialized reservation labels.
                 rows = {"operations": [r for r in rows if r[1] != "lifecycle"],
@@ -281,7 +281,7 @@ def manifest(directory):
         "database_sha256": hashlib.sha256((directory / "registry.sqlite3").read_bytes()).hexdigest()}))
 
 
-@pytest.mark.parametrize("version", ["1", "2"])
+@pytest.mark.parametrize("version", ["1", "2", "3"])
 def test_exact_older_upgrade_preserves_retries_and_never_fabricates_bindings(tmp_path, version):
     directory = older_authority(tmp_path, version)
     before = state(tmp_path)
@@ -294,7 +294,7 @@ def test_exact_older_upgrade_preserves_retries_and_never_fabricates_bindings(tmp
     assert store.lookup(spec_id=SPEC, element_id="FR-001")["revision"] is None
     assert store.reserve(spec_id=SPEC, kind="AC", operation_id="allocate-AC", count=2) == ("AC-000001", "AC-000002")
     store.import_identities(spec_id=SPEC, operation_id="old-import", definitions=(("FR-001", "Legacy"),))
-    if version == "2":
+    if version in {"2", "3"}:
         assert store.apply_lifecycle(spec_id=SPEC, operation_id="create-AC", changes=(ElementCreate("AC-000001", "Movement", "Repair movement.", "allocate-AC"),))[0]["revision"] == "1"
     assert (directory / "authority.json").read_bytes() == marker
     upgraded = state(tmp_path)
@@ -302,7 +302,7 @@ def test_exact_older_upgrade_preserves_retries_and_never_fabricates_bindings(tmp
     assert state(tmp_path) == upgraded
 
 
-@pytest.mark.parametrize("version", ["1", "2"])
+@pytest.mark.parametrize("version", ["1", "2", "3"])
 def test_interrupted_binding_upgrade_rolls_back_ddl_data_metadata(tmp_path, version, monkeypatch):
     from harness import element_identity_schema as schema
     older_authority(tmp_path, version)
@@ -318,15 +318,36 @@ def test_interrupted_binding_upgrade_rolls_back_ddl_data_metadata(tmp_path, vers
 
 
 @pytest.mark.parametrize("version", ["1", "2", "3"])
+def test_each_frozen_source_history_is_audited_before_upgrade_mutation(tmp_path, version):
+    store = seeded(tmp_path)
+    if version == "3":
+        record(store, claim())
+    older_authority(tmp_path, version, store=store)
+    with sqlite3.connect(database(tmp_path)) as connection:
+        if version == "1":
+            connection.execute("DELETE FROM reservations")
+        elif version == "2":
+            connection.execute("UPDATE lifecycle_receipts SET receipt_sha256='bad'")
+        else:
+            connection.execute("UPDATE binding_receipts SET receipt_sha256='bad'")
+    before = state(tmp_path)
+    with pytest.raises(IdentityStoreError):
+        IdentityStore.upgrade(tmp_path)
+    assert state(tmp_path) == before
+
+
+@pytest.mark.parametrize("version", ["1", "2", "3", "4"])
 @pytest.mark.parametrize("damage", [None, "unknown", "ordinal", "receipt"])
 def test_restore_audits_each_schema_before_destination_claim(tmp_path, version, damage):
     source = tmp_path / "source"
     source.mkdir()
-    if version == "3":
+    if version in {"3", "4"}:
         store = seeded(source)
-        record(store, claim())
-        observe(store, occurrence())
+        original_reference = record(store, claim())
+        original_occurrence = observe(store, occurrence())
         directory = source / ".echelon/identity"
+        if version == "3":
+            older_authority(source, version, store=store)
     else:
         directory = older_authority(source, version)
     with sqlite3.connect(database(source)) as connection:
@@ -347,9 +368,9 @@ def test_restore_audits_each_schema_before_destination_claim(tmp_path, version, 
         assert not (destination / ".echelon").exists()
     else:
         restored = IdentityStore.restore(destination, directory)
-        if version == "3":
-            assert record(restored, claim()) == record(store, claim())
-            assert observe(restored, occurrence()) == observe(store, occurrence())
+        if version in {"3", "4"}:
+            assert record(restored, claim()) == original_reference
+            assert observe(restored, occurrence()) == original_occurrence
         else:
             assert read(restored) == () and issues(restored) == ()
     assert state(source) == before
@@ -464,9 +485,10 @@ def test_large_assessed_revision_is_bound_without_machine_integer_casts(tmp_path
     assert read(store)[0]["target_revision_matches_current"] is True
 
 
-@pytest.mark.parametrize("version,method", [("1", "reference_claims"), ("2", "issue_occurrences"), ("3", "unknown")])
+@pytest.mark.parametrize("version,method", [("1", "reference_claims"), ("2", "issue_occurrences"),
+                                           ("3", "identity_publication"), ("4", "unknown")])
 def test_audit_rejects_operation_methods_that_cannot_belong_to_schema(tmp_path, version, method):
-    if version == "3":
+    if version == "4":
         seeded(tmp_path)
     else:
         older_authority(tmp_path, version)

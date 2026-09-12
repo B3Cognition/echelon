@@ -1,4 +1,4 @@
-# Element identity allocation, lifecycle, and binding storage
+# Element identity allocation, lifecycle, binding, and publication journal storage
 
 `harness.element_identity_store.IdentityStore` is an inactive library. It is not
 wired into spec producers, providers, artifact adapters, evidence, or squad
@@ -204,6 +204,130 @@ receipt authority. Existing store transactions and future controllers retain
 those responsibilities; accepting bytes alone grants no adoption or publication
 authority.
 
+## Inactive durable publication journal
+
+`harness.element_identity_publication` defines exact frozen, slotted request types:
+`PublicationOperation(method, operation_id, payload)` and
+`PublicationIntentRequest(manifest_sha256, recovery_payload, operations=())`.
+The operations tuple contains at most one operation for each of `lifecycle`,
+`reference_claims`, and `issue_occurrences`, in that order; any subset, including
+the empty tuple, is valid. Child IDs are unique, exact nonblank UTF-8 strings
+without NUL and cannot equal the parent ID. Each child payload must already be
+the canonical ASCII output of the existing method-specific request codec.
+
+`encode_publication_request` produces canonical ASCII JSON with exactly `version`
+(string `"1"`), `manifest_sha256`, `recovery_payload`, and `operations`; every
+operation contains exactly `method`, `operation_id`, and `payload`.
+`decode_publication_request` accepts that closed shape, rejects duplicate keys at
+every level, numeric/nonfinite tokens, malformed/deep input, unknown fields and
+versions, and invalid UTF-8. Both codecs share one strict JSON parser. All public
+and internal request boundaries revalidate exact types, including altered frozen
+objects. No integer coercion changes labels or arbitrarily wide revision strings.
+Codec failures use bounded `PublicationIntentError`; store failures normalize to
+`IdentityStoreError`.
+
+The manifest hash uses the existing exact lowercase SHA-256 grammar. Recovery
+payload is retained as an exact nonblank/NUL-free UTF-8 string. Storage neither
+parses nor certifies its source coverage, original preimages, semantic judgments,
+or filesystem paths. A future completion owner must construct and authenticate
+the complete versioned recovery bundle; a provider assertion does not supply that
+authority.
+
+The store exposes these keyword-only methods:
+
+- `prepare_identity_publication(spec_id, operation_id, request)` validates the
+  lifecycle plan and projected bindings on one `BEGIN IMMEDIATE` snapshot, then
+  atomically retains the parent operation, request, exact plan and child claims.
+  It applies no child operation and does not materialize reserved IDs.
+- `apply_identity_publication(spec_id, operation_id)` authenticates the prepared
+  journal and baseline, then invokes the existing connection-owned lifecycle
+  and binding writers in request order. Every child effect, its original receipt,
+  the application receipt and the state change commit together. Any fault rolls
+  them all back, retaining the prepared intent and guard.
+- `release_identity_publication(spec_id, operation_id, completion_payload)`
+  requires an applied intent and retains exact nonblank/NUL-free UTF-8 completion
+  data. Only this explicit transition releases the spec guard. It supplies no
+  independent verification of graph or completion evidence.
+- `identity_publication(spec_id, operation_id)` and
+  `pending_identity_publication(spec_id)` use one query-only transaction and return
+  detached records with exactly `preparation`, `state`, `request`,
+  `application_receipt`, and `completion_payload`. Request/application fields are
+  canonical JSON strings, with an absent application or completion represented by
+  `None`. A missing intent returns `None`; an ID belonging to another method or
+  spec fails instead.
+
+The corresponding connection-owned functions in
+`harness.element_identity_publication_store` are `prepare(connection, store,
+spec_id, operation_id, request)`, `apply(connection, store, spec_id, operation_id)`,
+`release(connection, store, spec_id, operation_id, completion_payload)`,
+`read(connection, store, spec_id, operation_id)`, `pending(connection, store,
+spec_id)`, and `audit(connection, store)`. They require an active caller transaction,
+revalidate inputs, and never begin, commit, roll back, or change PRAGMAs themselves.
+Callers must let an exception roll back their composed write transaction.
+
+State moves only `prepared` → `applied` → `released`. Empty batches still gain an
+application receipt and stay guarded until release. Prepared records cannot
+release. There is no cancellation, timeout, automatic release, process-exit release,
+guard-clearing CLI, or history deletion. Abandoned reservations remain allocated.
+
+The guard is spec-wide: every new reservation, import, lifecycle change, reference
+claim, issue occurrence, or publication preparation for the pending spec fails,
+even if it concerns another element. This deliberately trades write concurrency
+inside a spec for a stable preparation baseline. Other specs continue except
+that child IDs are globally claimed. Exact already-completed ordinary retries
+retain their original receipt behavior; conflicting arguments fail. A prepared
+child cannot execute through a public writer even with matching arguments. After
+application/release, only its exact original receipt can replay. Claims remain
+permanent after release and prevent method/spec/digest takeover. A missing applied
+child is damaged history, never permission to recreate it.
+
+The common operation gate remains the only child-operation insert path. A private
+per-call adapter delegates to existing validators/writers and passes its owner ID
+only at that gate, which authenticates the prepared owner and exact request/claim
+association. Public writer signatures expose no owner bypass. Pending-spec and
+global-child lookups use indexes; ordinary allocation/import algorithms remain
+unchanged.
+
+Schema 4 adds only `publication_intents`, its unique partial `publication_pending_specs`
+index, `publication_operation_claims`, and its unique `publication_claim_methods`
+index. The parent operation method is `identity_publication`; child claims need
+not yet have an operation row. The retained plan is canonical ASCII JSON with
+`revisions` (the existing eight-field planner rows) and `lineage` (the existing
+seven-field rows), empty without lifecycle work. Request, plan, and application
+hashes cover ASCII bytes; completion hashes cover exact UTF-8 bytes. The parent
+digest is the existing `_digest(["identity_publication", spec_id, operation_id,
+request_json, plan_sha256])`. Existing child digest formulas, SQL writers and
+receipt formats remain unchanged.
+
+Preparation receipts contain exactly string `version="1"`, `workspace_uuid`,
+`epoch_uuid`, `spec_id`, `operation_id`, `request_sha256`, and `plan_sha256`.
+Namespace identity comes from validated metadata on the same connection, including
+class-based upgrade/restore audits. Application receipts contain string
+`version="1"`, `publication` (the original preparation receipt), and `operations`
+(ordered objects containing `method`, `operation_id`, and the original child
+`receipt` as an array). Release receipts contain string `version="1"`,
+`publication`, `application_sha256`, and `completion_sha256`.
+
+Exact preparation/application/release retries authenticate retained history and
+return the original receipt; changed request or completion arguments fail. Released
+requests are never replanned against newer current heads. Audits include decimal
+string counts for both new tables and detect malformed hashes, plans, receipts,
+claims, parent/child associations, orphan records, premature or incomplete child
+application, and differences between persisted rows/lineage and the retained plan.
+These are authority failures, not repair findings. Hash checks do not protect
+against coherent malicious rewriting of all SQLite history and hashes.
+
+No filesystem, provider, candidate, graph, controller-routing, or producer
+integration is activated here. The existing completion owner must authenticate
+sealed/current files under the existing publication lock before application, and
+mandatory graph/history and completion evidence before release. A call to release
+inside an inspection body before its normal-exit verification is invalid integration.
+Storage receipts prove retained ledger transitions, not semantic approval, file
+acceptance, complete dependency capture, or graph completion. Run-local/manual
+acceptance and final export still need one shared integration without duplicate
+revisions; historical reconciliation, managed feature snapshots, all seven
+producers, bounded repair, and offline/live checkpoints remain follow-on work.
+
 ## Authority and API
 
 Call `IdentityStore.initialize(workspace)` explicitly once for a fresh authority.
@@ -212,8 +336,9 @@ The workspace must already exist. State lives in `.echelon/identity/`:
 - `authority.json`: marker format version, workspace UUID, and authority epoch UUID.
 - `registry.sqlite3`: matching authority metadata, operation receipts, counters,
   reservation ranges, entities, lifecycle heads, immutable content revisions,
-  direct lineage, immutable reference claims, issue occurrences, and receipts.
-  Database schema version is separate metadata (`schema_version=3`); marker
+  direct lineage, immutable reference claims, issue occurrences, publication
+  intents, permanent child-operation claims, and receipts.
+  Database schema version is separate metadata (`schema_version=4`); marker
   format and SQLite `user_version` remain 1.
 
 The authority directory is created exclusively with mode `0700`; new sensitive
@@ -661,14 +786,18 @@ establish a completion gate.
 ## Explicit schema upgrade
 
 `IdentityStore.upgrade(workspace)` recognizes only exact reviewed schemas 1
-(allocation), 2 (lifecycle), and 3 (bindings), with their matching metadata.
-Ordinary `open` on schema 1 or 2 reports that explicit upgrade is required and
+(allocation), 2 (lifecycle), 3 (bindings), and 4 (publication journal), with their
+matching metadata. Versions 1/2/3 remain frozen, including a separate reviewed
+v3 SQL fixture. Ordinary `open` on schema 1, 2, or 3 reports that explicit upgrade is required and
 does not mutate storage.
 Upgrade audits authority, integrity, foreign keys, retained numeric claims,
 reservation history and legacy import/reservation overlap inside one
 `BEGIN IMMEDIATE` transaction. Schema 1 first gains lifecycle tables and
-imported/null heads. Both older schemas gain only the binding tables/indexes and
-schema metadata update; neither gains fabricated claims or occurrences. Exact
+imported/null heads. Versions 1/2 gain binding tables/indexes; versions 1/2/3
+gain the two publication tables and their two indexes. The metadata update adds
+no fabricated bindings, publication intents, child claims, or completion. Audit
+dispatch validates lifecycle for versions 2+, bindings for 3+, and publication
+history for 4 before migration. Exact
 labels, counters, reservations, lifecycle history, retry bindings and UUIDs stay
 intact. Current-schema audits retain shared entity label/kind/ordinal/subject
 checks; legacy reservation/import overlap rejection applies only to schema 1.
@@ -745,11 +874,13 @@ cannot commit between them. The destination workspace must exist and have no
 identity directory, even an empty one. Restore uses online backup into fresh
 owner-only files and preserves the exact workspace UUID, epoch, imported subjects,
 operation receipts, counters, and reservations. It never merges or overwrites.
-A recognized schema 1 or 2 backup is validated before claiming destination
+A recognized schema 1, 2, or 3 backup is validated before claiming destination
 state, then upgraded transactionally only in the fresh restored database. The
 backup itself is unchanged. Unknown schema versions fail before destination
 creation. Current backups retain lifecycle history, immutable claims, original
-receipts, report provenance and issue fingerprints.
+receipts, report provenance and issue fingerprints. Schema-4 backups also retain
+every prepared/applied/released publication and all permanent child claims. Restore
+does not promote files, authenticate completion, or clear a pending guard.
 
 A backup is a point-in-time snapshot. Restoring an old snapshot cannot recover
 reservations committed after it. Quiesce the original authority and ensure the

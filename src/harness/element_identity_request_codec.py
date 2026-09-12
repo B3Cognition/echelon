@@ -8,6 +8,7 @@ import json
 
 from harness import element_identity_bindings as bindings
 from harness import element_identity_lifecycle as lifecycle
+from harness.element_identity_json import MalformedJSON as _MalformedRequest, strict_json as _strict_json
 
 
 class IdentityRequestCodecError(ValueError):
@@ -30,10 +31,6 @@ _FIELD_NAMES = {
     item_type: frozenset(field.name for field in fields(item_type))
     for item_type in (*_LIFECYCLE_TYPES.values(), *_BINDING_TYPES.values())
 }
-
-
-class _MalformedRequest(ValueError):
-    """Internal sentinel for expected untrusted-wire failures."""
 
 
 def _method(method):
@@ -60,48 +57,6 @@ def encode_request(method: str, entries: Sequence) -> str:
         raise
     except (ValueError, TypeError, UnicodeError, RecursionError) as error:
         raise IdentityRequestCodecError(f"invalid {method} request values") from error
-
-
-def _unique_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise _MalformedRequest("duplicate JSON object key")
-        value[key] = item
-    return value
-
-
-def _reject_number(_token):
-    # Reject from the token text: never construct a huge int or float.
-    raise _MalformedRequest("numeric JSON tokens are not valid request strings")
-
-
-def _utf8_strings(value):
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if type(item) is str:
-            item.encode("utf-8")
-        elif type(item) is list:
-            pending.extend(item)
-        elif type(item) is dict:
-            pending.extend(item.keys())
-            pending.extend(item.values())
-
-
-def _strict_json(payload):
-    if type(payload) is not str:
-        raise _MalformedRequest("payload must have exact type str")
-    payload.encode("utf-8")
-    value = json.loads(
-        payload,
-        object_pairs_hook=_unique_object,
-        parse_int=_reject_number,
-        parse_float=_reject_number,
-        parse_constant=_reject_number,
-    )
-    _utf8_strings(value)
-    return value
 
 
 def _field_object(value, item_type, description):

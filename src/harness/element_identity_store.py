@@ -30,6 +30,7 @@ from harness.element_identity_candidate import (
 )
 from harness.element_identity_bundle import EvidenceInventoryContext, LexiconProjectionSource
 from harness.element_identity_issue_candidate import IssueReportContext
+from harness.element_identity_publication import PublicationIntentRequest
 
 
 _VERSION = 1
@@ -262,7 +263,8 @@ class IdentityStore:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = _validate(connection, marker, allow_old=True)
-                cls._audit(connection, lifecycle_state=version != "1", binding_state=version == "3")
+                cls._audit(connection, lifecycle_state=version != "1", binding_state=version in {"3", "4"},
+                           publication_state=version == "4")
                 if version != schema.SCHEMA_VERSION:
                     schema.upgrade(connection)
                 _validate(connection, marker)
@@ -289,9 +291,13 @@ class IdentityStore:
                 raise
 
     @staticmethod
-    def _operation(connection, operation_id, method, spec_id, digest):
+    def _operation(connection, operation_id, method, spec_id, digest, *, _publication_id=None):
+        from harness import element_identity_publication_store as publication_store
+
         existing = connection.execute("SELECT method, spec_id, digest FROM operations WHERE operation_id=?",
                                       (operation_id,)).fetchone()
+        publication_store.guard(connection, operation_id, method, spec_id, digest, existing,
+                                publication_id=_publication_id)
         if existing is not None:
             if tuple(existing) != (method, spec_id, digest):
                 raise IdentityStoreError("operation_id was already used with different arguments")
@@ -681,16 +687,69 @@ class IdentityStore:
                 projection_sources, evidence_inventories, issue_reports)
 
     @_public
+    def prepare_identity_publication(self, *, spec_id: str, operation_id: str,
+                                     request: PublicationIntentRequest) -> dict:
+        from harness import element_identity_publication_store as publication_store
+        from harness.element_identity_publication import encode_publication_request, decode_publication_request
+
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        request = decode_publication_request(encode_publication_request(request))
+        if any(op.operation_id == operation_id for op in request.operations):
+            raise IdentityStoreError("parent and child operation IDs must differ")
+        with self._transaction(write=True) as connection:
+            return publication_store.prepare(connection, self, spec_id, operation_id, request)
+
+    @_public
+    def apply_identity_publication(self, *, spec_id: str, operation_id: str) -> dict:
+        from harness import element_identity_publication_store as publication_store
+
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        with self._transaction(write=True) as connection:
+            return publication_store.apply(connection, self, spec_id, operation_id)
+
+    @_public
+    def release_identity_publication(self, *, spec_id: str, operation_id: str, completion_payload: str) -> dict:
+        from harness import element_identity_publication_store as publication_store
+
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        lifecycle.text(completion_payload, "completion_payload")
+        with self._transaction(write=True) as connection:
+            return publication_store.release(connection, self, spec_id, operation_id, completion_payload)
+
+    @_public
+    def identity_publication(self, *, spec_id: str, operation_id: str) -> dict | None:
+        from harness import element_identity_publication_store as publication_store
+
+        lifecycle.text(spec_id, "spec_id")
+        lifecycle.text(operation_id, "operation_id")
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            return publication_store.read(connection, self, spec_id, operation_id)
+
+    @_public
+    def pending_identity_publication(self, *, spec_id: str) -> dict | None:
+        from harness import element_identity_publication_store as publication_store
+
+        lifecycle.text(spec_id, "spec_id")
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            return publication_store.pending(connection, self, spec_id)
+
+    @_public
     def audit(self) -> dict:
         """Validate the complete current authority and report its snapshot."""
         tables = (
             "counters", "operations", "reservations", "entities", "revisions",
             "lifecycle_heads", "lifecycle_lineage", "lifecycle_receipts",
             "reference_claims", "issue_occurrences", "binding_receipts",
+            "publication_intents", "publication_operation_claims",
         )
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
-            self._audit(connection, lifecycle_state=True, binding_state=True)
+            self._audit(connection, lifecycle_state=True, binding_state=True, publication_state=True)
             counts = {
                 table: _decimal(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in tables
@@ -714,7 +773,7 @@ class IdentityStore:
             raise IdentityStoreError("reservation history is inconsistent")
 
     @classmethod
-    def _audit(cls, connection, *, lifecycle_state, binding_state=False):
+    def _audit(cls, connection, *, lifecycle_state, binding_state=False, publication_state=False):
         """Fully validate an explicitly audited, upgraded, or restored authority."""
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise IdentityStoreError("database integrity check failed")
@@ -725,6 +784,8 @@ class IdentityStore:
             methods.add("lifecycle")
         if binding_state:
             methods.update(("reference_claims", "issue_occurrences"))
+        if publication_state:
+            methods.add("identity_publication")
         if any(row[0] not in methods for row in connection.execute("SELECT DISTINCT method FROM operations")):
             raise IdentityStoreError("operation method is unsupported by this authority schema")
         cls._audit_counters(connection)
@@ -765,6 +826,10 @@ class IdentityStore:
                 cls._receipt(connection, *row)
         if binding_state:
             binding_store.audit(connection, cls)
+        if publication_state:
+            from harness import element_identity_publication_store as publication_store
+
+            publication_store.audit(connection, cls)
 
     @_public
     def record_reference_claims(self, *, spec_id: str, operation_id: str,
@@ -851,7 +916,8 @@ class IdentityStore:
             # committing between checksum verification and the online backup.
             if manifest["database_sha256"] != _hash_file(backup / _DATABASE):
                 raise IdentityStoreError("backup database digest does not match its manifest")
-            cls._audit(source, lifecycle_state=version != "1", binding_state=version == "3")
+            cls._audit(source, lifecycle_state=version != "1", binding_state=version in {"3", "4"},
+                       publication_state=version == "4")
             directory = _claim_authority(workspace)
             _write_new(directory / _MARKER, _json(marker).encode("ascii"))
             _write_new(directory / _DATABASE, b"")
