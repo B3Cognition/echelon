@@ -114,3 +114,20 @@ class TestTaskContract:
         )
 
         assert [task.task_id for task in tasks] == ["T-002"]
+
+    def test_parse_task_rows_retains_wide_ids_dependencies_and_requirements(self) -> None:
+        """A numeric-width ceiling must not hide valid canonical task rows."""
+        markdown = (
+            "- [ ] T-000001 complexity=standard phase=core "
+            "req=FR-000001 depends=none\n"
+            "- [ ] T-1000000 complexity=standard phase=core "
+            "req=FR-1000000,NFR-10000000 depends=T-000001,T-999999\n"
+            "- [ ] T-10000000x complexity=standard phase=core "
+            "req=FR-10000000 depends=T-1000000\n"
+        )
+
+        tasks = parse_task_rows(markdown)
+
+        assert [task.task_id for task in tasks] == ["T-000001", "T-1000000"]
+        assert tasks[1].requirements == ["FR-1000000", "NFR-10000000"]
+        assert tasks[1].dependencies == ["T-000001", "T-999999"]

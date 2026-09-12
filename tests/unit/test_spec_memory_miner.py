@@ -171,6 +171,34 @@ def test_echelon_bold_requirement_ids_are_structured_by_room() -> None:
     ]
 
 
+def test_canonical_memory_plan_retains_wide_numeric_requirement_ids() -> None:
+    """Memory extraction must not truncate wide IDs to a numeric prefix."""
+    content = (
+        b"- **FR-001**: Legacy behavior remains.\n"
+        b"- **AC-000001**: Six-digit acceptance.\n"
+        b"- **FR-1000000**: Seven-digit behavior.\n"
+        b"- **NFR-10000000**: Eight-digit constraint.\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source="specs/001-demo/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [row.requirement_id for row in rows] == [
+        "FR-001",
+        "AC-000001",
+        "FR-1000000",
+        "NFR-10000000",
+    ]
+
+
 def test_id_header_tables_are_parsed_without_dependency_table_duplicates() -> None:
     content = (
         b"# Demo\n\n"

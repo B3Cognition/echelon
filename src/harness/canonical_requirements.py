@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Iterable
 
+from kernel.element_ids import element_id_sort_key
+
 REQ_ID_RE = re.compile(
     r"(?<![A-Z0-9]-)\b(?:FR|NFR|EDGE|REQ|AC|US|SC)"
     r"(?:-[A-Z0-9]+(?:[_.:][A-Z0-9]+)*[a-z]?)+"
@@ -52,7 +54,7 @@ def extract_canonical_requirements(spec_dir: Path) -> list[CanonicalRequirement]
     ):
         _collect_markdown_ids(spec_dir / filename, source_kind, rows)
     _collect_task_metadata_ids(spec_dir / "tasks.md", rows)
-    return [rows[item_id] for item_id in sorted(rows)]
+    return [rows[item_id] for item_id in sorted(rows, key=element_id_sort_key)]
 
 
 def write_canonical_requirements(
@@ -225,7 +227,7 @@ def _load_inventory_requirements(inventory_path: Path) -> list[CanonicalRequirem
                 source_text=str(raw.get("source_text") or ""),
             )
         )
-    return sorted(rows, key=lambda row: row.id)
+    return sorted(rows, key=lambda row: element_id_sort_key(row.id))
 
 
 def _render_requirement_audit(requirements: list[CanonicalRequirement]) -> str:

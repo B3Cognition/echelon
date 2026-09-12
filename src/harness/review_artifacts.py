@@ -22,11 +22,12 @@ from typing import AbstractSet, Any, Literal, Sequence
 from uuid import uuid4
 
 from harness.state import is_process_alive
+from kernel.element_ids import format_element_id
 from kernel.task_contract import parse_task_rows
 
 
 _ARTIFACT_RE = re.compile(r"review-fix-([1-9][0-9]*)\.md\Z")
-_NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,4})\Z")
+_NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,})\Z")
 _TITLE_RE = re.compile(r"^  \*\*Title:\*\* (RF[1-9][0-9]*-T[123]) - \S.*\Z")
 _SECTION_RE = re.compile(r"^(?:---|## Review Fix [1-9][0-9]*: \S.*|> Source: review-fix-[1-9][0-9]*\.md|> PR: \S.*|> Status: pending)\Z")
 _LOCK_FIELDS = {"pid", "created_at", "strategy", "token", "released"}
@@ -618,21 +619,18 @@ def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedRev
 
 def _allocate_canonical_task_ids(path: Path, count: int) -> tuple[str, ...]:
     if not path.exists():
-        return tuple(f"T-{number:03d}" for number in range(1, count + 1))
+        return tuple(format_element_id("T", number) for number in range(1, count + 1))
     if not _is_regular_file(path):
         raise ReviewArtifactError("canonical tasks.md is not a regular file")
     numbers: list[int] = []
-    widths: list[int] = []
     for task in parse_task_rows(path.read_text(encoding="utf-8", errors="strict")):
         match = _NUMERIC_TASK_ID_RE.fullmatch(task.task_id)
         if match is not None:
             numbers.append(int(match.group(1)))
-            widths.append(len(match.group(1)))
     first = max(numbers, default=0) + 1
-    width = max([3, *widths, len(str(first + max(0, count - 1)))])
-    if width > 4:
-        raise ReviewArtifactError("cannot allocate canonical task IDs beyond T-9999")
-    return tuple(f"T-{number:0{width}d}" for number in range(first, first + count))
+    return tuple(
+        format_element_id("T", number) for number in range(first, first + count)
+    )
 
 
 def _staged_regular_file(root: Path, name: str) -> Path:

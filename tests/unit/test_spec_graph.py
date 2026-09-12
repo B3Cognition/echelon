@@ -530,6 +530,45 @@ def test_build_spec_graph_uses_only_canonical_spec_requirements(
 
 
 @pytest.mark.unit
+def test_build_spec_graph_retains_wide_requirement_and_task_edges(
+    tmp_path: Path,
+) -> None:
+    """Graph projection must not silently drop wide canonical task relations."""
+    spec_dir = _canonical_spec(tmp_path)
+    with (spec_dir / "spec.md").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "- **FR-1000000**: Build the millionth report.\n"
+            "- **NFR-10000000**: Retain it durably.\n"
+        )
+    with (spec_dir / "tasks.md").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "- [ ] T-10000000 complexity=standard phase=build "
+            "req=FR-1000000,NFR-10000000 depends=T-999999\n"
+        )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    node_ids = {item["id"] for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"])
+        for item in payload["edges"]
+    }
+
+    assert "req:001-demo:FR-1000000" in node_ids
+    assert "req:001-demo:NFR-10000000" in node_ids
+    assert "task:001-demo:T-10000000" in node_ids
+    assert (
+        "task:001-demo:T-10000000",
+        "IMPLEMENTS",
+        "req:001-demo:FR-1000000",
+    ) in edges
+    assert (
+        "task:001-demo:T-10000000",
+        "IMPLEMENTS",
+        "req:001-demo:NFR-10000000",
+    ) in edges
+
+
+@pytest.mark.unit
 def test_build_spec_graph_aggregates_multiple_product_inputs_per_requirement(
     tmp_path: Path,
 ) -> None:

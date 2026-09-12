@@ -107,7 +107,7 @@ These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
 #### Step 1: Absorption Metrics (I-01 to I-04)
 
 **I-01 requirement_coverage_rate** [FR-007]
-1. Extract all requirement IDs from spec.md using regex: `/(?:FR|NFR)-\d{3}/g`
+1. Extract complete requirement IDs from spec.md using regex: `/(?<![A-Z0-9-])(?:FR|NFR)-\d{3,}(?![-A-Za-z0-9])/g` (legacy IDs remain valid; there is no upper numeric width)
 2. Extract all requirement IDs from agent's output artifacts using same regex
 3. Compute: `|spec_ids ∩ output_ids| / |spec_ids|`
 4. If spec has 0 requirement IDs: null with "empty-denominator"
@@ -150,7 +150,7 @@ These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
 4. If 0 decisions detected: null with "empty-denominator"
 
 **I-07 cross_reference_accuracy** [FR-013]
-1. Extract all requirement ID citations from agent output: `/(?:FR|NFR|AC|C)-\d{3}[a-z]?/g`
+1. Extract complete requirement ID citations from agent output: `/(?<![A-Z0-9-])(?:FR|NFR|AC|C)-\d{3,}(?![-A-Za-z0-9])/g` (preserve the cited label exactly; do not truncate a wider ID or accept a numeric prefix of a malformed token)
 2. Build the valid ID set from spec.md
 3. For each citation, check: does this ID exist in the spec?
 4. Compute: `valid_citations / total_citations`

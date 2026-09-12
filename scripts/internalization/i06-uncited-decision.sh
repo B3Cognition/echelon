@@ -10,6 +10,8 @@ OUTPUT="$2"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/element-id-functions.sh"
 
 # Extract decision lines using keywords and structural markers
 grep -inE '(^decision:|^### decision|decided|selected|chose|choosing|adopted|will use|opted|implemented)' "$OUTPUT" \
@@ -26,7 +28,7 @@ fi
 uncited=0
 cited=0
 while IFS= read -r line; do
-  if echo "$line" | grep -qoE '(FR|NFR|AC|C)-[0-9]{3}'; then
+  if printf '%s\n' "$line" | extract_requirement_ids 'FR|NFR|AC|C' | grep -q .; then
     cited=$((cited + 1))
   else
     uncited=$((uncited + 1))

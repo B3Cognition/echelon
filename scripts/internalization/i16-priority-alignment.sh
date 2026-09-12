@@ -9,16 +9,18 @@ set -euo pipefail
 
 SPEC="$1"; OUTPUT="$2"
 tmpdir=$(mktemp -d); trap 'rm -rf "$tmpdir"' EXIT
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/element-id-functions.sh"
 
 # Extract requirements with priority indicators from spec
 # Look for: Must-Have, Should-Have, Could-Have, Won't-Have or P0/P1/P2/P3
 # Assign priority scores: Must-Have/P0=4, Should-Have/P1=3, Could-Have/P2=2, Won't-Have/P3=1
 {
   # Pattern 1: "FR-001 ... | Must-Have |" or "| FR-001 | ... | MVP |"
-  grep -oE '(FR|NFR)-[0-9]{3}' "$SPEC" | sort -u | while read -r req_id; do
+  extract_requirement_ids 'FR|NFR' < "$SPEC" | sort -u | while read -r req_id; do
     # Find the line containing this requirement and check for priority keywords
     priority=2  # default: Could-Have
-    req_line=$(grep "$req_id" "$SPEC" | head -1)
+    req_line=$(first_line_with_element_id "$SPEC" "$req_id" || true)
     if echo "$req_line" | grep -qiE 'must.have|MVP|P0|critical'; then
       priority=4
     elif echo "$req_line" | grep -qiE 'should.have|P1|high'; then
@@ -42,8 +44,7 @@ fi
 # Count decisions referencing each requirement in agent output
 total_attention=0
 while read -r req_id priority; do
-  count=$(grep -c "$req_id" "$OUTPUT" 2>/dev/null || echo 0)
-  count=$(echo "$count" | tr -d '[:space:]')
+  count=$(count_lines_with_element_id "$OUTPUT" "$req_id")
   total_attention=$((total_attention + count))
   echo "$req_id $priority $count"
 done < "$tmpdir/spec_priorities.txt" > "$tmpdir/combined.txt"
