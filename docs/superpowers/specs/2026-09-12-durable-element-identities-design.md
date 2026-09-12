@@ -202,6 +202,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   narrowly: rejected declaration labels no longer also become reference facts,
   while real body references remain. No semantic approval, accepted-source
   authentication or live publication enforcement is claimed.
+- Captured candidate source assembly: implemented in `57b0d2cf`, corrected in
+  `f8f74234`, and independently reviewed. Five-module suite: 364 passed;
+  amended module: 38 passed. Original and proposed images now join through an
+  explicit physical-to-logical binding; every sealed operation needs exact
+  writable scope and typed or opaque classification. Real changed-evidence
+  composition accepts its after hash and rejects its retained before hash.
+  Caller-input errors are bounded; snapshot validation remains separate.
+  This inactive adapter does not establish accepted-source or semantic authority.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
