@@ -310,6 +310,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   records. Real guarded publication and interrupted recovery match the prediction.
   The separate value carrier is not an observed capture or recovery baseline;
   complete graph assembly, source ownership and live integration remain required.
+- Captured spec-local graph structure: implemented in `f429a965` and
+  independently reviewed with no findings. Eight-module covering suite: 310
+  passed; subsequent test-only input-damage strengthening passed its named check.
+  Shared pure transformations preserve all local records and canonical keys from
+  exact supplied spec-tree bytes, with existing Path adapters and external-domain
+  behavior retained. Real pre-memory comparison, final role overrides, projected
+  publication and actual final captures agree. This is explicitly a partial
+  structure, not a complete graph or accepted source/semantic observation;
+  captured external domains and runtime integration remain required.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
