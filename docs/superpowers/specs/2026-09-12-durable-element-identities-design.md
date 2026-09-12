@@ -58,7 +58,12 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   non-active dependencies. A subsequent integration check found absent native
   Lexicon images were parsed as empty documents; corrected in `2db1ba96`, with
   237 covering tests passing and clean scoped review. Present empty documents
-  remain invalid. Immutable ancillary artifact validation is next.
+  remain invalid.
+- Immutable ancillary artifact validation: implemented in `581e8cc4` and
+  independently reviewed with no findings. Focused tests: 36 passed; complete
+  requested compatibility set: 224 passed. Pure Lexicon/source/glossary and
+  inventory APIs preserve existing rules while validating exact supplied text;
+  legacy Path behavior remains distinct. Supplemental bundle integration is next.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
