@@ -1821,6 +1821,34 @@ source scope. Candidate isolation, producer reservations, exact
 source/identity/graph completion, semantic judgment, and bounded repair remain
 separate prerequisites.
 
+## Captured legacy graph-input parser boundaries
+
+Three inactive compatibility helpers parse already-captured text without opening
+paths: `extract_canonical_requirements_from_texts`,
+`parse_deferred_scope_ledger`, and `parse_verified_ledger`. They return fresh
+existing requirement, deferred-scope, and verified-ledger records. The existing
+path readers retain their prior absence, decoding, I/O, ordering, default and
+error behavior and delegate only their parsing bodies after reading.
+
+These helpers accept exact strings; only the four requirement Markdown images may
+be `None`, meaning that source was absent from the capture. An empty supplied
+string remains a present empty observation. The requirement helper preserves the
+legacy inventory regex, source precedence, line numbering, task fallback and
+numeric ordering, including historical family, suffix, composite, range-endpoint
+and arbitrarily wide numeric labels. The ledger helpers preserve their existing
+permissive schema and row interpretation, including attached historical evidence
+references and fresh ordinary nested dictionaries.
+
+Parsed values are observations, not canonical managed definitions, accepted
+source authority, evidence authentication or proof of current fulfillment. The
+helpers do not validate the managed identity grammar, decide whether a reference
+defines a requirement, assess evidence, rebind historical evidence to a current
+revision, or authorize graph construction or publication. A future managed graph
+owner must authenticate the complete captured dependency set and apply the
+existing typed candidate, source and identity checks before building or publishing
+a graph. No graph caller, producer, controller, provider, lifecycle or completion
+path is activated by these parsing boundaries.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,
