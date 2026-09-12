@@ -217,6 +217,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   and retry are distinguished without changing the initial-source guard.
   Source ownership, accepted baseline persistence and coordinated publication
   remain required; a supplied observation hash is not acceptance authority.
+- Expected final source projection: implemented in `b39a9b29`, test assertion
+  strengthened in `426a7992`, and independently reviewed. Four-module suite:
+  179 passed; exact mode-only regression fix: 21 covering tests passed.
+  Sealed postimages now produce an expected complete selected fingerprint,
+  preserving unrelated files and existing directory modes while sharing the
+  publisher's actual new-directory mode. Real publication and interrupted retry
+  match the retained original's expectation. This is not a fresh observation
+  or guarded-promotion/accepted-source authority; those remain integration work.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
