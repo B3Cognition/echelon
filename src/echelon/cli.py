@@ -17092,8 +17092,8 @@ def _cmd_re_refresh(args: list[str]) -> None:
 class _ReKnowledgeActionOptions:
     source_ids: tuple[str, ...]
     depth: str | None
-    token_limit: int
-    active_ms_limit: int
+    token_limit: int | None
+    active_ms_limit: int | None
 
 
 def _parse_re_knowledge_action_options(
@@ -17104,8 +17104,8 @@ def _parse_re_knowledge_action_options(
 
     sources: list[str] = []
     depth: str | None = None
-    token_limit = 5_000_000
-    time_limit_minutes = 180
+    token_limit: int | None = None
+    time_limit_minutes: int | None = None
     index = 0
     while index < len(args):
         argument = args[index]
@@ -17168,7 +17168,37 @@ def _parse_re_knowledge_action_options(
     if len(sources) != len(set(sources)):
         raise ValueError("--source values must be unique")
     return _ReKnowledgeActionOptions(
-        tuple(sources), depth, token_limit, time_limit_minutes * 60_000
+        tuple(sources),
+        depth,
+        token_limit,
+        None if time_limit_minutes is None else time_limit_minutes * 60_000,
+    )
+
+
+def _resolve_re_knowledge_action_options(
+    workspace: Path,
+    options: _ReKnowledgeActionOptions,
+) -> _ReKnowledgeActionOptions:
+    """Apply configured RE authorization before freezing an ordinary request."""
+    from dataclasses import replace
+
+    from harness.re_profiles import resolve_re_execution_profile
+
+    profile = resolve_re_execution_profile(
+        workspace,
+        hard_token_limit=options.token_limit,
+        hard_active_minutes=(
+            None
+            if options.active_ms_limit is None
+            else options.active_ms_limit // 60_000
+        ),
+    )
+    if profile.hard_token_limit is None or profile.hard_active_minutes is None:
+        raise ValueError("ordinary RE requires finite token and active-time ceilings")
+    return replace(
+        options,
+        token_limit=profile.hard_token_limit,
+        active_ms_limit=profile.hard_active_minutes * 60_000,
     )
 
 
@@ -17395,6 +17425,7 @@ def _cmd_re_knowledge_run(args: list[str]) -> None:
         from harness.squad_provider import SquadCliProvider
 
         workspace = Path.cwd().resolve()
+        options = _resolve_re_knowledge_action_options(workspace, options)
         run_dir = resolve_current_re_run(workspace)
         config = load_config(workspace, squad_only=True)
         depths = (
@@ -17438,6 +17469,7 @@ def _cmd_re_knowledge_refresh(args: list[str]) -> None:
     """Plan and resume one source-granular reviewed refresh transaction."""
     try:
         options = _parse_re_knowledge_action_options(args, allow_sources=True)
+        options = _resolve_re_knowledge_action_options(Path.cwd().resolve(), options)
         _run_re_knowledge_refresh_action(
             Path.cwd().resolve(),
             options.source_ids,
@@ -17582,6 +17614,11 @@ def _run_re_knowledge_refresh_action(
         print(
             f"[re] refresh analysis starting · provider {provider_id} · "
             f"{len(plan.reanalyze_source_ids)} source(s)",
+            flush=True,
+        )
+        print(
+            f"[re] aggregate ceiling {analysis_token_limit} tokens / "
+            f"{analysis_active_ms_limit // 60_000} minutes",
             flush=True,
         )
         creation = create_or_resume_reviewed_analysis(

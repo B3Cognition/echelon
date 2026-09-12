@@ -17,6 +17,18 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
 
     run_dir = tmp_path / "runs" / "re-reviewed"
     run_dir.mkdir(parents=True)
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir()
+    (config_dir / "config.yml").write_text(
+        """re:
+  default_profile: balanced
+  profiles:
+    balanced:
+      hard_token_limit: 17000000
+      hard_active_minutes: 360
+""",
+        encoding="utf-8",
+    )
     config = object()
     provider = object()
     calls: list[tuple[Path, str, object, int | None, int | None]] = []
@@ -43,7 +55,9 @@ def test_normal_run_uses_current_reviewed_analysis_and_configured_provider(
 
     cli._cmd_re_knowledge_run(["--depth", "deep"])
 
-    assert calls == [(tmp_path.resolve(), "re-reviewed", provider, 5_000_000, 10_800_000)]
+    assert calls == [
+        (tmp_path.resolve(), "re-reviewed", provider, 17_000_000, 21_600_000)
+    ]
     output = capsys.readouterr().out
     assert "completed" in output
     assert "generation 4" in output
@@ -188,6 +202,40 @@ def test_normal_refresh_accepts_multiple_sources_and_preserves_absolute_limits(
 
 
 @pytest.mark.integration
+def test_normal_refresh_uses_workspace_profile_limits_when_not_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import echelon.cli as cli
+
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir()
+    (config_dir / "config.yml").write_text(
+        """re:
+  default_profile: balanced
+  profiles:
+    balanced:
+      hard_token_limit: 17000000
+      hard_active_minutes: 360
+""",
+        encoding="utf-8",
+    )
+    captured: list[tuple[tuple[str, ...], str | None, int, int]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "_run_re_knowledge_refresh_action",
+        lambda _root, sources, depth, tokens, active: captured.append(
+            (sources, depth, tokens, active)
+        ),
+        raising=False,
+    )
+
+    cli._cmd_re_knowledge_refresh(["--depth", "deep"])
+
+    assert captured == [((), "deep", 17_000_000, 21_600_000)]
+
+
+@pytest.mark.integration
 def test_normal_refresh_rejects_duplicate_source_before_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,6 +261,7 @@ def test_normal_refresh_rejects_duplicate_source_before_execution(
 def test_depth_refresh_creates_fresh_reviewed_analysis_instead_of_using_published_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     import echelon.cli as cli
     import harness.config
@@ -343,3 +392,4 @@ def test_depth_refresh_creates_fresh_reviewed_analysis_instead_of_using_publishe
     assert options.selection.source_ids == ("api",)
     assert options.source_depths == (("api", "standard"),)
     assert captured["analysis_run_id"] == "re-refresh-request-analysis"
+    assert "aggregate ceiling 8000000 tokens / 180 minutes" in capsys.readouterr().out

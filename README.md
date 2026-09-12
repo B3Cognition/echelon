@@ -190,6 +190,13 @@ workspace documents, and publishes either exactly one generation or a durable
 no-op. An explicit `--depth` selects `quick`, `standard`, or `deep`; refresh
 otherwise preserves each source's published depth.
 
+Each new request freezes the finite token and active-time ceilings from the
+workspace's selected `re.default_profile` in `.echelon/config.yml`; the CLI
+prints those aggregate limits before provider work begins. The shipped
+`balanced` profile remains 5,000,000 tokens and 180 active minutes. Customize
+the selected profile when a workspace needs more room—depth does not silently
+raise authorization.
+
 Echelon keeps the latest complete publication under `re/` and the durable run
 state under `runs/re-*`. Spec and delivery runs never execute or freshness-check
 RE. They take an immutable run-local snapshot of the latest generation, so an

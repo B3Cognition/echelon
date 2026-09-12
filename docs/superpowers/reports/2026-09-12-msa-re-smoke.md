@@ -132,3 +132,42 @@ standard attempt, 3,970,077 for the second, and 4,100,361 for the successful
 third attempt. Generation-2 synthesis charged 1,572,864 tokens. Including the
 successful quick analysis and synthesis, the smoke consumed 16,967,921
 conservative tokens, well below the approved 100,000,000-token aggregate ceiling.
+
+## Deep-Depth Refresh Follow-up
+
+The completed standard publication was then refreshed at `deep` depth through
+the ordinary one-command workflow:
+
+- Root request: `re-20260912-184814-508101`
+- Reviewed analysis: `re-20260912-184814-508101-analysis`
+- First workspace synthesis: `re-20260912-191023-681252`
+- Successful workspace synthesis: `re-20260912-191448-936055`
+- Analysis: 5/5 slices accepted, with one bounded verifier-driven repair
+- Synthesis: 6/6 artifacts complete; two compatible artifacts adopted and four
+  generated
+- Publication: generation 3, complete and available for full-quality
+  consumption
+- Source repository: clean after publication, with zero stashes
+
+The ordinary refresh initially froze the shipped balanced ceiling of 5,000,000
+tokens. Analysis charged 3,586,581 tokens, leaving too little authorization for
+the final synthesis reservation. The first synthesis stopped safely after 4/6
+artifacts and preserved generation 2. A bounded synthesis retry with a
+1,572,864-token ceiling then completed and atomically published generation 3.
+The complete deep follow-up charged 5,945,877 conservative tokens. Together
+with the preceding quick and standard trials, this fixture consumed 22,913,798
+tokens under the approved aggregate test allowance.
+
+That stop exposed a CLI authorization defect rather than a reason to increase
+the balanced default: ordinary `echelon re run` and `echelon re refresh` parsed
+their hidden compatibility flags but otherwise hardcoded the shipped balanced
+limits, bypassing the workspace's configured `re.default_profile` and custom
+profile values. The repaired commands now resolve the existing workspace RE
+profile before freezing a request, preserve an explicit CLI ceiling as the
+highest-precedence override, require both resolved ceilings to remain finite,
+and print the effective aggregate token/time limits before provider dispatch.
+Depth still does not silently multiply authorization.
+
+This deep run demonstrates a complete single-source refresh and full-quality
+publication. It remains one fixture trial, not the complete multi-workspace M4
+release gate.
