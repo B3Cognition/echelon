@@ -416,11 +416,13 @@ def _derive(proof, objects, l3, evidence):
         assessments.append(ReviewedCategoryDispositionV1(1, source, *key, row['category'], row['disposition'], scope['depth'],
             row['obligation_id'], row['row_id'], mapped(row['evidence_ids']), tuple(sorted(subjects[k].identity for k in row['subject_keys']))))
     if not proposal['domains'] and not any(key[0] == 'domain' for key in targets):
-        # Absence is an explicit reviewed whole-inventory conclusion, never a
-        # guessed directory name. Conflicting selected L3 domains fail above.
+        # The frozen target closure, the proposal's exact empty domain set, and
+        # the review's ready verdict jointly prove that there is no separate
+        # domain target to activate.  The source-level cross-domain category may
+        # still be analyzable (for example, boundaries between modules in a
+        # source-only repository); it is not the authority for target existence.
+        # Conflicting selected L3 domains fail above.
         boundary_row = next(row for row in review['obligations'] if row['category'] == 'cross-domain-boundaries')
-        if boundary_row['disposition'] != 'not-applicable':
-            raise KnowledgeActivationError('unresolved-reviewed-domain-absence')
         source_key = ('source', source)
         mappings.append(ReviewedTargetMappingV1(1, source, 'no-domain', *source_key,
             targets[source_key].identity, projections[source_key].identity, tuple(sorted(raw)), 'reviewed-no-domain'))

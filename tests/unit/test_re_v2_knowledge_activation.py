@@ -24,13 +24,17 @@ from tests.unit.test_re_v2_knowledge_discovery_review_v2 import _review_v2
 from tests.unit.test_re_v2_protocol_28_preparation import _preparation_fixture
 
 
-def _candidate(context, *, unknown=False, deployment=False):
+def _candidate(
+    context, *, unknown=False, deployment=False, source_boundary_analysis=False
+):
     refs = {row['projection']['path']: row['projection_id'] for row in context['evidence']}
     app = next(value for path, value in refs.items() if path.startswith('src/'))
     readme = refs['README.md']
     domains = [] if deployment else [dict(key='behavior', description='Handles a request.', evidence_ids=[app])]
     subjects = [dict(key='composition', target='source', description='Repository composition.',
                      category_ids=['source-composition'], evidence_ids=[readme] + ([app] if deployment else []))]
+    if source_boundary_analysis:
+        subjects[0]['category_ids'].append('cross-domain-boundaries')
     if not deployment:
         subjects.append(dict(key='handler', target='behavior', description='Handles requests.',
                              category_ids=['public-surfaces'], evidence_ids=[app]))
@@ -52,7 +56,8 @@ def _candidate(context, *, unknown=False, deployment=False):
 def activation_fixture(tmp_path, *, unknown=False, deployment=False, partial=False, legacy=False,
                        name_only=False, exact_target=False, extra_source_files=None, multiple=False, depth='deep', exclude_empty=False,
                        shared_owner=None, inherited_canary=None, account_policy=None, initial_expansion=False,
-                       prepared=None, binding_schema=2):
+                       prepared=None, binding_schema=2,
+                       source_boundary_analysis=False):
     workspace, intent, parent, options = prepared or _preparation_fixture(tmp_path, extra_source_files=extra_source_files)
     if multiple:
         from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
@@ -139,7 +144,12 @@ def activation_fixture(tmp_path, *, unknown=False, deployment=False, partial=Fal
             from tests.unit.test_re_v2_knowledge_dispatch import _evidence
             path = next(row['path'] for row in json.loads(context)['inventory'] if row['path'].startswith('src/'))
             return ProviderReply(_evidence(context, path), NormalizedUsageV1('unavailable', None, {}))
-        candidate = _candidate(json.loads(context), unknown=unknown, deployment=deployment)
+        candidate = _candidate(
+            json.loads(context),
+            unknown=unknown,
+            deployment=deployment,
+            source_boundary_analysis=source_boundary_analysis,
+        )
         if shared_owner is not None:
             readme_ids = list(candidate['subjects'][0]['evidence_ids'])
             if shared_owner == 'cross-target':
@@ -367,6 +377,36 @@ def test_reviewed_deployment_records_no_domain_with_exact_dispositions(tmp_path)
     domain_categories = [r for r in bundle.category_assessments if r.target_kind == 'domain']
     assert len(domain_categories) == 7
     assert all(r.disposition == 'not-applicable' for r in domain_categories)
+
+
+@pytest.mark.unit
+def test_no_domain_target_preserves_reviewed_source_boundary_analysis(tmp_path):
+    acquisition, account, review, l3, evidence, _ = activation_fixture(
+        tmp_path,
+        deployment=True,
+        binding_schema=3,
+        source_boundary_analysis=True,
+    )
+
+    root = _activation().activate_reviewed_discovery(
+        acquisition, account, review, l3, evidence
+    )
+    bundle = _activation().load_reviewed_discovery(
+        root, acquisition.objects, l3, evidence
+    )
+
+    source_boundary = next(
+        row for row in bundle.category_assessments
+        if row.target_kind == 'source'
+        and row.category_id == 'cross-domain-boundaries'
+    )
+    assert source_boundary.disposition == 'analyze'
+    domain_categories = [
+        row for row in bundle.category_assessments
+        if row.target_kind == 'domain'
+    ]
+    assert len(domain_categories) == len(DOMAIN_CATEGORIES)
+    assert all(row.disposition == 'not-applicable' for row in domain_categories)
 
 
 @pytest.mark.unit
