@@ -25,6 +25,7 @@
 **Files:**
 - Create: `src/kernel/element_ids.py` and `tests/unit/test_element_ids.py`.
 - Modify: `src/understanding/requirement_projection.py`, `src/kernel/task_contract.py`, `src/harness/task_requirement_mapping.py`, `src/harness/review_artifacts.py`, `src/harness/reopen_planner.py`, `src/harness/canonical_requirements.py`.
+- Align numeric format/reader instructions only: `prosaic/subagents/echelon.cartographer.md` (currently mandates exactly three/four digits) and `prosaic/subagents/echelon.internalizer.md` (currently supplies truncating three-digit extraction expressions). Require minimum six digits for new labels, preserve legacy IDs, and use complete-token matching with no upper width. Do not introduce allocation or routing behavior into these roles.
 - Inspect and modify only when a reproducible numeric-ID failure requires it: other `src/` and runtime script/schema readers of these element types.
 - Test: `tests/unit/test_requirement_projection.py`, `tests/unit/test_review_artifacts.py`, `tests/unit/test_reopen_planner.py`, `tests/unit/test_canonical_requirements.py`, `tests/unit/test_spec_graph.py`, plus existing task-contract, task-mapping and spec-memory test files discovered by filename search.
 
@@ -68,5 +69,9 @@ def format_element_id(prefix: str, ordinal: int) -> str:
 - [ ] Commit only task changes and write the implementation report with RED/GREEN evidence. Controller obtains an independent task review before marking phase 1 complete.
 
 ## Follow-on phases (not completion claims)
+
+### Compatibility audit addendum
+
+The six internalization metrics `i01`, `i06`, `i07`, `i08`, `i15`, and `i16` also contain three-digit extraction or substring matching. Include narrow full-token compatibility fixes and subprocess regression tests in Task 1. Preserve supported legacy letter suffixes in cross-reference/traceability metrics. Verify distinct long labels cannot collapse into one ID or match a shorter ID's prefix; do not redesign metric scoring. A shared shell helper is permitted if it avoids inconsistent extraction rules.
 
 After this batch is verified, plan and implement durable authority, lifecycle/reference publication, and targeted repair as separate testable plans against the approved design. Phase 1 alone does not make allocation retry-safe or stop subject reassignment. Full deployment and a new live trial wait for the complete enforcement path and review.
