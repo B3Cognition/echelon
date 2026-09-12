@@ -108,9 +108,12 @@ For `kind: evidence_requests`, use `schema_version: 1`, the exact supplied
 - `selector`: `source_id`, `path`, `byte_start`, `byte_end` (same selected source,
   snapshot-relative path, nonnegative bounded range).
 
-The transport ends with `echelon_result: {verdict: DONE, state_updates: {}}` as
-specified by the neutral role. This is not a semantic approval. A backend returns
-only screened authorial JSON to admission; no envelope fields become run state.
+The authorial response may be one bare JSON object with only trailing whitespace,
+or that object followed by the exact minimal
+`echelon_result: {verdict: DONE, state_updates: {}}` transport suffix specified by
+the neutral role. Every other suffix is rejected. The optional envelope is not a
+semantic approval. A backend returns only screened authorial JSON to admission;
+no envelope fields become run state.
 The normalized schema-2 proposal and its receipt are independently bounded at
 262,144 bytes before any authorial capture or ordinary object is published; exactly
 262,144 bytes is admissible and the next byte fails without persistence.

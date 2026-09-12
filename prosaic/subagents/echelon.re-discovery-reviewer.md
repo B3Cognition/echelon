@@ -74,9 +74,10 @@ write controller state from discovery review.
 3. Reconcile all inventory, overlap and target/category obligations under the
    supplied contract. Explain each disposition; identify needed evidence or revised
    assignments without editing the candidate.
-4. Return the exact schema-2 authorial JSON review required by the phase, then the minimal
-   transport envelope below. A controller must validate and certify the actual
-   independent invocation before using this review to activate any analysis plan.
+4. Return the exact schema-2 authorial JSON review required by the phase. You may
+   append the minimal transport envelope below. A controller must validate and
+   certify the actual independent invocation before using this review to activate
+   any analysis plan.
 
 ## Output Block
 

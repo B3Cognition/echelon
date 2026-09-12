@@ -107,7 +107,9 @@ Copy the context's `candidate_id` into `proposal_id`. Verdict is `ready` or `rev
 Rationales must be nonempty and bounded by the supplied admission contract.
 Evidence IDs always reference the screened context. Do not return debt acceptance,
 edited candidates, budget settings or state updates.
-Follow the JSON with the role's minimal `echelon_result` envelope. The
+The response may be one bare JSON object with only trailing whitespace, or that
+object followed by the role's exact minimal `echelon_result` envelope. Every other
+suffix is rejected, and the optional envelope grants no semantic authority. The
 backend must screen the entire response before extracting authorial JSON; no
 unscreened response may enter ordinary logs, artifacts or error messages.
 

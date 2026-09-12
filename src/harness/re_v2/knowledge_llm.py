@@ -27,7 +27,7 @@ from harness.re_v2.protocol_22.provider import (
 from harness.squad_provider import _extract_strict_echelon_result
 
 
-_BRIDGE_FORMAT_ID = "knowledge-agent-untrusted-context-v1"
+_BRIDGE_FORMAT_ID = "knowledge-agent-untrusted-context-v2"
 _INPUT_ACCOUNTING = "rendered-prompt-utf8-bytes"
 _USAGE_ACCOUNTING = "shared-provider-normalizer-v1-conservative-reservation"
 
@@ -202,6 +202,10 @@ def _authorial_response(raw: bytes) -> bytes | None:
     if not isinstance(value, dict):
         return None
     suffix = text[end:]
+    # The screened object gains no authority until phase admission succeeds, so
+    # the standard transport envelope can be omitted without weakening safety.
+    if not suffix.strip():
+        return text[leading:end].encode("utf-8")
     if not suffix.startswith(("\n", "\r")):
         return None
     if _has_duplicate_envelope_keys(suffix):

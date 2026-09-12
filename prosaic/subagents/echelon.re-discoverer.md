@@ -87,9 +87,9 @@ NEVER certify coverage, waive debt, publish a plan or write controller state.
 3. Otherwise propose domains, category-bearing subjects, an ownership decision for
    every inventory path, the complete category assessment table and unresolved
    questions under response schema 2.
-4. Return the authorial JSON payload, followed by the transport-only result below.
-   The backend must screen the entire response before extracting the JSON payload;
-   the controller alone validates and persists its own receipts.
+4. Return the authorial JSON payload. You may append the transport-only result
+   below. The backend must screen the entire response before extracting the JSON
+   payload; the controller alone validates and persists its own receipts.
 
 ## Output Block
 
