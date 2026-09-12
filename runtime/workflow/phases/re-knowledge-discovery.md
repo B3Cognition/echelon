@@ -48,6 +48,10 @@ by a fresh independent review, using the same immutable source authority,
 provider, reservation and aggregate account. The durable source-turn and
 reviewer-revision ceilings prevent producer/reviewer cycling; historical accounts
 without the field retain no automatic reviewer revision.
+Fresh accounts may separately freeze bounded reviewer-output repair turns. Those
+turns correct only malformed review payloads under the same reviewer authority;
+they do not edit the producer candidate, create a review-local budget, or reset
+the reviewer-requested producer-revision allowance.
 The backend screens the complete response (including the transport envelope)
 before returning authorial JSON bytes and normalized usage to the controller.
 

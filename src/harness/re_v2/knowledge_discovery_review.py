@@ -46,6 +46,84 @@ _FINDING_REASONS = frozenset({
     "evidence-gap",
 })
 
+# Only closed failures derived from already-screened reviewer bytes may be sent
+# back to the same reviewer. Authority, storage and transport failures are never
+# model-visible and remain terminal.
+DISCOVERY_REVIEW_REPAIRABLE_REASONS = frozenset({
+    "altered-discovery-review-obligation",
+    "discovery-review-finding-required",
+    "discovery-review-normalized-bound",
+    "discovery-review-receipt-bound",
+    "discovery-review-row-bound",
+    "discovery-review-schema-mismatch",
+    "duplicate-discovery-field",
+    "duplicate-discovery-review-finding",
+    "false-ready-discovery-review",
+    "incomplete-discovery-review-coverage",
+    "incomplete-discovery-review-inventory",
+    "incomplete-discovery-review-obligations",
+    "incomplete-discovery-review-overlap",
+    "invalid-discovery-fields",
+    "invalid-discovery-input",
+    "invalid-discovery-review-coverage",
+    "invalid-discovery-review-depth-authority",
+    "invalid-discovery-review-disposition",
+    "invalid-discovery-review-evidence",
+    "invalid-discovery-review-finding",
+    "invalid-discovery-review-inventory",
+    "invalid-discovery-review-obligation",
+    "invalid-discovery-review-overlap",
+    "invalid-discovery-review-overlap-context",
+    "invalid-discovery-review-response",
+    "invalid-discovery-review-verdict",
+    "invalid-discovery-text",
+    "unsupported-discovery-review-obligation",
+    "unsupported-discovery-review-overlap",
+    "unsupported-discovery-review-ownership",
+    "unsupported-discovery-review-row",
+    "unsupported-excluded-disposition",
+    "unsupported-nonbehavioral-disposition",
+})
+
+
+def review_repair_requirement(reason_code: str) -> str:
+    if reason_code == "invalid-discovery-review-evidence":
+        return (
+            "Every evidence_ids entry must be copied exactly from the supplied "
+            "safe review context. Do not invent, reconstruct, shorten, or cite "
+            "any other identifier. A supported row must cite applicable visible "
+            "evidence under the review contract."
+        )
+    return (
+        "Return one complete replacement review satisfying the exact review "
+        "response contract and deterministic feedback. Do not return a patch, "
+        "commentary, or a partial set of rows."
+    )
+
+
+def build_review_repair_context(
+    safe_review_context: dict, previous_review_text: str, reason_code: str
+) -> bytes:
+    if reason_code not in DISCOVERY_REVIEW_REPAIRABLE_REASONS:
+        raise DiscoveryReviewError("invalid-discovery-review-repair-feedback")
+    if (
+        not isinstance(previous_review_text, str)
+        or not previous_review_text
+        or not isinstance(safe_review_context, dict)
+        or safe_review_context.get("kind") != "untrusted_discovery_review_context"
+    ):
+        raise DiscoveryReviewError("invalid-discovery-review-repair-feedback")
+    return canonical_json_bytes({
+        "schema_version": 1,
+        "kind": "untrusted_discovery_review_repair_context",
+        "safe_review_context": safe_review_context,
+        "previous_review_text": previous_review_text,
+        "deterministic_feedback": {
+            "reason_code": reason_code,
+            "requirement": review_repair_requirement(reason_code),
+        },
+    })
+
 
 class DiscoveryReviewError(ValueError):
     """Closed diagnostic code; never includes provider or source values."""

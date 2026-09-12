@@ -62,6 +62,7 @@ _DISCOVERY_RESERVATION_ACTIVE_MS = 1_800_000
 _DISCOVERY_MAX_SOURCE_TURNS = 6
 _DISCOVERY_MAX_REPAIRS = 2
 _DISCOVERY_MAX_REVIEW_REVISIONS = 1
+_DISCOVERY_MAX_REVIEW_REPAIRS = 2
 
 
 class KnowledgeCreationError(RuntimeError):
@@ -376,6 +377,7 @@ def create_or_resume_reviewed_analysis(
             _DISCOVERY_MAX_SOURCE_TURNS,
             _DISCOVERY_MAX_REPAIRS,
             _DISCOVERY_MAX_REVIEW_REVISIONS,
+            _DISCOVERY_MAX_REVIEW_REPAIRS,
         ),
         contract,
         authority,
@@ -406,7 +408,11 @@ def create_or_resume_reviewed_analysis(
             reviewer = DiscoveryReviewController(
                 producer, review_agent, backend, reservation
             )
-            reviewed_result = reviewer.step()
+            while True:
+                reviewed_result = reviewer.step()
+                if reviewed_result.state == "review_repair_ready":
+                    continue
+                break
             if reviewed_result.state == "revision_required":
                 continue
             if reviewed_result.state != "review_ready":

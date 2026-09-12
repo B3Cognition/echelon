@@ -8,13 +8,15 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Callable
 
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.knowledge_discovery import DiscoveryError, _closed_errors, _load
 from harness.re_v2.knowledge_discovery_review import (
+    DISCOVERY_REVIEW_REPAIRABLE_REASONS,
     DiscoveryReviewAdmissionError,
     DiscoveryReviewBoundary,
     DiscoveryReviewError,
     DiscoveryReviewStorageError,
+    build_review_repair_context,
 )
 from harness.re_v2.knowledge_dispatch import (
     DiscoveryBackend,
@@ -55,6 +57,45 @@ class DiscoveryReviewController:
         if self.fault_hook is not None:
             self.fault_hook(point)
 
+    def _repair_context(self, state, dispatch_id):
+        request = state.dispatches[dispatch_id]
+        capture = state.captures[dispatch_id]
+        applied = state.applied[dispatch_id]
+        feedback = _load(self.account.objects.read_blob(applied["receipt_id"]))
+        if (
+            applied["state"] != "review_repair_ready"
+            or feedback.get("kind") != "discovery_review_repair_feedback"
+            or feedback.get("binding_id") != request["binding_id"]
+            or feedback.get("revision_id") != request["revision_id"]
+            or feedback.get("context_id") != request["context_id"]
+            or feedback.get("proposal_receipt_id")
+            != request["proposal_receipt_id"]
+            or feedback.get("authorial_response_id") != capture["output_id"]
+            or feedback.get("reason_code")
+            not in DISCOVERY_REVIEW_REPAIRABLE_REASONS
+        ):
+            raise DiscoveryError("invalid-discovery-review-repair-feedback")
+        governing = _load(
+            self.account.objects.read_blob(request["context_id"])
+        )
+        safe_context = (
+            governing["safe_review_context"]
+            if governing.get("kind")
+            == "untrusted_discovery_review_repair_context"
+            else governing
+        )
+        try:
+            previous_text = self.account.objects.read_blob(
+                capture["output_id"]
+            ).decode("utf-8")
+        except UnicodeDecodeError:
+            raise DiscoveryError(
+                "invalid-discovery-review-repair-feedback"
+            ) from None
+        return build_review_repair_context(
+            safe_context, previous_text, feedback["reason_code"]
+        )
+
     @_closed_errors
     def step(self) -> DiscoveryStep:
         if (self.producer.acquisition is not self.acquisition
@@ -81,6 +122,7 @@ class DiscoveryReviewController:
                 ),
                 None,
             )
+            repair_parent = None
             if matching_review is not None:
                 dispatch_id = matching_review
                 self._authenticate_request(state, state.dispatches[dispatch_id])
@@ -89,13 +131,21 @@ class DiscoveryReviewController:
                 if dispatch_id not in state.applied:
                     return self._apply(dispatch_id)
                 applied = state.applied[dispatch_id]
-                if applied["receipt_id"] is not None:
-                    self.boundary.read_review(
-                        state.dispatches[dispatch_id]["binding_id"],
-                        state.dispatches[dispatch_id]["proposal_receipt_id"],
-                        applied["receipt_id"],
-                    )
-                return self._result(applied)
+                if applied["state"] == "review_repair_ready":
+                    if self.account.opening["policy"].get(
+                        "max_review_repairs", 0
+                    ) > 0:
+                        repair_parent = dispatch_id
+                    else:
+                        return self._result(applied)
+                else:
+                    if applied["receipt_id"] is not None:
+                        self.boundary.read_review(
+                            state.dispatches[dispatch_id]["binding_id"],
+                            state.dispatches[dispatch_id]["proposal_receipt_id"],
+                            applied["receipt_id"],
+                        )
+                    return self._result(applied)
 
             # A breach is run-wide and must refuse every later native turn,
             # even when the breached producer did not yield an admissible
@@ -112,8 +162,13 @@ class DiscoveryReviewController:
                 return DiscoveryStep("blocked", reason_code="discovery-review-proposal-required")
             producer_request, producer_application = state.dispatches[producer_id], state.applied[producer_id]
             try:
-                context = self.boundary.provider_bytes(
-                    producer_request["binding_id"], producer_application["receipt_id"],
+                context = (
+                    self._repair_context(state, repair_parent)
+                    if repair_parent is not None
+                    else self.boundary.provider_bytes(
+                        producer_request["binding_id"],
+                        producer_application["receipt_id"],
+                    )
                 )
             except DiscoveryReviewStorageError:
                 raise
@@ -189,7 +244,22 @@ class DiscoveryReviewController:
                 or any(request[key] != state.dispatches[producer_id][key]
                        for key in ("source_id", "scope_id", "binding_id", "revision_id"))):
             raise DiscoveryError("discovery-review-dispatch-authority-mismatch")
-        context = self.boundary.provider_bytes(request["binding_id"], request["proposal_receipt_id"])
+        context = self.boundary.provider_bytes(
+            request["binding_id"], request["proposal_receipt_id"]
+        )
+        if request["context_id"] != content_digest(context):
+            reviews = state.review_sources.get(request["source_id"], [])
+            index = next(
+                (
+                    i
+                    for i, item in enumerate(reviews)
+                    if state.dispatches[item] is request
+                ),
+                None,
+            )
+            if index is None or index == 0:
+                raise DiscoveryError("discovery-review-context-mismatch")
+            context = self._repair_context(state, reviews[index - 1])
         if (request["context_id"] != content_digest(context)
                 or self.account.objects.read_blob(request["context_id"]) != context):
             raise DiscoveryError("discovery-review-context-mismatch")
@@ -209,9 +279,32 @@ class DiscoveryReviewController:
                     request["binding_id"], request["proposal_receipt_id"],
                     self.account.objects.read_blob(capture["output_id"]),
                 )
-            except DiscoveryReviewAdmissionError:
-                reason = "review-result-invalid"
-            if receipt_id is not None:
+            except DiscoveryReviewAdmissionError as exc:
+                admission_reason = str(exc)
+                if (
+                    admission_reason in DISCOVERY_REVIEW_REPAIRABLE_REASONS
+                    and self.account.opening["policy"].get(
+                        "max_review_repairs", 0
+                    ) > 0
+                ):
+                    receipt_id = self.account.objects.put_blob(
+                        canonical_json_bytes({
+                            "schema_version": 1,
+                            "kind": "discovery_review_repair_feedback",
+                            "binding_id": request["binding_id"],
+                            "revision_id": request["revision_id"],
+                            "context_id": request["context_id"],
+                            "proposal_receipt_id": request[
+                                "proposal_receipt_id"
+                            ],
+                            "authorial_response_id": capture["output_id"],
+                            "reason_code": admission_reason,
+                        })
+                    )
+                    result_state = "review_repair_ready"
+                else:
+                    reason = "review-result-invalid"
+            if receipt_id is not None and result_state != "review_repair_ready":
                 receipt = self.boundary.read_review(
                     request["binding_id"], request["proposal_receipt_id"], receipt_id,
                 )

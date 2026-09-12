@@ -17,6 +17,10 @@ from harness.re_v2.knowledge_discovery import (
     _obj,
 )
 from harness.re_v2.knowledge_discovery_review import _overlap_pairs
+from harness.re_v2.knowledge_discovery_review import (
+    DISCOVERY_REVIEW_REPAIRABLE_REASONS,
+    build_review_repair_context,
+)
 from harness.re_v2.ledger import DurableLedger, ObjectStore
 from harness.re_v2.protocol_22.budget import conservative_charge
 from harness.re_v2.protocol_22.provider import DispatchReservationV1, decode_normalized_usage_bytes
@@ -38,6 +42,7 @@ class KnowledgeDispatchPolicy:
     max_source_turns: int
     max_discovery_repairs: int | None = None
     max_review_revisions: int | None = None
+    max_review_repairs: int | None = None
 
     def __post_init__(self):
         for value in (
@@ -62,6 +67,15 @@ class KnowledgeDispatchPolicy:
             )
         ):
             raise DiscoveryError("invalid-discovery-review-revision-limit")
+        if (
+            self.max_review_repairs is not None
+            and (
+                type(self.max_review_repairs) is not int
+                or self.max_review_repairs < 0
+                or self.max_review_repairs >= self.max_source_turns
+            )
+        ):
+            raise DiscoveryError("invalid-discovery-review-repair-limit")
 
 
 def _policy_dict(policy: KnowledgeDispatchPolicy) -> dict[str, int]:
@@ -74,6 +88,8 @@ def _policy_dict(policy: KnowledgeDispatchPolicy) -> dict[str, int]:
         result["max_discovery_repairs"] = policy.max_discovery_repairs
     if policy.max_review_revisions is not None:
         result["max_review_revisions"] = policy.max_review_revisions
+    if policy.max_review_repairs is not None:
+        result["max_review_repairs"] = policy.max_review_repairs
     return result
 
 
@@ -247,8 +263,7 @@ class _DispatchState:
         source = request["source_id"]
         producer_id = request["producer_dispatch_id"]
         producer_history = self.discovery_sources.get(source, [])
-        if (not producer_history or producer_id != producer_history[-1]
-                or self.sources.get(source, [])[-1] != producer_id):
+        if not producer_history or producer_id != producer_history[-1]:
             return "discovery-review-proposal-required"
         producer = self.dispatches[producer_id]
         application = self.applied.get(producer_id)
@@ -260,11 +275,28 @@ class _DispatchState:
             return "discovery-review-authority-mismatch"
         if request["agent_id"] == producer["agent_id"]:
             return "discovery-review-agent-not-distinct"
-        if any(
-            self.dispatches[item].get("producer_dispatch_id") == producer_id
-            for item in self.review_sources.get(source, [])
-        ):
-            return "discovery-review-already-recorded"
+        source_history = self.sources.get(source, [])
+        predecessor = source_history[-1] if source_history else None
+        if predecessor != producer_id:
+            prior_request = self.dispatches.get(predecessor, {})
+            prior_application = self.applied.get(predecessor)
+            if (
+                self.dispatch_kinds.get(predecessor) != "review"
+                or prior_request.get("producer_dispatch_id") != producer_id
+                or prior_application is None
+                or prior_application["state"] != "review_repair_ready"
+                or any(
+                    request[key] != prior_request[key]
+                    for key in ("scope_id", "agent_id", "binding_id", "revision_id", "reservation")
+                )
+            ):
+                return "discovery-review-already-recorded"
+            repairs = sum(
+                self.applied.get(item, {}).get("state") == "review_repair_ready"
+                for item in self.review_sources.get(source, [])
+            )
+            if repairs > self.opening["policy"].get("max_review_repairs", 0):
+                return "discovery-review-repair-limit"
         return None
 
     def consume(self, record, objects):
@@ -355,7 +387,7 @@ class _DispatchState:
             expected_kind = "review" if record.type == "review_applied" else "discovery"
             if self.dispatch_kinds.get(key) != expected_kind:
                 raise DiscoveryError("invalid-discovery-application")
-            allowed = ({"review_ready", "revision_required", "blocked"}
+            allowed = ({"review_ready", "revision_required", "review_repair_ready", "blocked"}
                        if expected_kind == "review" else {
                            "proposal_ready", "evidence_ready", "repair_ready", "blocked"
                        })
@@ -378,6 +410,43 @@ class _DispatchState:
         proposal = _load(objects.read_blob(proposal_receipt["proposal_id"]))
         context_bytes = objects.read_blob(row["context_id"])
         context = _load(context_bytes)
+        if context.get("kind") == "untrusted_discovery_review_repair_context":
+            reviews = self.review_sources.get(row["source_id"], [])
+            if not reviews:
+                raise DiscoveryError("discovery-review-context-mismatch")
+            previous_id = reviews[-1]
+            previous_request = self.dispatches[previous_id]
+            previous_capture = self.captures.get(previous_id)
+            previous_application = self.applied.get(previous_id)
+            if (
+                previous_capture is None
+                or previous_application is None
+                or previous_application["state"] != "review_repair_ready"
+                or previous_request.get("producer_dispatch_id")
+                != row["producer_dispatch_id"]
+            ):
+                raise DiscoveryError("discovery-review-context-mismatch")
+            feedback = _load(
+                objects.read_blob(previous_application["receipt_id"])
+            )
+            previous_context = _load(objects.read_blob(previous_request["context_id"]))
+            safe_context = (
+                previous_context["safe_review_context"]
+                if previous_context.get("kind")
+                == "untrusted_discovery_review_repair_context"
+                else previous_context
+            )
+            previous_output = objects.read_blob(previous_capture["output_id"])
+            try:
+                previous_text = previous_output.decode("utf-8")
+            except UnicodeDecodeError:
+                raise DiscoveryError("discovery-review-context-mismatch") from None
+            expected = build_review_repair_context(
+                safe_context, previous_text, feedback.get("reason_code")
+            )
+            if context_bytes != expected:
+                raise DiscoveryError("discovery-review-context-mismatch")
+            return
         _obj(context, ("schema_version", "kind", "candidate_id", "candidate",
                        "safe_discovery_context", "overlap_pairs", "review_obligations"))
         obligations = {
@@ -434,17 +503,46 @@ class _DispatchState:
             return
         if receipt is None:
             raise DiscoveryError("invalid-discovery-application")
+        if row["state"] == "review_repair_ready":
+            _obj(receipt, (
+                "schema_version", "kind", "binding_id", "revision_id",
+                "context_id", "proposal_receipt_id", "authorial_response_id",
+                "reason_code",
+            ))
+            if (
+                row["reason_code"] is not None
+                or receipt["schema_version"] != 1
+                or receipt["kind"] != "discovery_review_repair_feedback"
+                or receipt["binding_id"] != request["binding_id"]
+                or receipt["revision_id"] != request["revision_id"]
+                or receipt["context_id"] != request["context_id"]
+                or receipt["proposal_receipt_id"]
+                != request["proposal_receipt_id"]
+                or receipt["authorial_response_id"] != capture["output_id"]
+                or receipt["reason_code"]
+                not in DISCOVERY_REVIEW_REPAIRABLE_REASONS
+                or capture["reason_code"] is not None
+            ):
+                raise DiscoveryError("invalid-discovery-application")
+            return
         _obj(receipt, ("schema_version", "state", "binding_id", "proposal_receipt_id",
                        "proposal_id", "review_id", "authorial_response_id", "reviewer_context_id",
                        "outcome", "execution_certification_required", "analysis_certified", "findings"))
         outcomes = {"ready_for_planning": "review_ready", "revision_required": "revision_required"}
         expected_state = outcomes.get(receipt["outcome"])
+        request_context = _load(objects.read_blob(request["context_id"]))
+        reviewer_context_id = (
+            content_digest(canonical_json_bytes(request_context["safe_review_context"]))
+            if request_context.get("kind")
+            == "untrusted_discovery_review_repair_context"
+            else request["context_id"]
+        )
         if (receipt["schema_version"] != 1 or receipt["state"] != "review_validated"
                 or expected_state is None or row["state"] != expected_state
                 or receipt["binding_id"] != request["binding_id"]
                 or receipt["proposal_receipt_id"] != request["proposal_receipt_id"]
                 or receipt["authorial_response_id"] != capture["output_id"]
-                or receipt["reviewer_context_id"] != request["context_id"]
+                or receipt["reviewer_context_id"] != reviewer_context_id
                 or receipt["execution_certification_required"] is not True
                 or receipt["analysis_certified"] is not False):
             raise DiscoveryError("invalid-discovery-application")

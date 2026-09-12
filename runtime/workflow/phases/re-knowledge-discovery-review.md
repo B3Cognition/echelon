@@ -10,8 +10,12 @@ the operation is not a second scheduler.
 The existing RE controller supplies only the bytes returned by
 `DiscoveryReviewBoundary.provider_bytes(binding_id, proposal_receipt_id)`: the
 authenticated screened discovery context, normalized candidate and deterministic
-review obligations. Do not supply producer conversations, reasoning transcripts,
-private evidence mappings, local paths or earlier reviewer verdicts.
+review obligations. A bounded authorial repair turn instead receives an
+`untrusted_discovery_review_repair_context` containing that exact safe review
+context, the prior screened review as opaque UTF-8 text, and one closed
+deterministic admission reason. Do not supply producer conversations, reasoning
+transcripts, private evidence mappings, local paths or earlier admitted reviewer
+verdicts.
 For schema 2 and schema 3, the nested safe discovery context carries the exact canonical
 `category_depth_applicability` object: `quick`, `standard` and `deep` each contain
 `domain` and `source` objects with exact `required` and `outside_requested_depth`
@@ -28,7 +32,7 @@ Use a fresh independent reviewer invocation. Bind the rendered neutral role and
 this phase contract, provider/model, candidate, context and response in the same
 logical-run resource account used by discovery. Reserve before dispatch, persist
 the screened capture before applying it, and retain unsettled charges on restart.
-Do not create a review-local budget or nested result-repair loop.
+Do not create a review-local budget or an unbounded result-repair loop.
 
 The internal operation accepts only a ledger-committed producer proposal and
 uses the producer's existing account. Discovery and review share token, active
@@ -36,6 +40,12 @@ time and source-turn ceilings. A review is a separate reserved call with its own
 frozen role/phase and context identities; it never runs the producer implicitly.
 The existing capture and application records preserve the exact result and
 feedback. Reopening cannot change provider, role, reservation or proposal.
+Fresh accounts may freeze a positive reviewer-output repair ceiling. Only a
+safely captured authorial admission failure consumes such a turn; storage,
+transport, authority and reservation failures remain terminal. Each repair uses
+the same reviewer role, proposal, provider, reservation, source-turn ceiling and
+aggregate account, and asks for one complete replacement review. Historical
+accounts without the frozen field retain zero reviewer repair turns.
 
 Installed review dispatch remains disabled. The opt-in `KnowledgeLLMBackend`
 executes the separately reserved reviewer through Echelon's configured provider
@@ -46,7 +56,8 @@ discovery: reserve before dispatch, charge observed usage, retain
 conservative charges when usage is missing/untrusted, and block further calls on
 an observed reservation breach. Native in-flight token overshoot remains possible;
 neither the rendered-prompt byte bound nor the timeout guarantees a native token
-cutoff. No review-local allowance or automatic extra call is permitted.
+cutoff. No review-local allowance is permitted; only an explicitly frozen
+reviewer-repair turn may make another call.
 
 Codex currently supplies the constrained capability. Other configured adapters
 without it must be refused before invocation, not replaced or routed through
@@ -125,16 +136,25 @@ Context preparation rejects more than 4,096 overlap pairs with
 context without truncation. Admission bounds both the normalized review and its
 receipt before ordinary persistence so every admitted result can be replayed.
 
+`review_repair_ready` means a screened reviewer response failed a closed
+authorial admission rule and the next owner invocation may spend one frozen
+repair turn. The context preserves the rejected response as opaque text and
+provides the exact deterministic requirement; it grants no authority. The
+durable repair count and source-turn ceiling survive reopen, and exhaustion
+returns `discovery-review-repair-limit` without invoking the provider.
+
 `ready_for_planning` means structurally admitted reviewer output only.
 `revision_required` retains normalized findings for the next authorized producer
 attempt. Both require independent execution certification; neither certifies
 analysis. The controller must also ensure the candidate is the active committed
 revision before activation. Repeated terminal output cannot reset attempts,
-expand scope or allocate resources. A malformed review or unavailable local
-authority remains a failure, not accepted uncertainty.
+expand scope or allocate resources. A malformed review beyond the frozen repair
+allowance, or unavailable local authority, remains a failure rather than accepted
+uncertainty.
 
 The operation returns `review_ready` or `revision_required` with that exact passive
-receipt, or `blocked` with a closed reason. Repeating a completed/terminal step
+receipt, `review_repair_ready` with closed deterministic feedback, or `blocked`
+with a closed reason. Repeating a completed/terminal step
 returns its stored result without a call. An uncaptured reserved dispatch is
 indeterminate and retains its full charge; do not automatically repeat it.
 A captured but unapplied response is recovered by admission only, without another

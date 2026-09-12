@@ -123,6 +123,32 @@ class _RevisionRepairBackend(_RevisionBackend):
         return super().__call__(agent, context, reservation)
 
 
+class _ReviewRepairBackend(_ReadyBackend):
+    def __call__(self, _agent, context, _reservation):
+        value = json.loads(context)
+        self.calls.append(value["kind"])
+        if value["kind"] == "untrusted_discovery_context":
+            payload = _candidate(value)
+            target = value["analysis_domain_targets"][0]["key"]
+            payload["domains"][0]["key"] = target
+            for row in (*payload["subjects"], *payload["obligations"]):
+                if row["target"] == "behavior":
+                    row["target"] = target
+        elif value["kind"] == "untrusted_discovery_review_context":
+            payload = _review_v2(value)
+            payload["subjects"][0]["evidence_ids"] = ["sha256:" + "f" * 64]
+        else:
+            assert value["kind"] == "untrusted_discovery_review_repair_context"
+            assert value["deterministic_feedback"]["reason_code"] == (
+                "invalid-discovery-review-evidence"
+            )
+            payload = _review_v2(value["safe_review_context"])
+        return ProviderReply(
+            canonical_json_bytes(payload),
+            NormalizedUsageV1("unavailable", None, {}),
+        )
+
+
 def _options(tmp_path, backend):
     from harness.re_v2.knowledge_creation import ReviewedAnalysisCreationOptions
 
@@ -235,6 +261,23 @@ def test_fresh_creation_repairs_revised_candidate_and_authenticates_activation(
         "untrusted_discovery_review_revision_context",
         "untrusted_discovery_repair_context",
         "untrusted_discovery_review_context",
+    ]
+
+
+@pytest.mark.unit
+def test_fresh_creation_repairs_invalid_independent_review(tmp_path):
+    from harness.re_v2.knowledge_creation import create_or_resume_reviewed_analysis
+
+    backend = _ReviewRepairBackend()
+    options = _options(tmp_path, backend)
+
+    result = create_or_resume_reviewed_analysis(tmp_path / "workspace", options)
+
+    assert result.state == "ready"
+    assert backend.calls == [
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_context",
+        "untrusted_discovery_review_repair_context",
     ]
 
 

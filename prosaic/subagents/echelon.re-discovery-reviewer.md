@@ -72,6 +72,13 @@ context roots for subsequent controller validation.
 NEVER mark analysis complete, accept debt, activate a plan, publish artifacts or
 write controller state from discovery review.
 
+ALWAYS treat an `untrusted_discovery_review_repair_context` as a bounded request
+to replace the entire opaque `previous_review_text`, following its closed
+`deterministic_feedback` while using `safe_review_context` as the sole evidence,
+candidate and obligation authority.
+NEVER patch only one row, reuse an identifier not copied exactly from the safe
+context, relax review standards, or treat repair feedback as evidence.
+
 ## Protocol
 
 1. Inspect the frozen inventory and safe evidence before judging the candidate's
@@ -81,7 +88,9 @@ write controller state from discovery review.
 3. Reconcile all inventory, overlap and target/category obligations under the
    supplied contract. Explain each disposition; identify needed evidence or revised
    assignments without editing the candidate.
-4. Return the exact schema-2 authorial JSON review required by the phase. You may
+4. For a repair context, replace the entire prior review and address the supplied
+   admission failure without changing the candidate or authority.
+5. Return the exact schema-2 authorial JSON review required by the phase. You may
    append the minimal transport envelope below. A controller must validate and
    certify the actual independent invocation before using this review to activate
    any analysis plan.

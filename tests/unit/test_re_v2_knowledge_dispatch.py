@@ -30,7 +30,7 @@ def test_repair_feedback_explains_depth_scoped_subject_categories():
 
 def _controller(
     tmp_path, *, tokens=500_000, turns=3, repairs=None, review_revisions=None,
-    backend=None, fault=None
+    review_repairs=None, backend=None, fault=None
 ):
     from harness.re_v2.knowledge_dispatch import (
         DiscoveryController, KnowledgeDispatchAccount, KnowledgeDispatchPolicy, ProviderReply,
@@ -39,7 +39,7 @@ def _controller(
     account = KnowledgeDispatchAccount(
         paths,
         KnowledgeDispatchPolicy(
-            tokens, 100_000, turns, repairs, review_revisions
+            tokens, 100_000, turns, repairs, review_revisions, review_repairs
         ),
         _contract(),
         boundary.run_authority(),

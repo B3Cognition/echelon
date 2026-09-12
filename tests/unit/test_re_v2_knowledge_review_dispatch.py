@@ -245,6 +245,64 @@ def test_review_revision_limit_closes_before_another_provider_call(tmp_path):
 
 
 @pytest.mark.unit
+def test_invalid_review_gets_one_bounded_deterministic_repair(tmp_path):
+    producer, account, _, _ = _controller(
+        tmp_path, tokens=400_000, turns=4, review_repairs=1
+    )
+    assert producer.step().state == "proposal_ready"
+    calls = []
+
+    def backend(context):
+        if context["kind"] == "untrusted_discovery_review_context":
+            payload = json.loads(_valid_review(context))
+            payload["subjects"][0]["evidence_ids"] = ["sha256:" + "f" * 64]
+            return canonical_json_bytes(payload)
+        assert context["kind"] == "untrusted_discovery_review_repair_context"
+        assert context["deterministic_feedback"]["reason_code"] == (
+            "invalid-discovery-review-evidence"
+        )
+        return _valid_review(context["safe_review_context"])
+
+    reviewer = _reviewer(producer, account, calls, backend=backend)
+
+    first = reviewer.step()
+    repaired = reviewer.step()
+
+    assert first.state == "review_repair_ready"
+    assert repaired.state == "revision_required"
+    assert [row[1]["kind"] for row in calls] == [
+        "untrusted_discovery_review_context",
+        "untrusted_discovery_review_repair_context",
+    ]
+    assert account.status().charged_tokens == 300_000
+
+
+@pytest.mark.unit
+def test_review_repair_limit_closes_before_third_reviewer_call(tmp_path):
+    producer, account, _, _ = _controller(
+        tmp_path, tokens=500_000, turns=5, review_repairs=1
+    )
+    assert producer.step().state == "proposal_ready"
+    calls = []
+
+    def invalid(context):
+        base = context.get("safe_review_context", context)
+        payload = json.loads(_valid_review(base))
+        payload["subjects"][0]["evidence_ids"] = ["sha256:" + "f" * 64]
+        return canonical_json_bytes(payload)
+
+    reviewer = _reviewer(producer, account, calls, backend=invalid)
+    assert reviewer.step().state == "review_repair_ready"
+    assert reviewer.step().state == "review_repair_ready"
+
+    result = reviewer.step()
+
+    assert result.reason_code == "discovery-review-repair-limit"
+    assert len(calls) == 2
+    assert account.status().charged_tokens == 300_000
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("tokens", "turns", "reason"),
     [(150_000, 3, "budget-exhausted"), (500_000, 1, "discovery-turn-limit")],
