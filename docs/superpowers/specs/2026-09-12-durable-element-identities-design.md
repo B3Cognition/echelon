@@ -155,6 +155,14 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   child operation claims through restart/restore. Original receipts survive
   later history. Opaque recovery/completion payloads are retained caller claims,
   not semantic, source, graph or filesystem authority; no workflow is activated.
+- Coherent materialized-history snapshot: implemented in `3f62ac6c`, with
+  complete-row regression assertions strengthened in `76f6abfc`, and independently
+  reviewed. Exact seven-module suite: 405 passed; test-only correction: 32 passed.
+  One full-audit transaction yields stable per-spec history bytes including
+  unassessed/terminal entities, every revision/lineage row and original reference/
+  occurrence bindings. Unused reservations and publication release do not alter
+  this history digest. It is not a restore backup, cheap per-ID lookup, source
+  authentication or graph/semantic completion; live consumers remain unwired.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
