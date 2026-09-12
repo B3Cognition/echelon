@@ -271,6 +271,8 @@ def test_squad_provider_repairs_schema_invalid_echelon_result_after_clean_exit(m
 
 
 def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tmp_path) -> None:
+    from harness.verbosity import verbose_mode
+
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -278,7 +280,7 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
         llm=LlmConfig(cli="codex"),
     )
     provider = SquadCliProvider(config)
-    monkeypatch.setenv("ECHELON_DEBUG_RAW_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
     prompts: list[str] = []
 
     def fake_run_agent_result(project_root, prompt, timeout_ms=None):
@@ -297,7 +299,8 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
 
     monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
 
-    result = provider.exec_agent(str(tmp_path), "original prompt")
+    with verbose_mode():
+        result = provider.exec_agent(str(tmp_path), "original prompt")
 
     assert len(prompts) == 2
     assert result.echelon_result is None

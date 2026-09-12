@@ -63,6 +63,52 @@ def test_re_status_json_option_routes_without_changing_default(monkeypatch):
 
 
 @pytest.mark.unit
+def test_quiet_is_accepted_after_a_nested_command_and_scoped_to_that_invocation(
+    monkeypatch,
+):
+    """Removing --quiet during dispatch would leave provider diagnostics enabled."""
+    from echelon.cli_app import run
+    from harness.verbosity import is_verbose
+
+    observed: list[tuple[list[str], bool]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_spec_run",
+        lambda args: observed.append((args, is_verbose())),
+    )
+
+    run(["spec", "run", "Describe the feature", "--quiet"])
+
+    assert observed == [(["Describe the feature"], False)]
+    assert is_verbose() is False
+
+
+@pytest.mark.unit
+def test_provider_diagnostics_are_enabled_by_default(monkeypatch):
+    """An ordinary command should enable provider diagnostics."""
+    from echelon.cli_app import run
+    from harness.verbosity import is_verbose
+
+    observed: list[bool] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_status", lambda args: observed.append(is_verbose())
+    )
+
+    run(["re", "status"])
+
+    assert observed == [True]
+
+
+@pytest.mark.unit
+def test_root_help_documents_common_quiet_option() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--quiet" in result.output
+
+
+@pytest.mark.unit
 def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
     from echelon.cli_app import run
 

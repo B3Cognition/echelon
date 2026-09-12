@@ -17,6 +17,7 @@ from harness.ai_cli_backends.claude import (
 )
 from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
+from harness.verbosity import is_verbose
 
 
 _MODEL_TIER_TO_CODEX_MODEL = {
@@ -522,7 +523,7 @@ def _codex_command_event_text(event: dict, item: dict) -> str:
     exit_code = item.get("exit_code")
     command = _truncate_one_line(str(item.get("command") or "command"), limit=180)
     output = str(item.get("aggregated_output") or "").strip()
-    debug = _debug_llm_enabled()
+    debug = is_verbose()
 
     if event_type == "item.started":
         return f"[codex] command started: {command}" if debug else ""
@@ -557,11 +558,6 @@ def _truncate_multiline(text: str, *, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "\n..."
-
-
-def _debug_llm_enabled() -> bool:
-    value = os.environ.get("ECHELON_DEBUG_LLM", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
 
 
 def _extract_token_usage_details(info: object) -> dict[str, int]:

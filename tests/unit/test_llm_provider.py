@@ -585,14 +585,32 @@ class TestAICodingCliProvider:
         assert "malformed containment root metadata" in result.stderr
         run_prompt.assert_not_called()
 
-    def test_provider_debug_env_prints_effective_backend(self, monkeypatch, capsys):
+    def test_provider_is_quiet_outside_a_cli_invocation(
+        self, monkeypatch, capsys
+    ):
         monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
 
         AICodingCliProvider(_config(cli="codex"))
 
         captured = capsys.readouterr()
-        assert "[llm] provider=codex" in captured.err
-        assert "backend=CodexCliBackend" in captured.err
+        assert captured.err == ""
+
+    @pytest.mark.parametrize(
+        "cli", ("claude", "codex", "copilot", "opencode", "openai-compatible")
+    )
+    def test_provider_quiet_mode_suppresses_effective_backend_diagnostics(
+        self, cli, monkeypatch, capsys
+    ):
+        """The CLI quiet option, not a debug environment variable, suppresses diagnostics."""
+        from harness.verbosity import verbose_mode
+
+        monkeypatch.delenv("ECHELON_DEBUG_LLM", raising=False)
+
+        with verbose_mode(False):
+            AICodingCliProvider(_config(cli=cli))
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
     def test_streaming_captures_result_error_text(self, tmp_path):
         provider = AICodingCliProvider(_config())

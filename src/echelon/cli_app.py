@@ -15,12 +15,15 @@ from typing import Callable, Optional
 
 import typer
 
+from harness.verbosity import verbose_mode
+
 
 app = typer.Typer(
     add_completion=False,
     help="Echelon CLI",
     no_args_is_help=True,
 )
+
 workspace_app = typer.Typer(
     add_completion=False,
     help="Workspace setup, doctor, and migration commands.",
@@ -750,6 +753,11 @@ def root(
         "--version",
         "-v",
         help="Show the Echelon CLI version and exit.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Suppress provider diagnostics and verbose failure captures.",
     ),
 ) -> None:
     """Echelon CLI."""
@@ -4185,7 +4193,8 @@ def delivery_checkpoint_list(
 
 def run(argv: list[str] | None = None) -> int | None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
-    if argv in (["-v"], ["--version"], ["version"]):
+    args, quiet = _extract_quiet_option(argv)
+    if args in (["-v"], ["--version"], ["version"]):
         legacy_cli = _legacy_cli()
         typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
         return
@@ -4196,7 +4205,8 @@ def run(argv: list[str] | None = None) -> int | None:
         before = wiki_service.capture_input_snapshot(project_root)
     except Exception:
         before = None
-    exit_code = app(args=argv, standalone_mode=False)
+    with verbose_mode(not quiet):
+        exit_code = app(args=args, standalone_mode=False)
     try:
         refreshed = wiki_service.refresh_after_changed_command(project_root, before)
     except Exception as exc:
@@ -4205,3 +4215,10 @@ def run(argv: list[str] | None = None) -> int | None:
         if refreshed is not None:
             typer.echo(f"Wiki auto-refreshed: {refreshed.home_path}")
     return exit_code
+
+
+def _extract_quiet_option(argv: list[str] | None) -> tuple[list[str] | None, bool]:
+    """Accept --quiet at any command level without passing it to legacy handlers."""
+    if argv is None:
+        return None, False
+    return [arg for arg in argv if arg != "--quiet"], "--quiet" in argv

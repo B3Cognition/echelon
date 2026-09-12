@@ -20,6 +20,7 @@ from harness.provider_capability import (
     ProviderCapability,
 )
 from harness.provider_workspace_scope import apply_product_plane_boundary
+from harness.verbosity import is_verbose
 
 
 SUPPORTED_EXECUTION_PROFILES = {"claude": frozenset({"review_triage_v1"})}
@@ -43,7 +44,7 @@ class AICodingCliProvider:
         self._config_dir = effective_config.llm.config_dir
         self._bin = shutil.which(self._cli) or self._cli
         self._backend = create_ai_cli_backend(effective_config)
-        if _debug_llm_enabled():
+        if is_verbose():
             print(
                 "[llm] "
                 f"provider={self._cli} "
@@ -214,11 +215,6 @@ class AICodingCliProvider:
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
         return env
-
-
-def _debug_llm_enabled() -> bool:
-    value = os.environ.get("ECHELON_DEBUG_LLM", "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
 
 
 def _normalized_invocation_metadata(

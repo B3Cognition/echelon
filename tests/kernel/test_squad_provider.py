@@ -338,15 +338,20 @@ class TestValidateOrBlockEchelonResult:
         assert result["verdict"] == "BLOCKED"
         assert "must be an object" in result["state_updates"]["blocked_reason"]
 
-    def test_validation_block_includes_debug_path_when_enabled(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("ECHELON_DEBUG_RAW_DIR", str(tmp_path))
+    def test_validation_block_includes_debug_path_when_verbose(
+        self, tmp_path, monkeypatch
+    ):
+        from harness.verbosity import verbose_mode
 
-        result = _validate_or_block_echelon_result(
-            {"verdict": "MAYBE", "state_updates": {}},
-            raw="echelon_result:\n  verdict: MAYBE\n  state_updates: {}",
-            exit_code=0,
-            duration_ms=10,
-        )
+        monkeypatch.chdir(tmp_path)
+
+        with verbose_mode():
+            result = _validate_or_block_echelon_result(
+                {"verdict": "MAYBE", "state_updates": {}},
+                raw="echelon_result:\n  verdict: MAYBE\n  state_updates: {}",
+                exit_code=0,
+                duration_ms=10,
+            )
 
         debug_path = Path(result["state_updates"]["echelon_result_debug_path"])
         assert debug_path.exists()

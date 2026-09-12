@@ -4492,7 +4492,11 @@ def test_codex_backend_fails_closed_without_workspace_boundary(tmp_path) -> None
     popen.assert_not_called()
 
 
-def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsys) -> None:
+def test_codex_backend_prints_successful_command_events_when_verbose(
+    tmp_path, capsys
+) -> None:
+    from harness.verbosity import verbose_mode
+
     backend = CodexCliBackend(_config("codex"))
     final_message = tmp_path / "last-message.txt"
 
@@ -4564,14 +4568,17 @@ def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsy
         return_value=FakeProcess(),
     ):
         named.return_value.__enter__.return_value.name = str(final_message)
-        result = backend.run_agent(request)
+        with verbose_mode():
+            result = backend.run_agent(request)
 
     captured = capsys.readouterr()
     assert "echelon_result:" in result.stdout
     assert "very noisy command output" not in result.stdout
     assert "aggregated_output" not in result.stdout
     assert '"type": "item.completed"' not in result.stdout
-    assert "very noisy command output" not in captured.out
+    assert "[codex] command started:" in captured.out
+    assert "[codex] command completed (exit 0):" in captured.out
+    assert "very noisy command output" in captured.out
     assert "aggregated_output" not in captured.out
     assert '"type": "item.completed"' not in captured.out
 
