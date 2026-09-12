@@ -69,6 +69,7 @@ DISCOVERY_REPAIRABLE_REASONS = frozenset({
     "subjectless-discovery-domain",
     "unattempted-discovery-obligation",
     "unsupported-discovery-obligation",
+    "unsupported-discovery-inventory-ownership",
     "unsupported-not-applicable-obligation",
 })
 
@@ -727,6 +728,13 @@ class DiscoveryBoundary:
                 expected_target = primary_target_by_path.get(path, "source")
                 if subjects[row["owner"]]["target"] != expected_target:
                     raise DiscoveryError("invalid-discovery-target-ownership")
+                if not any(
+                    projections[item]["path"] == path
+                    for item in subjects[row["owner"]]["evidence_ids"]
+                ):
+                    raise DiscoveryError(
+                        "unsupported-discovery-inventory-ownership"
+                    )
 
         subject_membership = {}
         for target in targets:

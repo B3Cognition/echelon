@@ -79,6 +79,10 @@ def _repair_requirement(reason_code: str) -> str:
             "Each owned inventory path must be assigned to a subject on its frozen "
             "primary analysis target; source-supporting paths use source subjects."
         ),
+        "unsupported-discovery-inventory-ownership": (
+            "Every non-null inventory owner must cite visible evidence from that "
+            "exact path in the named subject. Otherwise leave owner null for review."
+        ),
     }
     return requirements.get(
         reason_code,

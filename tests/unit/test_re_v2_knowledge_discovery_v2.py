@@ -290,6 +290,33 @@ def test_schema_3_rejects_inventory_owner_on_wrong_primary_target(
         boundary.admit(binding_id, canonical_json_bytes(proposal))
 
 
+@pytest.mark.unit
+def test_schema_3_rejects_owned_path_without_owner_path_evidence(
+    tmp_path: Path,
+) -> None:
+    boundary, binding_id, context, _objects = _setup(
+        tmp_path,
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "def handle(): return 'ok'\n",
+            "src/orders/helper.py": "def help_request(): return 'ok'\n",
+        },
+        depth="deep",
+        schema_version=3,
+    )
+    from tests.unit.test_re_v2_knowledge_activation import _candidate
+
+    target = context["analysis_domain_targets"][0]["key"]
+    proposal = _candidate(context)
+    proposal["domains"][0]["key"] = target
+    for row in (*proposal["subjects"], *proposal["obligations"]):
+        if row["target"] == "behavior":
+            row["target"] = target
+
+    with pytest.raises(DiscoveryError, match="unsupported-discovery-inventory-ownership"):
+        boundary.admit(binding_id, canonical_json_bytes(proposal))
+
+
 def _empty_repository_setup(
     tmp_path: Path, *, depth: str
 ) -> tuple[DiscoveryBoundary, str, dict, ObjectStore]:

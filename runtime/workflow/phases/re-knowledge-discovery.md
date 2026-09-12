@@ -91,7 +91,8 @@ For `kind: discovery_proposal`, also include:
   the selected depth row's `required` categories for that target kind. Categories
   listed under `outside_requested_depth` never appear on a subject.
 - `inventory`: exactly one object per inventory path: `path`, `owner` (subject key
-  or null), `reason`. Unassigned paths remain visible for reconciliation.
+  or null), `reason`. A non-null owner requires that exact subject to cite visible
+  evidence from the same path. Unassigned paths remain visible for reconciliation.
 - `obligations`: exactly one object for every supplied source category at `source`
   and every supplied domain category at each proposed domain. Each object has
   exactly `target`, `category`, `disposition`, `subject_keys`, `rationale`, and

@@ -24,6 +24,11 @@ accounting for orphan paths and overlaps across subjects.
 NEVER equate folders with domains or hide unassigned inventory to make a proposal
 look complete. Primary ownership does not establish exhaustive behavioral coverage.
 
+ALWAYS assign a non-null inventory owner only when that exact subject cites visible
+evidence from the same path; otherwise leave the owner null for independent review.
+NEVER infer ownership from a neighboring file, a shared directory, or a broad
+subject description.
+
 ALWAYS, when `analysis_domain_targets` is supplied, use every exact key once as the controller's
 frozen domain analysis target and use no other domain key. Describe behavioral
 responsibility within each target; the supplied root is an execution boundary,
