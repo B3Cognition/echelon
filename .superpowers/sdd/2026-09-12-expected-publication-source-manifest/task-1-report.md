@@ -213,3 +213,69 @@ None. The helper remains deliberately inactive. Authentication, guarded fresh
 comparison, durable accepted-source history, candidate scope/review binding,
 partial-recovery ownership, and completion integration remain future work exactly as
 documented.
+
+## Fix round 1/5: exact mode-only-write assertion
+
+### Review finding and scope
+
+The task review found one Important test-quality gap and no production defect. The
+rich-membership test asserted only that decimal mode `"384"` appeared somewhere in
+the payload. Because the separate newly written empty file also has mode `0600`, that
+assertion could pass even if the mode-only write for `source/crlf.md` were projected
+incorrectly.
+
+The fix is intentionally test-only. It adds `json` to the test imports, decodes the
+already-produced manifest payload, indexes the selected tree's file entries by exact
+path, and asserts that `source/crlf.md` itself has image mode `"384"`. No production,
+documentation, publisher, capture, codec, factory, parser, store, controller, plan,
+or ledger file changed. The root-owned untracked guarded-publication plan remained
+untouched.
+
+This is added precision for apparently correct production behavior, so no synthetic
+production RED was invented for the review fix.
+
+### Covering verification
+
+The requested covering set was run once after the assertion change:
+
+```text
+/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/pytest -q tests/unit/test_squad_source_projection.py
+```
+
+Actual pristine output (exit 0):
+
+```text
+.....................                                                    [100%]
+21 passed in 0.26s
+```
+
+No prior four-module set, full suite, post-commit suite, million-scale, live,
+provider, stopped-smoke, activation, or installation run was repeated.
+
+### Self-review and diff check
+
+- Verified the assertion resolves the exact affected path before checking its mode;
+  `source/new/nested/empty.bin` can no longer satisfy it.
+- Verified the asserted wire value `"384"` is the canonical decimal representation
+  of the sealed mode-only postimage `0600` and differs from the `0640` preimage.
+- Verified imports and assertions are the only test-file changes from fix base
+  `b39a9b298a2d9ea4c8a9afeccd045fe272c57160`.
+- Verified no production file changed in the fix range.
+
+Command before the test-only commit:
+
+```text
+git diff --check
+```
+
+Actual result: exit 0 with no output.
+
+Test fix commit:
+
+```text
+426a799231144c9138869c9ed0f16210036dae37 test: pin mode-only source projection
+```
+
+The appended report is committed separately so it can record the exact test-fix
+commit and evidence. A report-only `git diff --check` after appending this fix report
+also returned exit 0 with no output.
