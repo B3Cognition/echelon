@@ -294,7 +294,6 @@ def test_knowledge_command_pins_model_refuses_config_inheritance_and_disables_to
     for required in {
         "features.shell_tool=false",
         "features.unified_exec=false",
-        "experimental_use_unified_exec_tool=false",
         "features.apply_patch_freeform=false",
         'web_search="disabled"',
         "features.view_image=false",
@@ -302,7 +301,6 @@ def test_knowledge_command_pins_model_refuses_config_inheritance_and_disables_to
         "features.browser_use=false",
         "features.computer_use=false",
         "features.apps=false",
-        "features.connectors=false",
         "features.enable_mcp_apps=false",
         "mcp_servers={}",
         "features.plugins=false",
@@ -322,6 +320,17 @@ def test_knowledge_command_pins_model_refuses_config_inheritance_and_disables_to
         'history.persistence="none"',
     }:
         assert required in config
+    assert not config.intersection(
+        {
+            "experimental_use_unified_exec_tool=false",
+            "features.web_search=false",
+            "features.web_search_cached=false",
+            "features.web_search_request=false",
+            "features.imagegenext=false",
+            "features.connectors=false",
+            "features.collab=false",
+        }
+    )
 
     env = captured["env"]
     assert isinstance(env, dict)
