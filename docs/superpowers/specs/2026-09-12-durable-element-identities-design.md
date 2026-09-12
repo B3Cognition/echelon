@@ -132,6 +132,13 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   distinct. This is an observation of one selected tree during a bounded context,
   not post-exit freshness, complete external dependency coverage or publication
   authority. No provider authoring isolation or live workflow is activated.
+- Projected binding preflight: implemented in `e368efc1` and independently
+  reviewed with no findings. Exact five-module compatibility suite: 292 passed.
+  Proposed lifecycle rows and retained historical revisions share the existing
+  binding target policy in one query-only transaction. Unassessed references
+  remain unassessed; historical active issue occurrences retain their original
+  meaning after a projected retirement. This does not reserve a baseline,
+  authenticate evidence or authorize publication.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
