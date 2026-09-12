@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar, Literal, TypeVar
+from typing import ClassVar, Literal, Mapping, TypeVar
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.protocol_22.schema import (
@@ -327,8 +327,56 @@ class ExhaustiveEvidenceSliceV1:
         )
 
 
-def normalize_candidate_result(value: object) -> ExhaustiveEvidenceSliceV1:
-    """Normalize provider collection order before creating canonical authority."""
+def normalize_candidate_result(
+    value: object,
+    *,
+    slice_spec: SliceSpecV1 | None = None,
+    plan_entry: SlicePlanEntryV1 | None = None,
+) -> ExhaustiveEvidenceSliceV1:
+    """Normalize provider transport and collection order into canonical authority.
+
+    A provider may omit fields whose values are already frozen by the controller or
+    use the former ``rendered_explanation`` name for rendered prose. Those
+    mechanical transport defects are repaired only when both frozen authorities
+    are supplied. Provider-authored coverage and semantic content remain strict.
+    """
+    if (slice_spec is None) != (plan_entry is None):
+        raise Protocol28ArtifactError(
+            "candidate transport normalization requires both frozen authorities"
+        )
+    if slice_spec is not None and plan_entry is not None:
+        if not isinstance(slice_spec, SliceSpecV1) or not isinstance(
+            plan_entry, SlicePlanEntryV1
+        ):
+            raise Protocol28ArtifactError(
+                "candidate transport normalization requires typed frozen authorities"
+            )
+        if slice_spec.plan_entry_id != plan_entry.identity:
+            raise Protocol28ArtifactError("slice spec does not realize plan entry")
+        if not isinstance(value, Mapping) or any(
+            not isinstance(key, str) for key in value
+        ):
+            raise Protocol28ArtifactError(
+                "ExhaustiveEvidenceSliceV1 must be an object with string fields"
+            )
+        repaired = dict(value)
+        if (
+            "rendered_markdown" not in repaired
+            and "rendered_explanation" in repaired
+        ):
+            repaired["rendered_markdown"] = repaired.pop("rendered_explanation")
+        frozen_fields: dict[str, object] = {
+            "schema_version": 1,
+            "slice_spec_id": slice_spec.identity,
+            "plan_entry_id": plan_entry.identity,
+            "target_kind": plan_entry.target_kind,
+            "source_id": plan_entry.source_id,
+            "target_id": plan_entry.target_id,
+            "category_id": plan_entry.category_id,
+        }
+        for field, expected in frozen_fields.items():
+            repaired.setdefault(field, expected)
+        value = repaired
     raw = _schema(
         exact_object,
         value,
@@ -589,7 +637,9 @@ def validate_candidate(
         raise Protocol28ArtifactError("slice spec does not realize plan entry")
     if not isinstance(evidence_catalog, SnapshotEvidenceCatalogV1) or not isinstance(policy, ExhaustivePolicyV1):
         raise Protocol28ArtifactError("candidate evidence or policy authority is invalid")
-    candidate = normalize_candidate_result(raw)
+    candidate = normalize_candidate_result(
+        raw, slice_spec=slice_spec, plan_entry=plan_entry
+    )
     if (
         candidate.slice_spec_id != slice_spec.identity
         or candidate.plan_entry_id != plan_entry.identity

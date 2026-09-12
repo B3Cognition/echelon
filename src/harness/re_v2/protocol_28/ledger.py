@@ -23,6 +23,7 @@ from harness.re_v2.protocol_22.schema import (
 from harness.re_v2.protocol_28.artifacts import (
     ExhaustiveEvidenceSliceV1,
     ExhaustiveVerificationV1,
+    Protocol28ArtifactError,
     normalize_candidate_result,
     normalize_verification_result,
 )
@@ -38,6 +39,7 @@ from harness.re_v2.protocol_28.execution import (
     parse_captured_result,
 )
 from harness.re_v2.protocol_28.graph import AcceptedExhaustiveSliceV1
+from harness.re_v2.protocol_28.planning import SlicePlanEntryV1, SliceSpecV1
 
 
 _RECEIPT_DECODERS = {
@@ -170,7 +172,15 @@ class _Protocol28LedgerState:
             raise ReV2LedgerError(
                 f"producer result cannot authenticate candidate: {exc}"
             ) from exc
-        if normalize_candidate_result(raw_candidate) != candidate:
+        try:
+            normalized_candidate = normalize_candidate_result(raw_candidate)
+        except Protocol28ArtifactError:
+            slice_spec = _load(object_store, receipt.slice_spec_id, SliceSpecV1)
+            plan_entry = _load(object_store, receipt.plan_entry_id, SlicePlanEntryV1)
+            normalized_candidate = normalize_candidate_result(
+                raw_candidate, slice_spec=slice_spec, plan_entry=plan_entry
+            )
+        if normalized_candidate != candidate:
             raise ReV2LedgerError("producer result does not contain candidate")
         if (
             candidate.identity != receipt.candidate_hash

@@ -207,6 +207,51 @@ def test_candidate_validation_normalizes_provider_nested_object_order() -> None:
 
 
 @pytest.mark.unit
+def test_candidate_validation_repairs_only_mechanical_transport_fields() -> None:
+    entry, spec, evidence, candidate = _candidate_fixture()
+    raw = candidate.to_json_dict()
+    for field in (
+        "schema_version",
+        "slice_spec_id",
+        "plan_entry_id",
+        "target_kind",
+        "source_id",
+        "target_id",
+        "category_id",
+    ):
+        raw.pop(field)
+    raw["rendered_explanation"] = raw.pop("rendered_markdown")
+
+    assert validate_candidate(
+        spec, entry, evidence, raw, build_initial_exhaustive_policy()
+    ) == candidate
+
+
+@pytest.mark.unit
+def test_candidate_transport_repair_does_not_override_conflicting_scope() -> None:
+    entry, spec, evidence, candidate = _candidate_fixture()
+    raw = candidate.to_json_dict()
+    raw["source_id"] = "wrong-source"
+
+    with pytest.raises(Protocol28ArtifactError, match="scope"):
+        validate_candidate(
+            spec, entry, evidence, raw, build_initial_exhaustive_policy()
+        )
+
+
+@pytest.mark.unit
+def test_candidate_transport_repair_rejects_ambiguous_rendered_alias() -> None:
+    entry, spec, evidence, candidate = _candidate_fixture()
+    raw = candidate.to_json_dict()
+    raw["rendered_explanation"] = "Conflicting legacy prose."
+
+    with pytest.raises(Protocol28ArtifactError, match="unknown fields"):
+        validate_candidate(
+            spec, entry, evidence, raw, build_initial_exhaustive_policy()
+        )
+
+
+@pytest.mark.unit
 def test_provider_result_normalization_canonicalizes_unordered_digest_sets() -> None:
     entry, spec, _evidence, candidate = _candidate_fixture()
     low, high = sorted((digest("provider-set-a"), digest("provider-set-b")))

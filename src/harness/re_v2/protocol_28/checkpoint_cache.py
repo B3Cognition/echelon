@@ -256,7 +256,11 @@ def _execution_authority_failure(
         try:
             decoded = decode_provider_result_object(raw_result)
             normalized = (
-                normalize_candidate_result(decoded)
+                normalize_candidate_result(
+                    decoded,
+                    slice_spec=checkpoint.slice_spec,
+                    plan_entry=checkpoint.plan_entry,
+                )
                 if role == "producer"
                 else normalize_verification_result(decoded)
             )
