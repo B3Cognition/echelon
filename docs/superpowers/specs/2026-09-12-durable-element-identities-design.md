@@ -146,6 +146,15 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   Stable hard-linked reads preserve existing behavior, with link/content drift
   rejected. Source selection still requires controller-owned complete dependency
   coverage, and current bytes are not invented historical preimages.
+- Durable identity publication journal: implemented in `c7df1107` and independently
+  reviewed with no findings. Exact eleven-module suite: 581 passed, including
+  real-process contention/restart and one million imported IDs. Import took
+  14.154 seconds, the next allocation 0.014163 seconds, and the database used
+  168,890,368 bytes; these are imported identities, not assessed revisions.
+  Prepared and applied intents retain a spec-wide write guard and permanent
+  child operation claims through restart/restore. Original receipts survive
+  later history. Opaque recovery/completion payloads are retained caller claims,
+  not semantic, source, graph or filesystem authority; no workflow is activated.
 - Reference/publication enforcement, producer integration, targeted repair,
   and new live verification: outstanding. No global installation or stopped-run
   mutation. Capacity measurements do not prove semantic identity preservation.
