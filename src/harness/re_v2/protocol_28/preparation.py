@@ -823,25 +823,17 @@ def _entry_for_evidence_chunk(
 
 
 def _partition_manifest_authority_bytes(snapshot: CapturedSnapshot) -> bytes:
-    manifest = load_snapshot_manifest(snapshot)
-    if manifest.components is None:
+    from harness.re_v2.knowledge_bootstrap import (
+        KnowledgeBootstrapError,
+        partition_manifest_authority_bytes,
+    )
+
+    try:
+        return partition_manifest_authority_bytes(snapshot)
+    except KnowledgeBootstrapError as exc:
         raise Protocol28PreparationError(
             "L4 snapshot has no composite partition authority"
-        )
-    return canonical_json_bytes(
-        {
-            "partition_protocol": "re-v2-partition-v2",
-            "source_snapshot_id": manifest.snapshot_id,
-            "sources": [
-                {
-                    "git_role": item.git_role,
-                    "id": item.source_id,
-                    "path": item.workspace_path,
-                }
-                for item in manifest.components
-            ],
-        }
-    )
+        ) from exc
 
 
 def _role_bytes(

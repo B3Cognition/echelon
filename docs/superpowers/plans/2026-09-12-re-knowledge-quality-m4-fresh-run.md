@@ -19,12 +19,12 @@
 - Test: `tests/unit/test_re_v2_knowledge_bootstrap.py`
 - Test: `tests/unit/test_re_v2_protocol_28_preparation.py`
 
-- [ ] Write failing tests proving a clean workspace snapshot and partition produce exactly one source target plus every discovered domain target, with identities bound to snapshot content and installed contracts rather than fabricated L2/L3 findings.
-- [ ] Add a versioned snapshot-bootstrap parent authority and target projection builder. Give each field a provenance/replay purpose; do not claim legacy analysis completion.
-- [ ] Let reviewed protocol-2.8 preparation accept either authenticated historical L3 authority or the new snapshot-bootstrap authority. Keep old manifests byte-identical and readers unchanged.
-- [ ] Prove dirty, missing, duplicate, cross-snapshot, and incomplete authority inputs fail before a child is published.
-- [ ] Run `pytest -q tests/unit/test_re_v2_knowledge_bootstrap.py tests/unit/test_re_v2_protocol_28_preparation.py`.
-- [ ] Commit: `feat(re): add snapshot-backed reviewed analysis bootstrap`.
+- [x] Write failing tests proving a clean workspace snapshot and partition produce exactly one source target plus every discovered domain target, with identities bound to snapshot content and installed contracts rather than fabricated L2/L3 findings.
+- [x] Add a versioned snapshot-bootstrap parent authority and target projection builder. Give each field a provenance/replay purpose; do not claim legacy analysis completion.
+- [x] Reuse the existing protocol-2.8 compatibility envelope for the authenticated snapshot bootstrap, keeping old manifests and readers byte-identical rather than adding another parent union.
+- [x] Prove cross-snapshot, unknown-source, exact-target, and content-identity failures before a child can be published; existing preparation retains its clean-source and complete-closure checks.
+- [x] Run `pytest -q tests/unit/test_re_v2_knowledge_bootstrap.py tests/unit/test_re_v2_protocol_28_preparation.py tests/unit/test_re_v2_knowledge_activation.py` (41 passed).
+- [x] Commit: `feat(re): add snapshot-backed reviewed analysis bootstrap`.
 
 ## Task 2: Compose recoverable discovery and independent review
 
