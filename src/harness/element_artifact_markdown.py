@@ -26,7 +26,7 @@ _HEADING_RE = re.compile(
     re.ASCII,
 )
 _ANY_HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>.*?)[ \t]*$")
-_DECLARATION_LABEL = r"(?:AC|FR|NFR|ISS|U|A|T)-[A-Za-z0-9][^\s:*`]*"
+_DECLARATION_LABEL = r"(?:AC|FR|NFR|ISS|U|A|T)-[A-Za-z0-9][^\s:]*"
 _LOOSE_HEADING_RE = re.compile(
     r"^(?P<indent>[ \t]*)(?P<marks>#{1,6})[ \t]+"
     rf"(?P<id>{_DECLARATION_LABEL})(?P<rest>.*)$"
@@ -36,6 +36,8 @@ _BULLET_RE = re.compile(
     re.ASCII,
 )
 _LOOSE_BULLET_RE = re.compile(
+    # Match enclosing delimiters separately: internal wrapper-like characters
+    # still belong to an unsupported explicit label and its diagnostic span.
     rf"^(?P<indent>[ \t]*)[-*+][ \t]+(?P<wrap>\*\*|`)?"
     rf"(?P<id>{_DECLARATION_LABEL})(?(wrap)(?P=wrap))(?P<rest>.*)$"
 )

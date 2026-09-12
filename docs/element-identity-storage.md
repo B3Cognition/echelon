@@ -75,8 +75,11 @@ Input has exactly these keys at every level:
 
 The schema version is integer 1 (not a boolean). Spec and unique snapshot IDs
 are nonblank UTF-8 strings without NUL. Snapshot and artifact arrays are nonempty.
-Every snapshot explicitly captures the same unique canonical relative POSIX
-path/role set. Roles are the existing adapter roles: unknowns, assumptions,
+Within each snapshot a canonical relative POSIX path has exactly one role and
+one captured image. Duplicate paths are rejected even when their roles or texts
+differ. Across snapshots the same paths must be captured with the same assigned
+roles; the manifest does not accept multiple parser views of one physical file.
+Roles are the existing adapter roles: unknowns, assumptions,
 requirements, tasks, issues, lexicon, lexicon_projection, investigation,
 evidence, and references. Text is an exact UTF-8/NUL-free string or null:
 null captures absence; empty text captures a present document. Present Lexicon
@@ -132,7 +135,7 @@ definition locations use the explicitly captured following artifact hash
 | padding_alias | Distinct numeric spellings claim the same family/positive ordinal anywhere in the supplied history. Opaque composites are not numeric aliases. |
 | definition_changed | An exact authoritative label has different typed content hashes. All variants remain available for explicit lifecycle/semantic reconciliation; this does not claim every edit changed the subject. |
 | definition_missing | A definition disappears in the immediately following captured snapshot. Introduction or movement between captured files is not retirement. |
-| issue_mapping_required | Every ISS display-label group requires explicit durable-issue mapping, including single occurrences, identical fingerprints and bare issue references. |
+| issue_mapping_required | Every ISS display-label group requires explicit durable-issue mapping, including single occurrences, identical fingerprints, bare issue references and valid explicitly named ISS range endpoints. Intermediate range identities are never expanded. |
 | unresolved_reference | A supported bare target lacks authoritative declaration in its own snapshot. Other snapshots, projections and prose mentions cannot resolve it. |
 | ambiguous_reference | Duplicate declarations or historical numeric aliases prevent a unique target interpretation. |
 | unsupported_reference_range | The typed interval is retained without expanding it into allocated identities or resolving only one endpoint. |

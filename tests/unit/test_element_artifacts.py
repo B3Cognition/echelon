@@ -27,7 +27,7 @@ def test_opaque_issue_heading_is_diagnostic_not_empty_report():
 
 
 @pytest.mark.parametrize("family", ["AC", "FR", "NFR", "ISS", "U", "A", "T"])
-@pytest.mark.parametrize("suffix", ["legacy", "old.name", "old-name", "a_b", "001.legacy", "001-legacy", "001é"])
+@pytest.mark.parametrize("suffix", ["legacy", "old.name", "old-name", "a_b", "001.legacy", "001-legacy", "001é", "001*legacy", "001**legacy", "001`legacy", "001``legacy"])
 @pytest.mark.parametrize("shape", ["### {id}: Caption", "- {id}: Caption", "- **{id}**: Caption", "- `{id}`: Caption", "- **{id}** Caption", "- `{id}` Caption"])
 def test_unsupported_explicit_labels_keep_exact_span_without_shorter_reference(family, suffix, shape):
     label = f"{family}-{suffix}"

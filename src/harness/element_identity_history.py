@@ -148,14 +148,15 @@ def _collect(snapshots, conflicts):
                 if reference["range_end_id"] is not None:
                     targets.append(reference["range_end_id"])
                 valid = [_eligible(target, location, conflicts) for target in targets]
+                for target, eligible in zip(targets, valid):
+                    if eligible and target.startswith("ISS-"):
+                        issues[target].append(location)
                 if reference["range_end_id"] is not None:
                     _conflict(conflicts, "unsupported_reference_range", targets, [location],
                               "Reference interval is retained without expansion or resolution.")
                 elif all(valid):
                     target = reference["target_id"]
-                    if target.startswith("ISS-"):
-                        issues[target].append(location)
-                    else:
+                    if not target.startswith("ISS-"):
                         references.append((len(definitions), target, location))
         definitions.append(local)
     return definitions, history, issues, references

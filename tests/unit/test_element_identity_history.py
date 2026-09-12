@@ -147,6 +147,31 @@ def test_issue_reference_never_resolves_by_display_label_even_without_occurrence
     assert [c["code"] for c in result["conflicts"]] == ["issue_mapping_required"]
 
 
+@pytest.mark.parametrize("first", ["ISS-001", "ISS-000"])
+def test_issue_range_retains_interval_and_maps_only_valid_explicit_endpoints(first):
+    text = f"{first}..ISS-003\n"
+    result = inventory(request_for([artifact("evidence.md", "evidence", text)]))
+    mappings = conflicts(result, "issue_mapping_required")
+    assert [c["element_ids"] for c in mappings] == (
+        [["ISS-001"], ["ISS-003"]] if first == "ISS-001" else [["ISS-003"]]
+    )
+    assert [c["element_ids"] for c in conflicts(result, "unsupported_reference_range")] == [[first, "ISS-003"]]
+    assert bool(conflicts(result, "invalid_identity_label")) is (first == "ISS-000")
+    assert not conflicts(result, "unresolved_reference")
+    row = result["snapshots"][0]["artifacts"][0]
+    assert len(row["references"]) == 1
+    assert (row["references"][0]["target_id"], row["references"][0]["range_end_id"]) == (first, "ISS-003")
+    for mapping in mappings:
+        assert mapping["locations"] == [{"snapshot_id": "0", "path": "evidence.md", "artifact_sha256": sha(text), "span": {"start": 0, "end": 16, "line": 1}}]
+
+
+@pytest.mark.parametrize("role,text", [("references", "- FR-001: Move.\n"), ("references", "different"), ("requirements", "different")])
+def test_one_physical_path_cannot_supply_multiple_roles_or_images(role, text):
+    from harness.element_identity_history import HistoryInventoryError
+    with pytest.raises(HistoryInventoryError, match="artifact paths must be unique"):
+        inventory(request_for([artifact(), artifact(role=role, text=text)]))
+
+
 def test_invalid_zero_labels_are_facts_but_not_resolvable_authority():
     result = inventory(request_for([artifact(text="- FR-000: Zero.\nFR-000 FR-001\n")]))
     assert len(conflicts(result, "invalid_identity_label")) == 2
