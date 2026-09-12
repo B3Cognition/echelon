@@ -235,6 +235,56 @@ it is not relabeled as proof of new content. Complete crash recovery across arti
 promotion, ledger publication and graph projection remains future completion-owner
 integration and must prevent duplicate allocation and false completion.
 
+## Captured candidate source assembly
+
+`harness.element_identity_candidate_sources.assemble_candidate_sources` is an
+inactive, pure adapter between a validated initial `PublicationSourcesSnapshot`
+and the existing immutable `CandidateArtifact` input. It first invokes the initial
+source-baseline encoder as the structural and original-image guard. Invalid source
+authority therefore remains a bounded `PublicationError`; the adapter neither
+rebuilds a baseline from current postimages nor authenticates an encoded round trip.
+
+The caller supplies an explicit one-to-one `CandidateSourceBinding` for every typed
+physical source it wants to expose. Physical `source_path` values use the captured
+project-relative POSIX namespace. Logical `artifact_path` values use the candidate
+artifact/reference namespace, and `role` must be one of the existing identity roles.
+No prefix is stripped, root derived, filename interpreted, or role inferred. A
+source is available only when it is a sealed operation target, an explicitly
+selected file, or a component-wise member of a completely selected tree. Exact
+directories, descendants of known regular files, textual prefix siblings, and
+otherwise uncaptured paths are controller mapping errors. Missing selected files,
+missing tree members, and missing operation targets remain absent; present empty
+files remain empty strings.
+
+For an operation target, the candidate before image is the retained initial
+`current_bytes` and its after image is the sealed `postimage_bytes`. Other selected
+sources have identical before and after images. Exact UTF-8 text is preserved,
+including BOMs, CRLF, whitespace and Unicode. An invalid typed before image is a
+bounded request error because authenticated history cannot be offered as candidate
+repair. An invalid proposed after image produces `candidate_source_not_text` and
+omits only that artifact. Unbound selected binary and hidden files remain in the
+retained physical snapshot without being decoded or relabeled.
+
+Every sealed operation, including no-op writes, missing deletes and mode-only
+changes, is checked using exact physical path equality. A target outside
+`writable_paths` receives `artifact_out_of_scope`; a target lacking either a typed
+binding or explicit `opaque_write_paths` classification receives
+`publication_target_unbound`. Opaque paths must also be writable and cannot overlap
+typed bindings. They authorize only the declared physical operation: they produce
+no artifact and convey no role, namespace, semantic, or source-selection approval.
+Diagnostics use physical paths and the existing deterministic candidate ordering;
+artifacts use logical paths and are sorted independently. Callers must reject any
+diagnostics before treating the artifact tuple as successfully assembled.
+
+This helper performs no filesystem, database, network, clock, randomness, store,
+parser, provider, publication, allocation, lifecycle, reference resolution, or
+semantic-review action. It does not prove source-selection completeness, namespace
+ownership, edit-scope correctness, accepted-source freshness, or publication
+authority. Later controller integration must retain the complete physical snapshot,
+bind it to durable accepted-source and managed-run contracts, combine these physical
+diagnostics with structural and semantic review, and reject diagnostics before any
+publication, ledger, graph, memory, or completion update.
+
 ## Strict request recovery codec
 
 `harness.element_identity_request_codec` is a pure, inactive compatibility helper
