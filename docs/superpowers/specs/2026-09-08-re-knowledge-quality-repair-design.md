@@ -1,6 +1,6 @@
 # General-purpose RE knowledge-quality repair
 
-Status: M1 containment and M2 bounded knowledge acquisition are implemented and independently accepted. M2 includes Safe evidence projection, schema-aware category discovery/review, Reviewed protocol-2.8 activation, durable revision/reconciliation/debt authority, conservative configured-provider accounting, and replay-safe restart behavior. The configured-provider bridge remains opt-in; unsupported backends are refused rather than replaced, and installed routing remains unchanged. M3 source/workspace synthesis, publication and consumer integration, refresh, two-action CLI, native-provider isolation, live evaluation, and release readiness remain pending. Not release-ready.
+Status: M1 containment, M2 bounded knowledge acquisition, and the M3 offline vertical path are implemented and independently accepted. M3 connects terminal reviewed authority to source/workspace synthesis, atomic publication, immutable consumer snapshots, source-granular refresh, and the two-action depth-based CLI through the configured-provider facade. The offline two-service acceptance and scoped failure/replay regressions pass. Installation, live multi-workspace evaluation, and release approval remain the separately authorized M4 gate; installed routing remains unchanged. Not release-ready.
 Date: 2026-09-08
 Decision owner: Echelon maintainer.
 
@@ -842,7 +842,7 @@ here, before any live validation. Keep semantic instructions in neutral roles an
 dispatch contracts in runtime workflow files. New or revised agent behavior uses
 paired ALWAYS/NEVER rules.
 
-M3 — Small complete vertical path: connect terminal deeper authority to source
+M3 — Small complete vertical path (implemented and offline-accepted): connect terminal deeper authority to source
 and workspace synthesis, atomic publication and the actual spec snapshot consumer.
 Unify new-run and refresh routing and automatic publication, retaining the
 installed default until release. Implement the two-action CLI and depth contracts;
@@ -852,6 +852,18 @@ Implement source-granular incremental invalidation and the deterministic section
 handling. Fine-grained optimization is deferred until compatibility receipts can
 prove reuse. An offline two-service fixture must reach usable published knowledge
 before authorizing a new large L4 run.
+
+The accepted M3 fixture models an `api` service calling a `beta` service. A
+standard run publishes both source document families and the workspace overview,
+relationships, contracts, and domain composition. An A1-to-A2 targeted refresh
+reanalyzes only `api`, reuses authenticated `beta` authority as `not_checked`,
+regenerates dependent workspace outputs, and publishes exactly one new
+generation. A consumer created before the refresh remains pinned to generation
+1; a later consumer receives generation 2. The same offline regression set
+covers candidate/reviewer contradiction, unsupported absence, omitted category,
+accepted debt, secret canaries, provider failure, crash/replay, stale publication
+CAS, and no-op refresh behavior. This evidence satisfies M3, not the live M4
+release gate.
 
 M4 — Cross-workspace evaluation: run the approved live fixture comparison, then a
 representative small real workspace. Only after those pass, request a separately

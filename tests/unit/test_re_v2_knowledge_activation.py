@@ -386,8 +386,16 @@ def test_passive_review_object_without_ledger_application_cannot_activate(tmp_pa
     assert _files(acquisition.objects) == before
 
 
-def review_second_source(tmp_path, acquisition, account, review, options):
-    boundary = DiscoveryBoundary(options.snapshot, options.workspace_partition, 'beta', 'deep', content_digest(b'beta-origin'),
+def review_second_source(
+    tmp_path,
+    acquisition,
+    account,
+    review,
+    options,
+    *,
+    depth='deep',
+):
+    boundary = DiscoveryBoundary(options.snapshot, options.workspace_partition, 'beta', depth, content_digest(b'beta-origin'),
         acquisition.objects, ObjectStore(tmp_path / 'beta-quarantine'))
     source = next(s for s in options.workspace_partition.sources if s.source_id == 'beta')
     binding = boundary.prepare(tuple(EvidenceSelectorV1('beta', r.source_relative_path, 0, r.byte_count) for r in source.files))

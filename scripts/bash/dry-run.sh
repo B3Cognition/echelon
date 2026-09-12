@@ -187,9 +187,18 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
             and isinstance(test.left, ast.Name)
             and test.left.id == "engine"
             and len(test.ops) == 1
-            and isinstance(test.ops[0], ast.Is)
+            and isinstance(test.ops[0], ast.IsNot)
             and len(test.comparators) == 1
-            and is_named_attribute(test.comparators[0], "ReEngine", "V2")
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+        )
+
+    def is_normal_branch(node: ast.If) -> bool:
+        return bool(
+            isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and isinstance(node.test.operand, ast.Name)
+            and node.test.operand.id == "legacy"
         )
 
     def routes_engine(node: ast.If) -> bool:
@@ -238,6 +247,18 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
             and len(call.args) == 1
             and isinstance(call.args[0], ast.Name)
             and call.args[0].id == "args"
+        )
+
+    def routes_reviewed_knowledge(node: ast.If) -> bool:
+        return any(
+            call is not None
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "_cmd_re_knowledge_run"
+            and isinstance(call.func.value, ast.Call)
+            and isinstance(call.func.value.func, ast.Name)
+            and call.func.value.func.id == "_legacy_cli"
+            for statement in node.body
+            if (call := direct_call(statement)) is not None
         )
 
     root_attachments = []
@@ -366,6 +387,11 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
     ]
     if len(engine_branches) != 1 or not routes_engine(engine_branches[0]):
         raise SystemExit("RE run --engine callback routing is invalid")
+    normal_branches = [
+        node for node in run_function.body if isinstance(node, ast.If) and is_normal_branch(node)
+    ]
+    if len(normal_branches) != 1 or not routes_reviewed_knowledge(normal_branches[0]):
+        raise SystemExit("RE run normal reviewed-knowledge routing is invalid")
     shadow_branches = [
         node for node in run_function.body if isinstance(node, ast.If) and routes_shadow(node)
     ]

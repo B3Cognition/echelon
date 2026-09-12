@@ -161,7 +161,13 @@ def _refresh_plan(*, targeted: bool):
     )
 
 
-def _terminal_multi_source_context_with_executor(tmp_path):  # type: ignore[no-untyped-def]
+def _terminal_multi_source_context_with_executor(
+    tmp_path,
+    *,
+    depth: str = "deep",
+    api_extra_source_files: dict[str, str | bytes] | None = None,
+    knowledge_backend=None,
+):  # type: ignore[no-untyped-def]
     from harness.re_v2.knowledge_activation import (
         activate_reviewed_discovery,
         load_reviewed_discovery,
@@ -193,11 +199,20 @@ def _terminal_multi_source_context_with_executor(tmp_path):  # type: ignore[no-u
     api, account, review, l3, evidence, fixture = activation_fixture(
         tmp_path,
         multiple=True,
+        depth=depth,
+        extra_source_files=api_extra_source_files,
         account_policy=KnowledgeDispatchPolicy(5_000_000, 10_800_000, 3),
     )
     workspace, intent, parent, options = fixture
     first_root = activate_reviewed_discovery(api, account, review, l3, evidence)
-    beta, beta_review = review_second_source(tmp_path, api, account, review, options)
+    beta, beta_review = review_second_source(
+        tmp_path,
+        api,
+        account,
+        review,
+        options,
+        depth=depth,
+    )
     second_root = activate_reviewed_discovery(
         beta,
         account,
@@ -248,7 +263,7 @@ def _terminal_multi_source_context_with_executor(tmp_path):  # type: ignore[no-u
     activate_knowledge_workflow(context, account, allow_debt=False)
     result = run_protocol_28_exhaustive(
         context.run_dir,
-        lambda: KnowledgeBackend(),
+        lambda: knowledge_backend or KnowledgeBackend(),
     )
     assert result.state == "complete", result
     return context

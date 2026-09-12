@@ -15,7 +15,14 @@ from tests.unit.test_re_v2_protocol_28_reconciliation import (
 )
 
 
-def _reviewed_context_with_executor(tmp_path, *, complete: bool):
+def _reviewed_context_with_executor(
+    tmp_path,
+    *,
+    complete: bool,
+    depth: str = "deep",
+    extra_source_files: dict[str, str | bytes] | None = None,
+    knowledge_backend=None,
+):
     from harness.re_v2.canonical import canonical_json_bytes, content_digest
     from harness.re_v2.protocol_22.executors import ExecutorContractCatalogV1
     from harness.re_v2.protocol_28.executors import build_l4_executor_catalog
@@ -23,7 +30,8 @@ def _reviewed_context_with_executor(tmp_path, *, complete: bool):
     from tests.unit.test_re_v2_protocol_28_preparation import _preparation_fixture
 
     workspace, intent, parent_authority, options = _preparation_fixture(
-        tmp_path / "runs"
+        tmp_path / "runs",
+        extra_source_files=extra_source_files,
     )
     executor_bytes = canonical_json_bytes(
         ExecutorContractCatalogV1(1, (_shared_cli_entry(),)).to_json_dict()
@@ -44,16 +52,29 @@ def _reviewed_context_with_executor(tmp_path, *, complete: bool):
             parent_authority,
             replace(options, inherited_executor_contract_bytes=executor_bytes),
         ),
+        depth=depth,
     )
     if complete:
         assert run_protocol_28_exhaustive(
-            context.run_dir, lambda: KnowledgeBackend()
+            context.run_dir, lambda: knowledge_backend or KnowledgeBackend()
         ).state == "complete"
     return context
 
 
-def _terminal_reviewed_context_with_executor(tmp_path):
-    return _reviewed_context_with_executor(tmp_path, complete=True)
+def _terminal_reviewed_context_with_executor(
+    tmp_path,
+    *,
+    depth: str = "deep",
+    extra_source_files: dict[str, str | bytes] | None = None,
+    knowledge_backend=None,
+):
+    return _reviewed_context_with_executor(
+        tmp_path,
+        complete=True,
+        depth=depth,
+        extra_source_files=extra_source_files,
+        knowledge_backend=knowledge_backend,
+    )
 
 
 def _synthesis_agent():

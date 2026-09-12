@@ -109,11 +109,11 @@ def test_dry_run_rejects_engine_option_owned_by_shadow_parameter(
     result = _mutated_dry_run(
         tmp_path,
         replace=(
-            '''    engine: ReEngine = typer.Option(
-        ReEngine.V1,
+            '''    engine: Optional[ReEngine] = typer.Option(
+        None,
         "--engine",''',
-            '''    engine: ReEngine = typer.Option(
-        ReEngine.V1,
+            '''    engine: Optional[ReEngine] = typer.Option(
+        None,
         "--v2-engine",''',
         ),
     )
@@ -168,6 +168,23 @@ def test_dry_run_rejects_removed_engine_callback_route(tmp_path: Path) -> None:
     )
 
 
+def test_dry_run_rejects_removed_normal_knowledge_callback_route(
+    tmp_path: Path,
+) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        replace=(
+            "_legacy_cli()._cmd_re_knowledge_run(args)",
+            "_legacy_cli()._cmd_re_status(args)",
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE run normal reviewed-knowledge routing is invalid" in (
+        result.stdout + result.stderr
+    )
+
+
 def test_dry_run_rejects_misdirected_shadow_callback_route(tmp_path: Path) -> None:
     result = _mutated_dry_run(
         tmp_path,
@@ -207,8 +224,10 @@ def test_dry_run_rejects_removed_composite_capture(tmp_path: Path) -> None:
         tmp_path,
         relative_path="src/echelon/cli.py",
         replace=(
-            "snapshot = capture_workspace_snapshot(",
-            "snapshot = removed_workspace_snapshot(",
+            "    workspace_manifest = discover_workspace(workspace_root)\n"
+            "    snapshot = capture_workspace_snapshot(",
+            "    workspace_manifest = discover_workspace(workspace_root)\n"
+            "    snapshot = removed_workspace_snapshot(",
         ),
     )
 

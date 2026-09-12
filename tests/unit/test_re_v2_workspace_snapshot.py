@@ -420,12 +420,15 @@ COMPOSITE_FAULTS = (
 @pytest.mark.parametrize("boundary", COMPOSITE_FAULTS)
 def test_composite_capture_recovers_every_publication_fault(
     tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
     boundary: str,
 ) -> None:
     first = _clean_repo(tmp_path / "first", {"a.py": "a\n"})
     second = _clean_repo(tmp_path / "second", {"b.py": "b\n"})
     sources = _sources(tmp_path, first, second)
-    destination = tmp_path.parent / f"{tmp_path.name}-snapshots"
+    destination = tmp_path_factory.mktemp(
+        f"composite-recovery-{boundary.replace('_', '-')}"
+    )
     fired = False
 
     def crash_once(point: str) -> None:

@@ -288,7 +288,7 @@ Git workspaces and scripted providers.
   regression suite pass. Live multi-workspace evaluation and any paid budget are
   M4 and require separate explicit authorization.
 
-- [ ] **Step 1: Write the failing end-to-end fixture.**
-- [ ] **Step 2: Complete the smallest missing seams until it passes.**
-- [ ] **Step 3: Run scoped RE v2, CLI, publication, and consumer regressions.**
-- [ ] **Step 4: Run `git diff --check` and update truthful docs/status.**
+- [x] **Step 1: Write the failing end-to-end fixture.**
+- [x] **Step 2: Complete the smallest missing seams until it passes.**
+- [x] **Step 3: Run scoped RE v2, CLI, publication, and consumer regressions.**
+- [x] **Step 4: Run `git diff --check` and update truthful docs/status.**
