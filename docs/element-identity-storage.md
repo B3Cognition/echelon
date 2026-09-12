@@ -554,6 +554,42 @@ orphan record/receipt associations. No routine path scans all historical records
 `element_identity_binding_store` receives only the existing store's connection;
 it never opens files, commits, reserves IDs, or starts a second transaction.
 
+### Projected binding storage preflight
+
+`store.validate_projected_bindings(spec_id=..., changes=..., claims=...,
+occurrences=...)` validates proposed lifecycle and binding requests together in
+one query-only SQLite snapshot. All batches are copied and revalidated before the
+store opens its read transaction. Empty batches mean that no operation of that
+kind is proposed. A successful call returns `None`; it creates no operation ID,
+reservation, entity, revision, binding record, assessment, or receipt.
+
+When lifecycle changes are present, the preflight uses the existing lifecycle
+planner on the same connection. Binding targets resolve through its validated
+projected heads and exact projected revisions, with authenticated retained heads
+and revisions as fallback. Thus references may remain explicitly unassessed,
+name an earlier active revision, or name an existing or projected terminal
+revision. Issue occurrences retain the stricter storage rule that their exact
+revision must be active and their title/body must exactly match its immutable
+subject/content. An older active issue revision remains valid even when the
+projected head retires or supersedes it. Imported identities accept unassessed
+references; an assessed target exists only when the same proposed batch contains
+a valid explicit adoption.
+
+The connection-owned
+`element_identity_binding_preview.validate_projected(...)` helper requires an
+already-active caller transaction. It performs reads only, does not change
+connection pragmas, and does not begin, commit, roll back, or open another store
+transaction. Projected and retained targets pass through the same private binding
+target policy, so namespace high-water, label/kind/ordinal, subject, revision and
+issue-content checks keep the historical record/read semantics.
+
+This storage preflight is not semantic authorization. It does not authenticate
+source bytes or anchors, enforce candidate current-obligation rules, reserve a
+baseline, approve adoption for a managed producer, create a publication intent,
+or authorize graph completion, activation, or publication. Existing candidate,
+repair, Phase A completion and future publication transactions remain the owners
+of those decisions and must revalidate their writes against current authority.
+
 Source hashes, anchors, and report provenance are declarations, not proof that
 the caller holds or reviewed a file. The APIs never resolve anchors against live
 files or infer replacement anchors after edits. A future publication transaction

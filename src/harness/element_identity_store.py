@@ -626,6 +626,25 @@ class IdentityStore:
             return tuple(result)
 
     @_public
+    def validate_projected_bindings(
+        self, *, spec_id: str,
+        changes: Sequence[lifecycle.LifecycleChange] = (),
+        claims: Sequence[bindings.ReferenceClaim] = (),
+        occurrences: Sequence[bindings.IssueOccurrence] = (),
+    ) -> None:
+        """Validate proposed bindings in one query-only snapshot; no receipt."""
+        from harness import element_identity_binding_preview as binding_preview
+
+        lifecycle.text(spec_id, "spec_id")
+        changes, claims, occurrences = binding_preview._requests(changes, claims, occurrences)
+        with self._transaction() as connection:
+            connection.execute("PRAGMA query_only=ON")
+            binding_preview.validate_projected(
+                connection, self, spec_id,
+                changes=changes, claims=claims, occurrences=occurrences,
+            )
+
+    @_public
     def check_discovery_candidate(self, *, spec_id: str,
                                   artifacts: Sequence[CandidateArtifact],
                                   scope: DiscoveryEditScope,

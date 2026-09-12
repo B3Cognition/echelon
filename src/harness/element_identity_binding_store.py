@@ -12,20 +12,22 @@ from harness.issue_identity import issue_fingerprint
 _TYPES = {"reference_claims": bindings.ReferenceClaim, "issue_occurrences": bindings.IssueOccurrence}
 
 
-def _target(connection, store, spec_id, payload, method):
+def _target(connection, store, spec_id, payload, method, projected_view=None):
     reference = method == "reference_claims"
     label = payload["target_id" if reference else "issue_id"]
     revision = payload["target_revision" if reference else "issue_revision"]
     kind, ordinal = authority._parse_label(label)
     store._high_water(connection, spec_id, kind)
-    head = store._head(connection, spec_id, label)
+    head = (store._head(connection, spec_id, label) if projected_view is None
+            else projected_view.head(label))
     if head is None:
         raise ValueError("binding entity must already exist in the same spec")
     text(head["subject"], "stored subject")
     if (head["kind"], head["ordinal"]) != (kind, ordinal):
         raise ValueError("identity label, kind and ordinal binding disagree")
     if revision is not None:
-        historical = store._revision(connection, spec_id, label, revision)
+        historical = (store._revision(connection, spec_id, label, revision)
+                      if projected_view is None else projected_view.revision(label, revision))
         if historical is None:
             raise ValueError("binding requires an existing assessed revision")
         if not reference and (historical["status"] != "active" or historical["subject"] != payload["title"]
