@@ -19,9 +19,16 @@ is tracked below; approval is not a claim that all enforcement is implemented.
   failure. The four missing delivery rule headings were corrected in
   `8a6cc1b9`, with 89 covering tests passing and a clean independent review.
   This does not relabel the original full-suite result as an all-pass run.
-- Durable allocation authority: implementation in progress, not active.
-- Lifecycle, reference/publication enforcement, targeted repair, and new live
-  verification: outstanding. No global installation or stopped-run mutation.
+- Durable allocation authority: implemented and independently reviewed in
+  `c67c1e53` and `5fab792b`, not active. Final scoped run: 144 passing tests,
+  including real-process contention/recovery and one million imported IDs.
+  The final million-record run measured 9.751 seconds to import and
+  130,846,720 database bytes with indexed allocation/integrity checks.
+  Detectable counter/history contradictions reject without counter repair.
+- Lifecycle foundation: implementation in progress, not active.
+- Reference/publication enforcement, producer integration, targeted repair,
+  and new live verification: outstanding. No global installation or stopped-run
+  mutation. Capacity measurements do not prove semantic identity preservation.
 
 The work covers AC, FR, NFR, ISS, U, A, and T identities; their readers,
 producers, references, evidence lineage; and the failed Phase A discovery
