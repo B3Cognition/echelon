@@ -2,6 +2,7 @@ import hashlib
 import multiprocessing
 import os
 import stat
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
@@ -313,6 +314,93 @@ def test_root_is_pinned_before_loading_sealed_sources(tmp_path, monkeypatch):
     with pytest.raises(PublicationError, match="^target_drift$"):
         with prepared.inspect():
             pytest.fail("different project root escaped")
+
+
+@pytest.mark.parametrize("interval", ["before-acquisition", "after-acquisition"])
+def test_root_replacement_during_lock_acquisition_rejects_before_sealed_load(
+    tmp_path, monkeypatch, interval,
+):
+    project, _, prepared, _ = _prepared(tmp_path)
+    original_lock = publication._publication_exclusivity
+    original_load = publication._load_prepared_pinned
+    loads = []
+    moved = project.with_name(project.name + "-moved")
+
+    def replace_root():
+        project.rename(moved)
+        project.mkdir()
+        (moved / "runs").rename(project / "runs")
+        (moved / "spec.md").rename(project / "spec.md")
+
+    @contextmanager
+    def replace_during_acquisition(root):
+        if interval == "before-acquisition":
+            replace_root()
+        with original_lock(root):
+            if interval == "after-acquisition":
+                replace_root()
+            yield
+
+    def record_load(*args):
+        loads.append(args)
+        return original_load(*args)
+
+    monkeypatch.setattr(publication, "_publication_exclusivity", replace_during_acquisition)
+    monkeypatch.setattr(publication, "_load_prepared_pinned", record_load)
+    with pytest.raises(PublicationError, match="^target_drift$"):
+        with prepared.inspect():
+            pytest.fail("replacement root escaped under a different publication lock")
+    assert loads == []
+    assert (project / "spec.md").read_bytes() == b"before"
+    # The old and replacement lock contexts both remain usable after rejection.
+    with original_lock(moved):
+        pass
+    with original_lock(project):
+        pass
+
+
+@pytest.mark.parametrize("failure", ["lock-path", "lock-rank"])
+def test_root_pins_close_when_publication_lock_acquisition_fails(
+    tmp_path, monkeypatch, failure,
+):
+    project, _, prepared, _ = _prepared(tmp_path)
+    opened = set()
+    root_pins = []
+    original_directory = publication._InspectionPaths.directory
+
+    for name in ("_open_directory", "_open_regular_at"):
+        original = getattr(publication, name)
+        def record(*args, _original=original, **kwargs):
+            fd = _original(*args, **kwargs)
+            opened.add(fd)
+            return fd
+        monkeypatch.setattr(publication, name, record)
+
+    def record_root(self, root_fd, parts, **kwargs):
+        fd = original_directory(self, root_fd, parts, **kwargs)
+        if parts == project.parts[1:]:
+            root_pins.append(fd)
+        return fd
+
+    monkeypatch.setattr(publication._InspectionPaths, "directory", record_root)
+    if failure == "lock-path":
+        lock_path = project / ".echelon/runtime/publication.lock"
+        lock_path.mkdir(parents=True)
+        with pytest.raises(PublicationError, match="^publish_io$"):
+            with prepared.inspect():
+                pytest.fail("invalid lock escaped")
+    else:
+        with controller_lock_order("completion", "outer"):
+            with pytest.raises(LockOrderViolation):
+                with prepared.inspect():
+                    pytest.fail("lock inversion escaped")
+        assert not (project / ".echelon").exists()
+    assert len(root_pins) == 1
+    assert root_pins[0] in opened
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    assert (project / "spec.md").read_bytes() == b"before"
 
 
 def test_caller_exception_propagates_and_lock_releases(tmp_path):

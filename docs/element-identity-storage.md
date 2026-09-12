@@ -33,6 +33,9 @@ rejects the entire inspection. No-follow descriptor traversal retains root,
 ancestor, file and absence bindings and revalidates them, the manifest and stages
 before yielding and on successful context exit. Absent target parents are not
 created. Caller exceptions propagate and release retained descriptors and the lock.
+The project-root chain is pinned before acquiring that lock and revalidated
+immediately after acquisition, before loading sealed authority, so a replacement
+root cannot be inspected under the original root's lock.
 
 The body is for short controller-owned validation or identity transactions, not
 provider work. Do not recursively call `publish`, `discard`, or `inspect` while

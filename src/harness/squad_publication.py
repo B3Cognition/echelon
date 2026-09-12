@@ -1655,20 +1655,21 @@ class PreparedSquadPublication:
         expected_root = self._squad_dir / _OUTBOX_DIRECTORY / marker.transaction_id
         if self._transaction_root != expected_root:
             _raise("manifest_invalid")
-        with _publication_exclusivity(self._project_root):
-            with ExitStack() as resources:
-                paths = _InspectionPaths(resources)
-                filesystem_fd = _open_directory(
-                    Path("/"), missing_code="publish_io", invalid_code="publish_io"
-                )
-                resources.callback(os.close, filesystem_fd)
-                project = _require_real_directory(
-                    self._project_root, code="manifest_invalid"
-                )
-                project_fd = paths.directory(
-                    filesystem_fd, project.parts[1:],
-                    code="target_drift",
-                )
+        with ExitStack() as resources:
+            paths = _InspectionPaths(resources)
+            filesystem_fd = _open_directory(
+                Path("/"), missing_code="publish_io", invalid_code="publish_io"
+            )
+            resources.callback(os.close, filesystem_fd)
+            project = _require_real_directory(
+                self._project_root, code="manifest_invalid"
+            )
+            project_fd = paths.directory(
+                filesystem_fd, project.parts[1:], code="target_drift"
+            )
+            with _publication_exclusivity(self._project_root):
+                # Bind the acquired lock to the root retained before acquisition.
+                paths.verify()
                 verified, pinned = _load_prepared_pinned(
                     self._project_root, self._squad_dir, marker
                 )
