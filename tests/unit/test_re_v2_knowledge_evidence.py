@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.re_v2.canonical import canonical_json_bytes
 from harness.re_v2.ledger import ObjectStore
 from harness.re_v2 import knowledge_evidence
 from tests.unit.test_re_v2_protocol_28_evidence import _fixture
@@ -238,6 +239,31 @@ def test_safe_output_passes_unchanged_without_quarantine(tmp_path: Path) -> None
     quarantine = ObjectStore(tmp_path / "quarantine")
     assert gate(payload, quarantine) == payload
     assert not any(path.is_file() for path in quarantine.root.rglob("*"))
+
+
+@pytest.mark.unit
+def test_provider_context_accepts_masked_assignment_after_json_embedding() -> None:
+    payload = canonical_json_bytes(
+        {"snapshot_evidence": {"text": 'api_token = "***"'}}
+    )
+
+    assert _api().validate_provider_context(payload) == payload
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value",
+    ['api_token = "fixture-sensitive-value"', "ghp_" + "Q" * 36],
+)
+def test_provider_context_still_refuses_unmasked_sensitive_values(
+    value: str,
+) -> None:
+    payload = canonical_json_bytes({"snapshot_evidence": {"text": value}})
+
+    with pytest.raises(
+        _api().KnowledgeEvidenceError, match="unsafe-provider-context"
+    ):
+        _api().validate_provider_context(payload)
 
 
 @pytest.mark.unit

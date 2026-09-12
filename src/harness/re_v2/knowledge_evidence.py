@@ -384,6 +384,67 @@ def validate_provider_output(payload: bytes) -> bytes:
     raise KnowledgeEvidenceError("unsafe-provider-output")
 
 
+def validate_provider_context(
+    payload: bytes, *, max_bytes: int = _MAX_CONTEXT_BYTES
+) -> bytes:
+    """Validate controller-authored canonical JSON without escaped-value ambiguity.
+
+    Provider output is screened as raw bytes before retention.  A later prompt
+    context is assembled from those screened objects plus independently screened
+    snapshot evidence.  Reapplying the raw-output scanner to that enclosing JSON
+    can misread a safely masked value such as ``token = \"***\"`` once its quotes
+    are JSON-escaped.  Context validation instead inspects decoded string values
+    and explicit scalar key/value pairs while retaining exact canonical-JSON and
+    size requirements.
+    """
+    if (
+        not isinstance(payload, bytes)
+        or type(max_bytes) is not int
+        or max_bytes <= 0
+        or len(payload) > max_bytes
+    ):
+        raise KnowledgeEvidenceError("provider-context-bound")
+    duplicate = False
+
+    def decode_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        nonlocal duplicate
+        keys = [key for key, _value in pairs]
+        duplicate = duplicate or len(keys) != len(set(keys))
+        return dict(pairs)
+
+    try:
+        decoded = json.loads(
+            payload.decode("utf-8"), object_pairs_hook=decode_pairs
+        )
+        if duplicate or canonical_json_bytes(decoded) != payload:
+            raise KnowledgeEvidenceError("uninspectable-provider-context")
+
+        unsafe = False
+
+        def inspect(value: object) -> None:
+            nonlocal unsafe
+            if isinstance(value, str):
+                unsafe = unsafe or bool(_secret_spans(value))
+            elif isinstance(value, list):
+                for item in value:
+                    inspect(item)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    unsafe = unsafe or bool(_secret_spans(key))
+                    if isinstance(item, str):
+                        unsafe = unsafe or bool(_secret_spans(f"{key}: {item}"))
+                    inspect(item)
+
+        inspect(decoded)
+        if not unsafe:
+            return payload
+    except KnowledgeEvidenceError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+        raise KnowledgeEvidenceError("uninspectable-provider-context") from None
+    raise KnowledgeEvidenceError("unsafe-provider-context")
+
+
 def screen_provider_output(payload: bytes, quarantine: ObjectStore) -> bytes:
     """Screen before ordinary logs/artifacts; preserve clean output for parsing.
 

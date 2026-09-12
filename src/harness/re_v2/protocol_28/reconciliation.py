@@ -10,7 +10,10 @@ import json
 from typing import Literal
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
-from harness.re_v2.knowledge_evidence import validate_provider_output
+from harness.re_v2.knowledge_evidence import (
+    validate_provider_context,
+    validate_provider_output,
+)
 from harness.re_v2.protocol_28.model import KnowledgeValueV1
 from harness.re_v2.protocol_28.debt import KnowledgeDebtCandidateV1, KnowledgeDebtResolutionCandidateV1
 
@@ -378,7 +381,7 @@ def _reconciliation_context(context, active, view, work, *, role, candidate=None
         context.inputs.exhaustive_policy.max_candidate_output_bytes if role == 'verifier' else 0)
     if len(payload) > maximum:
         raise ValueError('reconciliation-context-bound')
-    validate_provider_output(payload)
+    validate_provider_context(payload, max_bytes=maximum)
     return payload
 
 
