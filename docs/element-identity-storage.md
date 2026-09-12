@@ -154,7 +154,14 @@ cross-family pairs, missing endpoints and chains produce `invalid_range` for the
 whole expression; qualification takes precedence as
 `unsupported_qualified_reference`. No shorter singleton escapes a rejected
 interval. An ASCII dash followed by prose, as in FR-001 - implementation note,
-leaves an ordinary singleton. Discovery and history consumers still block
+leaves an ordinary singleton. Repeated separators after an identity interval
+starts remain one rejected expression. For en dash, em dash and two dots,
+an immediately adjacent bare atom is retained as an unsupported endpoint even
+across whitespace: `See ..FR-001` includes See in its diagnostic span. An
+explicit enclosing expression wrapper or ordinary delimiter separates outside
+prose; `See` followed by the inline-code expression `..FR-001` diagnoses only
+the expression. Query-position wrappers within a qualified locator are literal
+locator content and cannot detach a local ID. Discovery and history consumers still block
 interval application and qualifications. This scanner is not a namespace
 resolver, historical-source authenticator or semantic assessor. Managed
 consumers remain inactive, and explicit historical reconciliation remains

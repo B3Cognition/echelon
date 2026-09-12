@@ -109,6 +109,24 @@ def test_internal_locator_wrappers_cannot_detach_a_local_id(locator):
     assert ("See " + locator)[diagnostic.span.start:diagnostic.span.end] == locator
 
 
+@pytest.mark.parametrize("prefix", ["https://example.org?", "https://example.org?q=", "other/file.md?", "other/file.md?q=", "scope::value?key="])
+@pytest.mark.parametrize("wrapper", ["`", "``", "**", "*", "__", "_"])
+def test_query_position_wrappers_remain_part_of_the_complete_locator(prefix, wrapper):
+    locator = f"{prefix}{wrapper}FR-001{wrapper}"
+    text = f"Résumé ⚡\r\nSee {locator}."
+    result = parse(text)
+    assert not result.references
+    diagnostic, = result.diagnostics
+    assert diagnostic.code == "unsupported_qualified_reference"
+    assert (text[diagnostic.span.start:diagnostic.span.end], diagnostic.span.line) == (locator, 2)
+
+
+def test_metadata_assignment_wrappers_still_enclose_independent_references():
+    result = parse("req=`FR-001` depends=**T-002**")
+    assert not result.diagnostics
+    assert [r.target_id for r in result.references] == ["FR-001", "T-002"]
+
+
 @pytest.mark.parametrize("source", ["` FR-001. `", "`` FR-001. ``", "`prose FR-001. more prose`"])
 def test_code_span_whitespace_does_not_make_literal_dot_prose_punctuation(source):
     result = parse("See " + source)
@@ -144,7 +162,8 @@ def test_invalid_intervals_never_leak_either_endpoint(expression, wrapper):
     assert not result.references
     diagnostic, = result.diagnostics
     assert diagnostic.code == "invalid_range"
-    assert text[diagnostic.span.start:diagnostic.span.end] == expression
+    expected = "See " + expression if not wrapper and expression.startswith(("..", "–")) else expression
+    assert text[diagnostic.span.start:diagnostic.span.end] == expected
 
 
 @pytest.mark.parametrize("expression", ["scope::FR-001..FR-003", "FR-001..scope::FR-003", "other/FR-001.md–FR-003", "FR-001–other/FR-003.md", "investigation/FR-001.md..FR-003", "FR-001..investigation/FR-003.md", "scope::FR-001.other..FR-003"])
@@ -202,6 +221,37 @@ def test_ascii_interval_without_right_endpoint_is_diagnostic():
     diagnostic, = result.diagnostics
     assert diagnostic.code == "invalid_range"
     assert text[diagnostic.span.start:diagnostic.span.end] == "FR-001 -"
+
+
+@pytest.mark.parametrize("expression", ["FR-001 - - FR-003", "FR-001 - - - FR-003", "FR-001 - – FR-003", "FR-001 – - FR-003", "FR-001 - -", "FR-001 - - unsupported", "FR-001 - - scope::FR-003"])
+def test_repeated_ascii_separators_cannot_return_singleton_endpoints(expression):
+    result = parse(expression)
+    assert not result.references
+    diagnostic, = result.diagnostics
+    assert diagnostic.code == ("unsupported_qualified_reference" if "scope::" in expression else "invalid_range")
+    assert expression[diagnostic.span.start:diagnostic.span.end] == expression
+
+
+@pytest.mark.parametrize("separator", ["–", "—", ".."])
+@pytest.mark.parametrize("expression", ["FR-001 {sep} unsupported", "unsupported {sep} FR-001", "See {sep}FR-001"])
+def test_spaced_unsupported_interval_endpoint_is_retained_in_full(separator, expression):
+    text = expression.format(sep=separator)
+    result = parse(text)
+    assert not result.references
+    diagnostic, = result.diagnostics
+    assert diagnostic.code == "invalid_range"
+    assert text[diagnostic.span.start:diagnostic.span.end] == text
+
+
+@pytest.mark.parametrize("wrapper", ["`", "**", "__"])
+@pytest.mark.parametrize("expression", ["..FR-001", "FR-001.."])
+def test_enclosing_interval_wrapper_separates_adjacent_prose(wrapper, expression):
+    text = f"See {wrapper}{expression}{wrapper} afterwards"
+    result = parse(text)
+    assert not result.references
+    diagnostic, = result.diagnostics
+    assert diagnostic.code == "invalid_range"
+    assert text[diagnostic.span.start:diagnostic.span.end] == expression
 
 
 def test_scanner_is_pure_and_does_not_extract_excluded_prefixes():
