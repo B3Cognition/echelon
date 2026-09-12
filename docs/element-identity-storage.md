@@ -235,6 +235,43 @@ it is not relabeled as proof of new content. Complete crash recovery across arti
 promotion, ledger publication and graph projection remains future completion-owner
 integration and must prevent duplicate allocation and false completion.
 
+## Selected source observation manifest
+
+`harness.squad_source_manifest.snapshot_source_manifest(trees=..., files=...)`
+is an inactive, pure fingerprinting helper for the exact immutable tree and file
+tuples returned by a successful selected-source capture. It does not accept the
+publication snapshot and does not inspect operations, marker, transaction ID or
+promotion state. The same sources therefore produce the same value across
+transactions, while a valid observation made before, partway through or after
+publication can produce a different value as the selected current sources change.
+That difference describes only observation; it does not classify publication
+state or authorize completion.
+
+The version-1 payload is compact canonical ASCII JSON with exactly `version`,
+`trees` and `files` at its root. It retains the selection's canonical paths,
+string-valued existence flags, complete directory membership and decimal modes,
+and regular-file or missing image descriptors. File descriptors retain the exact
+lowercase content SHA-256 and decimal mode; missing files retain null hash and
+mode. Original bytes and `content_base64` are deliberately omitted only after the
+shared initial-baseline validators have checked those bytes against every retained
+image. `SourceManifestSnapshot.sha256` is the lowercase SHA-256 of the exact ASCII
+payload without a prefix. Both result fields are detached strings on a frozen,
+slotted value.
+
+Only the caller's explicit tree and file selection participates. Equal
+fingerprints make no claim about unselected project content, dependency-selection
+completeness, source ownership, semantic approval or accepted authority. The
+factory performs no filesystem access, namespace lookup, parsing, provider work,
+clock/random operation, registration, storage or compare-and-swap. In particular,
+it neither replaces the initial byte-retention codec nor weakens that codec's
+pre-promotion guard: crash recovery still requires retained original bytes.
+
+A later completion owner must durably bind a complete declared selection to the
+appropriate namespace and publication receipt, store its accepted manifest,
+recapture under the existing guarded scope, and compare against that authority
+while coordinating source, ledger and graph completion. No accepted-source head,
+schema, provider API or controller activation is introduced here.
+
 ## Captured candidate source assembly
 
 `harness.element_identity_candidate_sources.assemble_candidate_sources` is an
