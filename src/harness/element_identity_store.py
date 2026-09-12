@@ -31,7 +31,7 @@ from harness.element_identity_candidate import (
 )
 from harness.element_identity_bundle import EvidenceInventoryContext, LexiconProjectionSource
 from harness.element_identity_issue_candidate import IssueReportContext
-from harness.element_identity_publication import PublicationIntentRequest
+from harness.element_identity_publication import PublicationIntentRequest, PublicationOperation
 from harness.element_identity_managed import ManagedIdentityRequest, encode_managed_identity_request
 
 if TYPE_CHECKING:
@@ -841,6 +841,22 @@ class IdentityStore:
         with self._transaction() as connection:
             connection.execute("PRAGMA query_only=ON")
             return capture(connection, self, spec_id)
+
+    def preview_identity_history(self, *, spec_id: str,
+                                 operations: tuple[PublicationOperation, ...] = ()) -> IdentityHistorySnapshot:
+        """Observe exact proposed materialized history for new, unclaimed operations."""
+        from harness.element_identity_publication import validated_operations
+        from harness.element_identity_snapshot_preview import preview
+
+        try:
+            lifecycle.text(spec_id, "spec_id")
+            operations = validated_operations(operations)
+            with self._transaction() as connection:
+                connection.execute("PRAGMA query_only=ON")
+                return preview(connection, self, spec_id, operations)
+        except Exception:
+            pass
+        raise IdentityStoreError("invalid proposed identity history authority or request")
 
     @_public
     def audit(self) -> dict:

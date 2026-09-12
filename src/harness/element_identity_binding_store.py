@@ -43,6 +43,11 @@ def _entry(spec_id, operation_id, index, payload, method):
     return result
 
 
+def materialized_row(spec_id, operation_id, index, payload, method):
+    result = _entry(spec_id, operation_id, index, payload, method)
+    return result | {"payload_sha256": authority._digest([method, result])}
+
+
 def receipt(connection, store, method, spec_id, operation_id):
     """Authenticate complete retained operation, including all record associations."""
     operation = connection.execute("SELECT method,spec_id,digest FROM operations WHERE operation_id=?",
@@ -62,7 +67,7 @@ def receipt(connection, store, method, spec_id, operation_id):
         payload = {field.name: row[field.name] for field in fields(entry_type)}
         entry_type(**payload)
         result = _entry(spec_id, operation_id, index, payload, method)
-        if dict(row) != result | {"payload_sha256": authority._digest([method, result])}:
+        if dict(row) != materialized_row(spec_id, operation_id, index, payload, method):
             raise ValueError("binding record payload or operation binding is damaged")
         _target(connection, store, spec_id, payload, method)
         payloads.append(payload)
@@ -84,7 +89,7 @@ def record(connection, store, method, spec_id, operation_id, payloads):
     for index, payload in enumerate(payloads, 1):
         _target(connection, store, spec_id, payload, method)
         result = _entry(spec_id, operation_id, index, payload, method)
-        row = result | {"payload_sha256": authority._digest([method, result])}
+        row = materialized_row(spec_id, operation_id, index, payload, method)
         connection.execute(f"INSERT INTO {method} ({','.join(row)}) VALUES ({','.join('?' for _ in row)})",
                            tuple(row.values()))
         results.append(result)

@@ -1003,6 +1003,55 @@ integrity means that the ledger is internally consistent; it does not establish
 semantic correctness, approved evidence, current publication, or managed
 readiness.
 
+### Proposed materialized history before publication intent
+
+`IdentityStore.preview_identity_history(spec_id=..., operations=())` returns the
+existing frozen `IdentityHistorySnapshot` described below. The spec ID must be an
+exact nonblank, NUL-free UTF-8 string. Operations must be an exact tuple of exact
+`PublicationOperation` values, each using the existing canonical child request
+encoding. Methods are unique and ordered `lifecycle`, `reference_claims`, then
+`issue_occurrences`; operation IDs are unique. Values are revalidated and detached
+before transaction use, including damaged frozen records. An empty tuple is valid.
+
+This is a pre-intent observation for new, globally unclaimed child operations.
+It rejects IDs already executed or permanently claimed by any publication in any
+spec, and rejects a pending publication for the selected spec even for an empty
+tuple. `identity_history` remains available during pending state. Another spec's
+pending publication does not prevent an otherwise valid independent preview.
+
+Preview uses one existing query-only transaction and the retained snapshot's full
+authority audit. It overlays the journal's shared lifecycle plan and projected
+binding validation on detached complete history, using the existing writers' row
+construction and the same canonical ordering and encoding. Existing entities keep
+their immutable identity fields; all prior revisions, lineage, references and
+occurrences remain present. Imports remain unassessed unless explicitly adopted.
+Historical active issue occurrences remain valid after retirement, and nullable
+reference revisions retain their existing unassessed meaning. Candidate-only
+active-dependency rules are not additional preview policy.
+
+On an unchanged accepted database, applying exactly those child operations through
+the existing journal produces byte-for-byte equal retained history payload and
+hash. The wire remains version `"1"` with no proposed-state metadata. No parent,
+source manifest, seal, receipt, reservation or claim is fabricated or written.
+Planning does not simulate writes, use savepoints or copy SQLite. Ordinary input,
+helper and storage failures produce a fixed bounded `IdentityStoreError` without
+retained cause/context; `BaseException` propagation and transaction cleanup remain
+intact.
+
+The returned value has no lease, receipt or reserved baseline. A later legitimate
+write can stale the original proposal; a fresh preview can observe changed
+history, and actual prepare still owns parent-ID validation, new claims,
+baseline comparison and recovery. Full history capture scales with retained
+history; this API adds no ledger scan to allocation or managed-context checks.
+
+The existing graph projection and rendering helpers can use this value to compute
+`spec-artifact-graph.json` before sealing the complete source tree. Preview does
+not certify rendered Markdown, captured graph source rows, future namespace
+selection, semantic evidence, publication freshness or runtime metadata. A
+captured-source graph builder, source/semantic authorization, complete staged
+producer scope, coordinated completion/recovery and bounded repair still require
+integration. This API activates no controller, runtime or provider path.
+
 ### Canonical materialized identity history observation
 
 `IdentityStore.identity_history(spec_id=...)` returns a frozen

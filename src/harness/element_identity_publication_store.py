@@ -46,8 +46,12 @@ def _preparation(connection, row):
 
 
 def _children(request, spec_id):
+    return operation_children(request.operations, spec_id)
+
+
+def operation_children(operations, spec_id):
     children = []
-    for operation in request.operations:
+    for operation in operations:
         entries = decode_request(operation.method, operation.payload)
         if operation.method == "lifecycle":
             payload = lifecycle.request(entries)[1]
@@ -60,14 +64,27 @@ def _children(request, spec_id):
     return children
 
 
-def _plan(connection, store, spec_id, children):
+def planned_effects(connection, store, spec_id, children):
+    """Plan lifecycle and validate all bindings using the journal's projected view."""
     batches = {operation.method: entries for operation, entries, _, _ in children}
     changes = batches.get("lifecycle", ())
     planned, links = lifecycle_store.plan_changes(connection, store, spec_id, changes) if changes else ([], [])
     binding_preview.validate_projected(connection, store, spec_id, changes=changes,
                                        claims=batches.get("reference_claims", ()),
                                        occurrences=batches.get("issue_occurrences", ()))
-    return authority._json({"revisions": planned, "lineage": links})
+    return {"revisions": planned, "lineage": links}
+
+
+def _plan(connection, store, spec_id, children):
+    return authority._json(planned_effects(connection, store, spec_id, children))
+
+
+def require_new_children(connection, children):
+    """Require globally unused operation IDs, including permanent child claims."""
+    for op, _, _, _ in children:
+        if (connection.execute("SELECT 1 FROM operations WHERE operation_id=?", (op.operation_id,)).fetchone()
+                or connection.execute(_CLAIM, (op.operation_id,)).fetchone()):
+            raise ValueError("publication child operation_id already executed or claimed")
 
 
 def _stored_json(payload):
@@ -306,10 +323,7 @@ def prepare(connection, store, spec_id, operation_id, request):
             raise ValueError("publication operation_id was already used with different arguments")
         return _preparation(connection, loaded[0])
     children = _children(request, spec_id)
-    for op, _, _, _ in children:
-        if (connection.execute("SELECT 1 FROM operations WHERE operation_id=?", (op.operation_id,)).fetchone()
-                or connection.execute(_CLAIM, (op.operation_id,)).fetchone()):
-            raise ValueError("publication child operation_id already executed or claimed")
+    require_new_children(connection, children)
     plan = _plan(connection, store, spec_id, children)
     digest = authority._digest(["identity_publication", spec_id, operation_id, request_json, _hash(plan)])
     store._operation(connection, operation_id, "identity_publication", spec_id, digest)

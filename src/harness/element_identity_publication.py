@@ -72,24 +72,31 @@ class PublicationIntentRequest:
         _validate(self)
 
 
+def validated_operations(operations):
+    """Validate and detach the canonical ordered child operations, without a parent."""
+    if type(operations) is not tuple:
+        raise ValueError("operations must be an exact tuple")
+    previous, seen, detached = -1, set(), []
+    for operation in operations:
+        if type(operation) is not PublicationOperation:
+            raise ValueError("operation must have its exact immutable type")
+        copy = PublicationOperation(operation.method, operation.operation_id, operation.payload)
+        index = _METHODS.index(copy.method)
+        if index <= previous or copy.operation_id in seen:
+            raise ValueError("operations must be unique and in method order")
+        previous = index
+        seen.add(copy.operation_id)
+        detached.append(copy)
+    return tuple(detached)
+
+
 def _validate(request):
     try:
         if type(request) is not PublicationIntentRequest:
             raise ValueError("request must have its exact immutable type")
         sha256(request.manifest_sha256)
         text(request.recovery_payload, "recovery_payload")
-        if type(request.operations) is not tuple:
-            raise ValueError("operations must be an exact tuple")
-        previous, seen = -1, set()
-        for operation in request.operations:
-            if type(operation) is not PublicationOperation:
-                raise ValueError("operation must have its exact immutable type")
-            PublicationOperation.__post_init__(operation)
-            index = _METHODS.index(operation.method)
-            if index <= previous or operation.operation_id in seen:
-                raise ValueError("operations must be unique and in method order")
-            previous = index
-            seen.add(operation.operation_id)
+        validated_operations(request.operations)
         if request.sources is not None:
             baseline = _source_baseline(request.sources)
             if baseline.publication.marker.manifest_sha256 != request.manifest_sha256:

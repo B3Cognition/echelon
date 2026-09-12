@@ -5,6 +5,18 @@ import hashlib
 from harness import element_identity_lifecycle as lifecycle
 
 
+def revision_row(spec_id, operation_id, planned):
+    label, revision, subject, content, status, reason, _, _ = planned
+    return dict(spec_id=spec_id, element_id=label, revision=revision, subject=subject,
+                content=content, content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                status=status, reason=reason, operation_id=operation_id)
+
+
+def lineage_row(operation_id, link):
+    return dict(zip(("spec_id", "predecessor_id", "predecessor_revision", "successor_id",
+                     "successor_revision", "kind", "reason", "operation_id"), (*link, operation_id)))
+
+
 def apply_changes(connection, store, spec_id, operation_id, changes):
     """Apply a validated lifecycle operation in the caller's active transaction."""
     # Import locally so this connection-owned helper remains safe in the store's
@@ -38,9 +50,8 @@ def apply_changes(connection, store, spec_id, operation_id, changes):
             "INSERT INTO revisions "
             "(spec_id,element_id,revision,subject,content,content_sha256,status,reason,operation_id) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
-            (spec_id, label, revision, subject, content,
-             hashlib.sha256(content.encode("utf-8")).hexdigest(),
-             status, reason, operation_id),
+            tuple(revision_row(spec_id, operation_id,
+                  (label, revision, subject, content, status, reason, kind, ordinal)).values()),
         )
         connection.execute(
             "INSERT INTO lifecycle_heads (spec_id,element_id,status,revision) VALUES (?,?,?,?) "
@@ -51,7 +62,7 @@ def apply_changes(connection, store, spec_id, operation_id, changes):
         "INSERT INTO lifecycle_lineage "
         "(spec_id,predecessor_id,predecessor_revision,successor_id,successor_revision,kind,reason,operation_id) "
         "VALUES (?,?,?,?,?,?,?,?)",
-        ((*link, operation_id) for link in links),
+        (tuple(lineage_row(operation_id, link).values()) for link in links),
     )
     result = [
         {

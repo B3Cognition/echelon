@@ -16,6 +16,24 @@ def _rows(connection, query, spec_id):
     return [dict(row) for row in connection.execute(query, (spec_id,))]
 
 
+def canonical_snapshot(value) -> IdentityHistorySnapshot:
+    """Encode detached complete rows in the retained snapshot's exact SQL order."""
+    def entity_key(row):
+        ordinal = row["ordinal"]
+        return row["kind"], ordinal is None, len(ordinal or ""), ordinal or "", row["element_id"]
+
+    value["entities"].sort(key=entity_key)
+    keys = {row["element_id"]: entity_key(row) for row in value["entities"]}
+    value["revisions"].sort(key=lambda row: (
+        keys[row["element_id"]], len(row["revision"]), row["revision"]))
+    value["lineage"].sort(key=lambda row: (
+        keys[row["predecessor_id"]], keys[row["successor_id"]], row["kind"], row["operation_id"]))
+    for method in ("reference_claims", "issue_occurrences"):
+        value[method].sort(key=lambda row: (
+            row["operation_id"], len(row["entry_index"]), row["entry_index"]))
+    return IdentityHistorySnapshot(payload=authority._json(value), sha256=authority._digest(value))
+
+
 @authority._public
 def capture(connection, store, spec_id: str) -> IdentityHistorySnapshot:
     """Observe one spec's complete retained materialized history in a caller transaction."""
@@ -81,5 +99,4 @@ def capture(connection, store, spec_id: str) -> IdentityHistorySnapshot:
         "reference_claims": reference_claims,
         "issue_occurrences": issue_occurrences,
     }
-    payload = authority._json(value)
-    return IdentityHistorySnapshot(payload=payload, sha256=authority._digest(value))
+    return canonical_snapshot(value)
