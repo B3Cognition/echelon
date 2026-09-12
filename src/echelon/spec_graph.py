@@ -788,24 +788,14 @@ def _add_canonical_memory(
         report = _UnavailableMemoryReport(type(exc).__name__)
         planned_rows = locals().get("planned_rows", [])
 
-    normalized = _normalized_memory_audit(report)
-    audit_hash = _canonical_digest(normalized)
-    status = str(getattr(report, "status", "unavailable"))
-    receipt = MemoryReceipt(
-        domain="canonical-spec",
-        source_set_digest=source_set_digest,
-        audit_hash=audit_hash,
-        status=status,
+    from echelon.spec_graph_memory import _memory_receipt_records
+
+    receipt, audit_input = _memory_receipt_records(
+        domain="canonical-spec", virtual_path=virtual_path,
+        source_set_digest=source_set_digest, report=report, required=True,
     )
     receipts.append(receipt)
-    inputs[virtual_path] = GraphInput(
-        path=virtual_path,
-        hash=audit_hash,
-        role="memory_audit_report",
-        required=True,
-        status=status,
-        source_set_digest=source_set_digest,
-    )
+    inputs[virtual_path] = audit_input
     _add_drawer_rows(
         spec_dir,
         planned_rows,
@@ -967,25 +957,14 @@ def _add_artifact_memory_domain(
     except (Exception, SystemExit) as exc:
         report = _UnavailableMemoryReport(type(exc).__name__)
 
-    normalized = _normalized_memory_audit(report)
-    audit_hash = _canonical_digest(normalized)
-    status = str(getattr(report, "status", "unavailable"))
-    receipts.append(
-        MemoryReceipt(
-            domain=domain,
-            source_set_digest=source_set_digest,
-            audit_hash=audit_hash,
-            status=status,
-        )
+    from echelon.spec_graph_memory import _memory_receipt_records
+
+    receipt, audit_input = _memory_receipt_records(
+        domain=domain, virtual_path=virtual_path,
+        source_set_digest=source_set_digest, report=report, required=required,
     )
-    inputs[virtual_path] = GraphInput(
-        path=virtual_path,
-        hash=audit_hash,
-        role="memory_audit_report",
-        required=required,
-        status=status,
-        source_set_digest=source_set_digest,
-    )
+    receipts.append(receipt)
+    inputs[virtual_path] = audit_input
     _add_drawer_rows(
         spec_dir,
         planned_rows,
@@ -1005,69 +984,9 @@ def _add_artifact_memory_domain(
 
 
 def _project_memory_audit(report: object, drawer_ids: set[str]) -> object:
-    projected: dict[str, list[str]] = {}
-    fail_fields = (
-        "missing",
-        "stale",
-        "wrong_wing",
-        "wrong_room",
-        "non_canonical",
-        "lifecycle_excluded",
-    )
-    for field in (*fail_fields, "duplicate"):
-        projected[field] = sorted(
-            value
-            for value in getattr(report, field, [])
-            if value in drawer_ids
-        )
-    projected["errors"] = sorted(
-        value
-        for value in getattr(report, "errors", [])
-        if any(str(value).startswith(drawer_id) for drawer_id in drawer_ids)
-    )
-    if str(getattr(report, "status", "")) == "unavailable":
-        status = "unavailable"
-    elif any(projected[field] for field in fail_fields):
-        status = "fail"
-    elif projected["duplicate"] or projected["errors"]:
-        status = "warn"
-    else:
-        status = "pass"
-    return _ProjectedMemoryReport(
-        report=report,
-        status=status,
-        expected_count=len(drawer_ids),
-        issues=projected,
-    )
+    from echelon.spec_graph_memory import _project_memory_audit as project
 
-
-class _ProjectedMemoryReport:
-    def __init__(
-        self,
-        *,
-        report: object,
-        status: str,
-        expected_count: int,
-        issues: Mapping[str, list[str]],
-    ) -> None:
-        self.schema_version = int(getattr(report, "schema_version", 1))
-        self.wing = getattr(report, "wing", None)
-        self.status = status
-        self.artifact_count = 0
-        self.expected_count = expected_count
-        failed_ids: set[str] = set()
-        for field in (
-            "missing",
-            "stale",
-            "wrong_wing",
-            "wrong_room",
-            "non_canonical",
-            "lifecycle_excluded",
-        ):
-            failed_ids.update(issues[field])
-        self.present_current_count = expected_count - len(failed_ids)
-        for field, values in issues.items():
-            setattr(self, field, values)
+    return project(report, drawer_ids)
 
 
 def _add_drawer_rows(
@@ -1079,83 +998,16 @@ def _add_drawer_rows(
     *,
     source_artifact_kind: Mapping[str, str],
 ) -> None:
-    issue_fields = (
-        "missing",
-        "stale",
-        "wrong_wing",
-        "wrong_room",
-        "non_canonical",
-        "lifecycle_excluded",
-        "duplicate",
-    )
-    issues_by_id: dict[str, list[str]] = {}
-    for field in issue_fields:
-        values = getattr(report, field, [])
-        if not isinstance(values, list):
-            continue
-        for drawer_id in values:
-            if isinstance(drawer_id, str):
-                issues_by_id.setdefault(drawer_id, []).append(field)
-    status = str(getattr(report, "status", "unavailable"))
+    from echelon.spec_graph_memory import _drawer_records
 
-    for row in planned_rows:
-        drawer_id = str(getattr(row, "drawer_id"))
-        source = str(getattr(row, "source"))
-        requirement_id = str(getattr(row, "requirement_id", ""))
-        issue_codes = sorted(issues_by_id.get(drawer_id, []))
-        if status == "unavailable":
-            presence = "unavailable"
-            reconciliation_status = "unavailable"
-        elif "missing" in issue_codes:
-            presence = "missing"
-            reconciliation_status = "fail"
-        elif issue_codes:
-            presence = "invalid"
-            reconciliation_status = "fail"
+    for record in _drawer_records(
+        spec_dir.name, planned_rows, report, nodes.keys(),
+        source_artifact_kind=source_artifact_kind,
+    ):
+        if isinstance(record, GraphNode):
+            nodes[record.id] = record
         else:
-            presence = "present"
-            reconciliation_status = "pass"
-
-        node_id = f"drawer:{spec_dir.name}:{drawer_id}"
-        nodes[node_id] = GraphNode(
-            node_id,
-            "MemPalaceDrawer",
-            {
-                "drawer_id": drawer_id,
-                "source_path": source,
-                "room": str(getattr(row, "room", "")),
-                "artifact_kind": source_artifact_kind.get(source, "unknown"),
-                "artifact_hash": str(getattr(row, "artifact_hash", "")),
-                "content_hash": str(
-                    getattr(row, "requirement_content_sha256", "")
-                ),
-                "presence": presence,
-                "reconciliation_status": reconciliation_status,
-                "issue_codes": issue_codes,
-            },
-        )
-        requirement_node = f"req:{spec_dir.name}:{requirement_id}"
-        artifact_node = f"artifact:{spec_dir.name}:{source}"
-        source_node = (
-            requirement_node
-            if requirement_node in nodes and source_artifact_kind.get(source) == "requirement"
-            else artifact_node
-        )
-        if source_node not in nodes:
-            raise SpecGraphError(
-                f"memory planner source has no Artifact node: {source}"
-            )
-        edges.append(
-            GraphEdge(
-                source_node,
-                "STORED_AS",
-                node_id,
-                {
-                    "presence": presence,
-                    "reconciliation_status": reconciliation_status,
-                },
-            )
-        )
+            edges.append(record)
 
 
 def _memory_source_set_digest(snapshots: list[object]) -> str:
@@ -1177,33 +1029,15 @@ def _memory_source_set_digest(snapshots: list[object]) -> str:
         }
         for snapshot in snapshots
     ]
-    return _canonical_digest(sorted(records, key=lambda item: item["path"]))
+    from echelon.spec_graph_memory import _source_records_digest
+
+    return _source_records_digest(records)
 
 
 def _normalized_memory_audit(report: object) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "schema_version": int(getattr(report, "schema_version", 1)),
-        "wing": getattr(report, "wing", None),
-        "status": str(getattr(report, "status", "unavailable")),
-        "artifact_count": int(getattr(report, "artifact_count", 0)),
-        "expected_count": int(getattr(report, "expected_count", 0)),
-        "present_current_count": int(
-            getattr(report, "present_current_count", 0)
-        ),
-    }
-    for field in (
-        "missing",
-        "stale",
-        "wrong_wing",
-        "wrong_room",
-        "duplicate",
-        "non_canonical",
-        "lifecycle_excluded",
-        "errors",
-    ):
-        values = getattr(report, field, [])
-        payload[field] = sorted(str(value) for value in values)
-    return payload
+    from echelon.spec_graph_memory import _normalized_memory_audit as normalize
+
+    return normalize(report)
 
 
 class _UnavailableMemoryReport:

@@ -1913,6 +1913,65 @@ source-selection/logical-mapping ownership, identity overlay, graph sealing and
 managed producer/runtime/semantic/completion/bounded-repair integration remain
 required before activation.
 
+## Captured memory graph contributions
+
+`build_memory_graph_contribution(spec_id=..., lifecycle=..., domain=...,
+sources=..., planned_rows=..., audit=..., known_node_ids=...)` projects one
+captured `canonical-spec`, `spec-evidence`, or `published-re` observation. It
+returns a frozen `MemoryGraphContribution` containing only contributed or
+replaced artifact and drawer records, edges, inputs, and one existing
+`MemoryReceipt`. It reuses the existing graph models and both native seven-field
+drawer-plan types without changing their import identities or the graph wire.
+
+`GraphMemorySource` carries a canonical relative POSIX path, exact bytes,
+artifact kind, and source room. Canonical and evidence sources must lie beneath
+`specs/{spec_id}`; RE sources must lie beneath `re`. The boundary validates
+exact types, unique source paths and drawer/node IDs, UTF-8 metadata, SHA-256
+formats, and each row's artifact and canonical-source hashes against the
+supplied bytes. The retained requirement-content hash is a claim, not proof of
+native derivation. No planner or content/secret processor runs in this function.
+Scope and lifecycle validation share the spec-local structure rules.
+
+`GraphMemoryAudit` carries report values and a mandatory `origin`:
+`returned` or `exception`. A returned unavailable report is still returned.
+Exception origin must have the exact existing fallback shape: schema 1, no
+wing, unavailable status, zero counts, empty issue collections, and one nonempty
+exception-class error. Published RE projects only returned reports to selected
+drawer IDs; exception fallbacks bypass that projection. The origin is not added
+to the normalized audit or graph wire and does not authenticate acquisition.
+Counts and status remain observations; partial planned rows can coexist with
+an unavailable report. Canonical and evidence reports are not projected.
+
+Shared transformations retain the existing sorted source-set digest, normalized
+audit hash, virtual audit paths, receipt flags, drawer properties, issue rules,
+and `STORED_AS` relationships. Canonical root `spec.md` is already represented
+by the local structure and is not added again. Other canonical sources replace
+artifact roles with supporting context; evidence uses verification evidence and
+RE uses reverse engineering. Required root-task flags use the supplied lifecycle.
+A requirement source links to a known requirement node only when its artifact
+kind is requirement; otherwise it needs the corresponding artifact endpoint.
+Unrelated known nodes are never copied into the contribution.
+
+The legacy graph helpers retain their real reads, adapter creation, native
+planning, audits, exception handling, partial rows, and conditional RE projection.
+They delegate only the pure transformations and keep their duck-typed defaults,
+string coercions, list-only drawer issues, and incremental updates. Strict
+captured validation is not applied retroactively to those legacy helpers.
+All returned records and nested properties are independently owned. Ordinary
+captured-input failures become bounded `SpecGraphError` values without retaining
+source-bearing exception causes or contexts; process-control exceptions propagate.
+
+This function does not access memory storage, refresh an audit, determine
+currentness, derive a memory context or wing, or claim complete endpoint/source
+selection. The complete graph owner must authenticate captured observations,
+compose domains in legacy order, add the remaining RE/topology and evidence
+selection, and apply the separate retained identity-history projection before
+sealing. Offline composition tests retain original requirement/task keys and
+historical evidence links; legacy memory edges remain explicitly unassessed by
+identity projection. Captured acquisition/reconciliation, full composition and
+sealing, managed source/runtime/producer/semantic/completion, and bounded-repair
+integration remain required. No publication or runtime path is activated here.
+
 ## Focused verification
 
 The unit contracts are in `tests/unit/test_element_identity_store.py`,

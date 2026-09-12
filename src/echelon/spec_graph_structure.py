@@ -296,9 +296,7 @@ def build_spec_graph_structure(
     raise SpecGraphError("invalid captured spec graph structure")
 
 
-def _build_spec_graph_structure(
-    *, spec_id: str, tree: ProjectTreeSnapshot, lifecycle: str,
-) -> SpecGraphStructure:
+def _validate_scope(spec_id: str, lifecycle: str) -> PurePosixPath:
     if (
         type(spec_id) is not str or not spec_id or spec_id != spec_id.strip()
         or spec_id in {".", ".."} or "/" in spec_id or "\\" in spec_id
@@ -308,6 +306,13 @@ def _build_spec_graph_structure(
     spec_id.encode("utf-8")
     if type(lifecycle) is not str or lifecycle not in {"phase_a", "build", "verified", "landed"}:
         raise ValueError("invalid lifecycle")
+    return PurePosixPath("specs", spec_id)
+
+
+def _build_spec_graph_structure(
+    *, spec_id: str, tree: ProjectTreeSnapshot, lifecycle: str,
+) -> SpecGraphStructure:
+    spec_path = _validate_scope(spec_id, lifecycle)
     snapshot_source_manifest(trees=(tree,), files=())
 
     root_parts = PurePosixPath(tree.path).parts
@@ -319,7 +324,6 @@ def _build_spec_graph_structure(
         PurePosixPath(*PurePosixPath(item.path).parts[len(root_parts):]).as_posix()
         for item in tree.directories
     }
-    spec_path = PurePosixPath("specs", spec_id)
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     inputs: dict[str, GraphInput] = {}
