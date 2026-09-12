@@ -410,11 +410,18 @@ def merge_refresh_synthesis_parent(
         else prior_projections[source_id]
         for source_id in sorted(required_ids)
     )
-    payloads = _merge_payloads(
+    merged_payloads = _merge_payloads(
         frozen_overview_payloads(published_parent),
         frozen_overview_payloads(fresh_parent),
         label="source overview",
     )
+    selected_overview_ids = {item.object_hash for item in projections}
+    if not selected_overview_ids <= set(merged_payloads):
+        raise KnowledgeRefreshError("refresh source overview closure is incomplete")
+    payloads = {
+        object_id: merged_payloads[object_id]
+        for object_id in sorted(selected_overview_ids)
+    }
     objects = _merge_payloads(
         published_parent.authority_objects,
         fresh_parent.authority_objects,

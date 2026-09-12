@@ -75,7 +75,9 @@ def _parent(run_id: str, sources: tuple[AcceptedSourceOutcomeV1, ...]) -> Resolv
         for source in sources
     )
     payloads = {
-        item.object_hash: f"# {item.source_id}\n".encode("utf-8")
+        item.object_hash: (
+            f"# {item.source_id}\n\nsource root: {item.source_root_hash}\n"
+        ).encode("utf-8")
         for item in projections
     }
     projections = tuple(
@@ -83,7 +85,9 @@ def _parent(run_id: str, sources: tuple[AcceptedSourceOutcomeV1, ...]) -> Resolv
         for item in projections
     )
     payloads = {
-        item.object_hash: f"# {item.source_id}\n".encode("utf-8")
+        item.object_hash: (
+            f"# {item.source_id}\n\nsource root: {item.source_root_hash}\n"
+        ).encode("utf-8")
         for item in projections
     }
     authority = {
@@ -293,6 +297,9 @@ def test_refresh_merge_replaces_changed_source_and_authenticates_retained_source
         "worker": "not_checked",
     }
     assert merged.checkpoint_origin_run_id == "re-prior-synthesis"
+    assert set(merged._overview_payloads) == {
+        item.object_hash for item in merged._overview_catalog.projections
+    }
 
 
 @pytest.mark.integration
