@@ -405,3 +405,42 @@ def test_upgrade_rejects_lost_reservation_history(tmp_path):
     with pytest.raises(IdentityStoreError):
         IdentityStore.upgrade(tmp_path)
     assert rows(tmp_path) == before
+
+
+@pytest.mark.parametrize("action", ["upgrade", "restore"])
+@pytest.mark.parametrize("damage", ["ordinal", "kind", "subject"])
+def test_current_audit_rejects_corrupt_import_binding(tmp_path, action, damage):
+    store = seeded(tmp_path)
+    store.import_identities(spec_id="demo", operation_id="import", definitions=(("FR-001", "Legacy subject"),))
+    store.reserve(spec_id="demo", kind="NFR", operation_id="nfr", count=1)
+    # Current-schema audits must accept legitimate reservation materialization.
+    IdentityStore.upgrade(tmp_path)
+    if action == "restore":
+        database_dir = tmp_path / "backup"
+        store.backup(database_dir)
+    else:
+        database_dir = tmp_path / ".echelon/identity"
+    with sqlite3.connect(database_dir / "registry.sqlite3") as connection:
+        statement = {
+            "ordinal": "UPDATE entities SET ordinal=NULL WHERE element_id='FR-001'",
+            "kind": "UPDATE entities SET kind='NFR' WHERE element_id='FR-001'",
+            "subject": "UPDATE entities SET subject=' ' WHERE element_id='FR-001'",
+        }[damage]
+        connection.execute(statement)
+    if action == "restore":
+        manifest_path = database_dir / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["database_sha256"] = hashlib.sha256((database_dir / "registry.sqlite3").read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        before = (database_dir / "registry.sqlite3").read_bytes()
+        with pytest.raises(IdentityStoreError):
+            IdentityStore.restore(destination, database_dir)
+        assert not (destination / ".echelon").exists()
+        assert (database_dir / "registry.sqlite3").read_bytes() == before
+    else:
+        before = rows(tmp_path)
+        with pytest.raises(IdentityStoreError):
+            IdentityStore.upgrade(tmp_path)
+        assert rows(tmp_path) == before

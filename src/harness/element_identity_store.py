@@ -670,21 +670,20 @@ class IdentityStore:
             if _integer(row["first_ordinal"]) <= previous.get(key, 0):
                 raise IdentityStoreError("reservation ranges overlap")
             previous[key] = _integer(row["last_ordinal"])
-        if not lifecycle_state:
-            for row in connection.execute("SELECT * FROM entities"):
-                kind, ordinal = _parse_label(row["element_id"])
-                _identifier(row["subject"], "stored subject")
-                if (kind, ordinal) != (row["kind"], row["ordinal"]):
-                    raise IdentityStoreError("legacy identity label and ordinal binding disagree")
-                if ordinal is not None:
-                    claim = connection.execute(
-                        "SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
-                        "AND (first_length,first_ordinal) <= (?,?) "
-                        "ORDER BY first_length DESC,first_ordinal DESC LIMIT 1",
-                        (row["spec_id"], kind, len(ordinal), ordinal),
-                    ).fetchone()
-                    if claim and _integer(ordinal) <= _integer(claim[0]):
-                        raise IdentityStoreError("legacy import overlaps a retained reservation")
+        for row in connection.execute("SELECT * FROM entities"):
+            kind, ordinal = _parse_label(row["element_id"])
+            _identifier(row["subject"], "stored subject")
+            if (kind, ordinal) != (row["kind"], row["ordinal"]):
+                raise IdentityStoreError("identity label, kind and ordinal binding disagree")
+            if not lifecycle_state and ordinal is not None:
+                claim = connection.execute(
+                    "SELECT last_ordinal FROM reservations WHERE spec_id=? AND kind=? "
+                    "AND (first_length,first_ordinal) <= (?,?) "
+                    "ORDER BY first_length DESC,first_ordinal DESC LIMIT 1",
+                    (row["spec_id"], kind, len(ordinal), ordinal),
+                ).fetchone()
+                if claim and _integer(ordinal) <= _integer(claim[0]):
+                    raise IdentityStoreError("legacy import overlaps a retained reservation")
         if lifecycle_state:
             for row in connection.execute("SELECT spec_id,element_id FROM entities"):
                 cls._head(connection, *row)
