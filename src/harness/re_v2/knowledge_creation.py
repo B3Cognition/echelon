@@ -20,7 +20,10 @@ from harness.re_v2.knowledge_accounting import (
     KnowledgeDispatchAccount,
     KnowledgeDispatchPolicy,
 )
-from harness.re_v2.knowledge_acquisition import DiscoveryAcquisition
+from harness.re_v2.knowledge_acquisition import (
+    MAX_DISCOVERY_EXPANSION_ROUNDS,
+    DiscoveryAcquisition,
+)
 from harness.re_v2.knowledge_activation import (
     activate_reviewed_discovery,
     load_reviewed_discovery,
@@ -59,10 +62,18 @@ from harness.re_v2.snapshot import CapturedSnapshot
 _NON_BEHAVIORAL_SUFFIXES = (".gif", ".ico", ".jpeg", ".jpg", ".mp4", ".png")
 _DISCOVERY_RESERVATION_TOKENS = 262_144
 _DISCOVERY_RESERVATION_ACTIVE_MS = 1_800_000
-_DISCOVERY_MAX_SOURCE_TURNS = 6
 _DISCOVERY_MAX_REPAIRS = 2
 _DISCOVERY_MAX_REVIEW_REVISIONS = 1
 _DISCOVERY_MAX_REVIEW_REPAIRS = 2
+# One proposal and review per revision epoch, plus every independently bounded
+# evidence expansion and repair. The aggregate guard must admit every legal
+# bounded path; the narrower guards still prevent non-converging loops.
+_DISCOVERY_MAX_SOURCE_TURNS = (
+    2 * (1 + _DISCOVERY_MAX_REVIEW_REVISIONS)
+    + MAX_DISCOVERY_EXPANSION_ROUNDS
+    + _DISCOVERY_MAX_REPAIRS
+    + _DISCOVERY_MAX_REVIEW_REPAIRS
+)
 
 
 class KnowledgeCreationError(RuntimeError):

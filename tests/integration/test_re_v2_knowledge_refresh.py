@@ -465,6 +465,11 @@ def test_refresh_workflow_continues_changed_analysis_into_merged_publication(
     )
     monkeypatch.setattr(
         knowledge_workflow,
+        "load_protocol_28_run_context",
+        lambda _run: SimpleNamespace(resources=SimpleNamespace(records=())),
+    )
+    monkeypatch.setattr(
+        knowledge_workflow,
         "resolve_reviewed_synthesis_parent",
         lambda _root, _run: fresh,
     )

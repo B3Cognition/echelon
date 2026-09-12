@@ -149,6 +149,95 @@ class _ReviewRepairBackend(_ReadyBackend):
         )
 
 
+def _candidate_for_context(context):
+    payload = _candidate(context)
+    if context.get("schema_version") == 3:
+        target = context["analysis_domain_targets"][0]["key"]
+        payload["domains"][0]["key"] = target
+        for row in (*payload["subjects"], *payload["obligations"]):
+            if row["target"] == "behavior":
+                row["target"] = target
+    return payload
+
+
+def _request_additional_evidence(context):
+    observed_end = {}
+    for row in context["evidence"]:
+        projection = row["projection"]
+        observed_end[projection["path"]] = max(
+            observed_end.get(projection["path"], 0),
+            projection["byte_end"],
+        )
+    record = next(
+        row
+        for row in context["inventory"]
+        if row["object_kind"] == "regular"
+        and row["text_status"] == "eligible_utf8"
+        and observed_end.get(row["path"], 0) < row["byte_count"]
+    )
+    byte_start = observed_end.get(record["path"], 0)
+    return {
+        "schema_version": 1,
+        "kind": "evidence_requests",
+        "source_id": context["source_id"],
+        "requests": [{
+            "obligation_id": context["origin_obligation_id"],
+            "reason_class": "missing-behavior",
+            "selector": {
+                "source_id": context["source_id"],
+                "path": record["path"],
+                "byte_start": byte_start,
+                "byte_end": min(record["byte_count"], byte_start + 8_192),
+            },
+        }],
+    }
+
+
+class _FullTurnEnvelopeBackend(_ReadyBackend):
+    """Exercise the longest ordinary path observed in the live smoke run."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.discovery_contexts = 0
+        self.review_contexts = 0
+
+    def __call__(self, _agent, context, _reservation):
+        value = json.loads(context)
+        kind = value["kind"]
+        self.calls.append(kind)
+        if kind == "untrusted_discovery_context":
+            self.discovery_contexts += 1
+            payload = (
+                _request_additional_evidence(value)
+                if self.discovery_contexts == 1
+                else _candidate_for_context(value)
+            )
+        elif kind == "untrusted_discovery_review_revision_context":
+            payload = _request_additional_evidence(
+                value["safe_discovery_context"]
+            )
+        elif kind == "untrusted_discovery_review_context":
+            self.review_contexts += 1
+            payload = _review_v2(value)
+            if self.review_contexts == 1:
+                payload["subjects"][0]["evidence_ids"] = ["sha256:" + "f" * 64]
+        else:
+            assert kind == "untrusted_discovery_review_repair_context"
+            payload = _review_v2(value["safe_review_context"])
+            payload["verdict"] = "revise"
+            payload["subjects"][0]["verdict"] = "revise"
+            payload["findings"] = [{
+                "target": "source",
+                "reason_class": "ownership",
+                "rationale": "Expand evidence and replace the candidate ownership.",
+                "evidence_ids": payload["subjects"][0]["evidence_ids"],
+            }]
+        return ProviderReply(
+            canonical_json_bytes(payload),
+            NormalizedUsageV1("unavailable", None, {}),
+        )
+
+
 def _options(tmp_path, backend):
     from harness.re_v2.knowledge_creation import ReviewedAnalysisCreationOptions
 
@@ -278,6 +367,43 @@ def test_fresh_creation_repairs_invalid_independent_review(tmp_path):
         "untrusted_discovery_context",
         "untrusted_discovery_review_context",
         "untrusted_discovery_review_repair_context",
+    ]
+
+
+@pytest.mark.unit
+def test_fresh_creation_turn_envelope_allows_reviewed_revision_after_expansion(
+    tmp_path,
+):
+    from harness.re_v2.knowledge_creation import create_or_resume_reviewed_analysis
+
+    backend = _FullTurnEnvelopeBackend()
+    options = _options(tmp_path, backend)
+    snapshot, partition = _fixture(
+        tmp_path / "large",
+        {
+            "README.md": "API service\n",
+            "src/orders/handler.py": "VALUE = 1\n" * 3_000,
+        },
+    )
+    options = replace(
+        options,
+        snapshot=snapshot,
+        workspace_partition=partition,
+    )
+
+    result = create_or_resume_reviewed_analysis(
+        tmp_path / "large" / "workspace", options
+    )
+
+    assert result.state == "ready", result
+    assert backend.calls == [
+        "untrusted_discovery_context",
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_context",
+        "untrusted_discovery_review_repair_context",
+        "untrusted_discovery_review_revision_context",
+        "untrusted_discovery_context",
+        "untrusted_discovery_review_context",
     ]
 
 

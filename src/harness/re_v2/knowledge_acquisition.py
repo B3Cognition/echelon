@@ -22,6 +22,9 @@ from harness.re_v2.protocol_22.schema import digest_value
 from harness.re_v2.run_store import ReV2Paths
 
 
+MAX_DISCOVERY_EXPANSION_ROUNDS = 2
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveryProgress:
     revision_id: str
@@ -307,7 +310,7 @@ class DiscoveryAcquisition:
                 raise DiscoveryError("stale-discovery-binding")
             if all(_semantic_key(row) in state.reusable() for row in rows):
                 return state.progress
-            if state.progress.rounds >= 2:
+            if state.progress.rounds >= MAX_DISCOVERY_EXPANSION_ROUNDS:
                 raise DiscoveryError("evidence-expansion-limit")
             intent = {"schema_version": 1, "kind": "discovery_expansion_intent",
                       "scope_id": content_digest(self.opening), "binding_id": binding_id, "batch_id": batch_id,
